@@ -11,7 +11,7 @@ export type ServerEvent =
   | { type: 'alert:updated'; alert: Alert }
   | { type: 'settings:updated'; settings: Settings }
   | { type: 'service:status'; serviceStatus: ServiceStatus }
-  | { type: 'disk:space'; diskSpace: DiskSpace };
+  | { type: 'disk:space'; disk: DiskSpace };
 
 export const SSE_EVENT_NAMES = [
   'room:updated',

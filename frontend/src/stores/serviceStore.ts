@@ -23,9 +23,9 @@ export const useServiceStore = create<ServiceState>((set) => ({
       set({
         loading: false,
         status: {
-          status: 'offline',
+          state: 'running',
           version: null,
-          diskSpace: { path: '', free: 0, total: 0 },
+          disk: { freeBytes: 0, totalBytes: 0 },
           activeRecordings: 0,
           setupCompleted: false,
         },

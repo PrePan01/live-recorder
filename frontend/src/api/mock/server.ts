@@ -116,13 +116,10 @@ const alerts: Alert[] = [
 ];
 
 const serviceStatus: ServiceStatus = {
-  status: 'online',
+  state: 'running',
   version: '0.1.0-mock',
-  diskSpace: {
-    path: settings.recordingDirectory,
-    free: 256_000_000_000,
-    total: 1_000_000_000_000,
-  },
+  uptimeSeconds: 0,
+  disk: { freeBytes: 256_000_000_000, totalBytes: 1_000_000_000_000 },
   activeRecordings: 0,
   setupCompleted: true,
 };
@@ -330,7 +327,7 @@ function route(method: string, path: string, query: Record<string, string>, body
         const { password, ...mailRest } = body.mail as Record<string, unknown>;
         settings.mail = { ...settings.mail, ...(mailRest as object), passwordSet: Boolean(password) || settings.mail.passwordSet };
       }
-      serviceStatus.diskSpace = { ...serviceStatus.diskSpace, path: settings.recordingDirectory };
+      
       emit({ type: 'settings:updated', settings: { ...settings } });
       return ok({ settings });
     }

@@ -26,9 +26,9 @@ export default function StatusBar() {
     return () => clearInterval(t);
   }, []);
 
-  const online = status?.status === 'online' && sseConnected;
-  const free = status?.diskSpace?.free ?? 0;
-  const total = status?.diskSpace?.total ?? 1;
+  const online = status?.state === 'running' && sseConnected;
+  const free = status?.disk?.freeBytes ?? 0;
+  const total = status?.disk?.totalBytes ?? 1;
   const freeRatio = total > 0 ? free / total : 0;
   const spaceDanger = free < 20_000_000_000 || freeRatio < 0.1;
   const isSettingsPage = pathname.startsWith('/settings');
@@ -48,7 +48,7 @@ export default function StatusBar() {
       <Space>
         <CloudServerOutlined style={{ color: online ? '#52c41a' : '#ff4d4f' }} />
         <Typography.Text strong>
-          {status?.status === 'restarting' ? '服务重启中' : online ? '服务正常' : '服务已断开'}
+          {status?.state === 'restarting' ? '服务重启中' : online ? '服务正常' : '服务已断开'}
         </Typography.Text>
         {status?.version ? <Tag>{status.version}</Tag> : null}
         {status && status.activeRecordings > 0 ? <Tag color="red">录制中 {status.activeRecordings}</Tag> : null}

@@ -24,7 +24,7 @@ export function applyServerEvent(e: ServerEvent) {
       useServiceStore.getState().patchStatus(e.serviceStatus);
       break;
     case 'disk:space':
-      useServiceStore.getState().patchStatus({ diskSpace: e.diskSpace });
+      useServiceStore.getState().patchStatus({ disk: e.disk });
       break;
   }
 }

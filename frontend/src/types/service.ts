@@ -1,15 +1,15 @@
-export type ServiceHealth = 'online' | 'offline' | 'restarting';
+export type ServiceState = 'running' | 'restarting';
 
 export interface DiskSpace {
-  path: string;
-  free: number;
-  total: number;
+  freeBytes: number;
+  totalBytes: number;
 }
 
 export interface ServiceStatus {
-  status: ServiceHealth;
+  state: ServiceState;
   version: string | null;
-  diskSpace: DiskSpace;
+  uptimeSeconds?: number;
+  disk: DiskSpace;
   activeRecordings: number;
   setupCompleted: boolean;
 }
