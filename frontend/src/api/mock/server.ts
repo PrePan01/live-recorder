@@ -83,7 +83,6 @@ const recordings: Recording[] = [
     fileSizeBytes: 1_610_000_000,
     failureReason: null,
     retryCount: 0,
-    quality: 'original',
   },
   {
     id: 'rec_01JMOCHK0002',
@@ -102,7 +101,6 @@ const recordings: Recording[] = [
       true,
     ),
     retryCount: 3,
-    quality: '1080p',
   },
 ];
 
@@ -174,7 +172,6 @@ function startRecording(room: Room) {
     fileSizeBytes: 0,
     failureReason: null,
     retryCount: 0,
-    quality: settings.quality,
   };
   recordings.unshift(rec);
   emitRecording(rec);
@@ -340,7 +337,8 @@ function route(method: string, path: string, query: Record<string, string>, body
     if (seg[1] === 'validate-directory') {
       const dir = String(body.directory ?? '');
       const valid = dir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(dir);
-      return ok({ valid, writable: valid, message: valid ? null : '路径不合法' });
+      if (!valid) throw new MockFail(env('DIRECTORY_NOT_WRITABLE', '路径不合法或不可写'), 422);
+      return ok({ ok: true });
     }
     if (seg[1] === 'test-smtp') return ok({ ok: true });
   }

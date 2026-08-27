@@ -1,4 +1,4 @@
-import type { Quality } from './recording';
+export type Quality = 'original' | '1080p' | '720p' | '360p';
 
 export type PlatformIntervals = {
   default: number;
@@ -58,8 +58,3 @@ export interface SettingsInput {
   mail?: MailInput;
 }
 
-export interface DirectoryValidation {
-  valid: boolean;
-  writable: boolean;
-  message: string | null;
-}

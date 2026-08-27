@@ -1,5 +1,5 @@
 import { http } from './client';
-import type { DirectoryValidation, Settings, SettingsInput } from '../types/settings';
+import type { Settings, SettingsInput } from '../types/settings';
 
 export async function fetchSettings(): Promise<Settings> {
   const { data } = await http.get<{ settings: Settings }>('/settings');
@@ -11,8 +11,8 @@ export async function updateSettings(input: SettingsInput): Promise<Settings> {
   return data.settings;
 }
 
-export async function validateDirectory(directory: string): Promise<DirectoryValidation> {
-  const { data } = await http.post<DirectoryValidation>('/settings/validate-directory', { directory });
+export async function validateDirectory(directory: string): Promise<{ ok: boolean }> {
+  const { data } = await http.post<{ ok: boolean }>('/settings/validate-directory', { directory });
   return data;
 }
 

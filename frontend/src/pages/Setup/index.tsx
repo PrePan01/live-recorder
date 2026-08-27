@@ -33,8 +33,8 @@ export default function Setup() {
   const validate = async () => {
     setDirState({ checking: true, valid: null, message: null });
     try {
-      const res = await validateDirectory(dir.trim());
-      setDirState({ checking: false, valid: res.valid && res.writable, message: res.message });
+      await validateDirectory(dir.trim());
+      setDirState({ checking: false, valid: true, message: null });
     } catch (e) {
       setDirState({
         checking: false,

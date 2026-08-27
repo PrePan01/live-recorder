@@ -1,9 +1,8 @@
 import type { Platform } from './room';
 import type { ApiErrorEnvelope } from './error';
 
-export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'completed' | 'failed';
 
-export type Quality = 'original' | '1080p' | '720p' | '360p';
+export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'completed' | 'failed';
 
 export interface Recording {
   id: string;
@@ -18,7 +17,6 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ApiErrorEnvelope | null;
   retryCount: number;
-  quality?: Quality | null;
 }
 
 export interface RecordingQuery {

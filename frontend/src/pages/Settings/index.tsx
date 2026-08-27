@@ -39,8 +39,8 @@ export default function SettingsPage() {
     const dir = form.getFieldValue('recordingDirectory') as string;
     if (!dir) return;
     try {
-      const res = await validateDirectory(dir);
-      setDirMsg(res.valid && res.writable ? { ok: true, text: '目录可写' } : { ok: false, text: res.message ?? '目录不可用' });
+      await validateDirectory(dir);
+      setDirMsg({ ok: true, text: '目录可写' });
     } catch (e) {
       setDirMsg({ ok: false, text: e instanceof ApiError ? describeError(e.code, e.message) : '校验失败' });
     }
