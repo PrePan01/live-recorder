@@ -23,6 +23,5 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ErrorObject | null;
   retryCount: number;
-  quality: Quality | null;
   createdAt: string;
 }
