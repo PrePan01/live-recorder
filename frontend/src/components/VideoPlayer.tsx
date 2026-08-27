@@ -1,0 +1,104 @@
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Spin } from 'antd';
+import mpegts from 'mpegts.js';
+import { USE_MOCK, previewWsUrl } from '../api/client';
+
+const MAX_RETRY = 3;
+const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
+const EVENTS = mpegts.Events as unknown as Record<
+  'PLAYING' | 'ERROR',
+  Parameters<mpegts.Player['on']>[0]
+>;
+
+export interface VideoPlayerProps {
+  roomId: string;
+}
+
+export default function VideoPlayer({ roomId }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [state, setState] = useState<'loading' | 'playing' | 'ended' | 'error'>('loading');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (USE_MOCK) {
+      setState('loading');
+      const t = setTimeout(() => {
+        setState('error');
+        setErrorMsg('Mock 模式无真实视频流，BE fake 栈就绪后直连联调');
+      }, 600);
+      return () => clearTimeout(t);
+    }
+    if (!mpegts.isSupported()) {
+      setState('error');
+      setErrorMsg('当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看');
+      return;
+    }
+    let player: mpegts.Player | null = null;
+    let retry = 0;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const create = () => {
+      if (disposed || !videoRef.current) return;
+      player = mpegts.createPlayer(
+        { type: 'ws_flv', url: previewWsUrl(roomId), isLive: true },
+        { enableStashBuffer: false, liveBufferLatencyChasing: true },
+      );
+      player.attachMediaElement(videoRef.current);
+      player.on(EVENTS.PLAYING, () => setState('playing'));
+      player.on(EVENTS.ERROR, (_t, _detail) => {
+        player?.destroy();
+        player = null;
+        if (disposed) return;
+        if (retry >= MAX_RETRY) {
+          setState('error');
+          setErrorMsg('预览连接异常（重试 3 次后放弃）');
+          return;
+        }
+        setState('loading');
+        timer = setTimeout(create, RETRY_DELAYS_MS[retry]);
+        retry += 1;
+      });
+      player.load();
+      void player.play()?.catch?.(() => undefined);
+    };
+
+    create();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      player?.destroy();
+    };
+  }, [roomId]);
+
+  return (
+    <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
+      {state === 'loading' && (
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+          <Spin tip="连接预览流…" />
+        </div>
+      )}
+      {state === 'error' && (
+        <div style={{ padding: 24 }}>
+          <Alert type="error" showIcon message="预览不可用" description={errorMsg} />
+        </div>
+      )}
+      {state === 'ended' && (
+        <div style={{ padding: 24 }}>
+          <Alert type="info" showIcon message="本场录制已结束" />
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        controls
+        muted
+        autoPlay
+        style={{
+          width: '100%',
+          aspectRatio: '16 / 9',
+          display: state === 'error' || state === 'ended' ? 'none' : 'block',
+        }}
+      />
+    </div>
+  );
+}

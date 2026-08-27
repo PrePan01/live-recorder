@@ -6,12 +6,12 @@
 |------|------|------|------|
 | 构建工具 | Vite | ^8.2 | 快速开发体验 |
 | 框架 | React | ^19.2 | 成熟生态 |
-| 语言 | TypeScript | ^7.0 | 类型安全 |
+| 语言 | TypeScript | ^6.0 | 严格模式 |
 | UI 组件库 | Ant Design | ^6.6 | 企业级组件 |
 | 路由 | React Router | ^7.0 | SPA 路由 |
 | 状态管理 | Zustand | ^5.0 | 轻量状态管理 |
 | HTTP 客户端 | axios | ^1.7 | REST API |
-| 视频播放 | flv.js | ^1.6 | 低延迟直播流 |
+| 视频播放 | mpegts.js | ^1.8 | WS-FLV 低延迟直播流（flv.js 不支持 ws://，评审定稿改用） |
 | 代码规范 | ESLint + Prettier | latest | 代码质量 |
 
 ## 2. 项目结构
@@ -187,9 +187,9 @@ frontend/
 | POST | /alerts/read-all | 全部标记已读 |
 | GET | /service/status | 获取服务状态 |
 
-### 6.2 SSE 事件
+### 6.2 SSE 事件（v1.1：标准帧）
 
-端点：`/events`
+端点：`GET /api/v1/events`。报文为标准 SSE 帧：`event: <事件名>` + `data: <资源 JSON>`（data 不内嵌 type），字段 camelCase。
 
 事件类型：
 - `room:updated` - 房间状态变更
@@ -202,9 +202,9 @@ frontend/
 
 ### 6.3 WebSocket 视频流
 
-端点：`ws://127.0.0.1:43120/ws/preview/:roomId`
+端点：`ws://127.0.0.1:43120/ws/preview/:roomId`，协议 FLV over WebSocket（mpegts.js `ws_flv`）。
 
-协议：FLV over WebSocket
+关闭码↔错误码（v1.1 冻结）：1000 正常结束（前置 `stream_end reason=ended`）→"本场录制已结束"；4002 房间不存在/未在录制 → `PREVIEW_NOT_RECORDING`"当前未在录制，无法预览"；4003 预览超限 → `PREVIEW_LIMIT_REACHED`；4004 断流重连耗尽（前置 `stream_end reason=stream_lost`）→ `STREAM_DISCONNECTED_RECONNECT_EXHAUSTED`；1011 服务内部错误。以 stream_end reason 为准、关闭码兜底；仅 1011/网络异常重连 ≤3 次（1/3/5s），4002/4003/4004 不重连。
 
 ## 7. 视频播放器
 
@@ -213,7 +213,7 @@ frontend/
 - 仅支持 Chrome/Firefox，Safari 显示兼容性提示
 
 ### 7.2 实现要点
-- 使用 React Hook 封装播放器生命周期
+- 使用 React Hook 封装播放器生命周期（懒加载，避免 mpegts 进主包）
 - 组件卸载时正确销毁播放器实例
 - 断流自动重连（最多 3 次）
 - 最多 2 路同时预览，超过提示"预览数已达上限"
@@ -237,6 +237,8 @@ const ERROR_MAP = {
   ROOM_LINK_INVALID: '链接无效，请检查后重试',
   ROOM_LINK_DUPLICATE: '该直播间已存在',
   PLATFORM_ACCESS_RESTRICTED: '平台访问受限，请检查 Cookie 配置',
+  PLATFORM_CHANGED: '平台有变动，等待适配更新',
+  PREVIEW_NOT_RECORDING: '当前未在录制，无法预览',
   DIRECTORY_NOT_WRITABLE: '目录不可写，请检查权限',
   DISK_SPACE_INSUFFICIENT: '磁盘空间不足',
   CONCURRENT_LIMIT_REACHED: '并发录制数已达上限',
@@ -245,10 +247,18 @@ const ERROR_MAP = {
 ```
 
 ### 8.2 重试机制
-- 根据 `retryable` 字段决定是否显示"重试"按钮
+- 根据 `retryable` 字段决定是否显示"重试"按钮；info 级提示码（STREAM_FORMAT_CHANGED/QUALITY_DOWNGRADED）retryable 为 —，仅展示不渲染重试
 - 网络错误自动重试（最多 3 次）
 
-## 9. 实现计划
+## 9. 契约对齐记录（v1.1，2026-08-28 评审定稿）
+
+- REST envelope：`{rooms}` / `{items,total,page,pageSize}`（pageSize 默认 20 上限 100）/ `{settings}` / `{alerts}` / `{serviceStatus}` / 单资源 `{room|recording|alert}`；POST /rooms→201，DELETE→204，操作类→`{ok:true}`；`PATCH /rooms/:id/enable` body `{enabled}`
+- 错误信封：`{error:{code,message,roomId?,recordingId?,occurredAt,retryable}}`，18 码全集见契约 v1.1
+- `room.lastError` / `recording.failureReason` 为结构化对象 `{code,message,occurredAt,retryable,recordingId?}|null`
+- `settings.checkIntervalSec` 为 `{default,bilibili,douyin}` 按平台对象；SMTP 密码仅 `passwordSet` 标记
+- dev 联调走 Vite 代理（/api、/ws），Origin `http://localhost:5173` 已在 BE 白名单；BE fake 全栈就绪后删自建 mock（VITE_USE_MOCK 关闭）
+
+## 10. 实现计划
 
 ### 阶段 B：可用骨架（预计 2 天）
 1. 项目初始化：安装依赖、配置 ESLint/Prettier
@@ -272,7 +282,7 @@ const ERROR_MAP = {
 3. 跨浏览器测试（Chrome/Firefox/Safari）
 4. 性能优化
 
-## 10. 依赖清单
+## 11. 依赖清单
 
 ```json
 {
@@ -283,7 +293,7 @@ const ERROR_MAP = {
     "antd": "^6.6.0",
     "zustand": "^5.0.0",
     "axios": "^1.7.0",
-    "flv.js": "^1.6.0",
+    "mpegts.js": "^1.8.0",
     "dayjs": "^1.11.0"
   },
   "devDependencies": {

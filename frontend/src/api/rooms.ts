@@ -1,0 +1,34 @@
+import { http } from './client';
+import type { Room, RoomCreateInput, RoomUpdateInput } from '../types/room';
+
+export async function fetchRooms(): Promise<Room[]> {
+  const { data } = await http.get<{ rooms: Room[] }>('/rooms');
+  return data.rooms;
+}
+
+export async function createRoom(input: RoomCreateInput): Promise<Room> {
+  const { data } = await http.post<{ room: Room }>('/rooms', input);
+  return data.room;
+}
+
+export async function updateRoom(id: string, input: RoomUpdateInput): Promise<Room> {
+  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input);
+  return data.room;
+}
+
+export async function deleteRoom(id: string): Promise<void> {
+  await http.delete(`/rooms/${id}`);
+}
+
+export async function setRoomEnabled(id: string, enabled: boolean): Promise<Room> {
+  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}/enable`, { enabled });
+  return data.room;
+}
+
+export async function checkRoomNow(id: string): Promise<void> {
+  await http.post(`/rooms/${id}/check`);
+}
+
+export async function stopRecording(id: string): Promise<void> {
+  await http.post(`/rooms/${id}/stop-recording`);
+}
