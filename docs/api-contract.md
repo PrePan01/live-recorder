@@ -81,6 +81,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。响应均为 JSON，字段一律 ca
 {
   "recordingDirectory": "/Users/me/Movies/LiveRecordings",
   "maxConcurrentRecordings": 2,
+  "quality": "original",
   "checkIntervalSec": { "default": 60, "bilibili": 60, "douyin": 120 },
   "retry": { "maxAttempts": 3, "delaysSeconds": [5, 15, 45] },
   "diskGuard": { "minFreeBytes": 21474836480, "minFreePercent": 10 },

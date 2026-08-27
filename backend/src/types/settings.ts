@@ -1,3 +1,5 @@
+import type { Quality } from './recording.js';
+
 export interface RetryConfig {
   maxAttempts: number;
   delaysSeconds: number[];
@@ -32,6 +34,8 @@ export interface MailConfigView extends MailConfig {
 export interface AppSettings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
+  /** 录制默认清晰度（阶段 C 生效）；recordings.quality 内部列记录实际使用值。 */
+  quality: Quality;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;

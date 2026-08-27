@@ -23,6 +23,7 @@ export const DEFAULT_DISK_GUARD: DiskGuardConfig = {
 export const DEFAULT_SETTINGS = {
   recordingDirectory: '',
   maxConcurrentRecordings: 2,
+  quality: 'original' as const,
   checkIntervalSec: DEFAULT_CHECK_INTERVAL,
   retry: DEFAULT_RETRY,
   diskGuard: DEFAULT_DISK_GUARD,
