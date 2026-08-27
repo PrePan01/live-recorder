@@ -1,7 +1,7 @@
 import type { ErrorCode } from '../types/error';
 
 /** 契约 v1.1：18 码全集。info 级提示码（STREAM_FORMAT_CHANGED / QUALITY_DOWNGRADED）仅展示，不渲染重试。 */
-const ERROR_MAP: Record<ErrorCode, string> = {
+const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   ROOM_LINK_INVALID: '链接无效或平台不支持，请检查后重试',
   ROOM_LINK_DUPLICATE: '该直播间已存在',
   PLATFORM_ACCESS_RESTRICTED: '平台访问受限，请检查 Cookie 配置',
@@ -16,7 +16,7 @@ const ERROR_MAP: Record<ErrorCode, string> = {
   NETWORK_UNAVAILABLE: '网络不可用',
   RECORDING_FILE_CORRUPTED: '录制文件损坏',
   CONFIG_LOAD_FAILED: '配置加载失败',
-  RESOURCE_NOT_FOUND: '资源不存在或已被删除',
+  // RESOURCE_NOT_FOUND 不设固定文案：v1.2 口径 FE 直接渲染服务端 message
   STREAM_FORMAT_CHANGED: '流格式变更，已自动切换续录',
   PREVIEW_LIMIT_REACHED: '预览数已达上限（2 路）',
   PREVIEW_NOT_RECORDING: '当前未在录制，无法预览',
