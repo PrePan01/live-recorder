@@ -1,4 +1,5 @@
 import type { Platform } from './room';
+import type { ApiErrorEnvelope } from './error';
 
 export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'completed' | 'failed';
 
@@ -15,17 +16,9 @@ export interface Recording {
   endedAt: string | null;
   filePath: string | null;
   fileSizeBytes: number;
-  failureReason: ApiFailureReason | null;
+  failureReason: ApiErrorEnvelope | null;
   retryCount: number;
-  quality: Quality | null;
-}
-
-export interface ApiFailureReason {
-  code: string;
-  message: string;
-  occurredAt: string;
-  retryable: boolean;
-  recordingId?: string;
+  quality?: Quality | null;
 }
 
 export interface RecordingQuery {

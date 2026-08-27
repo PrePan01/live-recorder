@@ -24,17 +24,20 @@ const env = (code: string, message: string, retryable = false, recordingId?: str
 });
 
 const settings: Settings = {
-  saveDirectory: '/Users/example/Videos/live-recorder',
-  maxConcurrency: 2,
+  recordingDirectory: '/Users/example/Videos/live-recorder',
+  maxConcurrentRecordings: 2,
   checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
-  defaultQuality: 'original',
+  quality: 'original',
+  retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+  diskGuard: { minFreeBytes: 21_474_836_480, minFreePercent: 10 },
   mail: {
+    enabled: true,
     host: 'smtp.example.com',
     port: 465,
-    user: 'notify@example.com',
+    secure: true,
+    username: 'notify@example.com',
     from: 'notify@example.com',
-    to: 'owner@example.com',
-    useTls: true,
+    recipients: ['owner@example.com'],
     passwordSet: true,
   },
 };
@@ -76,7 +79,7 @@ const recordings: Recording[] = [
     state: 'completed',
     startedAt: new Date(Date.now() - 86400_000).toISOString(),
     endedAt: new Date(Date.now() - 86400_000 + 5400_000).toISOString(),
-    filePath: `${settings.saveDirectory}/2026-08-27/Mock B站主播_sess_mock_a001.mkv`,
+    filePath: `${settings.recordingDirectory}/2026-08-27/Mock B站主播_sess_mock_a001.mkv`,
     fileSizeBytes: 1_610_000_000,
     failureReason: null,
     retryCount: 0,
@@ -118,7 +121,7 @@ const serviceStatus: ServiceStatus = {
   status: 'online',
   version: '0.1.0-mock',
   diskSpace: {
-    path: settings.saveDirectory,
+    path: settings.recordingDirectory,
     free: 256_000_000_000,
     total: 1_000_000_000_000,
   },
@@ -171,14 +174,14 @@ function startRecording(room: Room) {
     fileSizeBytes: 0,
     failureReason: null,
     retryCount: 0,
-    quality: settings.defaultQuality,
+    quality: settings.quality,
   };
   recordings.unshift(rec);
   emitRecording(rec);
   setTimeout(() => {
     if (rec.state !== 'pending') return;
     rec.state = 'recording';
-    rec.filePath = `${settings.saveDirectory}/${now().slice(0, 10)}/${room.displayName}_${rec.streamSessionId}.mkv`;
+    rec.filePath = `${settings.recordingDirectory}/${now().slice(0, 10)}/${room.displayName}_${rec.streamSessionId}.mkv`;
     serviceStatus.activeRecordings += 1;
     room.monitorState = 'recording';
     room.lastError = null;
@@ -210,9 +213,9 @@ function finishRecording(room: Room, rec: Recording, failed = false) {
 
 // ---------- 路由 ----------
 class MockFail extends Error {
-  body: ApiErrorEnvelope & { roomId?: string };
+  body: ApiErrorEnvelope;
   status: number;
-  constructor(body: ApiErrorEnvelope & { roomId?: string }, status: number) {
+  constructor(body: ApiErrorEnvelope, status: number) {
     super(body.message);
     this.body = body;
     this.status = status;
@@ -322,12 +325,15 @@ function route(method: string, path: string, query: Record<string, string>, body
   if (seg[0] === 'settings') {
     if (seg.length === 1 && method === 'GET') return ok({ settings });
     if (seg.length === 1 && method === 'PUT') {
-      if (body.saveDirectory) settings.saveDirectory = String(body.saveDirectory);
-      if (body.maxConcurrency) settings.maxConcurrency = Number(body.maxConcurrency);
-      if (body.defaultQuality) settings.defaultQuality = String(body.defaultQuality) as Settings['defaultQuality'];
+      if (body.saveDirectory) settings.recordingDirectory = String(body.saveDirectory);
+      if (body.maxConcurrentRecordings) settings.maxConcurrentRecordings = Number(body.maxConcurrentRecordings);
+      if (body.quality) settings.quality = String(body.quality) as Settings['quality'];
       if (body.checkIntervalSec) settings.checkIntervalSec = { ...settings.checkIntervalSec, ...(body.checkIntervalSec as object) };
-      if (body.mail) settings.mail = { ...settings.mail, ...(body.mail as object), passwordSet: true };
-      serviceStatus.diskSpace = { ...serviceStatus.diskSpace, path: settings.saveDirectory };
+      if (body.mail) {
+        const { password, ...mailRest } = body.mail as Record<string, unknown>;
+        settings.mail = { ...settings.mail, ...(mailRest as object), passwordSet: Boolean(password) || settings.mail.passwordSet };
+      }
+      serviceStatus.diskSpace = { ...serviceStatus.diskSpace, path: settings.recordingDirectory };
       emit({ type: 'settings:updated', settings: { ...settings } });
       return ok({ settings });
     }

@@ -26,17 +26,17 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       form.setFieldsValue({
-        saveDirectory: settings.saveDirectory,
-        maxConcurrency: settings.maxConcurrency,
+        recordingDirectory: settings.recordingDirectory,
+        maxConcurrentRecordings: settings.maxConcurrentRecordings,
         checkIntervalSec: { ...settings.checkIntervalSec },
-        defaultQuality: settings.defaultQuality,
-        mail: { ...settings.mail, password: '' },
+        quality: settings.quality,
+        mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
     }
   }, [settings, form]);
 
   const checkDir = async () => {
-    const dir = form.getFieldValue('saveDirectory') as string;
+    const dir = form.getFieldValue('recordingDirectory') as string;
     if (!dir) return;
     try {
       const res = await validateDirectory(dir);
@@ -49,12 +49,17 @@ export default function SettingsPage() {
   const onFinish = async (values: SettingsInput) => {
     setSaving(true);
     try {
+      const { mail, ...rest } = values as SettingsInput & { mail?: Record<string, unknown> & { recipients?: string; password?: string } };
       await save({
-        ...values,
-        mail: values.mail
+        ...rest,
+        mail: mail
           ? {
-              ...values.mail,
-              password: (values.mail as { password?: string }).password || undefined,
+              ...mail,
+              recipients: String(mail.recipients ?? '')
+                .split(',')
+                .map((x) => x.trim())
+                .filter(Boolean),
+              password: mail.password || undefined,
             }
           : undefined,
       });
@@ -73,7 +78,7 @@ export default function SettingsPage() {
           <Form form={form} layout="vertical" onFinish={onFinish} disabled={!settings}>
             <Form.Item label="保存目录">
               <Space.Compact style={{ width: '100%' }}>
-                <Form.Item name="saveDirectory" noStyle rules={[{ required: true, message: '必填' }]}>
+                <Form.Item name="recordingDirectory" noStyle rules={[{ required: true, message: '必填' }]}>
                   <Input />
                 </Form.Item>
                 <Button onClick={() => void checkDir()}>校验</Button>
@@ -84,12 +89,12 @@ export default function SettingsPage() {
             )}
             <Row gutter={16}>
               <Col span={8}>
-                <Form.Item label="最大并发" name="maxConcurrency" rules={[{ required: true }]}>
+                <Form.Item label="最大并发" name="maxConcurrentRecordings" rules={[{ required: true }]}>
                   <InputNumber min={1} max={8} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item label="默认清晰度" name="defaultQuality">
+                <Form.Item label="默认清晰度" name="quality">
                   <Select
                     options={[
                       { value: 'original', label: '原画' },
@@ -134,12 +139,12 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
               <Col span={6}>
-                <Form.Item label="TLS" name={['mail', 'useTls']} valuePropName="checked">
+                <Form.Item label="TLS" name={['mail', 'secure']} valuePropName="checked">
                   <Switch />
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item label="用户名" name={['mail', 'user']}>
+                <Form.Item label="用户名" name={['mail', 'username']}>
                   <Input />
                 </Form.Item>
               </Col>
@@ -149,7 +154,7 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item label="收件地址" name={['mail', 'to']}>
+                <Form.Item label="收件地址（逗号分隔）" name={['mail', 'recipients']}>
                   <Input />
                 </Form.Item>
               </Col>

@@ -19,11 +19,11 @@ export default function Setup() {
   const settings = useSettingsStore((s) => s.settings);
   const load = useSettingsStore((s) => s.load);
   const [step, setStep] = useState(0);
-  const [dir, setDir] = useState<string>(settings?.saveDirectory ?? '');
+  const [dir, setDir] = useState<string>(settings?.recordingDirectory ?? '');
   const [dirState, setDirState] = useState<DirState>({ checking: false, valid: null, message: null });
-  const [concurrency, setConcurrency] = useState<number>(settings?.maxConcurrency ?? 2);
+  const [concurrency, setConcurrency] = useState<number>(settings?.maxConcurrentRecordings ?? 2);
   const [mailOn, setMailOn] = useState(false);
-  const [mail, setMail] = useState({ host: '', port: 465, user: '', from: '', to: '', useTls: true, password: '' });
+  const [mail, setMail] = useState({ host: '', port: 465, username: '', from: '', to: '', secure: true, password: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -48,21 +48,22 @@ export default function Setup() {
     setSaving(true);
     try {
       await updateSettings({
-        saveDirectory: dir.trim(),
-        maxConcurrency: concurrency,
-        ...(mailOn
-          ? {
-              mail: {
+        recordingDirectory: dir.trim(),
+        maxConcurrentRecordings: concurrency,
+        mail: {
+          enabled: mailOn,
+          ...(mailOn
+            ? {
                 host: mail.host,
                 port: mail.port,
-                user: mail.user,
+                username: mail.username,
                 from: mail.from,
-                to: mail.to,
-                useTls: mail.useTls,
+                recipients: mail.to ? [mail.to] : [],
+                secure: mail.secure,
                 password: mail.password || undefined,
-              },
-            }
-          : {}),
+              }
+            : {}),
+        },
       });
       await useServiceStore.getState().fetchStatus();
       message.success('设置已保存');
@@ -122,7 +123,7 @@ export default function Setup() {
                   <InputNumber value={mail.port} onChange={(v) => setMail({ ...mail, port: v ?? 465 })} />
                 </Form.Item>
                 <Form.Item label="用户名" style={{ marginBottom: 8 }}>
-                  <Input value={mail.user} onChange={(e) => setMail({ ...mail, user: e.target.value })} />
+                  <Input value={mail.username} onChange={(e) => setMail({ ...mail, username: e.target.value })} />
                 </Form.Item>
                 <Form.Item label="发件地址" style={{ marginBottom: 8 }}>
                   <Input value={mail.from} onChange={(e) => setMail({ ...mail, from: e.target.value })} />
@@ -134,7 +135,7 @@ export default function Setup() {
                   <Input.Password value={mail.password} onChange={(e) => setMail({ ...mail, password: e.target.value })} />
                 </Form.Item>
               </Space>
-              <Checkbox checked={mail.useTls} onChange={(e) => setMail({ ...mail, useTls: e.target.checked })}>
+              <Checkbox checked={mail.secure} onChange={(e) => setMail({ ...mail, secure: e.target.checked })}>
                 使用 TLS
               </Checkbox>
               <div>

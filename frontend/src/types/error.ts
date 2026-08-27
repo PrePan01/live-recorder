@@ -23,20 +23,22 @@ export type ErrorCode =
 export interface ApiErrorEnvelope {
   code: ErrorCode;
   message: string;
+  roomId?: string | null;
+  recordingId?: string | null;
   occurredAt: string;
   retryable: boolean;
-  recordingId?: string;
+  details?: Record<string, unknown>;
 }
 
 export class ApiError extends Error {
   readonly code: ErrorCode;
-  readonly roomId?: string;
-  readonly recordingId?: string;
+  readonly roomId?: string | null;
+  readonly recordingId?: string | null;
   readonly occurredAt?: string;
   readonly retryable: boolean;
   readonly status?: number;
 
-  constructor(body: ApiErrorEnvelope & { roomId?: string }, status?: number) {
+  constructor(body: ApiErrorEnvelope, status?: number) {
     super(body.message);
     this.name = 'ApiError';
     this.code = body.code;

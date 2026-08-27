@@ -307,3 +307,4 @@ const ERROR_MAP = {
   }
 }
 ```
+设置资源模型：以契约 v1.1 蓝本 §设置 为准——recordingDirectory / maxConcurrentRecordings / quality / retry / diskGuard / mail{enabled,host,port,secure,username,from,recipients[],passwordSet}；FE 早期线程里的 saveDirectory/maxConcurrency 命名作废。

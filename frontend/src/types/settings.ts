@@ -6,31 +6,56 @@ export type PlatformIntervals = {
   douyin: number;
 };
 
+export interface RetryPolicy {
+  maxAttempts: number;
+  delaysSeconds: number[];
+}
+
+export interface DiskGuard {
+  minFreeBytes: number;
+  minFreePercent: number;
+}
+
 export interface MailSettings {
+  enabled: boolean;
   host: string | null;
   port: number | null;
-  user: string | null;
+  secure: boolean;
+  username: string | null;
   from: string | null;
-  to: string | null;
-  useTls: boolean;
-  /** true 表示 SecretStore 中已存密码；响应永不回显明文 */
+  recipients: string[];
+  /** true 表示 SecretStore 已存密码；响应永不回显明文 */
   passwordSet: boolean;
 }
 
 export interface Settings {
-  saveDirectory: string;
-  maxConcurrency: number;
+  recordingDirectory: string;
+  maxConcurrentRecordings: number;
   checkIntervalSec: PlatformIntervals;
-  defaultQuality: Quality;
+  quality: Quality;
+  retry: RetryPolicy;
+  diskGuard: DiskGuard;
   mail: MailSettings;
 }
 
+export interface MailInput {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  username?: string;
+  from?: string;
+  recipients?: string[];
+  /** 仅更新密码时传入 */
+  password?: string;
+}
+
 export interface SettingsInput {
-  saveDirectory?: string;
-  maxConcurrency?: number;
+  recordingDirectory?: string;
+  maxConcurrentRecordings?: number;
   checkIntervalSec?: Partial<PlatformIntervals>;
-  defaultQuality?: Quality;
-  mail?: Partial<Omit<MailSettings, 'passwordSet'>> & { password?: string };
+  quality?: Quality;
+  mail?: MailInput;
 }
 
 export interface DirectoryValidation {
