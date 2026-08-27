@@ -16,6 +16,7 @@ const ERROR_MAP: Record<ErrorCode, string> = {
   NETWORK_UNAVAILABLE: '网络不可用',
   RECORDING_FILE_CORRUPTED: '录制文件损坏',
   CONFIG_LOAD_FAILED: '配置加载失败',
+  RESOURCE_NOT_FOUND: '资源不存在或已被删除',
   STREAM_FORMAT_CHANGED: '流格式变更，已自动切换续录',
   PREVIEW_LIMIT_REACHED: '预览数已达上限（2 路）',
   PREVIEW_NOT_RECORDING: '当前未在录制，无法预览',
