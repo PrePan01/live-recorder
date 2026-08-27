@@ -51,6 +51,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     });
     expect(dup.statusCode).toBe(409);
     expect(dup.json().error.code).toBe('ROOM_LINK_DUPLICATE');
+    expect(dup.json().error.roomId).toBe(room.id);
     expect(dup.json().error.retryable).toBe(false);
 
     const invalid = await app.inject({

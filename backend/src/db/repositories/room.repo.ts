@@ -87,11 +87,16 @@ export class RoomRepository {
         .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.monitorState, now, now);
     } catch (err) {
       if (isUniqueConflict(err)) {
-        throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: room.id });
+        throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: this.findIdByPlatformUrl(room.platform, room.url) });
       }
       throw err;
     }
     return room;
+  }
+
+  private findIdByPlatformUrl(platform: Platform, url: string): string | null {
+    const row = this.db.prepare('SELECT id FROM rooms WHERE platform = ? AND url = ?').get(platform, url) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled'>>): Room {
