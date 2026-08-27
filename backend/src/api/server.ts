@@ -6,17 +6,24 @@ import { registerRecordingRoutes } from './routes/recordings.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerServiceRoutes } from './routes/service.js';
+import { SSEBroadcaster, registerSse } from './sse.js';
+import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 
-const ALLOWED_HOSTS = new Set(['127.0.0.1:43120', 'localhost:43120']);
+export const ALLOWED_HOSTS = new Set(['127.0.0.1:43120', 'localhost:43120']);
+export const BASE_ORIGINS = ['http://127.0.0.1:43120', 'http://localhost:43120'];
 
-function originAllowed(origin: string | undefined, extra: string[]): boolean {
-  if (origin === undefined) return true;
-  const allowed = new Set(['http://127.0.0.1:43120', 'http://localhost:43120', ...extra]);
-  return allowed.has(origin);
+export interface BuiltApp {
+  app: FastifyInstance;
+  sse: SSEBroadcaster;
+  preview: PreviewManager;
+  ws: { dispose: () => void };
 }
 
-export function buildApp(services: Services, opts: { extraOrigins?: string[] } = {}): FastifyInstance {
+export function buildApp(services: Services, opts: { extraOrigins?: string[] } = {}): BuiltApp {
   const app = Fastify({ logger: false });
+  const sse = new SSEBroadcaster();
+  const preview = new PreviewManager(services);
+  const extraOrigins = opts.extraOrigins ?? [];
 
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host;
@@ -25,7 +32,8 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
         error: { code: 'SERVICE_UNAVAILABLE', message: '仅允许本机访问', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
-    if (!originAllowed(req.headers.origin, opts.extraOrigins ?? [])) {
+    const allowedOrigins = new Set([...BASE_ORIGINS, ...extraOrigins]);
+    if (req.headers.origin !== undefined && !allowedOrigins.has(req.headers.origin)) {
       return reply.status(403).send({
         error: { code: 'SERVICE_UNAVAILABLE', message: 'Origin 不在白名单', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
@@ -42,7 +50,8 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
         error: { code: 'CONFIG_LOAD_FAILED', message: '请求字段非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
-    services.alerts.create({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });
+    const alert = services.alerts.create({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });
+    services.events.emit({ type: 'alert:created', data: alert });
     return reply.status(500).send({
       error: { code: 'SERVICE_UNAVAILABLE', message: '服务内部错误', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: true },
     });
@@ -65,6 +74,15 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
   registerSettingsRoutes(app, services);
   registerAlertRoutes(app, services);
   registerServiceRoutes(app, services);
+  registerSse(app, services, sse);
 
-  return app;
+  const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins);
+  app.addHook('onClose', async () => {
+    ws.dispose();
+    sse.stop();
+    for (const roomId of preview.trackedRooms()) preview.closeRoomWithError(roomId, 1001);
+    services.db.close();
+  });
+
+  return { app, sse, preview, ws };
 }

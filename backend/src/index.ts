@@ -5,7 +5,7 @@ import { SERVICE_HOST, SERVICE_PORT } from './config/defaults.js';
 const extraOrigins = (process.env.LR_EXTRA_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim()).filter(Boolean);
 
 const services = buildServices();
-const app = buildApp(services, { extraOrigins });
+const { app } = buildApp(services, { extraOrigins });
 
 async function main(): Promise<void> {
   await app.listen({ host: SERVICE_HOST, port: SERVICE_PORT });

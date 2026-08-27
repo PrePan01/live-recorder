@@ -12,7 +12,7 @@ function newServices(): Services {
 
 describe('REST contract v1.1 (fake stack)', () => {
   it('health + service status', async () => {
-    const app = buildApp(newServices());
+    const { app } = buildApp(newServices());
     const res = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: '127.0.0.1:43120' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().serviceStatus.state).toBe('running');
@@ -24,7 +24,7 @@ describe('REST contract v1.1 (fake stack)', () => {
   });
 
   it('rejects non-local host and unknown origin, allows dev origin when configured', async () => {
-    const app = buildApp(newServices(), { extraOrigins: ['http://localhost:5173'] });
+    const { app } = buildApp(newServices(), { extraOrigins: ['http://localhost:5173'] });
     const badHost = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: 'evil.example.com' } });
     expect(badHost.statusCode).toBe(403);
     const badOrigin = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: '127.0.0.1:43120', origin: 'http://evil.example.com' } });
@@ -36,7 +36,7 @@ describe('REST contract v1.1 (fake stack)', () => {
 
   it('rooms CRUD with 409/422 and enable toggle', async () => {
     const services = newServices();
-    const app = buildApp(services);
+    const { app } = buildApp(services);
     const created = await app.inject({
       method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
       payload: { platform: 'bilibili', url: 'https://live.bilibili.com/123?spm=x', displayName: '主播' },
@@ -77,12 +77,17 @@ describe('REST contract v1.1 (fake stack)', () => {
     const del = await app.inject({ method: 'DELETE', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' } });
     expect(del.statusCode).toBe(204);
     expect(del.body).toBe('');
+    const delUnknown = await app.inject({ method: 'DELETE', url: '/api/v1/rooms/room_none', headers: { host: '127.0.0.1:43120' } });
+    expect(delUnknown.statusCode).toBe(404);
+    expect(delUnknown.json().error.code).toBe('RESOURCE_NOT_FOUND');
+    const patchUnknown = await app.inject({ method: 'PATCH', url: '/api/v1/rooms/room_none', headers: { host: '127.0.0.1:43120' }, payload: { displayName: 'x' } });
+    expect(patchUnknown.statusCode).toBe(404);
     await app.close();
   });
 
   it('settings: password write-only, passwordSet derived, validate-directory semantics', async () => {
     const services = newServices();
-    const app = buildApp(services);
+    const { app } = buildApp(services);
     const get = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' } });
     expect(get.statusCode).toBe(200);
     expect(get.json().settings.mail.passwordSet).toBe(false);
@@ -132,7 +137,7 @@ describe('REST contract v1.1 (fake stack)', () => {
 
   it('recordings pagination + open, alerts flow', async () => {
     const services = newServices();
-    const app = buildApp(services);
+    const { app } = buildApp(services);
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/1', displayName: 'd' });
     const rec = services.recordings.create({ roomId: room.id, platform: 'douyin', streamSessionId: 's1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'recording', filePath: '/tmp/x.mkv' });
@@ -145,8 +150,8 @@ describe('REST contract v1.1 (fake stack)', () => {
     const open = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec.id}/open`, headers: { host: '127.0.0.1:43120' } });
     expect(open.json().ok).toBe(true);
     const openBad = await app.inject({ method: 'POST', url: '/api/v1/recordings/rec_none/open', headers: { host: '127.0.0.1:43120' } });
-    expect(openBad.statusCode).toBe(400);
-    expect(openBad.json().error.code).toBe('RECORDING_FILE_CORRUPTED');
+    expect(openBad.statusCode).toBe(404);
+    expect(openBad.json().error.code).toBe('RESOURCE_NOT_FOUND');
 
     const alert = services.alerts.create({ level: 'warning', source: 'disk', message: '空间不足', occurredAt: services.clock.iso() });
     const alerts = await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } });

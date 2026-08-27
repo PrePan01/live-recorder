@@ -45,7 +45,9 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     services.settings.save(merged);
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
-    return reply.send({ settings: await settingsView(services) });
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return reply.send({ settings: view });
   });
 
   app.post('/api/v1/settings/validate-directory', async (req, reply) => {

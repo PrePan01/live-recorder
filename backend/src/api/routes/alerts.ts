@@ -15,7 +15,8 @@ export function registerAlertRoutes(app: FastifyInstance, services: Services): v
   app.patch('/api/v1/alerts/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const alert = services.alerts.markResolved(id);
-    if (!alert) throw new AppError('CONFIG_LOAD_FAILED', '告警不存在');
+    if (!alert) throw new AppError('RESOURCE_NOT_FOUND', '告警不存在', { details: { resource: 'alert' } });
+    services.events.emit({ type: 'alert:updated', data: alert });
     return reply.send({ alert });
   });
 

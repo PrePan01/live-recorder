@@ -5,6 +5,7 @@ import type { Mailer } from '../mail/mailer.js';
 import type { SecretStore } from '../security/secret-store.js';
 import type { Clock } from './clock.js';
 import { SystemClock } from './clock.js';
+import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { FakeRecordingEngine } from '../recorder/fake-engine.js';
@@ -24,6 +25,7 @@ export type AdapterMode = 'fake' | 'real';
 export interface Services {
   mode: AdapterMode;
   startedAt: number;
+  events: AppEventBus;
   clock: Clock;
   db: DB;
   rooms: RoomRepository;
@@ -71,6 +73,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   return {
     mode,
     startedAt: clock.now(),
+    events: new AppEventBus(),
     clock,
     db,
     rooms: new RoomRepository(db),

@@ -25,6 +25,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
     });
+    services.events.emit({ type: 'room:updated', data: room });
     return reply.status(201).send({ room });
   });
 
@@ -43,6 +44,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     const room = services.rooms.update(id, patch);
+    services.events.emit({ type: 'room:updated', data: room });
     return reply.send({ room });
   });
 
@@ -53,32 +55,38 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', 'enabled 必须为布尔值', { roomId: id });
     }
     const room = services.rooms.update(id, { enabled: body.enabled });
+    services.events.emit({ type: 'room:updated', data: room });
     return reply.send({ room });
   });
 
   app.delete('/api/v1/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const existing = services.rooms.get(id);
+    if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     services.rooms.remove(id);
+    services.events.emit({ type: 'room:updated', data: { ...existing, enabled: false, monitorState: 'disabled' } });
     return reply.status(204).send();
   });
 
   app.post('/api/v1/rooms/:id/check', async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('ROOM_LINK_INVALID', '房间不存在', { roomId: id });
+    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const adapter = services.adapterFor(room.platform);
     const status = await adapter.checkLiveStatus(room.url);
-    services.rooms.setState(id, status.status === 'live' ? 'idle' : 'idle', {
+    services.rooms.setState(id, 'idle', {
       lastCheckedAt: services.clock.iso(),
       lastError: status.error ?? null,
     });
+    const updated = services.rooms.get(id);
+    if (updated) services.events.emit({ type: 'room:updated', data: updated });
     return reply.send({ ok: true });
   });
 
   app.post('/api/v1/rooms/:id/stop-recording', async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('ROOM_LINK_INVALID', '房间不存在', { roomId: id });
+    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     if (room.monitorState !== 'recording' && room.monitorState !== 'reconnecting') {
       throw new AppError('PREVIEW_NOT_RECORDING', '当前未在录制', { roomId: id });
     }

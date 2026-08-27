@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'CONFIG_LOAD_FAILED'
   | 'STREAM_FORMAT_CHANGED'
   | 'PREVIEW_LIMIT_REACHED'
+  | 'RESOURCE_NOT_FOUND'
   | 'PREVIEW_NOT_RECORDING'
   | 'QUALITY_DOWNGRADED';
 
@@ -99,6 +100,8 @@ export function httpStatusFor(code: ErrorCode): number {
       return 503;
     case 'CONFIG_LOAD_FAILED':
       return 500;
+    case 'RESOURCE_NOT_FOUND':
+      return 404;
     default:
       return 400;
   }

@@ -35,7 +35,7 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
     if (!rec || !rec.filePath) {
-      throw new AppError('RECORDING_FILE_CORRUPTED', '录制记录不存在或文件缺失', { recordingId: id });
+      throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在或文件缺失', { recordingId: id, details: { resource: 'recording' } });
     }
     return reply.send({ ok: true });
   });

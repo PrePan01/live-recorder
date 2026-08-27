@@ -101,7 +101,7 @@ export class RoomRepository {
 
   update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled'>>): Room {
     const existing = this.get(id);
-    if (!existing) throw new AppError('ROOM_LINK_INVALID', '房间不存在', { roomId: id });
+    if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
     if (patch.enabled !== undefined) {
       next.monitorState = !patch.enabled ? 'disabled' : existing.monitorState === 'disabled' ? 'idle' : existing.monitorState;
