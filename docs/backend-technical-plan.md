@@ -156,7 +156,7 @@ class Scheduler {
 }
 ```
 
-调度器使用 `setInterval` 按配置间隔轮询。每个房间按平台类型选择对应适配器。检测结果通过 SSE 推送给前端。
+调度器按平台独立间隔轮询（`checkIntervalSec`，可配置：bilibili 默认 60s、douyin 默认 120s，含全局默认值兜底），同一平台内房间串行检测；每个房间按平台类型选择对应适配器。检测结果通过 SSE 推送给前端。
 
 ### 3.4 录制管理器
 
@@ -191,7 +191,8 @@ class PreviewManager {
   addPreview(roomId: string, ws: WebSocket): void;
   removePreview(roomId: string, ws: WebSocket): void;
   broadcastData(roomId: string, chunk: Buffer): void;
-  notifyDisconnect(roomId: string): void;
+  // endReason 存在时先下发 stream_end 帧，再按 closeCode 关闭连接
+  notifyDisconnect(roomId: string, closeCode: number, endReason?: 'ended' | 'stream_lost'): void;
 }
 ```
 
@@ -251,6 +252,15 @@ class Notifier {
 | --- | --- | --- |
 | GET | `/api/v1/service/status` | 服务状态、磁盘空间、活跃录制数、setupCompleted |
 
+#### 响应 envelope 约定（BE/FE 联合定稿）
+
+- 单资源：`{ room }` / `{ recording }` / `{ alert }`；`POST /rooms` 返回 `201 + { room }`；`DELETE` 返回 `204` 无 body
+- 列表：`GET /rooms` → `{ rooms }`；`GET /recordings` → `{ items, total, page, pageSize }`；`GET /alerts` → `{ alerts }`
+- `GET/PUT /settings` → `{ settings }`；`GET /service/status` → `{ serviceStatus }`
+- 操作类端点（check / stop-recording / open / validate-directory / test-smtp / read-all）→ `{ ok: true }`，必要时附资源字段
+- `PATCH /rooms/:id/enable` 请求体 `{ enabled: boolean }`，返回 `{ room }`
+- 全部字段 camelCase；`GET /recordings` 查询参数 `page/pageSize/roomId/state/sessionId/groupBy`，默认 `startedAt` 倒序，pageSize 默认 20（上限 100）
+
 ### 4.2 SSE 事件
 
 端点：`GET /api/v1/events`
@@ -264,13 +274,30 @@ class Notifier {
 - `service:status` — 服务状态变更
 - `disk:space` — 磁盘空间变更
 
+报文格式：标准 SSE 帧，`event: <事件名>` 行 + `data: <JSON>` 行，FE 按事件名 `addEventListener` 订阅；`data` 为资源模型或统一错误对象（camelCase），不在 data 内嵌 type 字段。
+
 ### 4.3 WebSocket
 
 端点：`ws://127.0.0.1:43120/ws/preview/:roomId`
 
-- 连接后接收 FLV 流数据
-- 服务端主动断开时发送 `{ type: 'stream_end', reason: string }`
-- 超过预览上限返回 4003 关闭码
+- 连接后接收 FLV 二进制帧；服务端在流正常结束（1000）与断流（4004）场景先发送 `{ type: 'stream_end', reason: 'ended' | 'stream_lost' }`，再下发关闭帧；4002/4003/1011 直接以关闭帧结束
+- 关闭码约定（BE/FE 联合定义，纳入 API 契约"错误码/关闭码"小节，前端据此映射提示文案）：
+
+| 关闭码 | 含义 | 前置 stream_end reason | 对应错误码 |
+| --- | --- | --- | --- |
+| 1000 | 正常结束（直播结束 / 用户停止录制） | `ended` | — |
+| 4002 | 房间不存在或当前未在录制 | — | PREVIEW_NOT_RECORDING（新增，retryable=false） |
+| 4003 | 预览并发超限（全局 2 路） | — | PREVIEW_LIMIT_REACHED |
+| 4004 | 服务端断流，重连耗尽 | `stream_lost` | STREAM_DISCONNECTED_RECONNECT_EXHAUSTED |
+| 1011 | 服务内部错误 | — | —（FE 自动重连兜底） |
+
+- 重连约定：仅 1011/网络错误由前端自动重连（≤3 次，1/3/5s）；4002/4003/4004 不重连；FE 以 `stream_end.reason` 为准展示，关闭码仅兜底
+
+## 4.4 字段命名与暴露约定（第 3 项评审结论并入）
+
+- 检测间隔统一为 `checkIntervalSec: { bilibili: 60, douyin: 120 }`（按平台对象），废弃 `pollIntervalSeconds` 命名
+- SMTP 密码不回显，仅返回 `passwordSet: true/false` 标记
+- `dedupeWindowMinutes` v1 不暴露到 `/settings`，服务端固定 30 分钟；契约预留可选字段，后续按需开放
 
 ## 5. 数据模型
 
@@ -329,6 +356,13 @@ CREATE TABLE alerts (
 CREATE INDEX idx_alerts_resolved ON alerts(resolved);
 ```
 
+### API 输出约定（第 6 项评审定稿）
+
+- `room.lastError` / `recording.failureReason`：DB 存错误信封紧凑 JSON，repository 层解析后以**结构化对象**返回（`{ code, message, occurredAt, retryable, recordingId? }` 或 `null`），不返回转义字符串，FE 无需 JSON.parse
+- snake_case → camelCase 映射集中在 repositories，core 层只见 camelCase
+- 内部字段（`quality`、`schema_version`、`alerts.resolved` 的读接口形态）暂不入契约，需暴露时走契约变更
+- ID 为带前缀 ULID（`room_` / `rec_` / `alr_`）；时间为 UTC ISO-8601 TEXT 原样输出
+
 ## 6. 错误处理
 
 ```typescript
@@ -348,6 +382,7 @@ type ErrorCode =
   | 'ROOM_LINK_INVALID'
   | 'ROOM_LINK_DUPLICATE'
   | 'PLATFORM_ACCESS_RESTRICTED'
+  | 'PLATFORM_CHANGED'
   | 'DIRECTORY_NOT_WRITABLE'
   | 'DISK_SPACE_INSUFFICIENT'
   | 'CONCURRENT_LIMIT_REACHED'
@@ -360,6 +395,7 @@ type ErrorCode =
   | 'CONFIG_LOAD_FAILED'
   | 'STREAM_FORMAT_CHANGED'
   | 'PREVIEW_LIMIT_REACHED'
+  | 'PREVIEW_NOT_RECORDING'
   | 'QUALITY_DOWNGRADED';
 ```
 
@@ -374,6 +410,33 @@ type ErrorCode =
   }
 }
 ```
+
+### 错误码总表（18 码 = FE 已确认 16 码 + 新增 2 码）
+
+新增（已获 FE/QA 认可待第 5 项定稿）：`PREVIEW_NOT_RECORDING`（挂 WS 4002）、`PLATFORM_CHANGED`（平台接口/反爬变更）。
+
+| 码 | 触发面 | HTTP（请求错误时） | retryable | 告警级别 |
+| --- | --- | --- | --- | --- |
+| ROOM_LINK_INVALID | 添加/编辑房间 | 422 | false | — |
+| ROOM_LINK_DUPLICATE | 添加房间 | 409 | false | — |
+| DIRECTORY_NOT_WRITABLE | validate-directory / PUT settings | 422 | false | error |
+| DISK_SPACE_INSUFFICIENT | 调度/手动检测 | 409 | false | error（含邮件） |
+| CONCURRENT_LIMIT_REACHED | 手动检测；自动调度仅 SSE | 409 | true（下轮重排） | warning |
+| SMTP_SEND_FAILED | test-smtp；后台通知仅告警 | 502 | true | warning |
+| SERVICE_UNAVAILABLE | 启停窗口期请求 | 503 | true | — |
+| CONFIG_LOAD_FAILED | 启动配置加载失败 | 500 | false | error |
+| PLATFORM_ACCESS_RESTRICTED | 运行时检测（登录/Cookie/私密） | — | false | warning |
+| PLATFORM_CHANGED | 运行时检测（平台接口/反爬变更） | — | false | error |
+| NETWORK_UNAVAILABLE | 平台请求超时/失败 | — | true | warning |
+| RECORDING_START_FAILED | 录制器启动失败 | — | true | error（含邮件） |
+| STREAM_DISCONNECTED_RECONNECT_EXHAUSTED | 重连耗尽；WS 4004 | — | true（下场直播） | error（含邮件） |
+| RECORDING_FILE_CORRUPTED | 完成校验失败 | — | false | error |
+| STREAM_FORMAT_CHANGED | 录制引擎事件，服务端自动续录（当前段 completed + 新段） | — | —（提示类，不重试） | info |
+| QUALITY_DOWNGRADED | 清晰度降级，提示类 | — | — | info |
+| PREVIEW_LIMIT_REACHED | WS 握手 4003 | — | true（有预览释放后） | — |
+| PREVIEW_NOT_RECORDING | WS 握手 4002 | — | false | — |
+
+约定：请求错误走 4.4 统一信封；运行时错误经 `room:updated.lastError`、`recording:updated.failureReason`、`alert:created`（level=error/warning）三通道，不设独立 `service.error` SSE 事件（原设计稿废用，已并入告警通道），同一 code 定义唯一；提示类（QUALITY_DOWNGRADED/STREAM_FORMAT_CHANGED）只进告警 level=info，不发邮件。邮件仍限三类：recording_started / recording_failed / disk_space_low。命名统一：磁盘空间不足一律 `DISK_SPACE_INSUFFICIENT`，旧契约示例中的 `DISK_SPACE_LOW` 作废。
 
 ## 7. 可测试性设计
 
@@ -397,16 +460,24 @@ interface Services {
 - `FakeDiskGuard` — 模拟磁盘空间
 - `FakeMailer` — 记录发送日志
 - `FakeSecretStore`（memory-store）— 内存存储密钥，CI/无 GUI 环境不依赖 keytar
+- `FakeClock` — 可跳时钟：退避 5/15/45s、按平台轮询、30min 去重窗、30s pending 超时的时序用例不真等
 
 ## 8. 安全设计
 
 - 服务绑定 `127.0.0.1`，拒绝外部连接
 - SMTP 密码通过 `SecretStore` 接口写入操作系统 keychain（生产为 keytar 实现；测试/CI 注入 `FakeSecretStore`，不落盘）
-- API 响应中 `settings.mail.pass` 永远返回 `***`
+- API 不回显密码，`GET /settings` 仅返回派生标记 `passwordSet`
 - 日志中密码、Cookie 等字段脱敏
 - WebSocket 预览连接仅接受 localhost
+- Host/Origin 校验：生产仅允许 `127.0.0.1:43120` / `localhost:43120`；dev 模式白名单追加 `http://localhost:5173`（Vite 代理），白名单可配置，不写死
+- 平台 Cookie 与 SMTP 密码同存 `SecretStore`，不入库、不进日志
+- 合规边界：适配器仅访问公开、允许访问的直播间，不绕过任何访问控制（受限→`PLATFORM_ACCESS_RESTRICTED` 引导自配 Cookie；接口/反爬变更→`PLATFORM_CHANGED`）；录制仅使用适配器返回的合法流地址
+- 文件安全：录像仅写入用户配置目录（validate-directory 校验可写与路径包含，拒绝穿越）；`POST /recordings/:id/open` 仅接受表内 id、打开其派生路径，不接受任意路径参数
+- 无遥测：出站请求仅限两平台公开接口
 
 ## 9. 阶段 B 交付物
+
+0. Fake 输出最小可播放 FLV（header + onMetaData + 循环关键帧/静音 AAC ≈2fps），FE 可直连联调 MSE 链路
 
 1. 服务启动，绑定 `127.0.0.1:43120`
 2. SQLite 初始化 + 迁移
@@ -422,8 +493,8 @@ interface Services {
 
 1. B站适配器（公开 API + 流地址获取 + 清晰度选择）
 2. 抖音适配器（内部接口 + 反爬处理 + Cookie 支持）
-3. 真实录制引擎（stream 写入文件）
-4. 流复制（录制 + 预览同时）
+3. 真实录制引擎（stream 写入 MKV；断流保留已录部分。不完整 MKV 验收口径：ffprobe 可读 + VLC 可播放已写片段即通过，写入采用预写 Segment 尺寸提升容错）
+4. 流复制（录制 + 预览同时，背压隔离：预览慢消费不阻塞录制写入）
 5. SMTP 邮件发送
 6. keytar 集成
-7. 前后端联调
+7. 前后端联调（FE 按环境变量一键切真实服务）
