@@ -23,6 +23,7 @@ export type AdapterMode = 'fake' | 'real';
 
 export interface Services {
   mode: AdapterMode;
+  startedAt: number;
   clock: Clock;
   db: DB;
   rooms: RoomRepository;
@@ -69,6 +70,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
 
   return {
     mode,
+    startedAt: clock.now(),
     clock,
     db,
     rooms: new RoomRepository(db),

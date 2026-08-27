@@ -38,7 +38,7 @@ export class AlertRepository {
     return row ? rowToAlert(row) : null;
   }
 
-  list(opts: { unresolvedOnly?: boolean; limit?: number } = {}): Alert[] {
+  list(opts: { unresolvedOnly?: boolean | undefined; limit?: number | undefined } = {}): Alert[] {
     const where = opts.unresolvedOnly ? 'WHERE resolved = 0' : '';
     const limit = opts.limit ?? 100;
     const rows = this.db.prepare(`SELECT * FROM alerts ${where} ORDER BY occurred_at DESC LIMIT ?`).all(limit) as AlertRow[];

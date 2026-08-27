@@ -47,6 +47,7 @@ export interface AppSettings {
 export interface SettingsView {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
+  quality: Quality;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;

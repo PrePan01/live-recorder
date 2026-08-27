@@ -1,19 +1,15 @@
-import { buildServer, type ServiceInfo } from './api/server.js';
+import { buildApp } from './api/server.js';
+import { buildServices } from './core/services.js';
 import { SERVICE_HOST, SERVICE_PORT } from './config/defaults.js';
 
-const version = process.env.npm_package_version ?? '0.1.0';
+const extraOrigins = (process.env.LR_EXTRA_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim()).filter(Boolean);
 
-const info: ServiceInfo = {
-  version,
-  startedAt: Date.now(),
-  setupCompleted: () => false,
-};
-
-const app = buildServer(info);
+const services = buildServices();
+const app = buildApp(services, { extraOrigins });
 
 async function main(): Promise<void> {
   await app.listen({ host: SERVICE_HOST, port: SERVICE_PORT });
-  app.log.info(`live-recorder backend listening on http://${SERVICE_HOST}:${SERVICE_PORT}`);
+  console.log(`live-recorder backend (${services.mode}) listening on http://${SERVICE_HOST}:${SERVICE_PORT}`);
 }
 
 main().catch((err) => {

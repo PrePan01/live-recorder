@@ -48,12 +48,12 @@ export function rowToRecording(row: RecordingRow): Recording {
 }
 
 export interface RecordingListQuery {
-  page?: number;
-  pageSize?: number;
-  roomId?: string;
-  state?: RecordingState;
-  sessionId?: string;
-  groupBy?: 'session';
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  roomId?: string | undefined;
+  state?: RecordingState | undefined;
+  sessionId?: string | undefined;
+  groupBy?: 'session' | undefined;
 }
 
 export class RecordingRepository {
