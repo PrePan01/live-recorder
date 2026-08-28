@@ -1,4 +1,6 @@
-# localhost 录制服务 API 契约（v2.0 · 2026-08-28）
+# localhost 录制服务 API 契约（v2.1 · 2026-08-28）
+
+相对 v2.0 的变更：`Recording` 新增 `roomName`（创建录播时快照的房间显示名，删房间后历史页仍可展示房间名）；`DELETE /rooms/:id` 不再级联删除该房间的录制历史（仅移除监控配置，录制记录与文件保留，历史页仍可按 roomId 查看）。
 
 相对 v1.9 的变更：`Room` 新增 `lastLiveStatus`（最近检测直播状态 live/offline/restricted，SSE room:updated 输出，供监控开播标识）；新增 `POST /rooms/:id/start-recording`（手动强制开始录制，绕过 autoRecord，未开播/已录制→409 RECORDING_NOT_AVAILABLE）。
 
@@ -45,6 +47,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 {
   "id": "rec_01J...",
   "roomId": "room_01J...",
+  "roomName": "主播名",
   "platform": "bilibili",
   "streamTitle": "直播标题",
   "state": "recording",
@@ -59,7 +62,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 }
 ```
 
-`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。`integrity`（v1.7）：录制文件完整性 `verified | failed | pending`（ffprobe 异步校验，缺 ffprobe/超时→pending，损坏/截断→failed 并发告警），未记录时字段省略。
+`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。`integrity`（v1.7）：录制文件完整性 `verified | failed | pending`（ffprobe 异步校验，缺 ffprobe/超时→pending，损坏/截断→failed 并发告警），未记录时字段省略。`roomName`（v2.1，#92）：创建录播时快照的房间显示名（录制开始时写入 `room.displayName`），删房间后历史页据此展示房间名而非 roomId；存量记录回填为空字符串。
 
 字段命名统一 camelCase。
 
@@ -68,7 +71,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 - 单资源：`{ "room": ... }` / `{ "recording": ... }` / `{ "alert": ... }`
 - 列表：`GET /rooms` → `{ "rooms": [...] }`；`GET /recordings` → `{ "items": [...], "total": n, "page": n, "pageSize": n }`；`GET /settings` → `{ "settings": ... }`；`GET /alerts` → `{ "alerts": [...] }`；`GET /service/status` → `{ "serviceStatus": ... }`
 - 操作类端点（无资源返回时）：`{ "ok": true }`（必要时附资源字段）
-- `POST /rooms` 成功：`201` + `{ "room": ... }`；`DELETE /rooms/:id` 成功：`204` 无 body
+- `POST /rooms` 成功：`201` + `{ "room": ... }`；`DELETE /rooms/:id` 成功：`204` 无 body（v2.1，#92：仅移除监控配置，不再级联删除该房间的录制历史）
 - `PATCH /rooms/:id/enable` body：`{ "enabled": true|false }` → `{ "room": ... }`
 - `PATCH /rooms/:id/favorite` body：`{ "favorited": true|false }` → `{ "room": ... }`（v1.5）
 - `POST /rooms/batch` body：`{ "urls": ["...", "..."] }`（≤100）→ `{ "succeeded": [Room...], "failed": [{ "url", "reason" }] }`（v1.6，部分成功，逐条去重含现库与批内）
