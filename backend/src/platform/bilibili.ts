@@ -34,6 +34,7 @@ interface BiliPlayResponse {
   code?: number;
   data?: {
     live_status?: number;
+    live_time?: number;
     room_info?: { title?: string };
     anchor_info?: { base_info?: { uname?: string } };
     playurl_info?: {
@@ -157,9 +158,12 @@ export class BilibiliAdapter implements PlatformAdapter {
     if (!hasStream) {
       return { status: 'restricted', ...(uname ? { displayName: uname } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false }).toObject() };
     }
+    // B站每次开播的 live_time 不同，用它标识本场直播，避免把同一房间的多次开播误判为同一场。
+    const liveTime = data.data.live_time;
+    const sessionId = liveTime && liveTime > 0 ? `${roomId}:${liveTime}` : `live_${roomId}_${Date.now()}`;
     return {
       status: 'live',
-      streamSessionId: String(roomId),
+      streamSessionId: sessionId,
       streamTitle: title,
       ...(uname ? { displayName: uname } : {}),
       availableQualities: this.availableQns(data).map(qnToQuality),

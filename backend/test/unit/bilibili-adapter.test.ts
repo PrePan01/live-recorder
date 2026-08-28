@@ -64,14 +64,21 @@ describe('BilibiliAdapter', () => {
     expect(a.parseRoomId('https://example.com/1')).toBeNull();
   });
 
-  it('reports live with session id, title, displayName and qualities', async () => {
-    const a = new BilibiliAdapter(mockFetcher(() => livePayload()));
+  it('reports live with a per-broadcast session id, title, displayName and qualities', async () => {
+    const a = new BilibiliAdapter(mockFetcher(() => livePayload({ live_time: 1787891234 })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
     expect(result.status).toBe('live');
-    expect(result.streamSessionId).toBe('123456');
+    expect(result.streamSessionId).toBe('123456:1787891234');
     expect(result.streamTitle).toBe('测试直播间');
     expect(result.displayName).toBe('测试主播');
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
+  });
+
+  it('uses a unique fallback session id when live_time is absent', async () => {
+    const a = new BilibiliAdapter(mockFetcher(() => livePayload()));
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.streamSessionId).toMatch(/^live_123456_\d+$/);
   });
 
   it('reports offline when live_status is not 1', async () => {
