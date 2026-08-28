@@ -6,6 +6,7 @@ export type ErrorCode =
   | 'DIRECTORY_NOT_WRITABLE'
   | 'DISK_SPACE_INSUFFICIENT'
   | 'CONCURRENT_LIMIT_REACHED'
+  | 'RECORDING_NOT_AVAILABLE'
   | 'RECORDING_START_FAILED'
   | 'STREAM_DISCONNECTED_RECONNECT_EXHAUSTED'
   | 'SMTP_SEND_FAILED'
@@ -91,6 +92,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'ROOM_LINK_DUPLICATE':
     case 'DISK_SPACE_INSUFFICIENT':
     case 'CONCURRENT_LIMIT_REACHED':
+    case 'RECORDING_NOT_AVAILABLE':
       return 409;
     case 'DIRECTORY_NOT_WRITABLE':
       return 422;

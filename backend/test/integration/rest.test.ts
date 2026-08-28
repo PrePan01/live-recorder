@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
+import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import { AppError } from '../../src/types/error.js';
 
 function newServices(): Services {
@@ -537,6 +538,46 @@ describe('REST contract v1.1 (fake stack)', () => {
       payload: { autoRecord: 'yes' },
     });
     expect(bad.statusCode).toBe(422);
+    await app.close();
+  });
+
+  it('POST /rooms/:id/start-recording forces manual recording when live (#79)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-rec-'));
+    const services = newServices();
+    services.settings.save({
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      recordingFormat: 'source_flv',
+      autoRecord: false,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/999', displayName: 'rec' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's1' }]);
+
+    // 未开播状态（lastLiveStatus=null）→ 端点实时检测到 live → 强制开录（即使全局 autoRecord=false）
+    const ok = await app.inject({ method: 'POST', url: `/api/v1/rooms/${room.id}/start-recording`, headers: { host: '127.0.0.1:43120' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('live');
+
+    // 已在录制 → 409
+    const dup = await app.inject({ method: 'POST', url: `/api/v1/rooms/${room.id}/start-recording`, headers: { host: '127.0.0.1:43120' } });
+    expect(dup.statusCode).toBe(409);
+
+    await services.manager.stopRecording(room.id);
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 房间不存在 → 404
+    const badRoom = await app.inject({ method: 'POST', url: '/api/v1/rooms/room_none/start-recording', headers: { host: '127.0.0.1:43120' } });
+    expect(badRoom.statusCode).toBe(404);
     await app.close();
   });
 });

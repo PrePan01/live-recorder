@@ -317,4 +317,24 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
     expect(seenCookie).toBeUndefined();
   });
+
+  it('writes lastLiveStatus from check result (#78)', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-livestatus-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/24', displayName: 'ls' });
+    expect(services.rooms.get(room.id)!.lastLiveStatus).toBeNull();
+
+    // 开播 → live
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's1' }]);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    for (let i = 0; i < 5 && !services.rooms.get(room.id)!.lastLiveStatus; i += 1) await settle(clock, 500);
+    expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('live');
+
+    // 下播 → offline
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    for (let i = 0; i < 5 && services.rooms.get(room.id)!.lastLiveStatus === 'live'; i += 1) await settle(clock, 500);
+    expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('offline');
+  });
 });

@@ -74,6 +74,10 @@ export class Scheduler {
     this.emitRoom(room.id);
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
+    // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
+    if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
+      this.services.rooms.setLiveStatus(room.id, status.status);
+    }
     if (status.status === 'live') {
       // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
       // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；

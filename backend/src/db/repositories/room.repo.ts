@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import { AppError, type ErrorObject, type MonitorState, type Platform, type Room } from '../../types/index.js';
+import { AppError, type ErrorObject, type LiveStatus, type MonitorState, type Platform, type Room } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RoomRow {
@@ -10,6 +10,7 @@ interface RoomRow {
   enabled: number;
   favorited: number;
   auto_record: number | null;
+  last_live_status: string | null;
   monitor_state: string;
   last_checked_at: string | null;
   last_error: string | null;
@@ -35,6 +36,7 @@ export function rowToRoom(row: RoomRow): Room {
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
+    lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     monitorState: row.monitor_state as MonitorState,
     lastCheckedAt: row.last_checked_at,
     lastError: parseError(row.last_error),
@@ -79,6 +81,7 @@ export class RoomRepository {
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
+      lastLiveStatus: null,
       monitorState: input.enabled === false ? 'disabled' : 'idle',
       lastCheckedAt: null,
       lastError: null,
@@ -89,8 +92,8 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, last_live_status, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, ?, ?)`,
         )
         .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.monitorState, now, now);
     } catch (err) {
@@ -141,6 +144,13 @@ export class RoomRepository {
         `UPDATE rooms SET monitor_state = ?, last_checked_at = COALESCE(?, last_checked_at), last_error = ?, updated_at = ? WHERE id = ?`,
       )
       .run(state, opts.lastCheckedAt ?? null, opts.lastError ? JSON.stringify(opts.lastError) : null, nowIso(), id);
+  }
+
+  /** 写入最近一次检测的直播状态（#78）。 */
+  setLiveStatus(id: string, status: LiveStatus): void {
+    this.db
+      .prepare(`UPDATE rooms SET last_live_status = ?, updated_at = ? WHERE id = ?`)
+      .run(status, nowIso(), id);
   }
 
   remove(id: string): void {
