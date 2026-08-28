@@ -8,6 +8,7 @@ import { SystemClock } from './clock.js';
 import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
+import { BilibiliAdapter } from '../platform/bilibili.js';
 import { FakeRecordingEngine } from '../recorder/fake-engine.js';
 import { FakeDiskGuard } from '../storage/disk-guard.js';
 import { FakeMailer } from '../mail/mailer.js';
@@ -71,10 +72,9 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const fakeAdapter = new FakePlatformAdapter();
   const fakeEngine = new FakeRecordingEngine(clock);
 
-  if (mode === 'real') {
-    // 阶段 C 接入（C-C1~C-C4）。阶段 B 明确未实现，避免误用。
-    throw new Error('real adapter mode is not implemented until stage C');
-  }
+  const adapters = mode === 'real'
+    ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: fakeAdapter }
+    : { bilibili: fakeAdapter, douyin: fakeAdapter };
 
   const services: Services = {
     mode,
@@ -89,7 +89,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     secretStore: new MemorySecretStore(),
     diskGuard: new FakeDiskGuard(),
     mailer: new FakeMailer(() => clock.iso()),
-    adapterFor: () => fakeAdapter,
+    adapterFor: (platform) => adapters[platform],
     engineFor: () => fakeEngine,
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
