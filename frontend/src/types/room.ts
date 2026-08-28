@@ -2,6 +2,8 @@ import type { ApiErrorEnvelope } from './error';
 
 export type Platform = 'bilibili' | 'douyin';
 
+export type LiveStatus = 'live' | 'offline' | 'restricted';
+
 export type MonitorState =
   | 'idle'
   | 'checking'
@@ -18,6 +20,7 @@ export interface Room {
   displayName: string;
   enabled: boolean;
   monitorState: MonitorState;
+  lastLiveStatus: LiveStatus | null;
   lastCheckedAt: string | null;
   lastError: ApiErrorEnvelope | null;
   favorited: boolean;

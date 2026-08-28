@@ -44,6 +44,10 @@ export async function checkRoomNow(id: string): Promise<void> {
   await http.post(`/rooms/${id}/check`);
 }
 
+export async function startRoomRecording(id: string): Promise<void> {
+  await http.post(`/rooms/${id}/start-recording`);
+}
+
 export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }

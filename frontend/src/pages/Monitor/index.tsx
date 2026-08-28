@@ -1,11 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
-import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
+import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
 import RoomHealth from '../../components/RoomHealth';
+import LiveStatusTag from '../../components/LiveStatusTag';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -16,15 +17,18 @@ function RoomCard({
   onWatch,
   onCheck,
   onStop,
+  onRecord,
   onFavorite,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
   onCheck: (r: Room) => void;
   onStop: (r: Room) => void;
+  onRecord: (r: Room) => void;
   onFavorite: (r: Room, favorited: boolean) => void;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
+  const onAir = room.lastLiveStatus === 'live';
   return (
     <Card
       className="lr-room-card"
@@ -47,6 +51,9 @@ function RoomCard({
         </Space>
       }
     >
+      <div style={{ marginBottom: 8 }}>
+        <LiveStatusTag status={room.lastLiveStatus} />
+      </div>
       <div style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}
@@ -93,6 +100,15 @@ function RoomCard({
             停止
           </Button>
         )}
+        <Button
+          size="small"
+          type={recording ? 'default' : 'primary'}
+          icon={<VideoCameraAddOutlined />}
+          disabled={!onAir || recording}
+          onClick={() => onRecord(room)}
+        >
+          {recording ? '录制中' : '录制'}
+        </Button>
         <Button size="small" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
           直播间
         </Button>
@@ -103,7 +119,7 @@ function RoomCard({
 
 export default function Monitor() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, checkRoomNow, stopRoomRecording, favoriteRoom } = useRoomStore();
+  const { rooms, loading, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
   const [watching, setWatching] = useState<Room | null>(null);
@@ -176,6 +192,11 @@ export default function Monitor() {
                   )
                 }
                 onStop={(r) => void stopRoomRecording(r.id).catch(() => message.error('停止请求失败'))}
+                onRecord={(r) =>
+                  void startRoomRecording(r.id).catch((e) =>
+                    message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制请求失败'),
+                  )
+                }
                 onFavorite={(r, fav) =>
                   void favoriteRoom(r.id, fav).catch((e) =>
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
