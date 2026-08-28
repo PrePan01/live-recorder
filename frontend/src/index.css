@@ -74,14 +74,17 @@ body {
 
 .lr-room-card__actions {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
   border-top: 1px solid #f0f0f0;
   padding-top: 10px;
 }
 
 .lr-room-card__actions .ant-btn {
-  min-width: 76px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 6px;
+  white-space: nowrap;
 }
 
 .lr-room-card--list .ant-card-body {
@@ -120,6 +123,16 @@ body {
     border-top: 1px solid #f0f0f0;
     padding: 10px 0 0;
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .lr-room-card__actions {
+    flex-wrap: wrap;
+  }
+
+  .lr-room-card__actions .ant-btn {
+    flex-basis: calc(33.333% - 4px);
   }
 }
 
