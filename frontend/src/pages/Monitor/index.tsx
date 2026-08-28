@@ -3,7 +3,6 @@ import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
-import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
 import RoomHealth from '../../components/RoomHealth';
@@ -28,28 +27,33 @@ function RoomCard({
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   return (
     <Card
+      className="lr-room-card"
+      styles={{ body: { padding: 14 } }}
       title={
-        <Space>
+        <Space style={{ minWidth: 0 }}>
           <PlatformLogoTag platform={room.platform} />
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120 }}>
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
             {room.displayName}
           </span>
         </Space>
       }
-      extra={<MonitorStateTag state={room.monitorState} />}
+      extra={
+        <Space size={0}>
+          <Button
+            type="text"
+            size="small"
+            aria-label="收藏"
+            icon={room.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+            onClick={() => onFavorite(room, !room.favorited)}
+          />
+        </Space>
+      }
     >
-      <Space style={{ marginBottom: 10, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}
           startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
           state={room.monitorState}
-        />
-        <Button
-          type="text"
-          size="small"
-          aria-label="收藏"
-          icon={room.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
-          onClick={() => onFavorite(room, !room.favorited)}
         />
       </Space>
       <div style={{ marginBottom: 10 }}>
@@ -164,7 +168,7 @@ export default function Monitor() {
       ) : (
         <Row gutter={[16, 16]}>
           {monitorRooms.map((room) => (
-            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === "列表" ? { span: 24 } : {})}>
+            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === "列表" ? { span: 24 } : {})} style={{ minWidth: 320 }}>
               <RoomCard
                 room={room}
                 onWatch={handleWatch}

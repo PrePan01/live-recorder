@@ -9,6 +9,7 @@ interface RoomRow {
   display_name: string;
   enabled: number;
   favorited: number;
+  auto_record: number | null;
   monitor_state: string;
   last_checked_at: string | null;
   last_error: string | null;
@@ -33,6 +34,7 @@ export function rowToRoom(row: RoomRow): Room {
     displayName: row.display_name,
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
+    autoRecord: row.auto_record === null ? null : row.auto_record === 1,
     monitorState: row.monitor_state as MonitorState,
     lastCheckedAt: row.last_checked_at,
     lastError: parseError(row.last_error),
@@ -76,6 +78,7 @@ export class RoomRepository {
       displayName: input.displayName,
       enabled: input.enabled ?? true,
       favorited: false,
+      autoRecord: null,
       monitorState: input.enabled === false ? 'disabled' : 'idle',
       lastCheckedAt: null,
       lastError: null,
@@ -86,8 +89,8 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`,
         )
         .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.monitorState, now, now);
     } catch (err) {
@@ -104,7 +107,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -114,9 +117,9 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
-        .run(next.url, next.displayName, next.enabled ? 1 : 0, next.favorited ? 1 : 0, next.monitorState, next.updatedAt, id);
+        .run(next.url, next.displayName, next.enabled ? 1 : 0, next.favorited ? 1 : 0, next.autoRecord === null ? null : next.autoRecord ? 1 : 0, next.monitorState, next.updatedAt, id);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: id });

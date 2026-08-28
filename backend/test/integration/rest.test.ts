@@ -508,4 +508,35 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(badStats.statusCode).toBe(404);
     await app.close();
   });
+
+  it('PATCH /rooms/:id sets/clears autoRecord (room-level override, #75)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { platform: 'bilibili', url: 'https://live.bilibili.com/222', displayName: 'ar' },
+    });
+    const roomId = created.json().room.id;
+    expect(created.json().room.autoRecord).toBeNull();
+
+    const set = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${roomId}`, headers: { host: '127.0.0.1:43120' },
+      payload: { autoRecord: false },
+    });
+    expect(set.json().room.autoRecord).toBe(false);
+
+    // 恢复继承全局
+    const clear = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${roomId}`, headers: { host: '127.0.0.1:43120' },
+      payload: { autoRecord: null },
+    });
+    expect(clear.json().room.autoRecord).toBeNull();
+
+    const bad = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${roomId}`, headers: { host: '127.0.0.1:43120' },
+      payload: { autoRecord: 'yes' },
+    });
+    expect(bad.statusCode).toBe(422);
+    await app.close();
+  });
 });
