@@ -31,7 +31,9 @@ function RoomCard({
       title={
         <Space>
           <PlatformLogoTag platform={room.platform} />
-          <span>{room.displayName}</span>
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120 }}>
+            {room.displayName}
+          </span>
         </Space>
       }
       extra={<MonitorStateTag state={room.monitorState} />}
