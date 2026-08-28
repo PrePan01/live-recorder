@@ -7,6 +7,8 @@ import type { Clock } from './clock.js';
 import { SystemClock } from './clock.js';
 import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
+import { KeytarSecretStore } from '../security/keychain-store.js';
+import { MAIL_PASSWORD_KEY } from '../security/keys.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { BilibiliAdapter } from '../platform/bilibili.js';
 import { DouyinAdapter } from '../platform/douyin.js';
@@ -14,6 +16,7 @@ import { FakeRecordingEngine } from '../recorder/fake-engine.js';
 import { StreamRecordingEngine } from '../recorder/stream-recorder.js';
 import { FakeDiskGuard } from '../storage/disk-guard.js';
 import { FakeMailer } from '../mail/mailer.js';
+import { SmtpMailer } from '../mail/smtp-mailer.js';
 import { openDatabase, type DB } from '../db/connection.js';
 import { runMigrations } from '../db/migrations/index.js';
 import { RoomRepository } from '../db/repositories/room.repo.js';
@@ -78,6 +81,8 @@ export function buildServices(opts: BuildOptions = {}): Services {
     ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: new DouyinAdapter() as PlatformAdapter }
     : { bilibili: fakeAdapter, douyin: fakeAdapter };
 
+  const useKeychain = mode === 'real';
+
   const services: Services = {
     mode,
     startedAt: clock.now(),
@@ -88,15 +93,18 @@ export function buildServices(opts: BuildOptions = {}): Services {
     recordings: new RecordingRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
-    secretStore: new MemorySecretStore(),
+    secretStore: useKeychain ? new KeytarSecretStore() : new MemorySecretStore(),
     diskGuard: new FakeDiskGuard(),
-    mailer: new FakeMailer(() => clock.iso()),
+    mailer: undefined as unknown as Mailer,
     adapterFor: (platform) => adapters[platform],
     engineFor: () => (mode === 'real' ? new StreamRecordingEngine() : fakeEngine),
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
     scheduler: undefined as unknown as Scheduler,
   };
+  services.mailer = useKeychain
+    ? new SmtpMailer(() => services.secretStore.get(MAIL_PASSWORD_KEY))
+    : new FakeMailer(() => clock.iso());
   services.notifier = new Notifier(
     services.mailer,
     clock,

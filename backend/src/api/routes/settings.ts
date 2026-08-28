@@ -7,8 +7,7 @@ import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, MailConfig, SettingsView } from '../../types/index.js';
 import { validateSettings } from '../../config/schema.js';
-
-export const MAIL_PASSWORD_KEY = '***';
+import { MAIL_PASSWORD_KEY } from '../../security/keys.js';
 
 async function settingsView(services: Services): Promise<SettingsView> {
   const stored = services.settings.load();
