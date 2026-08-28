@@ -139,4 +139,39 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     await services.manager.stopRecording(id);
     return reply.send({ ok: true });
   });
+
+  // 房间健康度概览（#70）：近 N 天录制次数/大小聚合 + 成功率窗口。
+  app.get('/api/v1/rooms/:id/stats', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const room = services.rooms.get(id);
+    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    const q = req.query as Record<string, string | undefined>;
+    const days = Math.min(30, Math.max(1, Number(q.days ?? '7') || 7));
+    const fromIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const recs = services.recordings.list({ roomId: id, pageSize: 100, dateFrom: fromIso }).items;
+    const totalBytes = recs.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
+    const completed = recs.filter((r) => r.state === 'completed').length;
+    const failed = recs.filter((r) => r.state === 'failed').length;
+    const rate = completed + failed > 0 ? Math.round((completed / (completed + failed)) * 100) : 100;
+    const byDay = new Map<string, { count: number; bytes: number }>();
+    for (const r of recs) {
+      const day = r.startedAt.slice(0, 10);
+      const cur = byDay.get(day) ?? { count: 0, bytes: 0 };
+      cur.count += 1;
+      cur.bytes += r.fileSizeBytes || 0;
+      byDay.set(day, cur);
+    }
+    return reply.send({
+      roomId: id,
+      days,
+      totalRecordings: recs.length,
+      totalBytes,
+      successRate: rate,
+      completed,
+      failed,
+      lastCheckedAt: room.lastCheckedAt,
+      lastError: room.lastError,
+      byDay: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, v]) => ({ date, count: v.count, bytes: v.bytes })),
+    });
+  });
 }
