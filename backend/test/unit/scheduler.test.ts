@@ -135,6 +135,38 @@ describe('Scheduler', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
   });
 
+  it('stops recording when live check returns offline while active (#64)', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-schoff-'));
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/20', displayName: 'off' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+      { status: 'offline' },
+    ]);
+
+    // 首次检查 → 开播录制
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    // 推进时钟让引擎产出 file_created → 进入 recording 状态
+    for (let i = 0; i < 10 && !services.recordings.list({ roomId: room.id }).items.some((r) => r.state === 'recording'); i += 1) {
+      await settle(clock, 500);
+    }
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+
+    // 第二次检查返回 offline → 应主动停录收口
+    await services.scheduler.triggerImmediateCheck(room.id);
+    for (let i = 0; i < 20 && services.manager.isRoomActive(room.id); i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
+    // 录制记录已收口为 completed/failed，无残留 recording
+    const recs = services.recordings.list({ roomId: room.id }).items;
+    expect(recs.some((r) => r.state === 'recording')).toBe(false);
+  });
+
   it('coalesces concurrent checks for the same room into one platform request', async () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/44', displayName: 'single-flight' });
