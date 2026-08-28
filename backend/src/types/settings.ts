@@ -31,11 +31,16 @@ export interface MailConfigView extends MailConfig {
   passwordSet: boolean;
 }
 
+/** 录制文件格式：source_flv=源 FLV 直写（.flv，无损最快）；mp4_after=完成后 ffmpeg 转封装 MP4。 */
+export type RecordingFormat = 'source_flv' | 'mp4_after';
+
 export interface AppSettings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
   /** 录制默认清晰度（阶段 C 生效）；recordings.quality 内部列记录实际使用值。 */
   quality: Quality;
+  /** 录制格式（v4）：source_flv 直写或完成后转 MP4。 */
+  recordingFormat: RecordingFormat;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
@@ -48,6 +53,7 @@ export interface SettingsView {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
   quality: Quality;
+  recordingFormat: RecordingFormat;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;

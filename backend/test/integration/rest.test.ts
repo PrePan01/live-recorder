@@ -207,6 +207,36 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings expose recordingFormat and validate allowed values (#60)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-fmt-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      recordingFormat: 'source_flv',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    };
+
+    const put = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: base });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().settings.recordingFormat).toBe('source_flv');
+
+    const putMp4 = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: { ...base, recordingFormat: 'mp4_after' } });
+    expect(putMp4.statusCode).toBe(200);
+    expect(putMp4.json().settings.recordingFormat).toBe('mp4_after');
+
+    const bad = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: { ...base, recordingFormat: 'avi' } });
+    expect(bad.statusCode).toBe(500);
+    expect(bad.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    await app.close();
+  });
+
   it('settings: password write-only, passwordSet derived, validate-directory semantics', async () => {
     const services = newServices();
     const { app } = buildApp(services);

@@ -4,6 +4,7 @@ import { AppError } from '../types/error.js';
 import type { AppSettings, ErrorObject, Room } from '../types/index.js';
 import { recordingFilePath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
+import { remuxFlvToMp4 } from '../recorder/remux.js';
 import type { RecordingEvent } from '../recorder/engine.js';
 import type { Notifier } from './notifier.js';
 import type { Services } from './services.js';
@@ -100,7 +101,7 @@ export class RecorderManager {
 
     const cookie = await this.services.platformCookie(room.platform);
     const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-    const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
+    const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
     const recording = this.services.recordings.create({
       roomId: room.id,
       platform: room.platform,
@@ -209,7 +210,7 @@ export class RecorderManager {
     try {
       const cookie = await this.services.platformCookie(room.platform);
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
+      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
       const next = this.services.recordings.create({ roomId: room.id, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
@@ -264,7 +265,7 @@ export class RecorderManager {
         return;
       }
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
+      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
       const recording = this.services.recordings.get(recordingId)!;
       const next = this.services.recordings.create({ roomId: room.id, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const cur = this.active.get(room.id);
@@ -289,6 +290,24 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     // 异步校验文件完整性，不阻塞录制完成响应。
     if (rec.filePath) this.verifyIntegrity(rec);
+    // mp4_after：完成后异步转封装 MP4。
+    if (this.settings().recordingFormat === 'mp4_after' && rec.filePath) {
+      this.remuxToMp4(rec);
+    }
+  }
+
+  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。 */
+  private remuxToMp4(rec: import('../types/index.js').Recording): void {
+    void (async () => {
+      try {
+        const mp4 = await remuxFlvToMp4(rec.filePath!);
+        if (!mp4) return;
+        const updated = this.services.recordings.update(rec.id, { filePath: mp4 });
+        this.services.events.emit({ type: 'recording:updated', data: updated });
+      } catch {
+        // 转封装失败/应用关闭：保留 FLV，不阻断。
+      }
+    })();
   }
 
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
@@ -342,6 +361,7 @@ function defaultsLite(): AppSettings {
     recordingDirectory: '',
     maxConcurrentRecordings: 2,
     quality: 'original',
+    recordingFormat: 'source_flv',
     checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },
