@@ -3,7 +3,8 @@ import { App, Button, Card, Col, Empty, Modal, Popconfirm, Row, Segmented, Space
 import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
-import { MonitorStateTag, PlatformTag } from '../../components/StatusTags';
+import { MonitorStateTag } from '../../components/StatusTags';
+import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
@@ -28,7 +29,7 @@ function RoomCard({
     <Card
       title={
         <Space>
-          <PlatformTag platform={room.platform} />
+          <PlatformLogoTag platform={room.platform} />
           <span>{room.displayName}</span>
         </Space>
       }

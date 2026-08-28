@@ -5,7 +5,8 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
 import { useRoomStore } from '../../stores/roomStore';
-import { PlatformTag, RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
+import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
+import { PlatformLogoTag } from '../../components/PlatformLogo';
 import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -41,7 +42,7 @@ export default function History() {
   const columns: ColumnsType<Recording> = useMemo(
     () => [
       { title: '房间', dataIndex: 'roomId', width: 140, ellipsis: true, render: (id: string) => roomName.get(id) ?? id },
-      { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformTag platform={p} /> },
+      { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformLogoTag platform={p} /> },
       {
         title: '标题',
         dataIndex: 'streamTitle',
