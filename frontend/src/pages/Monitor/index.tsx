@@ -58,7 +58,7 @@ function RoomCard({
         <RoomHealth roomId={room.id} />
       </div>
       {room.lastError ? (
-        <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 10, marginTop: 0 }}>
+        <Typography.Paragraph type="danger" style={{ marginBottom: 10, marginTop: 0 }}>
           {room.lastError.message}
         </Typography.Paragraph>
       ) : null}
