@@ -154,7 +154,7 @@ export class RecorderManager {
             break;
           }
           case 'completed': {
-            await this.completeRecording(room, recordingId, event.fileSize, 'ended');
+            await this.handleNaturalEnd(room, recordingId, event.fileSize, session, attempt);
             return;
           }
           case 'error': {
@@ -226,6 +226,52 @@ export class RecorderManager {
     if (!session) return;
     session.stopRequested = true;
     await this.services.engineFor().stop();
+  }
+
+  /**
+   * 自然结束（流连接断开但房间可能仍开播）：先归档当前分段，再立即重拉流开新段续录，
+   * 避免等待调度器下一轮（60s）造成 60s+ 数据缺口。rapid 用于限制连断连拉的快速循环。
+   */
+  private async handleNaturalEnd(room: Room, recordingId: string, size: number, session: ActiveSession, attempt: number): Promise<void> {
+    if (session.stopRequested) {
+      await this.completeRecording(room, recordingId, size, 'ended');
+      return;
+    }
+    const settings = this.settings();
+    this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
+    this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+
+    const rapid = settings.retry.delaysSeconds[attempt] ?? settings.retry.maxAttempts;
+    if (attempt >= settings.retry.maxAttempts) {
+      await this.completeRecording(room, recordingId, size, 'ended');
+      return;
+    }
+    // 短暂退避后重拉流：连续断连时避免高频空转，正常重连 gap 远小于调度器间隔。
+    await new Promise<void>((resolve) => {
+      this.services.clock.setTimeout(() => resolve(), Math.min(rapid, 5) * 1000);
+    });
+    if (this.active.get(room.id)?.stopRequested) {
+      await this.completeRecording(room, recordingId, size, 'ended');
+      return;
+    }
+    try {
+      const cookie = await this.services.platformCookie(room.platform);
+      // 先确认主播仍开播：已下播则正常收口，避免对结束的直播反复重连。
+      const live = await this.services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
+      if (live.status !== 'live') {
+        await this.completeRecording(room, recordingId, size, 'ended');
+        return;
+      }
+      const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
+      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
+      const recording = this.services.recordings.get(recordingId)!;
+      const next = this.services.recordings.create({ roomId: room.id, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
+      const cur = this.active.get(room.id);
+      if (cur) cur.recordingId = next.id;
+      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
+    } catch {
+      await this.completeRecording(room, recordingId, size, 'ended');
+    }
   }
 
   private async completeRecording(room: Room, recordingId: string, size: number, endReason: 'ended' | 'stream_lost'): Promise<void> {
