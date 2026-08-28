@@ -52,6 +52,18 @@ export class RecorderManager {
     return { ...room, activeRecording: this.activeRecordingFor(room.id) };
   }
 
+  /** 补发 service:status SSE，供前端顶部导航实时显示录制中数量。 */
+  emitServiceStatus(): void {
+    this.services.events.emit({
+      type: 'service:status',
+      data: {
+        state: 'running',
+        activeRecordings: this.active.size,
+        setupCompleted: Boolean(this.services.settings.load()?.recordingDirectory?.length),
+      },
+    });
+  }
+
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
     if (this.active.has(room.id)) return;
@@ -100,6 +112,7 @@ export class RecorderManager {
     this.active.set(room.id, session);
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     this.services.events.emit({ type: 'recording:updated', data: recording });
+    this.emitServiceStatus();
 
     void this.runSession(room, recording.id, stream, filePath, session, 0);
   }
@@ -223,6 +236,7 @@ export class RecorderManager {
     });
     this.preview?.closeRoom(room.id, 1000, endReason);
     this.active.delete(room.id);
+    this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
     this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
@@ -236,6 +250,7 @@ export class RecorderManager {
     });
     this.preview?.closeRoom(room.id, 4004, 'stream_lost');
     this.active.delete(room.id);
+    this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
     this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });

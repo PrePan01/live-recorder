@@ -58,6 +58,43 @@ describe('SSE events', () => {
     await stream.done;
     await server.close();
   });
+
+  it('emits service:status on recording start and stop (#42)', async () => {
+    const server = await listen();
+    const stream = openEventStream(server.url);
+    await new Promise((r) => setTimeout(r, 100));
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'svc' });
+    server.services.settings.save({
+      recordingDirectory: '',
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+
+    const countFrames = () => stream.frames.filter((f) => f.includes('event: service:status'));
+    expect(countFrames().length).toBe(0);
+
+    await server.services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(countFrames().length).toBeGreaterThanOrEqual(1);
+    const startFrame = countFrames()[0]!;
+    expect(startFrame).toContain('"activeRecordings":1');
+
+    await server.services.manager.stopRecording(room.id);
+    // FakeClock 定时器需 advance 才会让引擎循环走到 stopped 分支并完成。
+    (server.services.clock as FakeClock).advance(1000);
+    await new Promise((r) => setTimeout(r, 200));
+    const frames = countFrames();
+    expect(frames.some((f) => f.includes('"activeRecordings":0'))).toBe(true);
+
+    stream.req.destroy();
+    await stream.done;
+    await server.close();
+  });
 });
 
 describe('WebSocket preview', () => {
@@ -125,6 +162,31 @@ describe('WebSocket preview', () => {
     server.preview.closeRoom(rooms[0]!.id, 1000, 'ended');
     expect(await c1.closed).toBe(1000);
     expect(messages.some((m) => m.toString().includes('"stream_end"') && m.toString().includes('"ended"'))).toBe(true);
+
+    c2.ws.close();
+    await c2.closed;
+    await server.close();
+  });
+
+  it('replays buffered stream header to late-joining clients (FLV preview init)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'buf' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    // 录制开始、尚无预览客户端时也需累积流头缓冲（中途加入可初始化 FLV）。
+    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01]), Buffer.alloc(256)]);
+    server.preview.broadcastFrame(room.id, header);
+    server.preview.broadcastFrame(room.id, Buffer.alloc(128));
+
+    // 中途加入的新客户端应首先收到已缓冲的流头数据。
+    const c2 = connect(server.url, room.id);
+    const firstChunk = await new Promise<Buffer>((resolve) => {
+      c2.ws.once('message', (data: Buffer) => resolve(Buffer.from(data)));
+    });
+    expect(firstChunk.length).toBeGreaterThan(0);
+    expect(firstChunk[0]).toBe(0x46);
+    expect(firstChunk[1]).toBe(0x4c);
+    expect(firstChunk[2]).toBe(0x56);
 
     c2.ws.close();
     await c2.closed;

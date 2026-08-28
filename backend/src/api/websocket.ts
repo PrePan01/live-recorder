@@ -19,7 +19,13 @@ const RECORDING_STATES: MonitorState[] = ['recording', 'reconnecting'];
 interface PreviewRoom {
   dir: string;
   sockets: Set<WebSocket>;
+  /** 流开头缓冲（含 FLV header/metadata），供中途加入的客户端初始化 mpegts。 */
+  headerBuffer: Buffer[];
+  headerBytes: number;
 }
+
+/** 预览头缓冲上限：足够覆盖 FLV 头 + onMetaData + 若干初始帧。 */
+const PREVIEW_HEADER_MAX = 512 * 1024;
 
 export class PreviewManager {
   private rooms = new Map<string, PreviewRoom>();
@@ -34,20 +40,41 @@ export class PreviewManager {
   addClient(roomId: string, ws: WebSocket): void {
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { dir: roomId, sockets: new Set() };
+      room = { dir: roomId, sockets: new Set(), headerBuffer: [], headerBytes: 0 };
       this.rooms.set(roomId, room);
     }
     room.sockets.add(ws);
     this.total += 1;
+    // 中途加入：先补发流头缓冲，mpegts.js 才能识别 FLV 并初始化解复用器。
+    for (const chunk of room.headerBuffer) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(chunk);
+        } catch {
+          // 写失败由 close 事件回收
+        }
+      }
+    }
     ws.on('close', () => {
       if (room!.sockets.delete(ws)) this.total -= 1;
-      if (room!.sockets.size === 0) this.rooms.delete(roomId);
+      // 不在此处删除 room：录制进行中需要保留流头缓冲供后续客户端加入；
+      // 录制结束由 closeRoom 统一清理。
     });
   }
 
   broadcastFrame(roomId: string, chunk: Buffer): void {
-    const room = this.rooms.get(roomId);
-    if (!room) return;
+    // 无论是否有预览客户端，都先记录流头缓冲，保证中途加入的客户端能初始化 FLV。
+    let room = this.rooms.get(roomId);
+    if (!room) {
+      room = { dir: roomId, sockets: new Set(), headerBuffer: [], headerBytes: 0 };
+      this.rooms.set(roomId, room);
+    }
+    if (room.headerBytes < PREVIEW_HEADER_MAX) {
+      const remaining = PREVIEW_HEADER_MAX - room.headerBytes;
+      const slice = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+      room.headerBuffer.push(slice);
+      room.headerBytes += slice.length;
+    }
     for (const ws of room.sockets) {
       if (ws.readyState === WebSocket.OPEN) {
         try {
