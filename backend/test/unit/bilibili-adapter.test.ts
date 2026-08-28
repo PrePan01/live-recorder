@@ -10,6 +10,15 @@ function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
     }) as unknown as Response;
 }
 
+/** getRoomPlayInfo 现响应不含 room_info/anchor_info，名称改由 get_anchor_in_room/get_info 补充。 */
+function routeFetcher(play: unknown, anchor?: unknown, info?: unknown): typeof fetch {
+  return mockFetcher((url) => {
+    if (url.includes('get_anchor_in_room')) return anchor ?? { code: 0, data: { info: {} } };
+    if (url.includes('Room/get_info')) return info ?? { code: 0, data: {} };
+    return play;
+  });
+}
+
 function livePayload(overrides: Record<string, unknown> = {}): unknown {
   return {
     code: 0,
@@ -87,6 +96,30 @@ describe('BilibiliAdapter', () => {
     expect(result.status).toBe('offline');
   });
 
+  it('fills displayName and title from meta endpoints when getRoomPlayInfo omits them (#91)', async () => {
+    // 真实响应：getRoomPlayInfo 不再返回 room_info/anchor_info。
+    const play = livePayload({ live_time: 1787891234 });
+    delete (play as { data: Record<string, unknown> }).data.room_info;
+    delete (play as { data: Record<string, unknown> }).data.anchor_info;
+    const a = new BilibiliAdapter(
+      routeFetcher(play, { code: 0, data: { info: { uname: 'LofiGirl' } } }, { code: 0, data: { title: '学习工作背景音乐' } }),
+    );
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.displayName).toBe('LofiGirl');
+    expect(result.streamTitle).toBe('学习工作背景音乐');
+  });
+
+  it('keeps name from play response when present and tolerates meta endpoint failures', async () => {
+    const a = new BilibiliAdapter(
+      routeFetcher(livePayload({ live_time: 1787891234 }), null, null),
+    );
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.displayName).toBe('测试主播');
+    expect(result.streamTitle).toBe('测试直播间');
+  });
+
   it('reports restricted when live but no playable stream (needs cookie)', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => livePayload({ playurl_info: { playurl: { stream: [] } } })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
@@ -153,8 +186,10 @@ describe('BilibiliAdapter', () => {
     let sentCookie: string | undefined;
     let hasTimeoutSignal = false;
     const a = new BilibiliAdapter(async (url, init) => {
-      sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
-      hasTimeoutSignal = init?.signal instanceof AbortSignal;
+      if (String(url).includes('getRoomPlayInfo')) {
+        sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
+        hasTimeoutSignal = init?.signal instanceof AbortSignal;
+      }
       return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
     });
     await a.checkLiveStatus('https://live.bilibili.com/123456', 'SESSDATA=xxx;buvid3=yyy');
