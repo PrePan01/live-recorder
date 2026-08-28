@@ -9,11 +9,13 @@ import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import { formatRelative } from '../../utils/format';
 
-function guessPlatform(url: string): string | null {
-  if (/live\.douyin\.com|douyin\.com/.test(url)) return '抖音';
-  if (/live\.bilibili\.com|bilibili\.com/.test(url)) return 'B站';
+function guessPlatform(url: string): Room['platform'] | null {
+  if (/live\.douyin\.com|douyin\.com/.test(url)) return 'douyin';
+  if (/live\.bilibili\.com|bilibili\.com/.test(url)) return 'bilibili';
   return null;
 }
+
+const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', douyin: '抖音' };
 
 export default function Rooms() {
   const { message } = App.useApp();
@@ -41,13 +43,18 @@ export default function Rooms() {
 
   const submit = async () => {
     const values = await form.validateFields();
+    const platform = guessPlatform(values.url);
+    if (!platform) {
+      message.error('仅支持 B站 / 抖音 直播链接');
+      return;
+    }
     setSubmitting(true);
     try {
       if (editing) {
         await editRoom(editing.id, values);
         message.success('房间已更新');
       } else {
-        await addRoom(values);
+        await addRoom({ ...values, platform });
         message.success('房间已添加');
       }
       setModalOpen(false);
@@ -148,7 +155,7 @@ export default function Rooms() {
                   !v || guessPlatform(v) ? Promise.resolve() : Promise.reject(new Error('仅支持 B站 / 抖音 直播链接')),
               },
             ]}
-            extra={urlValue && guessPlatform(urlValue) ? `识别为：${guessPlatform(urlValue)}` : undefined}
+            extra={urlValue && guessPlatform(urlValue) ? `识别为：${PLATFORM_LABEL[guessPlatform(urlValue)!]}` : undefined}
           >
             <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
           </Form.Item>

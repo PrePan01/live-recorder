@@ -25,6 +25,7 @@ export interface Room {
 }
 
 export interface RoomCreateInput {
+  platform: Platform;
   url: string;
   displayName?: string;
   cookie?: string;
