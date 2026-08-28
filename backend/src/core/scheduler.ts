@@ -81,7 +81,7 @@ export class Scheduler {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
         this.emitRoom(room.id);
-        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso() });
+        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
       return;
@@ -103,6 +103,8 @@ export class Scheduler {
       source: 'platform',
       message: `${err.code}: ${err.message}`,
       occurredAt: this.services.clock.iso(),
+      roomId: room.id,
+      errorCode: err.code,
     });
     this.services.events.emit({ type: 'alert:created', data: alert });
   }

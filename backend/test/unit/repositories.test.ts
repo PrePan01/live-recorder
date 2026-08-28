@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(4);
+    expect(runMigrations(db)).toBe(5);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(4);
+    expect(currentSchemaVersion(db)).toBe(5);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -47,10 +47,10 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列
-    expect(runMigrations(db)).toBe(2);
+    expect(runMigrations(db)).toBe(3);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
-    expect(currentSchemaVersion(db)).toBe(4);
+    expect(currentSchemaVersion(db)).toBe(5);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);

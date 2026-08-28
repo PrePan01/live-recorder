@@ -9,6 +9,8 @@ interface AlertRow {
   message: string;
   occurred_at: string;
   resolved: number;
+  room_id: string | null;
+  error_code: string | null;
 }
 
 function rowToAlert(row: AlertRow): Alert {
@@ -19,17 +21,19 @@ function rowToAlert(row: AlertRow): Alert {
     message: row.message,
     occurredAt: row.occurred_at,
     resolved: row.resolved === 1,
+    roomId: row.room_id ?? null,
+    errorCode: row.error_code ?? null,
   };
 }
 
 export class AlertRepository {
   constructor(private db: DB) {}
 
-  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string }): Alert {
+  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
     const id = newId('alr');
     this.db
-      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved) VALUES (?, ?, ?, ?, ?, 0)')
-      .run(id, input.level, input.source, input.message, input.occurredAt);
+      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved, room_id, error_code) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
+      .run(id, input.level, input.source, input.message, input.occurredAt, input.roomId ?? null, input.errorCode ?? null);
     return this.get(id)!;
   }
 

@@ -320,7 +320,14 @@ export class RecorderManager {
   }
 
   private raiseAlert(level: 'info' | 'warning' | 'error', source: string, err: AppError | ErrorObject): void {
-    const alert = this.services.alerts.create({ level, source, message: `${err.code}: ${err.message}`, occurredAt: this.services.clock.iso() });
+    const alert = this.services.alerts.create({
+      level,
+      source,
+      message: `${err.code}: ${err.message}`,
+      occurredAt: this.services.clock.iso(),
+      roomId: err.roomId,
+      errorCode: err.code,
+    });
     this.services.events.emit({ type: 'alert:created', data: alert });
   }
 }
