@@ -74,17 +74,40 @@ body {
 
 .lr-room-card__actions {
   display: flex;
-  gap: 6px;
+  gap: 0;
   flex-wrap: nowrap;
   border-top: 1px solid #f0f0f0;
   padding-top: 10px;
+  overflow: hidden;
+}
+
+.lr-room-card__actions > * {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+}
+
+.lr-room-card__actions > * + * {
+  margin-left: -1px;
+}
+
+.lr-room-card__actions > *:hover {
+  z-index: 1;
 }
 
 .lr-room-card__actions .ant-btn {
-  flex: 1 1 0;
-  min-width: 0;
+  width: 100%;
   padding-inline: 6px;
+  border-radius: 0;
   white-space: nowrap;
+}
+
+.lr-room-card__actions > :first-child .ant-btn {
+  border-radius: 6px 0 0 6px;
+}
+
+.lr-room-card__actions > :last-child .ant-btn {
+  border-radius: 0 6px 6px 0;
 }
 
 .lr-room-card--list .ant-card-body {
@@ -128,11 +151,23 @@ body {
 
 @media (max-width: 480px) {
   .lr-room-card__actions {
+    gap: 6px;
     flex-wrap: wrap;
+    overflow: visible;
   }
 
-  .lr-room-card__actions .ant-btn {
+  .lr-room-card__actions > * {
     flex-basis: calc(33.333% - 4px);
+  }
+
+  .lr-room-card__actions > * + * {
+    margin-left: 0;
+  }
+
+  .lr-room-card__actions .ant-btn,
+  .lr-room-card__actions > :first-child .ant-btn,
+  .lr-room-card__actions > :last-child .ant-btn {
+    border-radius: 6px;
   }
 }
 
