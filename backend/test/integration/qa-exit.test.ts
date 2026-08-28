@@ -102,6 +102,72 @@ describe('QA stage-B exit: security', () => {
     expect(res.json().error.code).toBe('RESOURCE_NOT_FOUND');
     await app.close();
   });
+
+  it('v1.3: douyin cookie is write-only via PUT and never echoed', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-cookie-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+    };
+
+    const before = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: HOST });
+    expect(before.json().settings.douyinCookie.hasCookie).toBe(false);
+    expect(JSON.stringify(before.json())).not.toContain('sessionid');
+
+    const put = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: HOST, payload: { ...base, douyinCookie: 'sessionid=abc123' } });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().settings.douyinCookie.hasCookie).toBe(true);
+    expect(JSON.stringify(put.json())).not.toContain('sessionid=abc123');
+
+    const after = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: HOST });
+    expect(after.json().settings.douyinCookie.hasCookie).toBe(true);
+    expect(JSON.stringify(after.json())).not.toContain('sessionid');
+
+    const clear = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: HOST, payload: { ...base, douyinCookie: '' } });
+    expect(clear.json().settings.douyinCookie.hasCookie).toBe(false);
+    await app.close();
+  });
+
+  it('v1.3: no/expired cookie on restricted douyin room maps to PLATFORM_ACCESS_RESTRICTED + warning alert', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-cookie-rest-'));
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
+      { status: 'restricted', error: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查 Cookie 配置', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false } },
+    ]);
+    await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: HOST,
+      payload: {
+        recordingDirectory: dir,
+        maxConcurrentRecordings: 2,
+        checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+        retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+        diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+        mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      },
+    });
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: HOST,
+      payload: { platform: 'douyin', url: 'https://live.douyin.com/9003', displayName: 'Cookie受限' },
+    });
+    const roomId = created.json().room.id;
+
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    const room = services.rooms.get(roomId)!;
+    expect(room.monitorState).toBe('failed');
+    expect(room.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(room.lastError?.retryable).toBe(false);
+    const alert = services.alerts.list().find((a) => a.message.includes('PLATFORM_ACCESS_RESTRICTED'));
+    expect(alert).toBeDefined();
+    expect(alert!.level).toBe('warning');
+    await app.close();
+  });
 });
 
 describe('QA stage-B exit: fake full-stack happy path', () => {
