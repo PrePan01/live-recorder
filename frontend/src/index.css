@@ -145,11 +145,15 @@ body {
 }
 
 .lr-room-card__actions .ant-btn:not(:disabled):hover {
+  border: 0;
+  box-shadow: none;
   color: #1677ff;
   background: #f0f7ff;
 }
 
 .lr-room-card__actions .ant-btn-dangerous:not(:disabled):hover {
+  border: 0;
+  box-shadow: none;
   color: #cf4f4f;
   background: #fff1f0;
 }
