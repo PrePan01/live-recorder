@@ -181,4 +181,34 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       byDay: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, v]) => ({ date, count: v.count, bytes: v.bytes })),
     });
   });
+
+  // 手动「录制」按钮（#79）：开播状态下显式强制开始录制，绕过 autoRecord 检查。
+  app.post('/api/v1/rooms/:id/start-recording', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const room = services.rooms.get(id);
+    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (services.manager.isRoomActive(id)) {
+      throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });
+    }
+    // 确认开播：lastLiveStatus 为准（未检测过则触发一次实时检测）。
+    let live = room.lastLiveStatus === 'live';
+    if (room.lastLiveStatus === null) {
+      const cookie = await services.platformCookie(room.platform);
+      const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
+      if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
+        services.rooms.setLiveStatus(room.id, status.status);
+      }
+      live = status.status === 'live';
+    }
+    if (!live) {
+      throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
+    }
+    const cookie = await services.platformCookie(room.platform);
+    const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
+    if (status.status !== 'live') {
+      throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
+    }
+    await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    return reply.send({ ok: true });
+  });
 }

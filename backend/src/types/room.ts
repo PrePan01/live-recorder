@@ -11,6 +11,9 @@ export type MonitorState =
   | 'failed'
   | 'disabled';
 
+/** 最近一次检测的直播状态（#78）：live=开播、offline=未开播、restricted=受限/需更新 Cookie。 */
+export type LiveStatus = 'live' | 'offline' | 'restricted';
+
 export interface Room {
   id: string;
   platform: Platform;
@@ -20,6 +23,8 @@ export interface Room {
   favorited: boolean;
   /** 是否单独设置自动录制（v4 P0 #75）：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
   autoRecord: boolean | null;
+  /** 最近一次检测的直播状态（#78）：live/offline/restricted，未检测过为 null。 */
+  lastLiveStatus: LiveStatus | null;
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ErrorObject | null;
