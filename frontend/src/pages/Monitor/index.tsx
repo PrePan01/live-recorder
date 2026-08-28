@@ -4,9 +4,8 @@ import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } f
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { MonitorStateTag, PlatformTag } from '../../components/StatusTags';
-import RecordingDuration from '../../components/RecordingDuration';
+import RoomStats from '../../components/RoomStats';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
-import { formatRelative } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import type { Room } from '../../types/room';
@@ -76,13 +75,11 @@ function RoomCard({
         </Button>,
       ]}
     >
-      <Typography.Text type="secondary">最近检测：{formatRelative(room.lastCheckedAt)}</Typography.Text>
-      {recording && room.activeRecording ? (
-        <div style={{ marginTop: 8 }}>
-          <Typography.Text strong>已录制：</Typography.Text>
-          <RecordingDuration startedAt={room.activeRecording.startedAt} />
-        </div>
-      ) : null}
+      <RoomStats
+        lastCheckedAt={room.lastCheckedAt}
+        startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
+        state={room.monitorState}
+      />
       {room.lastError ? (
         <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 0, marginTop: 8 }}>
           {room.lastError.message}
