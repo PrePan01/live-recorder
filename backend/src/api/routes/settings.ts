@@ -1,31 +1,18 @@
-import { access, mkdir, writeFile, rm } from 'node:fs/promises';
+import { access, mkdir, readdir, writeFile, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
-import type { AppSettings, MailConfig, SettingsView } from '../../types/index.js';
+import type { AppSettings, MailConfig } from '../../types/index.js';
 import { validateSettings } from '../../config/schema.js';
 import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { settingsView } from './settings-view.js';
 
-async function settingsView(services: Services): Promise<SettingsView> {
-  const stored = services.settings.load();
-  const settings: AppSettings = stored ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
-  const passwordSet = await services.secretStore.has(MAIL_PASSWORD_KEY);
-  const hasDouyinCookie = await services.secretStore.has(DOUYIN_COOKIE_KEY);
-  const mail = { ...settings.mail, passwordSet };
-  return {
-    recordingDirectory: settings.recordingDirectory,
-    maxConcurrentRecordings: settings.maxConcurrentRecordings,
-    quality: settings.quality,
-    checkIntervalSec: settings.checkIntervalSec,
-    retry: settings.retry,
-    diskGuard: settings.diskGuard,
-    mail,
-    douyinCookie: { hasCookie: hasDouyinCookie },
-  };
-}
+export { settingsView };
 
 export function registerSettingsRoutes(app: FastifyInstance, services: Services): void {
   app.get('/api/v1/settings', async (_req, reply) => {
@@ -90,5 +77,61 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
       throw new AppError('SMTP_SEND_FAILED', '邮件发送失败', { retryable: true });
     }
     return reply.send({ ok: true });
+  });
+
+  app.get('/api/v1/settings/browse-directories', async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const requested = q.path && q.path.length > 0 ? q.path : os.homedir();
+    if (!path.isAbsolute(requested)) {
+      throw new AppError('DIRECTORY_NOT_WRITABLE', '仅支持绝对路径');
+    }
+    const target = path.resolve(requested);
+    let entries;
+    try {
+      entries = await readdir(target, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new AppError('RESOURCE_NOT_FOUND', '目录不存在', { details: { resource: 'directory' } });
+      }
+      throw new AppError('DIRECTORY_NOT_WRITABLE', '目录不可读或权限不足');
+    }
+    const directories = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => ({ name: e.name, path: path.join(target, e.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const parent = path.dirname(target) === target ? null : path.dirname(target);
+    return reply.send({ ok: true, path: target, parent, directories });
+  });
+
+  app.post('/api/v1/settings/pick-directory', async (_req, reply) => {
+    if (process.env.VITEST === 'true') return reply.send({ ok: true, directory: null });
+    const directory = await nativePickDirectory();
+    return reply.send({ ok: true, directory });
+  });
+}
+
+/** 系统原生目录选择器（macOS 访达 / Windows 资源管理器），取消返回 null。 */
+export function nativePickDirectory(): Promise<string | null> {
+  return new Promise((resolve) => {
+    let command: string;
+    let args: string[];
+    if (process.platform === 'darwin') {
+      command = 'osascript';
+      args = ['-e', 'POSIX path of (choose folder with prompt "选择录像保存目录")'];
+    } else if (process.platform === 'win32') {
+      command = 'powershell';
+      args = ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ $f.SelectedPath }"];
+    } else {
+      command = 'zenity';
+      args = ['--file-selection', '--directory'];
+    }
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += String(d)));
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const picked = out.trim();
+      resolve(picked.length > 0 ? picked : null);
+    });
   });
 }

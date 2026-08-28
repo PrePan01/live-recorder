@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.3 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.4 · 2026-08-28）
 
-相对 v1.2 的变更：新增抖音 Cookie 配置（Settings 增 `douyinCookie`，POST/PUT 可写、SecretStore 存不落盘、GET 仅回 `hasCookie` 布尔不回显值；受限房间提示沿用 `PLATFORM_ACCESS_RESTRICTED`，FE 引导去设置页填写）。
+相对 v1.3 的变更：新增设置页目录选择与配置导出/导入——`GET /settings/browse-directories`（目录树浏览，仅绝对路径、防穿越）、`POST /settings/pick-directory`（系统原生目录选择器，取消返回 null）、`GET /config/export` 与 `POST /config/import`（settings+rooms+alerts 打包，密钥/Cookie 值仅 hasXxx 标记不回显）。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径（评审线程 553da20f / 069e6fdb / 1dcb72d6 三方确认）全部保留；v1.2 变更经 8a5f0b88 线程 FE/QA 互确认；v1.3 抖音 Cookie 经 QA 测试口径确认 + PM 批准。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -198,6 +198,13 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 - 通知去重窗口 v1 服务端固定 30 分钟，不暴露到 `/settings`；契约预留可选字段 `dedupeWindowMinutes`（前端不渲染）
 - SMTP 密码不回显，`GET /settings` 仅返回 `passwordSet: true|false`（废弃 `passwordConfigured`）；密码经 `SecretStore`（keytar / CI 用 FakeSecretStore）存本机 keychain
 - `douyinCookie`（v1.3）：POST/PUT `/settings` 可写（字符串，空串表示清除），经 `SecretStore` 存本机 keychain 不落盘；`GET /settings` 仅返回 `douyinCookie: { hasCookie: true|false }`，永不回显值；抖音房间受限/反爬时按 `PLATFORM_ACCESS_RESTRICTED` 提示，FE 引导去设置页填写
+
+### v1.4 目录选择与配置导入导出
+
+- `GET /settings/browse-directories?path=<绝对路径>` → `{ ok, path, parent, directories: [{ name, path }] }`：目录树浏览（默认用户主目录）；仅接受绝对路径（否则 422 `DIRECTORY_NOT_WRITABLE`）、路径 resolve 归一化防穿越；目录不存在 → 404 `RESOURCE_NOT_FOUND`（`details.resource='directory'`）、无权限 → 422 `DIRECTORY_NOT_WRITABLE`；选择结果复用 `validate-directory` 校验
+- `POST /settings/pick-directory` → `{ ok, directory }`：弹出系统原生目录选择器（macOS 访达 osascript / Windows 资源管理器 PowerShell / Linux zenity），取消返回 `directory: null`
+- `GET /config/export` → `{ config: { version, exportedAt, settings, rooms, alerts } }`：settings 为视图（`passwordSet`/`hasCookie` 标记，不含任何密钥或 Cookie 值）；rooms/alerts 全量
+- `POST /config/import` body `{ config: { settings?, rooms?, alerts? } }` → `{ ok, appliedSettings, importedRooms, skippedRooms, importedAlerts }`：settings 过 `validateSettings`（非法 → 422/500 对应错误码）；rooms 按 `UNIQUE(platform,url)` 去重跳过已存在；alerts 仅导入未解决条目；密码/Cookie 值不导入，导入后提示重新配置
 
 ## Mock 约定
 

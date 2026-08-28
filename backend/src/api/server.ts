@@ -6,6 +6,7 @@ import { registerRecordingRoutes } from './routes/recordings.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerServiceRoutes } from './routes/service.js';
+import { registerConfigRoutes } from './routes/config.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 
@@ -75,6 +76,7 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
   registerSettingsRoutes(app, services);
   registerAlertRoutes(app, services);
   registerServiceRoutes(app, services);
+  registerConfigRoutes(app, services);
   registerSse(app, services, sse);
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins);
