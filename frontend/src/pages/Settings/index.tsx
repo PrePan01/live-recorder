@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { App, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
+import { App, Alert, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
 import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
+import { useServiceStore } from '../../stores/serviceStore';
 import { validateDirectory, testSmtp } from '../../api/settings';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
-import { formatTime } from '../../utils/format';
+import { formatBytes, formatTime } from '../../utils/format';
 import type { SettingsInput } from '../../types/settings';
 
 const LEVEL_COLOR: Record<string, string> = { info: 'blue', warning: 'orange', error: 'red' };
@@ -20,6 +21,8 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
   const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
+  const status = useServiceStore((s) => s.status);
+  const fetchStatus = useServiceStore((s) => s.fetchStatus);
   const [form] = Form.useForm();
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearCookie, setClearCookie] = useState(false);
@@ -33,7 +36,8 @@ export default function SettingsPage() {
   useEffect(() => {
     void load();
     void fetchAlerts();
-  }, [load, fetchAlerts]);
+    void fetchStatus();
+  }, [load, fetchAlerts, fetchStatus]);
 
   useEffect(() => {
     if (settings) {
@@ -145,8 +149,23 @@ export default function SettingsPage() {
     }
   };
 
+  const diskFree = status?.disk?.freeBytes ?? 0;
+  const diskTotal = status?.disk?.totalBytes ?? 1;
+  const diskRatio = diskTotal > 0 ? diskFree / diskTotal : 0;
+  const diskDanger = diskFree < 20_000_000_000 || diskRatio < 0.1;
+
   return (
-    <Row gutter={16}>
+    <div>
+      {diskDanger ? (
+        <Alert
+          type="warning"
+          showIcon
+          banner
+          style={{ marginBottom: 16 }}
+          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），低于阈值可能拒绝新录制`}
+        />
+      ) : null}
+      <Row gutter={16}>
       <Col xs={24} lg={14}>
         <Card
           title="服务设置"
@@ -438,5 +457,6 @@ export default function SettingsPage() {
         </Card>
       </Col>
     </Row>
+    </div>
   );
 }
