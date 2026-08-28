@@ -1,6 +1,6 @@
-# localhost 录制服务 API 契约（v1.8 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.9 · 2026-08-28）
 
-相对 v1.7 的变更：新增 `GET /recordings/:id/file`（历史回放，FLV 静态服务）；`GET /recordings/export`（CSV 导出，UTF-8 BOM）；`POST /recordings/batch-delete`（批量删除，部分成功）；`GET /rooms/:id/stats`（房间健康度统计）；`settings.recordingFormat`（source_flv | mp4_after，录制格式）与 `settings.autoRecord`（检测到开播是否自动录制，默认 true）；录制文件扩展名统一 `.flv`；`Recording` 输出 `integrity`。
+相对 v1.8 的变更：`Room` 新增 `autoRecord`（房间级自动录制开关，null=继承全局 settings.autoRecord，true/false=单独覆盖），`PATCH /rooms/:id` 支持设置/清除。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
@@ -30,6 +30,8 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 `monitorState`：`idle | checking | recording | reconnecting | completed | failed | disabled`。停用条目的状态为 `disabled`；录制项不使用 `checking` 或 `disabled`。
 
 `favorited`（v1.5）：手动收藏标记，`PATCH /rooms/:id/favorite` 切换，监控总览按收藏置顶。
+
+`autoRecord`（v1.9，#75）：房间级自动录制开关，`null`=继承全局 `settings.autoRecord`（默认 true），`true/false`=单独覆盖；`PATCH /rooms/:id` body `{ autoRecord: true|false|null }` 设置/清除（null 恢复继承）。调度器自动轮询时房间级优先，未设置用全局；手动 `/check` 始终可录。
 
 `activeRecording`（v1.5）：当前录制会话信息，未录制为 `null`；录制中为 `{ "recordingId": "rec_01J...", "startedAt": "2026-08-28T01:00:00.000Z" }`。`startedAt` 为该场次首次开始时间（断流重连续录不重置），前端秒级走时显示录制时长。
 
