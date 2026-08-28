@@ -16,6 +16,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.recordingFormat !== undefined && s.recordingFormat !== 'source_flv' && s.recordingFormat !== 'mp4_after') {
     throw new AppError('CONFIG_LOAD_FAILED', '录制格式仅支持 source_flv / mp4_after');
   }
+  if (s.autoRecord !== undefined && typeof s.autoRecord !== 'boolean') {
+    throw new AppError('CONFIG_LOAD_FAILED', 'autoRecord 必须为布尔值');
+  }
   const ci = s.checkIntervalSec;
   if (!ci || typeof ci.default !== 'number' || ci.default < 10 || typeof ci.bilibili !== 'number' || ci.bilibili < 10 || typeof ci.douyin !== 'number' || ci.douyin < 10) {
     throw new AppError('CONFIG_LOAD_FAILED', 'checkIntervalSec 需包含 default/bilibili/douyin 且不小于 10 秒');

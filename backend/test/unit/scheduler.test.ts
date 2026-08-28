@@ -167,6 +167,35 @@ describe('Scheduler', () => {
     expect(recs.some((r) => r.state === 'recording')).toBe(false);
   });
 
+  it('autoRecord=false blocks auto-start but manual check still records (#63)', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-autorec-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/21', displayName: 'auto' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+    ]);
+
+    // 自动调度检测（runPlatform 走 checkRoom 无 manual）→ 仅检测不自动录
+    services.scheduler.start();
+    await settle(clock, 1000);
+    for (let i = 0; i < 10 && services.recordings.list({ roomId: room.id }).items.length !== 0; i += 1) {
+      await settle(clock, 500);
+    }
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(0);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('idle');
+    services.scheduler.stop();
+
+    // 手动 /check（manual）→ 应正常开录
+    await services.scheduler.triggerImmediateCheck(room.id);
+    for (let i = 0; i < 10 && services.recordings.list({ roomId: room.id }).items.length === 0; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 1);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+  });
+
   it('coalesces concurrent checks for the same room into one platform request', async () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/44', displayName: 'single-flight' });

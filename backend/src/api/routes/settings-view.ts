@@ -14,6 +14,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     maxConcurrentRecordings: settings.maxConcurrentRecordings,
     quality: settings.quality,
     recordingFormat: settings.recordingFormat ?? 'source_flv',
+    autoRecord: settings.autoRecord ?? true,
     checkIntervalSec: settings.checkIntervalSec,
     retry: settings.retry,
     diskGuard: settings.diskGuard,

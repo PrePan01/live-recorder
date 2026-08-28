@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
   maxConcurrentRecordings: 2,
   quality: 'original' as const,
   recordingFormat: 'source_flv' as const,
+  autoRecord: true as const,
   checkIntervalSec: DEFAULT_CHECK_INTERVAL,
   retry: DEFAULT_RETRY,
   diskGuard: DEFAULT_DISK_GUARD,

@@ -362,6 +362,7 @@ function defaultsLite(): AppSettings {
     maxConcurrentRecordings: 2,
     quality: 'original',
     recordingFormat: 'source_flv',
+    autoRecord: true,
     checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },

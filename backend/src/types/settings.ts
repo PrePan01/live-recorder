@@ -41,6 +41,8 @@ export interface AppSettings {
   quality: Quality;
   /** 录制格式（v4）：source_flv 直写或完成后转 MP4。 */
   recordingFormat: RecordingFormat;
+  /** 检测到开播时是否自动录制（v4，#63）：默认 true；false=仅检测不自动录。 */
+  autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
@@ -54,6 +56,7 @@ export interface SettingsView {
   maxConcurrentRecordings: number;
   quality: Quality;
   recordingFormat: RecordingFormat;
+  autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
