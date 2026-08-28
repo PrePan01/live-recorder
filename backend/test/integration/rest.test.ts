@@ -400,4 +400,38 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(item.message).toContain('RECORDING_START_FAILED');
     await app.close();
   });
+
+  it('serves recording file for playback (FLV, completed only, #58)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-play-'));
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'p' });
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const file = path.join(dir, 'rec.flv');
+    await mkdir(dir, { recursive: true });
+    const flvBytes = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01]), Buffer.alloc(100)]);
+    await writeFile(file, flvBytes);
+
+    const rec = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's', streamTitle: 'p' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    // completed + 有文件 → 200 + FLV
+    const ok = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec.id}/file`, headers: { host: '127.0.0.1:43120' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-type']).toContain('video/x-flv');
+    const body = ok.rawPayload;
+    expect(body[0]).toBe(0x46);
+    expect(body[1]).toBe(0x4c);
+    expect(body[2]).toBe(0x56);
+
+    // recording 状态（未完成）→ 404
+    const rec2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'p2' });
+    const noFile = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec2.id}/file`, headers: { host: '127.0.0.1:43120' } });
+    expect(noFile.statusCode).toBe(404);
+
+    // 不存在的记录 → 404
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/recordings/rec_none/file', headers: { host: '127.0.0.1:43120' } });
+    expect(bad.statusCode).toBe(404);
+    await app.close();
+  });
 });

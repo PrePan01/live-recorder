@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { spawn } from 'node:child_process';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { dirname, basename, join } from 'node:path';
 import { rename, unlink } from 'node:fs/promises';
 import { AppError } from '../../types/error.js';
@@ -49,6 +51,27 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
       child.unref();
     }
     return reply.send({ ok: true });
+  });
+
+  // 历史页回放：仅 completed 且文件存在的录制可读取，按 FLV 内容输出（.flv/.mkv 均实为 FLV 字节）。
+  app.get('/api/v1/recordings/:id/file', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec || !rec.filePath || rec.state !== 'completed') {
+      throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在或文件缺失', { recordingId: id, details: { resource: 'recording' } });
+    }
+    let size: number;
+    try {
+      size = (await stat(rec.filePath)).size;
+    } catch {
+      throw new AppError('RESOURCE_NOT_FOUND', '录制文件缺失', { recordingId: id, details: { resource: 'recording' } });
+    }
+    if (size <= 0) {
+      throw new AppError('RECORDING_FILE_CORRUPTED', '录制文件为空或不可读', { recordingId: id, retryable: false });
+    }
+    reply.header('Content-Type', 'video/x-flv');
+    reply.header('Content-Length', String(size));
+    return reply.send(createReadStream(rec.filePath));
   });
 
   app.patch('/api/v1/recordings/:id', async (req, reply) => {
