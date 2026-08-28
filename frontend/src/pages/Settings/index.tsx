@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { App, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
-import { DownloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
 import { validateDirectory, testSmtp } from '../../api/settings';
 import { exportConfig, importConfig } from '../../api/config';
+import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
@@ -12,6 +13,8 @@ import { formatTime } from '../../utils/format';
 import type { SettingsInput } from '../../types/settings';
 
 const LEVEL_COLOR: Record<string, string> = { info: 'blue', warning: 'orange', error: 'red' };
+const CHECK_COLOR: Record<SelfCheckStatus, string> = { ok: 'success', fail: 'error', warn: 'warning', pending: 'default' };
+const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异常', warn: '警告', pending: '检测中' };
 
 export default function SettingsPage() {
   const { message } = App.useApp();
@@ -24,6 +27,8 @@ export default function SettingsPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
+  const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -52,6 +57,18 @@ export default function SettingsPage() {
       setDirMsg({ ok: true, text: '目录可写' });
     } catch (e) {
       setDirMsg({ ok: false, text: e instanceof ApiError ? describeError(e.code, e.message) : '校验失败' });
+    }
+  };
+
+  const runSelfCheck = async () => {
+    setChecking(true);
+    setChecks(null);
+    try {
+      setChecks(await fetchSelfCheck());
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '自检失败');
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -308,6 +325,52 @@ export default function SettingsPage() {
         </Card>
       </Col>
       <Col xs={24} lg={10}>
+        <Card
+          title="一键自检"
+          extra={
+            <Button size="small" icon={<SyncOutlined />} loading={checking} onClick={() => void runSelfCheck()}>
+              {checks ? '重新检测' : '开始检测'}
+            </Button>
+          }
+        >
+          {checks === null ? (
+            <Typography.Paragraph type="secondary">
+              检测环境健康：后端可达、平台 Cookie、SMTP、磁盘空间、目录可写。
+            </Typography.Paragraph>
+          ) : (
+            <List
+              size="small"
+              dataSource={checks}
+              locale={{ emptyText: '无检测项' }}
+              renderItem={(c) => (
+                <List.Item>
+                  <List.Item.Meta
+                    title={
+                      <Space>
+                        {c.status === 'ok' ? (
+                          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                        ) : (
+                          <Tag color={CHECK_COLOR[c.status]}>{CHECK_TEXT[c.status]}</Tag>
+                        )}
+                        <Typography.Text strong>{c.label}</Typography.Text>
+                      </Space>
+                    }
+                    description={
+                      <>
+                        {c.detail ? <Typography.Text type="secondary">{c.detail}</Typography.Text> : null}
+                        {c.fixHint ? (
+                          <Typography.Text type="warning" style={{ display: 'block' }}>
+                            修复：{c.fixHint}
+                          </Typography.Text>
+                        ) : null}
+                      </>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
         <Card
           title="告警"
           extra={
