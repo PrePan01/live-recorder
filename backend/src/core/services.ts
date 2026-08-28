@@ -9,6 +9,7 @@ import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { BilibiliAdapter } from '../platform/bilibili.js';
+import { DouyinAdapter } from '../platform/douyin.js';
 import { FakeRecordingEngine } from '../recorder/fake-engine.js';
 import { FakeDiskGuard } from '../storage/disk-guard.js';
 import { FakeMailer } from '../mail/mailer.js';
@@ -73,7 +74,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const fakeEngine = new FakeRecordingEngine(clock);
 
   const adapters = mode === 'real'
-    ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: fakeAdapter }
+    ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: new DouyinAdapter() as PlatformAdapter }
     : { bilibili: fakeAdapter, douyin: fakeAdapter };
 
   const services: Services = {
