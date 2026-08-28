@@ -214,9 +214,11 @@ export default function SettingsPage() {
             <Typography.Paragraph type="secondary">退避间隔 5s / 15s / 45s，共 3 次（服务端固定，不可配）</Typography.Paragraph>
             <Typography.Title level={5}>抖音 Cookie</Typography.Title>
             <Typography.Paragraph type="secondary">
-              部分抖音直播间需登录 Cookie 才能取流。获取方式：电脑浏览器登录
-              douyin.com → 按 F12 打开开发者工具 → 「Application/应用」→ 「Cookies」→ 选择
-              https://www.douyin.com → 复制全部 Cookie 值粘贴到下方。Cookie 仅存本机钥匙串，不会显示或上传。
+              部分抖音直播间需登录 Cookie 才能取流。需要 douyin.com 的完整 Cookie 字符串（分号分隔，含
+              sessionid/ttwid/__ac_signature 等全部字段）。获取方式（已登录抖音时）：F12 打开开发者工具 →
+              Console 控制台 → 输入 <Typography.Text code>copy(document.cookie)</Typography.Text> 回车 → 已自动复制到剪贴板
+              → 粘贴到下方输入框。也可在 Network 面板任意 douyin.com 请求的 Request Headers 中复制 Cookie
+              整段。Cookie 仅存本机钥匙串，不会显示或上传。
             </Typography.Paragraph>
             <Row gutter={16}>
               <Col span={12}>
