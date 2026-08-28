@@ -58,6 +58,43 @@ describe('SSE events', () => {
     await stream.done;
     await server.close();
   });
+
+  it('emits service:status on recording start and stop (#42)', async () => {
+    const server = await listen();
+    const stream = openEventStream(server.url);
+    await new Promise((r) => setTimeout(r, 100));
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'svc' });
+    server.services.settings.save({
+      recordingDirectory: '',
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+
+    const countFrames = () => stream.frames.filter((f) => f.includes('event: service:status'));
+    expect(countFrames().length).toBe(0);
+
+    await server.services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(countFrames().length).toBeGreaterThanOrEqual(1);
+    const startFrame = countFrames()[0]!;
+    expect(startFrame).toContain('"activeRecordings":1');
+
+    await server.services.manager.stopRecording(room.id);
+    // FakeClock 定时器需 advance 才会让引擎循环走到 stopped 分支并完成。
+    (server.services.clock as FakeClock).advance(1000);
+    await new Promise((r) => setTimeout(r, 200));
+    const frames = countFrames();
+    expect(frames.some((f) => f.includes('"activeRecordings":0'))).toBe(true);
+
+    stream.req.destroy();
+    await stream.done;
+    await server.close();
+  });
 });
 
 describe('WebSocket preview', () => {
