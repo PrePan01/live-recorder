@@ -105,6 +105,9 @@ export class DouyinAdapter implements PlatformAdapter {
       data = await this.fetchRoomInfo(roomId, cookie);
     } catch (err) {
       if (err instanceof AppError) {
+        if (err.code === 'PLATFORM_ACCESS_RESTRICTED') {
+          return { status: 'restricted', error: err.toObject() };
+        }
         return { status: 'error', error: err.toObject() };
       }
       return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {})).toObject() };
