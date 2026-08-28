@@ -36,6 +36,8 @@ export interface Settings {
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
+  /** v1.3：抖音 Cookie（SecretStore 存，GET 仅回显是否存在，永回明文） */
+  douyinCookie: { hasCookie: boolean };
 }
 
 export interface MailInput {
@@ -56,5 +58,7 @@ export interface SettingsInput {
   checkIntervalSec?: Partial<PlatformIntervals>;
   quality?: Quality;
   mail?: MailInput;
+  /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
+  douyinCookie?: string;
 }
 

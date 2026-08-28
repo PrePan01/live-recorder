@@ -17,6 +17,7 @@ export default function SettingsPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [clearCookie, setClearCookie] = useState(false);
 
   useEffect(() => {
     void load();
@@ -30,6 +31,7 @@ export default function SettingsPage() {
         maxConcurrentRecordings: settings.maxConcurrentRecordings,
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
+        douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
     }
@@ -49,9 +51,17 @@ export default function SettingsPage() {
   const onFinish = async (values: SettingsInput) => {
     setSaving(true);
     try {
-      const { mail, ...rest } = values as SettingsInput & { mail?: Record<string, unknown> & { recipients?: string; password?: string } };
+      const { mail, douyinCookie, ...rest } = values as SettingsInput & {
+        mail?: Record<string, unknown> & { recipients?: string; password?: string };
+        douyinCookie?: string;
+      };
       await save({
         ...rest,
+        ...(clearCookie
+          ? { douyinCookie: '' }
+          : typeof douyinCookie === 'string' && douyinCookie.length > 0
+            ? { douyinCookie }
+            : {}),
         mail: mail
           ? {
               ...mail,
@@ -64,6 +74,7 @@ export default function SettingsPage() {
           : undefined,
       });
       message.success('设置已保存');
+      setClearCookie(false);
     } catch (e) {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '保存失败');
     } finally {
@@ -126,6 +137,35 @@ export default function SettingsPage() {
             </Row>
             <Typography.Title level={5}>断线重连策略</Typography.Title>
             <Typography.Paragraph type="secondary">退避间隔 5s / 15s / 45s，共 3 次（服务端固定，不可配）</Typography.Paragraph>
+            <Typography.Title level={5}>抖音 Cookie</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              部分抖音直播间需登录 Cookie 才能取流；Cookie 仅存本机钥匙串，不会显示或上传
+            </Typography.Paragraph>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  label="抖音 Cookie"
+                  name="douyinCookie"
+                  extra={settings?.douyinCookie.hasCookie ? '已保存，留空则不修改' : undefined}
+                >
+                  <Input.Password
+                    placeholder={settings?.douyinCookie.hasCookie ? '••••••' : '输入抖音 Cookie（可选）'}
+                    autoComplete="new-password"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
+                <Button
+                  disabled={!settings?.douyinCookie.hasCookie}
+                  onClick={() => {
+                    form.setFieldValue('douyinCookie', '');
+                    setClearCookie(true);
+                  }}
+                >
+                  清除已存 Cookie
+                </Button>
+              </Col>
+            </Row>
             <Typography.Title level={5}>SMTP 邮件告警</Typography.Title>
             <Row gutter={16}>
               <Col span={12}>

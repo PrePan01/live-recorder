@@ -40,6 +40,7 @@ const settings: Settings = {
     recipients: ['owner@example.com'],
     passwordSet: true,
   },
+  douyinCookie: { hasCookie: false },
 };
 
 const rooms: Room[] = [
@@ -326,6 +327,9 @@ function route(method: string, path: string, query: Record<string, string>, body
       if (body.mail) {
         const { password, ...mailRest } = body.mail as Record<string, unknown>;
         settings.mail = { ...settings.mail, ...(mailRest as object), passwordSet: Boolean(password) || settings.mail.passwordSet };
+      }
+      if (typeof body.douyinCookie === 'string') {
+        settings.douyinCookie = { hasCookie: body.douyinCookie.length > 0 };
       }
       
       emit({ type: 'settings:updated', settings: { ...settings } });
