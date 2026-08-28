@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import type { RecordingState } from '../../types/index.js';
@@ -36,6 +38,12 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     const rec = services.recordings.get(id);
     if (!rec || !rec.filePath) {
       throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在或文件缺失', { recordingId: id, details: { resource: 'recording' } });
+    }
+    const dir = dirname(rec.filePath);
+    if (process.env.VITEST !== 'true') {
+      const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+      const child = spawn(command, [dir], { detached: true, stdio: 'ignore' });
+      child.unref();
     }
     return reply.send({ ok: true });
   });

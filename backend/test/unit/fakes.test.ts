@@ -112,4 +112,14 @@ describe('other fakes', () => {
     await store.delete('mail.password');
     expect(await store.has('mail.password')).toBe(false);
   });
+
+  it('disk guard defaults to real filesystem space and falls back to root', async () => {
+    const real = new FakeDiskGuard();
+    const space = await real.inspect(tmpdir());
+    expect(space.freeBytes).toBeGreaterThan(0);
+    expect(space.totalBytes).toBeGreaterThan(0);
+    const fallback = await real.inspect('/nonexistent/deep/path');
+    expect(fallback.freeBytes).toBeGreaterThan(0);
+    expect(fallback.totalBytes).toBeGreaterThan(0);
+  });
 });
