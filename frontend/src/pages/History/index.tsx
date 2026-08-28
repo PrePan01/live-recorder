@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, WarningOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
+import FilePlayer from '../../components/FilePlayer';
+import { recordingFileUrl } from '../../api/client';
 import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -26,6 +28,7 @@ export default function History() {
   const [renaming, setRenaming] = useState<Recording | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
+  const [playing, setPlaying] = useState<Recording | null>(null);
 
   useEffect(() => {
     const q: { page: number; roomId?: string; dateFrom?: string; dateTo?: string } = { page: 1, roomId };
@@ -95,6 +98,15 @@ export default function History() {
         width: 150,
         render: (_, r) => (
           <Space size={0}>
+            <Button
+              size="small"
+              type="link"
+              icon={<PlayCircleOutlined />}
+              disabled={r.state !== 'completed' || !r.filePath}
+              onClick={() => setPlaying(r)}
+            >
+              播放
+            </Button>
             <Button
               size="small"
               type="link"
@@ -191,6 +203,16 @@ export default function History() {
           }}
         />
       )}
+      <Modal
+        title={`播放：${playing?.streamTitle || playing?.id || ''}`}
+        open={playing !== null}
+        footer={null}
+        width={820}
+        destroyOnHidden
+        onCancel={() => setPlaying(null)}
+      >
+        {playing ? <FilePlayer url={recordingFileUrl(playing.id)} /> : null}
+      </Modal>
       <Modal
         title="重命名录制"
         open={renaming !== null}
