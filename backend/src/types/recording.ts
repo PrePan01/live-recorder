@@ -24,4 +24,5 @@ export interface Recording {
   failureReason: ErrorObject | null;
   retryCount: number;
   createdAt: string;
+  quality?: Quality;
 }
