@@ -144,16 +144,24 @@ body {
   background: #fffafa;
 }
 
-.lr-room-card__actions .ant-btn:not(:disabled):hover {
-  border: 0;
-  box-shadow: none;
+.lr-room-card__actions .ant-btn:not(:disabled):hover,
+.lr-room-card__actions .ant-btn:not(:disabled):focus,
+.lr-room-card__actions .ant-btn:not(:disabled):active {
+  border: 0 !important;
+  border-right: 1px solid #edf0f3 !important;
+  box-shadow: none !important;
+  outline: none !important;
   color: #1677ff;
   background: #f0f7ff;
 }
 
-.lr-room-card__actions .ant-btn-dangerous:not(:disabled):hover {
-  border: 0;
-  box-shadow: none;
+.lr-room-card__actions .ant-btn-dangerous:not(:disabled):hover,
+.lr-room-card__actions .ant-btn-dangerous:not(:disabled):focus,
+.lr-room-card__actions .ant-btn-dangerous:not(:disabled):active {
+  border: 0 !important;
+  border-right: 1px solid #edf0f3 !important;
+  box-shadow: none !important;
+  outline: none !important;
   color: #cf4f4f;
   background: #fff1f0;
 }
