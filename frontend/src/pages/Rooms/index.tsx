@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { App, Button, Form, Input, Modal, Popconfirm, Space, Switch, Table, Typography } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Typography } from 'antd';
 import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
@@ -19,15 +19,91 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
   const [modalOpen, setModalOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchBusy2, setBatchBusy2] = useState(false);
+  const [batchText, setBatchText] = useState('');
+  const [batchResult, setBatchResult] = useState<Awaited<ReturnType<typeof batchAddRooms>> | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<{ url: string; displayName?: string }>();
+  const [keyword, setKeyword] = useState('');
+  const [platform, setPlatform] = useState<string>();
+  const [state, setState] = useState<string>();
+  const [favOnly, setFavOnly] = useState<boolean>(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return rooms.filter((r) => {
+      if (kw && !r.displayName.toLowerCase().includes(kw) && !r.url.toLowerCase().includes(kw)) return false;
+      if (platform && r.platform !== platform) return false;
+      if (state && r.monitorState !== state) return false;
+      if (favOnly && !r.favorited) return false;
+      return true;
+    });
+  }, [rooms, keyword, platform, state, favOnly]);
+
+  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+
+  const resetPage = () => setPage(1);
+
+  const runBatch = async (fn: (r: Room) => Promise<void>, okMsg: string) => {
+    const targets = rooms.filter((r) => selectedKeys.includes(r.id));
+    if (targets.length === 0) {
+      message.warning('请先选择要操作的房间');
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      await Promise.all(targets.map((r) => fn(r)));
+      message.success(`${okMsg} ${targets.length} 个房间`);
+      setSelectedKeys([]);
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量操作失败');
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const batchActions = (
+    <Space>
+      <Button
+        size="small"
+        disabled={batchBusy || selectedKeys.length === 0}
+        onClick={() =>
+          void runBatch((r) => toggleRoom(r.id, true), '已启用')
+        }
+      >
+        批量启用
+      </Button>
+      <Button
+        size="small"
+        disabled={batchBusy || selectedKeys.length === 0}
+        onClick={() =>
+          void runBatch((r) => toggleRoom(r.id, false), '已停用')
+        }
+      >
+        批量停用
+      </Button>
+      <Popconfirm
+        title={`确定删除所选 ${selectedKeys.length} 个房间？不可恢复。`}
+        onConfirm={() => void runBatch((r) => removeRoom(r.id), '已删除')}
+      >
+        <Button size="small" danger disabled={batchBusy || selectedKeys.length === 0}>
+          批量删除
+        </Button>
+      </Popconfirm>
+    </Space>
+  );
 
   const openAdd = () => {
     setEditing(null);
@@ -66,6 +142,25 @@ export default function Rooms() {
   };
 
   const urlValue = Form.useWatch('url', form);
+
+  const submitBatch = async () => {
+    const urls = batchText.split(/\n/).map((s) => s.trim()).filter(Boolean);
+    if (urls.length === 0) {
+      message.warning('请粘贴至少一行直播链接');
+      return;
+    }
+    setBatchBusy2(true);
+    setBatchResult(null);
+    try {
+      const res = await batchAddRooms(urls);
+      setBatchResult(res);
+      message.success(`成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`);
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量添加失败');
+    } finally {
+      setBatchBusy2(false);
+    }
+  };
 
   const columns: ColumnsType<Room> = [
     {
@@ -148,11 +243,93 @@ export default function Rooms() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
         </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
-          添加直播间
-        </Button>
+        <Space>
+          <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
+            批量添加
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+            添加直播间
+          </Button>
+        </Space>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={rooms} loading={loading} pagination={false} />
+      <Space style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+        <Input.Search
+          allowClear
+          placeholder="搜索显示名 / 链接"
+          style={{ width: 220 }}
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value);
+            resetPage();
+          }}
+        />
+        <Select
+          allowClear
+          placeholder="平台"
+          style={{ width: 110 }}
+          value={platform}
+          onChange={(v) => {
+            setPlatform(v);
+            resetPage();
+          }}
+          options={[
+            { value: 'bilibili', label: 'B站' },
+            { value: 'douyin', label: '抖音' },
+          ]}
+        />
+        <Select
+          allowClear
+          placeholder="状态"
+          style={{ width: 130 }}
+          value={state}
+          onChange={(v) => {
+            setState(v);
+            resetPage();
+          }}
+          options={[
+            { value: 'idle', label: '空闲' },
+            { value: 'checking', label: '检测中' },
+            { value: 'recording', label: '录制中' },
+            { value: 'reconnecting', label: '重连中' },
+            { value: 'completed', label: '已完成' },
+            { value: 'failed', label: '失败' },
+            { value: 'disabled', label: '已停用' },
+          ]}
+        />
+        <Button
+          type={favOnly ? 'primary' : 'default'}
+          icon={<StarOutlined />}
+          onClick={() => {
+            setFavOnly((v) => !v);
+            resetPage();
+          }}
+        >
+          仅看收藏
+        </Button>
+        <Popover content={batchActions} trigger="click" placement="bottom">
+          <Button disabled={selectedKeys.length === 0}>批量操作</Button>
+        </Popover>
+        {selectedKeys.length > 0 ? <Typography.Text type="secondary">已选 {selectedKeys.length} 项</Typography.Text> : null}
+      </Space>
+      <Table
+        rowKey="id"
+        columns={columns}
+        dataSource={paginated}
+        loading={loading}
+        rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: filtered.length,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50],
+          showTotal: (t) => `共 ${t} 个房间`,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        }}
+      />
       <Modal
         title={editing ? '编辑直播间' : '添加直播间'}
         open={modalOpen}
@@ -180,6 +357,56 @@ export default function Rooms() {
             <Input placeholder="主播昵称" />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="批量添加直播间"
+        open={batchOpen}
+        onCancel={() => {
+          setBatchOpen(false);
+          setBatchResult(null);
+          setBatchText('');
+        }}
+        onOk={() => void submitBatch()}
+        confirmLoading={batchBusy2}
+        okText="批量添加"
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          每行一个直播链接，支持 B站 / 抖音 混排，最多 100 条。自动去重（含已存在房间与批内重复）。
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={6}
+          placeholder={'https://live.bilibili.com/...\nhttps://live.douyin.com/...'}
+          value={batchText}
+          onChange={(e) => setBatchText(e.target.value)}
+        />
+        {batchResult ? (
+          <div style={{ marginTop: 12 }}>
+            {batchResult.failed.length > 0 ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={`失败 ${batchResult.failed.length} 条`}
+                description={
+                  <List
+                    size="small"
+                    dataSource={batchResult.failed}
+                    renderItem={(f) => (
+                      <List.Item>
+                        <Typography.Text type="secondary" ellipsis style={{ maxWidth: 260 }}>
+                          {f.url}
+                        </Typography.Text>
+                        <Typography.Text type="danger">{f.reason}</Typography.Text>
+                      </List.Item>
+                    )}
+                  />
+                }
+              />
+            ) : (
+              <Alert type="success" showIcon message={`全部成功（${batchResult.succeeded.length} 条）`} />
+            )}
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

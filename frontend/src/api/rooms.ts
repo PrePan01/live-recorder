@@ -11,6 +11,16 @@ export async function createRoom(input: RoomCreateInput): Promise<Room> {
   return data.room;
 }
 
+export interface BatchRoomResult {
+  succeeded: Room[];
+  failed: Array<{ url: string; reason: string }>;
+}
+
+export async function batchCreateRooms(urls: string[]): Promise<BatchRoomResult> {
+  const { data } = await http.post<BatchRoomResult>('/rooms/batch', { urls });
+  return data;
+}
+
 export async function updateRoom(id: string, input: RoomUpdateInput): Promise<Room> {
   const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input);
   return data.room;

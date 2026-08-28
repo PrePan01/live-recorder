@@ -11,3 +11,54 @@ body {
     sans-serif;
   background: #f5f5f5;
 }
+
+@keyframes lr-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lr-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.lr-stat {
+  animation: lr-fade-in 0.35s ease-out;
+}
+
+.lr-stat__value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  transition: color 0.3s ease;
+}
+
+.lr-stat__value--recording {
+  color: #52c41a;
+  animation: lr-pulse 2s ease-in-out infinite;
+}
+
+.lr-stat__value--failed {
+  color: #ff4d4f;
+}
+
+.lr-stat__value--checking {
+  color: #1677ff;
+}
+
+.lr-stat__label {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}

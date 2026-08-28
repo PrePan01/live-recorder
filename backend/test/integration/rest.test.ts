@@ -140,6 +140,52 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('batch adds rooms with partial success (valid+duplicate+invalid mixed)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    // 预置一个现库房间，验证去重。
+    await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { platform: 'bilibili', url: 'https://live.bilibili.com/777', displayName: '已有' },
+    });
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/rooms/batch', headers: { host: '127.0.0.1:43120' },
+      payload: {
+        urls: [
+          'https://live.bilibili.com/778?x=1',   // 新增 bilibili（规范化去 query）
+          'https://live.douyin.com/100',          // 新增 douyin
+          'https://live.bilibili.com/777',        // 现库重复
+          'https://live.bilibili.com/778',        // 批内重复
+          'https://example.com/bad',              // 无效
+          '',                                     // 空行
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.succeeded).toHaveLength(2);
+    expect(body.failed).toHaveLength(4);
+    expect(body.succeeded.map((r: { url: string }) => r.url).sort()).toEqual([
+      'https://live.bilibili.com/778',
+      'https://live.douyin.com/100',
+    ].sort());
+    expect(body.failed.some((f: { url: string; reason: string }) => f.url === 'https://live.bilibili.com/777' && f.reason.includes('已存在'))).toBe(true);
+    expect(body.failed.some((f: { url: string }) => f.url === 'https://live.bilibili.com/778' && f.reason.includes('已存在'))).toBe(true);
+    expect(body.failed.some((f: { url: string }) => f.url === 'https://example.com/bad')).toBe(true);
+
+    // 批量后现库共 3 个（1 已有 + 2 新增）。
+    const list = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
+    expect(list.json().rooms).toHaveLength(3);
+
+    const badReq = await app.inject({
+      method: 'POST', url: '/api/v1/rooms/batch', headers: { host: '127.0.0.1:43120' },
+      payload: { urls: [] },
+    });
+    expect(badReq.statusCode).toBe(422);
+    await app.close();
+  });
+
   it('settings: password write-only, passwordSet derived, validate-directory semantics', async () => {
     const services = newServices();
     const { app } = buildApp(services);
