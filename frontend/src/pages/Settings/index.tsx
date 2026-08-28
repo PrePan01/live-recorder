@@ -47,6 +47,7 @@ export default function SettingsPage() {
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
         recordingFormat: settings.recordingFormat ?? 'source_flv',
+        autoRecord: settings.autoRecord ?? true,
         douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
@@ -227,6 +228,14 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
+            <Form.Item
+              label="检测到开播时自动录制"
+              name="autoRecord"
+              valuePropName="checked"
+              extra="开启后检测到直播自动开始录制；关闭后仅检测、不自动录（手动「立即检测」仍可触发录制）"
+            >
+              <Switch />
+            </Form.Item>
             <Typography.Title level={5}>检测间隔（秒，按平台）</Typography.Title>
             <Row gutter={16}>
               <Col span={8}>
