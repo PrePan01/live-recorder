@@ -294,11 +294,16 @@ export class RecorderManager {
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
   private verifyIntegrity(rec: import('../types/index.js').Recording): void {
     void (async () => {
-      const integrity = await checkFileIntegrity(rec.filePath!);
-      const updated = this.services.recordings.update(rec.id, { integrity });
-      this.services.events.emit({ type: 'recording:updated', data: updated });
-      if (integrity === 'failed') {
-        this.raiseAlert('warning', 'recorder', new AppError('RECORDING_FILE_CORRUPTED', '录制文件校验失败，可能损坏或截断', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
+      try {
+        const integrity = await checkFileIntegrity(rec.filePath!);
+        // 服务可能已关闭（DB 关闭），吞掉该场景错误避免未处理拒绝。
+        const updated = this.services.recordings.update(rec.id, { integrity });
+        this.services.events.emit({ type: 'recording:updated', data: updated });
+        if (integrity === 'failed') {
+          this.raiseAlert('warning', 'recorder', new AppError('RECORDING_FILE_CORRUPTED', '录制文件校验失败，可能损坏或截断', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
+        }
+      } catch {
+        // 应用关闭/校验中途异常：忽略（完整性校验非关键路径）。
       }
     })();
   }

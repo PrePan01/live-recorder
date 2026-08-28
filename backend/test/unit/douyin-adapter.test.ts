@@ -118,10 +118,29 @@ describe('DouyinAdapter', () => {
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
 
-  it('passes cookie through to the api request', async () => {
+  it('maps status_code=10011 with cookie to restricted (invalid/expired cookie, #56 part2)', async () => {
+    // 带 Cookie 时抖音返回 status_code=10011（Request params error / 服务繁忙）→ 视为凭证失效引导更新 Cookie，而非平台变动。
+    const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 10011, data: { message: 'Request params error', prompts: '当前服务繁忙，请稍后重试' } })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=expired');
+    expect(result.status).toBe('restricted');
+    expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(result.error?.message).toContain('Cookie');
+  });
+
+  it('maps unexpected structure without cookie signal to PLATFORM_CHANGED', async () => {
+    // 结构异常但非凭证特征 → 仍判平台变动（真接口变更）。
+    const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 99999, foo: 'bar' })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=xxx');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('PLATFORM_CHANGED');
+  });
+
+  it('passes cookie through and uses web_rid param (douyin API P0 fix)', async () => {
     let sentCookie: string | undefined;
+    let sentUrl = '';
     let hasTimeoutSignal = false;
     const a = new DouyinAdapter(async (url, init) => {
+      sentUrl = String(url);
       sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
       hasTimeoutSignal = init?.signal instanceof AbortSignal;
       return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
@@ -129,5 +148,8 @@ describe('DouyinAdapter', () => {
     await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=xxx');
     expect(sentCookie).toBe('sessionid=xxx');
     expect(hasTimeoutSignal).toBe(true);
+    // P0：抖音接口须用 web_rid，room_id_str 会返回 status_code=10011。
+    expect(sentUrl).toContain('web_rid=123456');
+    expect(sentUrl).not.toContain('room_id_str');
   });
 });

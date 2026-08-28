@@ -1,9 +1,10 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Button, Card, Col, Empty, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
+import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
 import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
-import { MonitorStateTag, PlatformTag } from '../../components/StatusTags';
+import { MonitorStateTag } from '../../components/StatusTags';
+import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
@@ -28,7 +29,7 @@ function RoomCard({
     <Card
       title={
         <Space>
-          <PlatformTag platform={room.platform} />
+          <PlatformLogoTag platform={room.platform} />
           <span>{room.displayName}</span>
         </Space>
       }
@@ -96,12 +97,25 @@ export default function Monitor() {
   const closePreview = usePreviewStore((s) => s.close);
   const [watching, setWatching] = useState<Room | null>(null);
   const [view, setView] = useState<'卡片' | '列表'>('卡片');
+  const [filter, setFilter] = useState<'全部' | '录制中' | '收藏'>('全部');
+  const [keyword, setKeyword] = useState('');
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
 
-  const monitorRooms = rooms.filter((r) => r.enabled).sort((a, b) => Number(b.favorited) - Number(a.favorited));
+  const monitorRooms = rooms
+    .filter((r) => r.enabled)
+    .filter((r) => {
+      if (filter === '录制中') return r.monitorState === 'recording' || r.monitorState === 'reconnecting';
+      if (filter === '收藏') return r.favorited;
+      return true;
+    })
+    .filter((r) => {
+      const kw = keyword.trim().toLowerCase();
+      return !kw || r.displayName.toLowerCase().includes(kw) || r.url.toLowerCase().includes(kw);
+    })
+    .sort((a, b) => Number(b.favorited) - Number(a.favorited));
 
   const handleWatch = (room: Room) => {
     if (!openPreview(room.id)) {
@@ -118,6 +132,18 @@ export default function Monitor() {
           监控总览
         </Typography.Title>
         <Space>
+          <Segmented
+            options={['全部', '录制中', '收藏']}
+            value={filter}
+            onChange={(v) => setFilter(v as '全部' | '录制中' | '收藏')}
+          />
+          <Input.Search
+            allowClear
+            placeholder="搜索房间"
+            style={{ width: 180 }}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+          />
           <Segmented options={['卡片', '列表']} value={view} onChange={(v) => setView(v as '卡片' | '列表')} />
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void fetchRooms()}>
             刷新
