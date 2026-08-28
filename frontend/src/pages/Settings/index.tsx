@@ -43,6 +43,7 @@ export default function SettingsPage() {
         maxConcurrentRecordings: settings.maxConcurrentRecordings,
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
+        recordingFormat: settings.recordingFormat ?? 'source_flv',
         douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
@@ -187,6 +188,20 @@ export default function SettingsPage() {
                       { value: '1080p', label: '1080p' },
                       { value: '720p', label: '720p' },
                       { value: '360p', label: '360p' },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item
+                  label="录制格式"
+                  name="recordingFormat"
+                  extra="源 FLV 直写（无损最快）；完成后转 MP4（ffmpeg 转封装）"
+                >
+                  <Select
+                    options={[
+                      { value: 'source_flv', label: '源 FLV 直写' },
+                      { value: 'mp4_after', label: '完成后转 MP4' },
                     ]}
                   />
                 </Form.Item>
