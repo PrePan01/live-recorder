@@ -118,10 +118,12 @@ describe('DouyinAdapter', () => {
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
 
-  it('passes cookie through to the api request', async () => {
+  it('passes cookie through and uses web_rid param (douyin API P0 fix)', async () => {
     let sentCookie: string | undefined;
+    let sentUrl = '';
     let hasTimeoutSignal = false;
     const a = new DouyinAdapter(async (url, init) => {
+      sentUrl = String(url);
       sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
       hasTimeoutSignal = init?.signal instanceof AbortSignal;
       return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
@@ -129,5 +131,8 @@ describe('DouyinAdapter', () => {
     await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=xxx');
     expect(sentCookie).toBe('sessionid=xxx');
     expect(hasTimeoutSignal).toBe(true);
+    // P0：抖音接口须用 web_rid，room_id_str 会返回 status_code=10011。
+    expect(sentUrl).toContain('web_rid=123456');
+    expect(sentUrl).not.toContain('room_id_str');
   });
 });

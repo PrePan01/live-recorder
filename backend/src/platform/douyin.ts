@@ -71,7 +71,8 @@ export class DouyinAdapter implements PlatformAdapter {
       live_id: '1',
       device_platform: 'web',
       enter_from: 'web_live',
-      room_id_str: roomId,
+      // 抖音接口已切换为 web_rid（room_id_str 会返回 status_code=10011 Request params error）
+      web_rid: roomId,
       enter_from_merge: 'web_live',
       is_need_double_stream: 'false',
     });
