@@ -167,7 +167,7 @@ describe('Scheduler', () => {
     expect(recs.some((r) => r.state === 'recording')).toBe(false);
   });
 
-  it('autoRecord=false blocks auto-start but manual check still records (#63)', async () => {
+  it('autoRecord=false (global, room inherits) blocks auto-start AND manual /check (#63/#77 unified)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-autorec-'));
     services.settings.save({ ...baseSettings(dir), autoRecord: false });
@@ -187,13 +187,14 @@ describe('Scheduler', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('idle');
     services.scheduler.stop();
 
-    // 手动 /check（manual）→ 应正常开录
+    // 手动 /check（manual）→ 统一语义下也不自动开始（全局 false + 房间继承）
     await services.scheduler.triggerImmediateCheck(room.id);
-    for (let i = 0; i < 10 && services.recordings.list({ roomId: room.id }).items.length === 0; i += 1) {
+    for (let i = 0; i < 10 && services.recordings.list({ roomId: room.id }).items.length !== 0; i += 1) {
       await settle(clock, 500);
     }
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 1);
-    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(0);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('idle');
   });
 
   it('room-level autoRecord overrides global false (#75)', async () => {

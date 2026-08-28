@@ -75,14 +75,12 @@ export class Scheduler {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {
-      // 房间级 autoRecord（#75/#76，PrePan 要求）：
-      //  - room.autoRecord=false（明确关闭）→ 任何检测（含手动 /check）都不自动开始录制；
-      //  - room.autoRecord=true（明确开启）→ 始终自动开始；
-      //  - room.autoRecord=null（继承）→ 自动调度用全局 settings.autoRecord（#63），手动 /check 始终可录。
+      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
+      // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
+      // true 时检测即自动开始。
       const globalAuto = this.services.settings.load()?.autoRecord ?? true;
-      const roomAuto = room.autoRecord;
-      const shouldAutoStart = roomAuto === true ? true : roomAuto === false ? false : opts.manual ? true : globalAuto;
-      if (!shouldAutoStart) {
+      const effectiveAuto = room.autoRecord ?? globalAuto;
+      if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
         this.emitRoom(room.id);
         return;
