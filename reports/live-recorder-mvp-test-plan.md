@@ -80,4 +80,14 @@
 | C 联调 | B 准出 + 真实适配器可用 | 18 错误码用例全通过；AC#1–12 主路径通过 |
 | D 验收 | C 准出 + macOS/Windows 双环境 | 24 条 AC + 异常矩阵 + 跨浏览器全通过，无阻塞缺陷 |
 
-> 开发未获 @PrePan 批准前，本计划持续按评审冻结口径更新，不执行环境搭建。
+## 5. 阶段 B 出口结果（QA 执行记录 · 2026-08-28）
+
+- **范围**：backend commit 42da368（B-E1~E6）+ docs/api-contract.md v1.2 入库版。
+- **测试**：后端全量 vitest 9 文件 49 测试全绿（BE 39 + QA 出口用例 10）。
+- **QA 出口用例**（`backend/test/integration/qa-exit.test.ts`）：
+  - RESOURCE_NOT_FOUND(404) 全 7 端点断言补齐：PATCH /rooms/:id、PATCH /rooms/:id/enable、DELETE /rooms/:id、POST /rooms/:id/check、POST /rooms/:id/stop-recording、POST /recordings/:id/open、PATCH /alerts/:id；均含 details.resource 与 retryable=false。
+  - 错误信封六必填字段（code/message/roomId/recordingId/occurredAt/retryable）与不落敏感信息断言。
+  - 安全：validate-directory 拒绝相对/穿越路径（`../`、`relative/path`）→ 422 DIRECTORY_NOT_WRITABLE；非本机 Host 与外部 Origin → 403；open 拒绝非表内 id。
+  - 全链路冒烟：PUT settings → POST rooms → POST check（live）→ 录制进入 recording → 落盘 `平台/主播/时间.mkv` → completed，fileSizeBytes>13；磁盘不足阻断新录制并告警。
+- **真机冒烟**：`npm run dev` 起 fake 服务，HTTP 实测 health/service-status/rooms/check/recordings 契约一致；录制文件真实写入（1642 字节）；404/403 守卫生效；冒烟后已清理临时数据与录制文件。
+- **结论**：阶段 B 准出通过，可进入阶段 C。
