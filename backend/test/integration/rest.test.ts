@@ -23,6 +23,26 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('service self-check returns per-item status without leaking secrets', async () => {
+    const { app } = buildApp(newServices());
+    const res = await app.inject({ method: 'GET', url: '/api/v1/service/self-check', headers: { host: '127.0.0.1:43120' } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.items.length).toBeGreaterThanOrEqual(5);
+    const keys = body.items.map((i: { key: string }) => i.key);
+    expect(keys).toEqual(expect.arrayContaining(['backend', 'smtp', 'cookie', 'disk', 'writable']));
+    for (const item of body.items) {
+      expect(['ok', 'fail', 'warn']).toContain(item.status);
+      expect(typeof item.detail).toBe('string');
+      expect(typeof item.fixHint).toBe('string');
+      // 不泄漏 Cookie/密码明文
+      const raw = JSON.stringify(item);
+      expect(raw).not.toMatch(/SESSDATA|buvid3|password|@|smtp\./i);
+    }
+    await app.close();
+  });
+
   it('rejects non-local host and unknown origin, allows dev origin when configured', async () => {
     const { app } = buildApp(newServices(), { extraOrigins: ['http://localhost:5173'] });
     const badHost = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: 'evil.example.com' } });
