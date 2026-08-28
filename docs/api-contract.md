@@ -1,6 +1,6 @@
 # localhost 录制服务 API 契约（v1.8 · 2026-08-28）
 
-相对 v1.7 的变更：新增 `GET /recordings/:id/file`（历史回放，FLV 静态服务）；`GET /recordings/export`（CSV 导出，UTF-8 BOM）；`POST /recordings/batch-delete`（批量删除，部分成功）；`GET /rooms/:id/stats`（房间健康度统计）；`settings.recordingFormat`（source_flv | mp4_after，录制格式）；录制文件扩展名统一 `.flv`；`Recording` 输出 `integrity`。
+相对 v1.7 的变更：新增 `GET /recordings/:id/file`（历史回放，FLV 静态服务）；`GET /recordings/export`（CSV 导出，UTF-8 BOM）；`POST /recordings/batch-delete`（批量删除，部分成功）；`GET /rooms/:id/stats`（房间健康度统计）；`settings.recordingFormat`（source_flv | mp4_after，录制格式）与 `settings.autoRecord`（检测到开播是否自动录制，默认 true）；录制文件扩展名统一 `.flv`；`Recording` 输出 `integrity`。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
