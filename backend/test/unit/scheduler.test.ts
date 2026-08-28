@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
+import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import type { AppSettings } from '../../src/types/index.js';
 
@@ -107,5 +108,28 @@ describe('Scheduler', () => {
     const alerts = services.alerts.list({ unresolvedOnly: true });
     expect(alerts[0]!.level).toBe('warning');
     expect(alerts[0]!.message).toContain('PLATFORM_ACCESS_RESTRICTED');
+  });
+
+  it('does not throw when a live room fails to start (getStreamUrl error) and records failed state', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'E' });
+    const throwing: PlatformAdapter = {
+      platform: 'bilibili',
+      async checkLiveStatus() {
+        return { status: 'live', streamSessionId: 's1' };
+      },
+      async getStreamUrl() {
+        throw new Error('upstream down');
+      },
+      normalizeUrl: (u) => u,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => throwing;
+
+    await expect(services.scheduler.triggerImmediateCheck(room.id)).resolves.toBeUndefined();
+    const after = services.rooms.get(room.id)!;
+    expect(after.monitorState).toBe('failed');
+    expect(after.lastError?.code).toBe('RECORDING_START_FAILED');
+    expect(services.alerts.list().some((a) => a.message.includes('RECORDING_START_FAILED'))).toBe(true);
   });
 });

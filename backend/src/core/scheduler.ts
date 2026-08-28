@@ -53,7 +53,15 @@ export class Scheduler {
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
     const status = await adapter.checkLiveStatus(room.url);
     if (status.status === 'live') {
-      await this.manager.maybeStartRecording({ ...room, monitorState: 'checking' }, status);
+      try {
+        await this.manager.maybeStartRecording({ ...room, monitorState: 'checking' }, status);
+      } catch (err) {
+        const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
+        this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
+        this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso() });
+        this.services.events.emit({ type: 'alert:created', data: alert });
+      }
       return;
     }
     if (status.status === 'offline') {
@@ -80,6 +88,6 @@ export class Scheduler {
   async triggerImmediateCheck(roomId: string): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
-    await this.checkRoom(room);
+    await this.checkRoom(room).catch(() => undefined);
   }
 }
