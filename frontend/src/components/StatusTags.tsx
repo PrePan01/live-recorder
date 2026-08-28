@@ -41,7 +41,3 @@ export function IntegrityTag({ integrity }: { integrity: RecordingIntegrity | nu
   const meta = INTEGRITY_META[integrity];
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
-
-export function PlatformTag({ platform }: { platform: string }) {
-  return <Tag color={platform === 'bilibili' ? 'blue' : 'magenta'}>{platform === 'bilibili' ? 'B站' : '抖音'}</Tag>;
-}
