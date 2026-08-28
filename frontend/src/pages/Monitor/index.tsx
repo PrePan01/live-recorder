@@ -35,64 +35,64 @@ function RoomCard({
         </Space>
       }
       extra={<MonitorStateTag state={room.monitorState} />}
-      actions={[
+    >
+      <Space style={{ marginBottom: 10, width: '100%', justifyContent: 'space-between' }}>
+        <RoomStats
+          lastCheckedAt={room.lastCheckedAt}
+          startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
+          state={room.monitorState}
+        />
         <Button
-          key="check"
           type="text"
+          size="small"
+          aria-label="收藏"
+          icon={room.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+          onClick={() => onFavorite(room, !room.favorited)}
+        />
+      </Space>
+      <div style={{ marginBottom: 10 }}>
+        <RoomHealth roomId={room.id} />
+      </div>
+      {room.lastError ? (
+        <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 10, marginTop: 0 }}>
+          {room.lastError.message}
+        </Typography.Paragraph>
+      ) : null}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+        <Button
+          size="small"
           icon={<ReloadOutlined />}
           disabled={room.monitorState === 'checking' || recording}
           onClick={() => onCheck(room)}
         >
           立即检测
-        </Button>,
-        recording ? (
-          <Button key="watch" type="text" icon={<EyeOutlined />} onClick={() => onWatch(room)}>
+        </Button>
+        {recording ? (
+          <Button size="small" type="primary" icon={<EyeOutlined />} onClick={() => onWatch(room)}>
             观看
           </Button>
         ) : (
-          <Tooltip key="watch" title="仅录制中可观看">
-            <Button type="text" icon={<EyeOutlined />} disabled>
+          <Tooltip title="仅录制中可观看">
+            <Button size="small" icon={<EyeOutlined />} disabled>
               观看
             </Button>
           </Tooltip>
-        ),
-        room.monitorState === 'recording' ? (
-          <Popconfirm key="stop" title="确定停止当前录制？" onConfirm={() => onStop(room)}>
-            <Button type="text" danger icon={<StopOutlined />}>
+        )}
+        {room.monitorState === 'recording' ? (
+          <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
+            <Button size="small" danger icon={<StopOutlined />}>
               停止
             </Button>
           </Popconfirm>
         ) : (
-          <Button key="stop" type="text" icon={<StopOutlined />} disabled>
+          <Button size="small" icon={<StopOutlined />} disabled>
             停止
           </Button>
-        ),
-        <Button
-          key="favorite"
-          type="text"
-          icon={room.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
-          onClick={() => onFavorite(room, !room.favorited)}
-        >
-          {room.favorited ? '已收藏' : '收藏'}
-        </Button>,
-        <Button key="live" type="text" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
-          去直播间
-        </Button>,
-      ]}
-    >
-      <RoomStats
-        lastCheckedAt={room.lastCheckedAt}
-        startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
-        state={room.monitorState}
-      />
-      <div style={{ marginTop: 10 }}>
-        <RoomHealth roomId={room.id} />
+        )}
+        <Button size="small" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
+          直播间
+        </Button>
       </div>
-      {room.lastError ? (
-        <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 0, marginTop: 8 }}>
-          {room.lastError.message}
-        </Typography.Paragraph>
-      ) : null}
     </Card>
   );
 }
