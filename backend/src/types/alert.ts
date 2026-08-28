@@ -10,4 +10,8 @@ export interface Alert {
   message: string;
   occurredAt: string;
   resolved: boolean;
+  /** 关联房间（失败重试定位用），无则 null。 */
+  roomId: string | null;
+  /** 结构化错误码（如 RECORDING_START_FAILED），无则 null。 */
+  errorCode: string | null;
 }

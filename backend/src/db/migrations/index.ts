@@ -92,6 +92,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #54：告警中心结构化字段——roomId/errorCode，供失败一键重试定位房间。幂等加列。
+    version: 5,
+    up: (db) => {
+      const cols = db.prepare(`SELECT name FROM pragma_table_info('alerts')`).all() as { name: string }[];
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has('room_id')) db.exec(`ALTER TABLE alerts ADD COLUMN room_id TEXT;`);
+      if (!names.has('error_code')) db.exec(`ALTER TABLE alerts ADD COLUMN error_code TEXT;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

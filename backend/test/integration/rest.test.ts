@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
+import { AppError } from '../../src/types/error.js';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -383,6 +384,20 @@ describe('REST contract v1.1 (fake stack)', () => {
 
     const badRen = await app.inject({ method: 'PATCH', url: '/api/v1/recordings/rec_none', headers: { host: '127.0.0.1:43120' }, payload: { streamTitle: 'x' } });
     expect(badRen.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('alerts carry structured roomId/errorCode for failure retry (#54)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'r' });
+    const err = new AppError('RECORDING_START_FAILED', '启动失败', { roomId: room.id });
+    const alert = services.alerts.create({ level: 'error', source: 'recorder', message: `${err.code}: ${err.message}`, occurredAt: services.clock.iso(), roomId: room.id, errorCode: err.code });
+    const alerts = await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } });
+    const item = alerts.json().alerts.find((a: { id: string }) => a.id === alert.id);
+    expect(item.roomId).toBe(room.id);
+    expect(item.errorCode).toBe('RECORDING_START_FAILED');
+    expect(item.message).toContain('RECORDING_START_FAILED');
     await app.close();
   });
 });
