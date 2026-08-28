@@ -8,6 +8,14 @@ import { useServiceStore } from './serviceStore';
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
     case 'room:updated':
+      // DELETE broadcasts the final disabled room after removeRoom has already
+      // removed it locally. Do not resurrect that stale event into the list.
+      if (
+        e.room.monitorState === 'disabled' &&
+        !useRoomStore.getState().rooms.some((room) => room.id === e.room.id)
+      ) {
+        break;
+      }
       useRoomStore.getState().upsertRoom(e.room);
       break;
     case 'recording:updated':

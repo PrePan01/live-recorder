@@ -43,11 +43,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().upsertRoom(await roomsApi.setRoomEnabled(id, enabled));
   },
   async checkRoomNow(id) {
-    await roomsApi.checkRoomNow(id);
     const room = get().rooms.find((r) => r.id === id);
     if (room) {
       get().upsertRoom({ ...room, monitorState: 'checking', lastCheckedAt: new Date().toISOString() });
     }
+    await roomsApi.checkRoomNow(id);
   },
   async stopRoomRecording(id) {
     await roomsApi.stopRecording(id);
