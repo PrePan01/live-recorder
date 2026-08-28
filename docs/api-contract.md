@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.6 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.7 · 2026-08-28）
 
-相对 v1.5 的变更：新增 `POST /rooms/batch` 批量添加直播间（部分成功 succeeded[]/failed[]）；`GET /recordings` 新增 `dateFrom`/`dateTo` 日期筛选；`Recording` 输出 `quality`（历史页清晰度列）；新增 `PATCH /recordings/:id`（重命名，同步改文件名）与 `DELETE /recordings/:id`（连带删除文件，文件缺失容错）。
+相对 v1.6 的变更：`Recording` 输出 `integrity`（ffprobe 完整性校验 verified/failed/pending）；新增 `GET /service/self-check` 一键自检（后端/SMTP/Cookie/磁盘/目录可写，status+detail+fixHint）；`Alert` 输出 `roomId`/`errorCode`（失败一键重试定位）。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）；v1.6 批量添加与历史页增强经评审会共识（BE #44/#45 + FE #47/#48/#49）。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）；v1.6 批量添加与历史页增强经评审会共识（BE #44/#45 + FE #47/#48/#49）；v1.7 完整性校验/一键自检/失败重试经评审会共识（BE #50/#51/#54 + FE #52/#53/#55）。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -55,7 +55,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 }
 ```
 
-`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。
+`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。`integrity`（v1.7）：录制文件完整性 `verified | failed | pending`（ffprobe 异步校验，缺 ffprobe/超时→pending，损坏/截断→failed 并发告警），未记录时字段省略。
 
 字段命名统一 camelCase。
 
@@ -89,10 +89,11 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 | 设置 | `GET` / `PUT` `/settings` | 读取 / 更新全局设置 |
 | 设置 | `POST` `/settings/validate-directory` | 校验录像目录 |
 | 设置 | `POST` `/settings/test-smtp` | SMTP 连通性测试 |
-| 告警 | `GET` `/alerts` | 告警列表 |
+| 告警 | `GET` `/alerts` | 告警列表（v1.7 起含 `roomId`/`errorCode` 结构化字段） |
 | 告警 | `PATCH` `/alerts/:id` | 单条标记已读 |
 | 告警 | `POST` `/alerts/read-all` | 全部标记已读 |
 | 服务 | `GET` `/service/status` | `{ serviceStatus }`：状态、磁盘、活跃录制数、`setupCompleted` |
+| 服务 | `GET` `/service/self-check` | 一键自检（v1.7）：`{ items: [{ key, label, status: ok|fail|warn, detail, fixHint }] }`，逐项=后端/SMTP(dry-run)/平台Cookie/磁盘/目录可写，每项 3s 超时 |
 
 ### `ServiceStatus` 结构（v1.1 定稿细化）
 
