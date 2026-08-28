@@ -10,6 +10,7 @@ export interface Recording {
   platform: Platform;
   streamSessionId: string | null;
   streamTitle: string;
+  quality: string | null;
   state: RecordingState;
   startedAt: string;
   endedAt: string | null;
@@ -26,6 +27,8 @@ export interface RecordingQuery {
   sessionId?: string;
   state?: RecordingState;
   groupBy?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface PagedRecordings {
