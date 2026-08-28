@@ -8,7 +8,7 @@ import { SystemClock } from './clock.js';
 import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
 import { KeytarSecretStore } from '../security/keychain-store.js';
-import { MAIL_PASSWORD_KEY } from '../security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY } from '../security/keys.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { BilibiliAdapter } from '../platform/bilibili.js';
 import { DouyinAdapter } from '../platform/douyin.js';
@@ -49,6 +49,8 @@ export interface Services {
   scheduler: Scheduler;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
+  /** 平台会话凭证（v1.3：抖音 Cookie），非该平台返回 undefined。 */
+  platformCookie(platform: 'bilibili' | 'douyin'): Promise<string | undefined>;
 }
 
 export interface BuildOptions {
@@ -82,6 +84,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     : { bilibili: fakeAdapter, douyin: fakeAdapter };
 
   const useKeychain = mode === 'real';
+  const secretStore: SecretStore = useKeychain ? new KeytarSecretStore() : new MemorySecretStore();
 
   const services: Services = {
     mode,
@@ -93,11 +96,12 @@ export function buildServices(opts: BuildOptions = {}): Services {
     recordings: new RecordingRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
-    secretStore: useKeychain ? new KeytarSecretStore() : new MemorySecretStore(),
+    secretStore,
     diskGuard: new FakeDiskGuard(),
     mailer: undefined as unknown as Mailer,
     adapterFor: (platform) => adapters[platform],
     engineFor: () => (mode === 'real' ? new StreamRecordingEngine() : fakeEngine),
+    platformCookie: async (platform) => (platform === 'douyin' ? (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined : undefined),
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
     scheduler: undefined as unknown as Scheduler,

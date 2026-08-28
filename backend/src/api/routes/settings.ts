@@ -7,12 +7,13 @@ import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, MailConfig, SettingsView } from '../../types/index.js';
 import { validateSettings } from '../../config/schema.js';
-import { MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 
 async function settingsView(services: Services): Promise<SettingsView> {
   const stored = services.settings.load();
   const settings: AppSettings = stored ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
   const passwordSet = await services.secretStore.has(MAIL_PASSWORD_KEY);
+  const hasDouyinCookie = await services.secretStore.has(DOUYIN_COOKIE_KEY);
   const mail = { ...settings.mail, passwordSet };
   return {
     recordingDirectory: settings.recordingDirectory,
@@ -22,6 +23,7 @@ async function settingsView(services: Services): Promise<SettingsView> {
     retry: settings.retry,
     diskGuard: settings.diskGuard,
     mail,
+    douyinCookie: { hasCookie: hasDouyinCookie },
   };
 }
 
@@ -31,10 +33,12 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   });
 
   app.put('/api/v1/settings', async (req, reply) => {
-    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } };
+    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string };
     const password = typeof body.mail?.password === 'string' && body.mail.password.length > 0 ? body.mail.password : null;
+    const douyinCookie = typeof body.douyinCookie === 'string' ? body.douyinCookie : null;
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
     if (incoming.mail) delete incoming.mail.password;
+    delete (incoming as { douyinCookie?: string }).douyinCookie;
     const merged: AppSettings = {
       ...(services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings)),
       ...incoming,
@@ -44,6 +48,10 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     services.settings.save(merged);
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
+    if (douyinCookie !== null) {
+      if (douyinCookie.length > 0) await services.secretStore.set(DOUYIN_COOKIE_KEY, douyinCookie);
+      else await services.secretStore.delete(DOUYIN_COOKIE_KEY);
+    }
     const view = await settingsView(services);
     services.events.emit({ type: 'settings:updated', data: view });
     return reply.send({ settings: view });

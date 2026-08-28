@@ -51,7 +51,8 @@ export class Scheduler {
   async checkRoom(room: Room): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
-    const status = await adapter.checkLiveStatus(room.url);
+    const cookie = await this.services.platformCookie(room.platform);
+    const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {
       try {
         await this.manager.maybeStartRecording({ ...room, monitorState: 'checking' }, status);

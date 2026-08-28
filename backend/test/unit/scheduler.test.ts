@@ -132,4 +132,31 @@ describe('Scheduler', () => {
     expect(after.lastError?.code).toBe('RECORDING_START_FAILED');
     expect(services.alerts.list().some((a) => a.message.includes('RECORDING_START_FAILED'))).toBe(true);
   });
+
+  it('passes the configured douyin cookie to the adapter on check', async () => {
+    const { services } = newServices();
+    await services.secretStore.set('douyin.cookie', 'sessionid=abc');
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/6', displayName: 'C' });
+    let seenCookie: string | undefined;
+    const spy: PlatformAdapter = {
+      platform: 'douyin',
+      async checkLiveStatus(_url, cookie) {
+        seenCookie = cookie;
+        return { status: 'offline' };
+      },
+      async getStreamUrl() {
+        return { url: 'https://x/flv', format: 'flv', actualQuality: 'original' };
+      },
+      normalizeUrl: (u) => u,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => spy;
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(seenCookie).toBe('sessionid=abc');
+
+    await services.secretStore.delete('douyin.cookie');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(seenCookie).toBeUndefined();
+  });
 });

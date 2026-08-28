@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.2 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.3 · 2026-08-28）
 
-相对 v1.1 的变更：新增 `RESOURCE_NOT_FOUND`（404，错误码全集 18→19），覆盖全部按 id 寻址的 HTTP 端点；明确与 WS 关闭码 4002 的边界；ServiceStatus/disk:space 结构细化（v1.1 定稿细化一并归档）。
+相对 v1.2 的变更：新增抖音 Cookie 配置（Settings 增 `douyinCookie`，POST/PUT 可写、SecretStore 存不落盘、GET 仅回 `hasCookie` 布尔不回显值；受限房间提示沿用 `PLATFORM_ACCESS_RESTRICTED`，FE 引导去设置页填写）。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径（评审线程 553da20f / 069e6fdb / 1dcb72d6 三方确认）全部保留；v1.2 变更经 8a5f0b88 线程 FE/QA 互确认。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径（评审线程 553da20f / 069e6fdb / 1dcb72d6 三方确认）全部保留；v1.2 变更经 8a5f0b88 线程 FE/QA 互确认；v1.3 抖音 Cookie 经 QA 测试口径确认 + PM 批准。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -197,6 +197,7 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 - `quality`（original/1080p/720p/360p，默认 original）用户可配，真实降级逻辑阶段 C 生效；recordings 表内部列记实际清晰度，API 不输出（v1.1 勘误补正，commit b90ec4d）
 - 通知去重窗口 v1 服务端固定 30 分钟，不暴露到 `/settings`；契约预留可选字段 `dedupeWindowMinutes`（前端不渲染）
 - SMTP 密码不回显，`GET /settings` 仅返回 `passwordSet: true|false`（废弃 `passwordConfigured`）；密码经 `SecretStore`（keytar / CI 用 FakeSecretStore）存本机 keychain
+- `douyinCookie`（v1.3）：POST/PUT `/settings` 可写（字符串，空串表示清除），经 `SecretStore` 存本机 keychain 不落盘；`GET /settings` 仅返回 `douyinCookie: { hasCookie: true|false }`，永不回显值；抖音房间受限/反爬时按 `PLATFORM_ACCESS_RESTRICTED` 提示，FE 引导去设置页填写
 
 ## Mock 约定
 

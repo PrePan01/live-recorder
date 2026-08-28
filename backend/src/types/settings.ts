@@ -52,4 +52,6 @@ export interface SettingsView {
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
   mail: MailConfigView;
+  /** v1.3：抖音 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）。 */
+  douyinCookie: { hasCookie: boolean };
 }

@@ -68,7 +68,8 @@ export class RecorderManager {
       }
     }
 
-    const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality);
+    const cookie = await this.services.platformCookie(room.platform);
+    const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
     const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
     const recording = this.services.recordings.create({
       roomId: room.id,
@@ -175,7 +176,8 @@ export class RecorderManager {
     });
     if (this.active.get(room.id)?.stopRequested) return;
     try {
-      const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality);
+      const cookie = await this.services.platformCookie(room.platform);
+      const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso());
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
