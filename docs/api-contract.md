@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.7 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.8 · 2026-08-28）
 
-相对 v1.6 的变更：`Recording` 输出 `integrity`（ffprobe 完整性校验 verified/failed/pending）；新增 `GET /service/self-check` 一键自检（后端/SMTP/Cookie/磁盘/目录可写，status+detail+fixHint）；`Alert` 输出 `roomId`/`errorCode`（失败一键重试定位）。
+相对 v1.7 的变更：新增 `GET /recordings/:id/file`（历史回放，FLV 静态服务）；`GET /recordings/export`（CSV 导出，UTF-8 BOM）；`POST /recordings/batch-delete`（批量删除，部分成功）；`GET /rooms/:id/stats`（房间健康度统计）；`settings.recordingFormat`（source_flv | mp4_after，录制格式）；录制文件扩展名统一 `.flv`；`Recording` 输出 `integrity`。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）；v1.6 批量添加与历史页增强经评审会共识（BE #44/#45 + FE #47/#48/#49）；v1.7 完整性校验/一键自检/失败重试经评审会共识（BE #50/#51/#54 + FE #52/#53/#55）。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）；v1.6 批量添加与历史页增强经评审会共识（BE #44/#45 + FE #47/#48/#49）；v1.7 完整性校验/一键自检/失败重试经评审会共识（BE #50/#51/#54 + FE #52/#53/#55）；v1.8 回放/格式/批量删除/CSV/健康度经评审会共识（BE #58/#60/#64/#67/#69/#70）。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -86,6 +86,10 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 | 录制 | `POST` `/recordings/:id/open` | 打开录像所在目录 |
 | 录制 | `PATCH` `/recordings/:id` | 重命名录制（v1.6，同步改文件名） |
 | 录制 | `DELETE` `/recordings/:id` | 删除录制（v1.6，连带删文件，缺失容错） |
+| 录制 | `GET` `/recordings/:id/file` | 历史回放（v1.8，FLV 静态服务，仅 completed 且有文件） |
+| 录制 | `POST` `/recordings/batch-delete` | 批量删除（v1.8，body `{ids[]}`≤100 → `{deleted[], failed[]}`） |
+| 录制 | `GET` `/recordings/export` | CSV 导出（v1.8，UTF-8 BOM，按现筛选条件+时长统计） |
+| 房间 | `GET` `/rooms/:id/stats` | 房间健康度（v1.8，`?days=N` 近 N 天次数/大小/成功率+byDay） |
 | 设置 | `GET` / `PUT` `/settings` | 读取 / 更新全局设置 |
 | 设置 | `POST` `/settings/validate-directory` | 校验录像目录 |
 | 设置 | `POST` `/settings/test-smtp` | SMTP 连通性测试 |
