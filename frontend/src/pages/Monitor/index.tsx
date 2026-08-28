@@ -6,6 +6,7 @@ import { usePreviewStore } from '../../stores/previewStore';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
+import RoomHealth from '../../components/RoomHealth';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -84,6 +85,9 @@ function RoomCard({
         startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
         state={room.monitorState}
       />
+      <div style={{ marginTop: 10 }}>
+        <RoomHealth roomId={room.id} />
+      </div>
       {room.lastError ? (
         <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 0, marginTop: 8 }}>
           {room.lastError.message}
