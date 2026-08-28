@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -259,6 +259,83 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     expect(room.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
     expect(services.recordings.list({ roomId }).items).toHaveLength(0);
     expect(services.alerts.list().some((a) => a.message.includes('DISK_SPACE_INSUFFICIENT'))).toBe(true);
+    await app.close();
+  });
+});
+
+describe('QA v1.4: browse-directories traversal + config import semantics', () => {
+  it('normalizes absolute paths with .. and never escapes the resolved root', async () => {
+    const { app } = buildApp(newServices());
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-qa-browse-'));
+    await mkdir(path.join(base, 'sub'));
+    const traversal = await app.inject({
+      method: 'GET',
+      url: `/api/v1/settings/browse-directories?path=${encodeURIComponent(path.join(base, '..', '..', '..', '..'))}`,
+      headers: HOST,
+    });
+    expect(traversal.statusCode).toBe(200);
+    expect(path.isAbsolute(traversal.json().path)).toBe(true);
+    expect(traversal.json().path).toBe(path.resolve(path.join(base, '..', '..', '..', '..')));
+
+    const child = await app.inject({
+      method: 'GET',
+      url: `/api/v1/settings/browse-directories?path=${encodeURIComponent(base)}`,
+      headers: HOST,
+    });
+    expect(child.json().path).toBe(base);
+    expect(child.json().directories.map((d: { name: string }) => d.name)).toContain('sub');
+    await app.close();
+  });
+
+  it('import stops on invalid settings with no partial application', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/config/import', headers: HOST,
+      payload: {
+        config: {
+          settings: { recordingDirectory: '/tmp/x', maxConcurrentRecordings: 999 },
+          rooms: [{ platform: 'bilibili', url: 'https://live.bilibili.com/9004', displayName: 'R' }],
+        },
+      },
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(services.rooms.list().some((r) => r.url === 'https://live.bilibili.com/9004')).toBe(false);
+    await app.close();
+  });
+
+  it('import reports partial success details (appliedSettings/importedRooms) on mid-way failure', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-import-'));
+    services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'existing' });
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/config/import', headers: HOST,
+      payload: {
+        config: {
+          settings: {
+            recordingDirectory: dir,
+            maxConcurrentRecordings: 2,
+            quality: 'original',
+            checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+            retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+            diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+            mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+          },
+          rooms: [
+            { platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'dup' },
+            { platform: 'douyin', url: 'https://live.douyin.com/10', displayName: 'new' },
+          ],
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().appliedSettings).toBe(true);
+    expect(res.json().importedRooms).toBe(1);
+    expect(res.json().skippedRooms).toBe(1);
+    expect(services.settings.load()?.recordingDirectory).toBe(dir);
     await app.close();
   });
 });
