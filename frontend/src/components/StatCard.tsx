@@ -22,7 +22,10 @@ export default function StatCard({ label, value, tone = 'default' }: StatCardPro
       <div className="lr-stat__label" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {label}
       </div>
-      <div className={`lr-stat__value${cls}`} style={{ whiteSpace: 'nowrap' }}>
+      <div
+        className={`lr-stat__value${cls}`}
+        style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+      >
         {value}
       </div>
     </div>
