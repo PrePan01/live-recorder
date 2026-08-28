@@ -72,14 +72,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
     if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
-    const adapter = services.adapterFor(room.platform);
-    const status = await adapter.checkLiveStatus(room.url);
-    services.rooms.setState(id, 'idle', {
-      lastCheckedAt: services.clock.iso(),
-      lastError: status.error ?? null,
-    });
-    const updated = services.rooms.get(id);
-    if (updated) services.events.emit({ type: 'room:updated', data: updated });
+    await services.scheduler.triggerImmediateCheck(id);
     return reply.send({ ok: true });
   });
 
@@ -87,9 +80,10 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
     if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
-    if (room.monitorState !== 'recording' && room.monitorState !== 'reconnecting') {
+    if (!services.manager.isRoomActive(id)) {
       throw new AppError('PREVIEW_NOT_RECORDING', '当前未在录制', { roomId: id });
     }
+    await services.manager.stopRecording(id);
     return reply.send({ ok: true });
   });
 }

@@ -1,14 +1,14 @@
-# Live Recorder 本地服务 API 契约 v1.1
+# localhost 录制服务 API 契约（v1.2 · 2026-08-28）
 
-版本：v1.1（2026-08-28 定稿，评审 10 项互确认 + PrePan 审核通过）
-维护：PM 牵头；实现蓝本随首个后端提交入 `docs/`。变更一律走版本升级（→v1.2）并经 FE/QA 互确认。
+相对 v1.1 的变更：新增 `RESOURCE_NOT_FOUND`（404，错误码全集 18→19），覆盖全部按 id 寻址的 HTTP 端点；明确与 WS 关闭码 4002 的边界；ServiceStatus/disk:space 结构细化（v1.1 定稿细化一并归档）。
 
-Base URL：`http://127.0.0.1:43120/api/v1`。响应均为 JSON，字段一律 camelCase。
-服务仅绑定 `127.0.0.1`；Host/Origin 白名单校验（dev 追加 `http://localhost:5173`，可配置）。
+Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-## 1. 资源模型
+状态说明：v1.1 冻结口径（评审线程 553da20f / 069e6fdb / 1dcb72d6 三方确认）全部保留；v1.2 变更经 8a5f0b88 线程 FE/QA 互确认。后续变更继续走版本升级并经三方互确认。
 
-### Room
+## 资源模型
+
+### `Room`
 
 ```json
 {
@@ -25,114 +25,179 @@ Base URL：`http://127.0.0.1:43120/api/v1`。响应均为 JSON，字段一律 ca
 }
 ```
 
-- `monitorState`：`idle | checking | recording | reconnecting | completed | failed | disabled`
-- `lastError`：结构化对象 `ErrorObject | null`（不返回转义字符串）
+`monitorState`：`idle | checking | recording | reconnecting | completed | failed | disabled`。停用条目的状态为 `disabled`；录制项不使用 `checking` 或 `disabled`。
 
-### Recording
+`lastError`（Room）与 `failureReason`（Recording）为结构化对象或 `null`：`{ "code": "...", "message": "...", "occurredAt": "...", "retryable": true|false, "recordingId?": "..." }`（v1.1 第 6 项口径：DB 存 JSON，repository 层解析后输出，全链路无转义字符串，FE 直接断言 code）。
+
+### `Recording`
 
 ```json
 {
   "id": "rec_01J...",
   "roomId": "room_01J...",
   "platform": "bilibili",
-  "streamSessionId": "sess_123",
   "streamTitle": "直播标题",
   "state": "recording",
   "startedAt": "2026-08-28T01:00:00.000Z",
   "endedAt": null,
-  "filePath": "/Users/me/Movies/LiveRecordings/bilibili/主播名/2026-08-28_010000.mkv",
+  "filePath": "/Users/me/Videos/bilibili/主播名/2026-08-28_010000.mkv",
   "fileSizeBytes": 0,
   "failureReason": null,
   "retryCount": 0,
-  "createdAt": "2026-08-28T01:00:00.000Z"
+  "streamSessionId": "sess_01J..."
 }
 ```
 
-- `state`：`pending | recording | reconnecting | completed | failed`
-- `failureReason`：`ErrorObject | null`
-- `quality`、`schema_version`、告警 `resolved` 内部字段暂不暴露（需暴露走 v1.2）
+`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。
 
-## 2. REST 端点
+字段命名统一 camelCase。
 
-| 方法 | 路径 | 说明 |
+## 成功响应 envelope（已冻结）
+
+- 单资源：`{ "room": ... }` / `{ "recording": ... }` / `{ "alert": ... }`
+- 列表：`GET /rooms` → `{ "rooms": [...] }`；`GET /recordings` → `{ "items": [...], "total": n, "page": n, "pageSize": n }`；`GET /settings` → `{ "settings": ... }`；`GET /alerts` → `{ "alerts": [...] }`；`GET /service/status` → `{ "serviceStatus": ... }`
+- 操作类端点（无资源返回时）：`{ "ok": true }`（必要时附资源字段）
+- `POST /rooms` 成功：`201` + `{ "room": ... }`；`DELETE /rooms/:id` 成功：`204` 无 body
+- `PATCH /rooms/:id/enable` body：`{ "enabled": true|false }` → `{ "room": ... }`
+
+## 端点
+
+| 组 | 方法/路径 | 用途 |
 | --- | --- | --- |
-| GET | `/health` | 服务状态与版本 |
-| GET | `/rooms` | `{ rooms }` |
-| POST | `/rooms` | 201 + `{ room }`；无效链接 `422 ROOM_LINK_INVALID`；重复 `409 ROOM_LINK_DUPLICATE` |
-| PATCH | `/rooms/:id` | `{ room }` |
-| PATCH | `/rooms/:id/enable` | body `{ enabled: boolean }` → `{ room }` |
-| DELETE | `/rooms/:id` | 204 无 body |
-| POST | `/rooms/:id/check` | 立即检测 → `{ ok: true }` |
-| POST | `/rooms/:id/stop-recording` | 手动停止 → `{ ok: true }` |
-| GET | `/recordings` | `{ items, total, page, pageSize }`；参数 `page/pageSize/roomId/state/sessionId/groupBy`，默认 `startedAt` 倒序，pageSize 默认 20 上限 100 |
-| POST | `/recordings/:id/open` | 打开所在目录（仅接受表内 id）→ `{ ok: true }` |
-| GET | `/settings` | `{ settings }`（`SettingsView`，含 `passwordSet`） |
-| PUT | `/settings` | `{ settings }` |
-| POST | `/settings/validate-directory` | `{ ok: true }` 或 `422 DIRECTORY_NOT_WRITABLE` |
-| POST | `/settings/test-smtp` | `{ ok: true }` 或 `502 SMTP_SEND_FAILED` |
-| GET | `/alerts` | `{ alerts }` |
-| PATCH | `/alerts/:id` | 标记已读 → `{ alert }` |
-| POST | `/alerts/read-all` | `{ ok: true }` |
-| GET | `/service/status` | `{ serviceStatus }`：state、磁盘、活跃录制数、`setupCompleted` |
+| 房间 | `GET` / `POST` `/rooms` | 查询 / 新建关注直播间 |
+| 房间 | `PATCH` / `DELETE` `/rooms/:id` | 编辑 / 删除直播间 |
+| 房间 | `PATCH` `/rooms/:id/enable` | 启用/停用监控 |
+| 房间 | `POST` `/rooms/:id/check` | 立即检测（供 UI 调试） |
+| 房间 | `POST` `/rooms/:id/stop-recording` | 手动停止录制 |
+| 录制 | `GET` `/recordings` | 历史查询；参数 `page`、`pageSize`（默认 20，上限 100）、`roomId`、`state`、`sessionId`、`groupBy`；默认 `startedAt` 倒序 |
+| 录制 | `POST` `/recordings/:id/open` | 打开录像所在目录 |
+| 设置 | `GET` / `PUT` `/settings` | 读取 / 更新全局设置 |
+| 设置 | `POST` `/settings/validate-directory` | 校验录像目录 |
+| 设置 | `POST` `/settings/test-smtp` | SMTP 连通性测试 |
+| 告警 | `GET` `/alerts` | 告警列表 |
+| 告警 | `PATCH` `/alerts/:id` | 单条标记已读 |
+| 告警 | `POST` `/alerts/read-all` | 全部标记已读 |
+| 服务 | `GET` `/service/status` | `{ serviceStatus }`：状态、磁盘、活跃录制数、`setupCompleted` |
 
-### Settings 结构（v1.1）
+### `ServiceStatus` 结构（v1.1 定稿细化）
+
+```json
+{
+  "state": "running",
+  "version": "0.1.0",
+  "uptimeSeconds": 123,
+  "disk": { "freeBytes": 123, "totalBytes": 456 },
+  "activeRecordings": 1,
+  "setupCompleted": true
+}
+```
+
+`state`：`running | restarting`。offline 不入枚举：由 FE 连接失败自判（fetch/EventSource 断且退避重连耗尽 → "服务已断开"）；收到 `state=restarting` 或 503 → "服务重启中"并按退避重连。SSE `service:status` 的 `data` 即本结构；`uptimeSeconds` 可选。
+
+`disk:space` 的 `data`：`{ directory, freeBytes, totalBytes, low }`（FE 消费 freeBytes/totalBytes，directory/low 附加可忽略）。
+| 事件 | `GET` `/events` | SSE 状态/录制/告警推送 |
+| 预览 | `WS` `/ws/preview/:roomId` | FLV 预览流转发 |
+
+## SSE（已冻结）
+
+标准帧格式：`event: <名称>` 行 + `data: <JSON>` 行；`data` 不内嵌 `type` 字段，FE 按事件名 `addEventListener`。
+
+事件名（冒号分隔）：`room:updated` / `recording:updated` / `alert:created` / `alert:updated` / `settings:updated` / `service:status` / `disk:space`；`data` 为相应资源模型或统一错误对象。
+
+## WebSocket 预览（已冻结）
+
+`ws://127.0.0.1:43120/ws/preview/:roomId`，连接后接收 FLV 二进制帧。服务端断开前先发 `{ "type": "stream_end", "reason": "ended|stream_lost" }`（仅 1000/4004 前置），`stream_end` 帧保证先于关闭帧写入（服务端单写队列）。
+
+关闭码 ↔ 错误码映射：
+
+| 关闭码 | 含义 | 错误码 | stream_end 前置 | FE 文案 | 重连 |
+| --- | --- | --- | --- | --- | --- |
+| `1000` | 正常结束（下播 / stop-recording） | — | `reason=ended` | "本场录制已结束" | 否 |
+| `4002` | 握手时 roomId 不存在或 `monitorState ∉ {recording, reconnecting}`，拒绝并关闭 | `PREVIEW_NOT_RECORDING`（retryable=false） | 无 | "当前未在录制，无法预览" | 否 |
+| `4003` | 全局预览数已达 2 | `PREVIEW_LIMIT_REACHED`（文案与 HTTP 同源） | 无 | "预览数已达上限（2 路）" | 否 |
+| `4004` | 断流重连 3 次（5/15/45s）耗尽，录制标记 failed | `STREAM_DISCONNECTED_RECONNECT_EXHAUSTED` | `reason=stream_lost` | "直播流中断" | 否 |
+| `1011` | 服务内部错误（标准码，不占业务码） | — | 无 | 重连失败提示"预览连接异常" | 是 |
+
+FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011/网络异常自动重连 ≤3 次（1/3/5s）。~~4005~~ 作废；~~4004=未在录制~~ 作废。
+
+## 统一错误信封（HTTP 非 2xx）
+
+```json
+{
+  "error": {
+    "code": "DISK_SPACE_INSUFFICIENT",
+    "message": "录像目录可用空间低于安全阈值",
+    "roomId": "room_01J...",
+    "recordingId": null,
+    "occurredAt": "2026-08-28T01:00:00.000Z",
+    "retryable": false,
+    "details": { "freeBytes": 123, "thresholdBytes": 456 }
+  }
+}
+```
+
+错误对象始终包含 `code`、`message`、`roomId`、`recordingId`（无关联时 `null`）、`occurredAt`、`retryable`；`retryable` 即 FE"重试"按钮依据。
+
+### 错误码全集（19 码，v1.2）
+
+| 码 | 触发面 | HTTP | retryable | 告警级别 |
+| --- | --- | --- | --- | --- |
+| `ROOM_LINK_INVALID` | 添加/编辑房间 | 422 | false | — |
+| `ROOM_LINK_DUPLICATE` | 添加房间 | 409 | false | — |
+| `DIRECTORY_NOT_WRITABLE` | validate-directory / PUT settings | 422 | false | error |
+| `DISK_SPACE_INSUFFICIENT` | 调度/手动检测 | 409 | false | error（含邮件） |
+| `CONCURRENT_LIMIT_REACHED` | 手动检测；自动调度仅 SSE | 409 | true（下轮重排） | warning |
+| `SMTP_SEND_FAILED` | test-smtp；后台通知仅告警 | 502 | true | warning |
+| `SERVICE_UNAVAILABLE` | 启停窗口期请求 | 503 | true | — |
+| `CONFIG_LOAD_FAILED` | 启动配置加载失败 | 500 | false | error |
+| `PLATFORM_ACCESS_RESTRICTED` | 登录/Cookie/私密受限 | — | false | warning |
+| `PLATFORM_CHANGED` | 平台接口/反爬变更 | — | false | error |
+| `NETWORK_UNAVAILABLE` | 平台请求超时/失败 | — | true | warning |
+| `RECORDING_START_FAILED` | 录制器启动失败 | — | true | error（含邮件） |
+| `STREAM_DISCONNECTED_RECONNECT_EXHAUSTED` | 重连耗尽；WS 4004 | — | true（指下场直播） | error（含邮件） |
+| `RECORDING_FILE_CORRUPTED` | 完成校验失败 | — | false | error |
+| `STREAM_FORMAT_CHANGED` | 自动切换格式（服务端自动续录） | — | —（v1.1 勘误：info 级提示码不设重试） | info |
+| `QUALITY_DOWNGRADED` | 清晰度降级 | — | — | info |
+| `PREVIEW_LIMIT_REACHED` | WS 4003 | — | true（预览释放后可重连） | — |
+| `PREVIEW_NOT_RECORDING` | WS 4002 | — | false（不弹重试） | — |
+| `RESOURCE_NOT_FOUND`（v1.2 新增） | 按 id 寻址的 HTTP 端点资源不存在（rooms/:id 的 PATCH/DELETE/enable/check/stop-recording、recordings/:id/open、alerts/:id） | 404 | false | — |
+
+边界（v1.2 明确）：WS 预览握手"房间不存在/未在录制"仍走 4002/`PREVIEW_NOT_RECORDING`（冻结表），HTTP 资源不存在走 `RESOURCE_NOT_FOUND`，两套不混用。`RESOURCE_NOT_FOUND` 的 `details.resource` 放资源类型，message 由服务端给出、FE 直接渲染（兜底文案"资源不存在或已被删除"）。
+
+文案要点：`PLATFORM_CHANGED`＝"平台有变动，等待适配更新"（提示类，不弹重试）；`PREVIEW_NOT_RECORDING`＝"当前未在录制，无法预览"。`DISK_SPACE_LOW` 作废，统一 `DISK_SPACE_INSUFFICIENT`。
+
+错误通道（三通道，同一码全局唯一定义；不设 `service.error` 事件）：请求错误走 HTTP 信封；房间级 → `room:updated.lastError`；会话级 → `recording:updated.failureReason`；服务级异常 → `service:status`（restarting）/ 客户端连接失败自判 offline + `alert:created`。邮件通知仅三类（recording_started / recording_failed / disk 空间不足）；提示类只进告警 `level=info`。
+
+写请求全部经 JSON Schema（Fastify）校验，非法字段直接 `400`。
+
+## 设置（PUT /settings 示例，v1 口径）
 
 ```json
 {
   "recordingDirectory": "/Users/me/Movies/LiveRecordings",
   "maxConcurrentRecordings": 2,
-  "quality": "original",
   "checkIntervalSec": { "default": 60, "bilibili": 60, "douyin": 120 },
+  "quality": "original",
   "retry": { "maxAttempts": 3, "delaysSeconds": [5, 15, 45] },
   "diskGuard": { "minFreeBytes": 21474836480, "minFreePercent": 10 },
   "mail": {
-    "enabled": true, "host": "smtp.example.com", "port": 465, "secure": true,
-    "username": "notice@example.com", "from": "notice@example.com",
-    "recipients": ["me@example.com"], "passwordSet": true
+    "enabled": true,
+    "host": "smtp.example.com",
+    "port": 465,
+    "secure": true,
+    "username": "notice@example.com",
+    "password": "***",
+    "from": "notice@example.com",
+    "recipients": ["me@example.com"]
   }
 }
 ```
 
-- 密码只写不读（PUT 接收 → SecretStore；GET 仅 `passwordSet` 布尔）
-- 邮件去重窗口 v1 固定 30 分钟，不暴露字段
-- 旧字段 `pollIntervalSeconds`、`DISK_SPACE_LOW` 示例作废
+- `checkIntervalSec` 为按平台对象 + 全局默认兜底（废弃 `pollIntervalSeconds`）；同平台房间串行检测
+- `quality`（original/1080p/720p/360p，默认 original）用户可配，真实降级逻辑阶段 C 生效；recordings 表内部列记实际清晰度，API 不输出（v1.1 勘误补正，commit b90ec4d）
+- 通知去重窗口 v1 服务端固定 30 分钟，不暴露到 `/settings`；契约预留可选字段 `dedupeWindowMinutes`（前端不渲染）
+- SMTP 密码不回显，`GET /settings` 仅返回 `passwordSet: true|false`（废弃 `passwordConfigured`）；密码经 `SecretStore`（keytar / CI 用 FakeSecretStore）存本机 keychain
 
-## 3. SSE
+## Mock 约定
 
-`GET /api/v1/events`，标准帧：`event: <名>` 行 + `data: <JSON>` 行，data 不内嵌 type。
-事件（7 个）：`room:updated`、`recording:updated`、`alert:created`、`alert:updated`、`settings:updated`、`service:status`、`disk:space`。
-`data` 为对应资源模型或 `ErrorObject`。不设 `service.error` 事件。
-
-## 4. WebSocket 预览
-
-`ws://127.0.0.1:43120/ws/preview/:roomId`，接收 FLV 二进制帧。
-服务端在正常结束/断流场景先下发 `{ "type": "stream_end", "reason": "ended" | "stream_lost" }` 文本帧，再关闭。
-
-| 关闭码 | 含义 | stream_end 前置 | 对应错误码 |
-| --- | --- | --- | --- |
-| 1000 | 正常结束 | `ended` | — |
-| 4002 | 房间不存在或未在录制 | — | `PREVIEW_NOT_RECORDING`（retryable=false） |
-| 4003 | 预览并发超限（全局 2 路） | — | `PREVIEW_LIMIT_REACHED` |
-| 4004 | 断流且重连耗尽 | `stream_lost` | `STREAM_DISCONNECTED_RECONNECT_EXHAUSTED` |
-| 1011 | 服务内部错误 | — | —（FE 自动重连 ≤3 次，1/3/5s） |
-
-重连规则：仅 1011/网络异常重连；4002/4003/4004 不重连；FE 以 `reason` 为准、关闭码兜底。
-
-## 5. 错误契约
-
-统一信封（HTTP 非 2xx）：
-
-```json
-{ "error": { "code": "...", "message": "...", "roomId": null, "recordingId": null, "occurredAt": "...", "retryable": false } }
-```
-
-错误码 18 个：`ROOM_LINK_INVALID`(422,false)、`ROOM_LINK_DUPLICATE`(409,false)、`PLATFORM_ACCESS_RESTRICTED`(运行时,false)、`PLATFORM_CHANGED`(运行时,false)、`DIRECTORY_NOT_WRITABLE`(422,false)、`DISK_SPACE_INSUFFICIENT`(409,false)、`CONCURRENT_LIMIT_REACHED`(409,true)、`RECORDING_START_FAILED`(运行时,true)、`STREAM_DISCONNECTED_RECONNECT_EXHAUSTED`(运行时,true)、`SMTP_SEND_FAILED`(502,true)、`SERVICE_UNAVAILABLE`(503,true)、`NETWORK_UNAVAILABLE`(运行时,true)、`RECORDING_FILE_CORRUPTED`(运行时,false)、`CONFIG_LOAD_FAILED`(500,false)、`STREAM_FORMAT_CHANGED`(运行时,—)、`PREVIEW_LIMIT_REACHED`(WS 4003,true)、`PREVIEW_NOT_RECORDING`(WS 4002,false)、`QUALITY_DOWNGRADED`(运行时,—)。
-
-- 运行时错误三通道：`room:updated.lastError`、`recording:updated.failureReason`、`alert:created`；服务级异常 = `service:status`(offline/restarting) + `alert:created`
-- info 级提示码（`STREAM_FORMAT_CHANGED`、`QUALITY_DOWNGRADED`）retryable 为 `—`，FE 不渲染重试按钮
-- 邮件通知三类：`recording_started` / `recording_failed` / `disk_space_low`
-
-## 6. Mock / 测试开关
-
-- `RECORDING_ADAPTER=fake`：不触网、不启动真实录制，`POST /rooms/:id/check` 走可编程假适配器；fake 流输出最小可播放 FLV
-- 真实平台/E2E 用例标记 `@live`，默认 CI 不执行
+前端可用上述样例作为固定 Mock。开发模式 `RECORDING_ADAPTER=fake` 时，`POST /rooms/:id/check` 按可注入假适配器（FakePlatformAdapter / fake-recorder / FakeSecretStore / fake clock）返回状态，不访问平台、不启动外部录制器。

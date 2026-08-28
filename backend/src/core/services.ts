@@ -19,6 +19,9 @@ import { SettingsRepository } from '../db/repositories/settings.repo.js';
 import { AlertRepository } from '../db/repositories/alert.repo.js';
 import os from 'node:os';
 import path from 'node:path';
+import { Notifier } from './notifier.js';
+import { RecorderManager } from './recorder-manager.js';
+import { Scheduler } from './scheduler.js';
 
 export type AdapterMode = 'fake' | 'real';
 
@@ -35,6 +38,9 @@ export interface Services {
   secretStore: SecretStore;
   diskGuard: DiskGuard;
   mailer: Mailer;
+  notifier: Notifier;
+  manager: RecorderManager;
+  scheduler: Scheduler;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
 }
@@ -70,7 +76,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     throw new Error('real adapter mode is not implemented until stage C');
   }
 
-  return {
+  const services: Services = {
     mode,
     startedAt: clock.now(),
     events: new AppEventBus(),
@@ -85,7 +91,20 @@ export function buildServices(opts: BuildOptions = {}): Services {
     mailer: new FakeMailer(() => clock.iso()),
     adapterFor: () => fakeAdapter,
     engineFor: () => fakeEngine,
+    notifier: undefined as unknown as Notifier,
+    manager: undefined as unknown as RecorderManager,
+    scheduler: undefined as unknown as Scheduler,
   };
+  services.notifier = new Notifier(
+    services.mailer,
+    clock,
+    services.alerts,
+    () => services.settings.load()?.mail ?? null,
+    () => (services.settings.load()?.dedupeWindowMinutes ?? 30) * 60 * 1000,
+  );
+  services.manager = new RecorderManager(services, services.notifier);
+  services.scheduler = new Scheduler(services, services.manager);
+  return services;
 }
 
 export type { Quality };

@@ -23,6 +23,7 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
   const app = Fastify({ logger: false });
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
+  services.manager.preview = preview;
   const extraOrigins = opts.extraOrigins ?? [];
 
   app.addHook('onRequest', async (req, reply) => {
@@ -78,6 +79,7 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins);
   app.addHook('onClose', async () => {
+    services.scheduler.stop();
     ws.dispose();
     sse.stop();
     for (const roomId of preview.trackedRooms()) preview.closeRoomWithError(roomId, 1001);

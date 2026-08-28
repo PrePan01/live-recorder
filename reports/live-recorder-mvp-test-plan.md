@@ -52,7 +52,7 @@
 
 1. **按平台轮询间隔**：`checkIntervalSec = { default: 60, bilibili: 60, douyin: 120 }`，可配置；非全局 60s。同平台房间串行。
 2. **开播检测**：B站公开状态接口；抖音需 Cookie/请求头，支持用户配置 Cookie，过期时提示重新配置（`PLATFORM_ACCESS_RESTRICTED`）。检测失败→记错误→下轮再试，不触发重连。
-3. **错误码全集 18 码**（契约 v1.1 为准）：原 16 码 + `PREVIEW_NOT_RECORDING`（WS 4002，retryable=false，FE 文案"当前未在录制，无法预览"）+ `PLATFORM_CHANGED`（平台接口/反爬变更，error 告警，FE 文案"平台有变动，等待适配更新"）。命名统一 `DISK_SPACE_INSUFFICIENT`（废弃 DISK_SPACE_LOW）。**v1.1 勘误**：info 级提示码 `STREAM_FORMAT_CHANGED`/`QUALITY_DOWNGRADED` retryable 统一置 `—`（服务端自动续录/降级，FE 不渲染重试按钮），retryable 断言用例按此口径。
+3. **错误码全集 18 码**（契约 v1.1 为准）：原 16 码 + `PREVIEW_NOT_RECORDING`（WS 4002，retryable=false，FE 文案"当前未在录制，无法预览"）+ `PLATFORM_CHANGED`（平台接口/反爬变更，error 告警，FE 文案"平台有变动，等待适配更新"）。命名统一 `DISK_SPACE_INSUFFICIENT`（废弃 DISK_SPACE_LOW）。**v1.1 勘误**：info 级提示码 `STREAM_FORMAT_CHANGED`/`QUALITY_DOWNGRADED` retryable 统一置 `—`（服务端自动续录/降级，FE 不渲染重试按钮），retryable 断言用例按此口径。**v1.2 提案（B-E5 线程 4699d478，待 PM 并入）**：新增 `RESOURCE_NOT_FOUND`（HTTP 404，retryable=false，details.resource=资源类型，FE 直接渲染 message），适用端点 7 个：PATCH /rooms/:id、PATCH /rooms/:id/enable、DELETE /rooms/:id、POST /rooms/:id/check、POST /rooms/:id/stop-recording、POST /recordings/:id/open、PATCH /alerts/:id；QA 每端点补 1 条 404 断言。注意边界：WS 预览握手房间不存在走 4002/PREVIEW_NOT_RECORDING，HTTP 资源不存在走 RESOURCE_NOT_FOUND，两口径在契约中分开断言。全集 18→19 码。
 4. **WS 预览关闭码（冻结，4005 作废）**：1000 正常结束（stream_end reason=ended）；4002 房间不存在/未在录制→PREVIEW_NOT_RECORDING；4003 预览超限→PREVIEW_LIMIT_REACHED；4004 断流重连耗尽（reason=stream_lost）→STREAM_DISCONNECTED_RECONNECT_EXHAUSTED；1011 服务内部错误。FE 以 reason 为准、关闭码兜底；仅 1011/网络异常重连 ≤3 次（1/3/5s）。
 5. **同场去重**：roomId + streamSessionId；平台无 session ID 时降级 roomId + 开播时间窗口 ±10 分钟。
 6. **流格式变化**：录制器返回 `STREAM_FORMAT_CHANGED` 错误码为准；当前文件标记 completed，新建 Recording 续录，同场多条按 streamSessionId 分组展示。

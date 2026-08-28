@@ -8,6 +8,7 @@ const services = buildServices();
 const { app } = buildApp(services, { extraOrigins });
 
 async function main(): Promise<void> {
+  services.scheduler.start();
   await app.listen({ host: SERVICE_HOST, port: SERVICE_PORT });
   console.log(`live-recorder backend (${services.mode}) listening on http://${SERVICE_HOST}:${SERVICE_PORT}`);
 }
