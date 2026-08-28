@@ -11,6 +11,7 @@ import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { BilibiliAdapter } from '../platform/bilibili.js';
 import { DouyinAdapter } from '../platform/douyin.js';
 import { FakeRecordingEngine } from '../recorder/fake-engine.js';
+import { StreamRecordingEngine } from '../recorder/stream-recorder.js';
 import { FakeDiskGuard } from '../storage/disk-guard.js';
 import { FakeMailer } from '../mail/mailer.js';
 import { openDatabase, type DB } from '../db/connection.js';
@@ -91,7 +92,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     diskGuard: new FakeDiskGuard(),
     mailer: new FakeMailer(() => clock.iso()),
     adapterFor: (platform) => adapters[platform],
-    engineFor: () => fakeEngine,
+    engineFor: () => (mode === 'real' ? new StreamRecordingEngine() : fakeEngine),
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
     scheduler: undefined as unknown as Scheduler,
