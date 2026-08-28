@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
-import { API_BASE, USE_MOCK } from '../api/client';
-import { subscribeMockEvents } from '../api/mock/server';
+import { API_BASE } from '../api/client';
 import { SSE_EVENT_NAMES } from '../types/events';
 import type { ServerEvent } from '../types/events';
 import { applyServerEvent } from '../stores/applyEvent';
@@ -8,7 +7,7 @@ import { useServiceStore } from '../stores/serviceStore';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
 
-/** 契约 v1.1：SSE 标准帧（event: 名称 + data: JSON），data 不内嵌 type。 */
+/** 契约 v1.3：SSE 标准帧（event: 名称 + data: JSON），data 不内嵌 type。 */
 export function useSSE() {
   useEffect(() => {
     let disposed = false;
@@ -49,15 +48,6 @@ export function useSSE() {
         }
       };
     };
-
-    if (USE_MOCK) {
-      setConnected(true);
-      const unsubscribe = subscribeMockEvents((e) => applyServerEvent(e));
-      return () => {
-        unsubscribe();
-        setConnected(false);
-      };
-    }
 
     connect();
     return () => {

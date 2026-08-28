@@ -1,12 +1,9 @@
 import axios, { AxiosError } from 'axios';
 import { ApiError } from '../types/error';
 import type { ApiErrorEnvelope } from '../types/error';
-import { mockAdapter } from './mock/server';
 
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:43120/api/v1';
-
-export const USE_MOCK = import.meta.env.VITE_USE_MOCK === '1';
 
 function httpOrigin(): string {
   if (/^https?:\/\//i.test(API_BASE)) return new URL(API_BASE).origin;
@@ -20,10 +17,6 @@ export function previewWsUrl(roomId: string): string {
 }
 
 export const http = axios.create({ baseURL: API_BASE, timeout: 10000 });
-
-if (USE_MOCK) {
-  http.defaults.adapter = mockAdapter;
-}
 
 http.interceptors.response.use(
   (response) => response,

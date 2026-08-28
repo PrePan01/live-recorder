@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Spin } from 'antd';
 import mpegts from 'mpegts.js';
-import { USE_MOCK, previewWsUrl } from '../api/client';
+import { previewWsUrl } from '../api/client';
 
 const MAX_RETRY = 3;
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
@@ -20,14 +20,6 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    if (USE_MOCK) {
-      setState('loading');
-      const t = setTimeout(() => {
-        setState('error');
-        setErrorMsg('Mock 模式无真实视频流，BE fake 栈就绪后直连联调');
-      }, 600);
-      return () => clearTimeout(t);
-    }
     if (!mpegts.isSupported()) {
       setState('error');
       setErrorMsg('当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看');
