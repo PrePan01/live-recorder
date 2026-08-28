@@ -3,6 +3,7 @@ import type { Quality } from '../types/index.js';
 import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapter.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 
 /** 抖音 flv_pull_url 档位键 → 本地清晰度。 */
 const RESOLUTION_QUALITY: Record<string, Quality> = {
@@ -39,7 +40,7 @@ interface DouyinEnterResponse {
 }
 
 function isNetworkError(err: unknown): boolean {
-  return err instanceof TypeError || (err instanceof Error && 'cause' in err);
+  return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
 
 export class DouyinAdapter implements PlatformAdapter {
@@ -75,6 +76,7 @@ export class DouyinAdapter implements PlatformAdapter {
       is_need_double_stream: 'false',
     });
     const res = await this.fetcher(`${this.apiBase}/?${params}`, {
+      signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
         Referer: `https://live.douyin.com/${roomId}`,

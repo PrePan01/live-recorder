@@ -14,6 +14,7 @@ function qnToQuality(qn: number): Quality {
 }
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 
 interface BiliUrlInfo {
   host?: string;
@@ -47,7 +48,7 @@ interface BiliPlayResponse {
 }
 
 function isNetworkError(err: unknown): boolean {
-  return err instanceof TypeError || (err instanceof Error && 'cause' in err);
+  return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
 
 export class BilibiliAdapter implements PlatformAdapter {
@@ -83,6 +84,7 @@ export class BilibiliAdapter implements PlatformAdapter {
       ptype: '8',
     });
     const res = await this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
+      signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
         Referer: `${this.roomBase}/${roomId}`,

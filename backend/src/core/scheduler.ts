@@ -8,13 +8,18 @@ const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 export class Scheduler {
   private running = false;
   private handles = new Map<Platform, unknown>();
+  /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
+  private checking = new Map<string, Promise<void>>();
 
   constructor(private services: Services, private manager: RecorderManager) {}
 
   start(): void {
     if (this.running) return;
     this.running = true;
-    for (const platform of PLATFORMS) this.scheduleNext(platform);
+    // 启动后先完成一轮检测，再开始按平台间隔轮询；恢复服务无需额外等待一个周期。
+    for (const platform of PLATFORMS) {
+      void this.runPlatform(platform).finally(() => this.scheduleNext(platform));
+    }
   }
 
   stop(): void {
@@ -49,8 +54,18 @@ export class Scheduler {
   }
 
   async checkRoom(room: Room): Promise<void> {
+    const pending = this.checking.get(room.id);
+    if (pending) return pending;
+
+    const task = this.runCheckRoom(room).finally(() => this.checking.delete(room.id));
+    this.checking.set(room.id, task);
+    return task;
+  }
+
+  private async runCheckRoom(room: Room): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
+    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {

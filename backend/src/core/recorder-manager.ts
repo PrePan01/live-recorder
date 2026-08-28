@@ -45,7 +45,12 @@ export class RecorderManager {
     if (this.active.has(room.id)) return;
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
-    if (sessionId && this.services.recordings.hasSession(room.id, sessionId)) return;
+    if (sessionId && this.services.recordings.hasSession(room.id, sessionId)) {
+      // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
+      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+      this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+      return;
+    }
 
     if (this.services.recordings.activeCount() >= settings.maxConcurrentRecordings) {
       const err = new AppError('CONCURRENT_LIMIT_REACHED', '并发录制数已达上限', { roomId: room.id, retryable: true });

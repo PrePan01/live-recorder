@@ -120,11 +120,14 @@ describe('DouyinAdapter', () => {
 
   it('passes cookie through to the api request', async () => {
     let sentCookie: string | undefined;
+    let hasTimeoutSignal = false;
     const a = new DouyinAdapter(async (url, init) => {
       sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
+      hasTimeoutSignal = init?.signal instanceof AbortSignal;
       return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
     });
     await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=xxx');
     expect(sentCookie).toBe('sessionid=xxx');
+    expect(hasTimeoutSignal).toBe(true);
   });
 });

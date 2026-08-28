@@ -144,11 +144,14 @@ describe('BilibiliAdapter', () => {
 
   it('passes cookie through to the api request', async () => {
     let sentCookie: string | undefined;
+    let hasTimeoutSignal = false;
     const a = new BilibiliAdapter(async (url, init) => {
       sentCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
+      hasTimeoutSignal = init?.signal instanceof AbortSignal;
       return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
     });
     await a.checkLiveStatus('https://live.bilibili.com/123456', 'SESSDATA=xxx;buvid3=yyy');
     expect(sentCookie).toBe('SESSDATA=xxx;buvid3=yyy');
+    expect(hasTimeoutSignal).toBe(true);
   });
 });

@@ -57,19 +57,19 @@ describe('Scheduler', () => {
     });
 
     services.scheduler.start();
-    await waitFor(() => seen.length === 0);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 2 && seen.filter((id) => id === r2.id).length === 2);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 1);
-    expect(seen.filter((id) => id === r2.id)).toHaveLength(0);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 4);
+    expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 2);
-    expect(seen.filter((id) => id === r2.id)).toHaveLength(0);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 6);
+    expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 60_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 3);
-    expect(seen.filter((id) => id === r2.id)).toHaveLength(1);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 8);
+    expect(seen.filter((id) => id === r2.id)).toHaveLength(4);
 
     services.scheduler.stop();
   });
@@ -108,6 +108,35 @@ describe('Scheduler', () => {
     const alerts = services.alerts.list({ unresolvedOnly: true });
     expect(alerts[0]!.level).toBe('warning');
     expect(alerts[0]!.message).toContain('PLATFORM_ACCESS_RESTRICTED');
+  });
+
+  it('coalesces concurrent checks for the same room into one platform request', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/44', displayName: 'single-flight' });
+    let checks = 0;
+    let release: (() => void) | undefined;
+    const adapter: PlatformAdapter = {
+      platform: 'bilibili',
+      async checkLiveStatus() {
+        checks += 1;
+        await new Promise<void>((resolve) => { release = resolve; });
+        return { status: 'offline' };
+      },
+      async getStreamUrl() {
+        return { url: 'https://x/flv', format: 'flv', actualQuality: 'original' };
+      },
+      normalizeUrl: (u) => u,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => adapter;
+
+    const first = services.scheduler.triggerImmediateCheck(room.id);
+    const second = services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => checks === 1);
+    release?.();
+    await Promise.all([first, second]);
+
+    expect(checks).toBe(1);
   });
 
   it('does not throw when a live room fails to start (getStreamUrl error) and records failed state', async () => {
