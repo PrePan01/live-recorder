@@ -27,7 +27,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
     });
-    services.events.emit({ type: 'room:updated', data: room });
+    services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.status(201).send({ room: enrich(room) });
   });
 
@@ -46,7 +46,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     const room = services.rooms.update(id, patch);
-    services.events.emit({ type: 'room:updated', data: room });
+    services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.send({ room: enrich(room) });
   });
 
@@ -57,7 +57,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', 'enabled 必须为布尔值', { roomId: id });
     }
     const room = services.rooms.update(id, { enabled: body.enabled });
-    services.events.emit({ type: 'room:updated', data: room });
+    services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.send({ room: enrich(room) });
   });
 
@@ -68,7 +68,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', 'favorited 必须为布尔值', { roomId: id });
     }
     const room = services.rooms.setFavorite(id, body.favorited);
-    services.events.emit({ type: 'room:updated', data: room });
+    services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.send({ room: enrich(room) });
   });
 
@@ -77,7 +77,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const existing = services.rooms.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     services.rooms.remove(id);
-    services.events.emit({ type: 'room:updated', data: { ...existing, enabled: false, monitorState: 'disabled' } });
+    services.events.emit({ type: 'room:updated', data: enrich({ ...existing, enabled: false, monitorState: 'disabled' }) });
     return reply.status(204).send();
   });
 

@@ -119,6 +119,22 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(active.recordingId).toMatch(/^rec_/);
     expect(active.startedAt).toBeTruthy();
 
+    // #40：录制中收藏，SSE room:updated 应带 activeRecording，不覆盖前端时长显示
+    const sseRooms: Array<{ activeRecording: unknown; favorited: boolean }> = [];
+    const unsub = services.events.on((e) => {
+      if (e.type === 'room:updated' && 'favorited' in e.data) sseRooms.push(e.data as { activeRecording: unknown; favorited: boolean });
+    });
+    const favDuring = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}/favorite`, headers: { host: '127.0.0.1:43120' },
+      payload: { favorited: true },
+    });
+    expect(favDuring.json().room.favorited).toBe(true);
+    const emitted = sseRooms[sseRooms.length - 1];
+    expect(emitted.favorited).toBe(true);
+    expect(emitted.activeRecording).not.toBeNull();
+    expect(emitted.activeRecording).toMatchObject({ recordingId: active.recordingId });
+    unsub();
+
     await services.manager.stopRecording(room.id);
     await new Promise((r) => setTimeout(r, 50));
     await app.close();
