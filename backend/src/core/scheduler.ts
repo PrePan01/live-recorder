@@ -75,6 +75,13 @@ export class Scheduler {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {
+      // autoRecord=false：自动调度只检测不自动录（手动 /check 仍可手动触发录制）。
+      const autoRecord = this.services.settings.load()?.autoRecord ?? true;
+      if (!opts.manual && !autoRecord) {
+        this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.emitRoom(room.id);
+        return;
+      }
       try {
         await this.manager.maybeStartRecording({ ...room, monitorState: 'checking' }, status, opts);
       } catch (err) {
@@ -87,6 +94,10 @@ export class Scheduler {
       return;
     }
     if (status.status === 'offline') {
+      // 下播主动停录：若该房间仍在录制，先停止收口（避免录空），再置 idle。
+      if (this.manager.isRoomActive(room.id)) {
+        await this.manager.stopRecording(room.id);
+      }
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.emitRoom(room.id);
       return;

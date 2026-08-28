@@ -1,5 +1,7 @@
 export type Quality = 'original' | '1080p' | '720p' | '360p';
 
+export type RecordingFormat = 'source_flv' | 'mp4_after';
+
 export type PlatformIntervals = {
   default: number;
   bilibili: number;
@@ -33,6 +35,7 @@ export interface Settings {
   maxConcurrentRecordings: number;
   checkIntervalSec: PlatformIntervals;
   quality: Quality;
+  recordingFormat: RecordingFormat;
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
@@ -57,6 +60,7 @@ export interface SettingsInput {
   maxConcurrentRecordings?: number;
   checkIntervalSec?: Partial<PlatformIntervals>;
   quality?: Quality;
+  recordingFormat?: RecordingFormat;
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;

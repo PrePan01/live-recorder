@@ -207,6 +207,36 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings expose recordingFormat and validate allowed values (#60)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-fmt-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      recordingFormat: 'source_flv',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    };
+
+    const put = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: base });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().settings.recordingFormat).toBe('source_flv');
+
+    const putMp4 = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: { ...base, recordingFormat: 'mp4_after' } });
+    expect(putMp4.statusCode).toBe(200);
+    expect(putMp4.json().settings.recordingFormat).toBe('mp4_after');
+
+    const bad = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: { ...base, recordingFormat: 'avi' } });
+    expect(bad.statusCode).toBe(500);
+    expect(bad.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    await app.close();
+  });
+
   it('settings: password write-only, passwordSet derived, validate-directory semantics', async () => {
     const services = newServices();
     const { app } = buildApp(services);
@@ -398,6 +428,84 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(item.roomId).toBe(room.id);
     expect(item.errorCode).toBe('RECORDING_START_FAILED');
     expect(item.message).toContain('RECORDING_START_FAILED');
+    await app.close();
+  });
+
+  it('serves recording file for playback (FLV, completed only, #58)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-play-'));
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'p' });
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const file = path.join(dir, 'rec.flv');
+    await mkdir(dir, { recursive: true });
+    const flvBytes = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01]), Buffer.alloc(100)]);
+    await writeFile(file, flvBytes);
+
+    const rec = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's', streamTitle: 'p' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    // completed + 有文件 → 200 + FLV
+    const ok = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec.id}/file`, headers: { host: '127.0.0.1:43120' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-type']).toContain('video/x-flv');
+    const body = ok.rawPayload;
+    expect(body[0]).toBe(0x46);
+    expect(body[1]).toBe(0x4c);
+    expect(body[2]).toBe(0x56);
+
+    // recording 状态（未完成）→ 404
+    const rec2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'p2' });
+    const noFile = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec2.id}/file`, headers: { host: '127.0.0.1:43120' } });
+    expect(noFile.statusCode).toBe(404);
+
+    // 不存在的记录 → 404
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/recordings/rec_none/file', headers: { host: '127.0.0.1:43120' } });
+    expect(bad.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('batch-delete recordings with partial success, CSV export, room stats (#67/#69/#70)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-v4-'));
+    const services = newServices();
+    const { app } = buildApp(services);
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(dir, { recursive: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'v4' });
+    const f1 = path.join(dir, 'a.flv');
+    const f2 = path.join(dir, 'b.flv');
+    await writeFile(f1, Buffer.from([1, 2, 3]));
+    await writeFile(f2, Buffer.from([4, 5, 6]));
+    const r1 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: 'a', quality: '720p' });
+    services.recordings.update(r1.id, { state: 'completed', startedAt: '2026-08-28T10:00:00.000Z', endedAt: '2026-08-28T10:10:00.000Z', filePath: f1, integrity: 'verified' });
+    const r2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'b' });
+    services.recordings.update(r2.id, { state: 'completed', startedAt: '2026-08-28T11:00:00.000Z', endedAt: '2026-08-28T11:05:00.000Z', filePath: f2 });
+
+    // #67 batch-delete：删 1 个存在 + 1 个不存在
+    const bd = await app.inject({ method: 'POST', url: '/api/v1/recordings/batch-delete', headers: { host: '127.0.0.1:43120' }, payload: { ids: [r1.id, 'rec_none'] } });
+    expect(bd.statusCode).toBe(200);
+    expect(bd.json().deleted).toEqual([r1.id]);
+    expect(bd.json().failed.some((f: { id: string }) => f.id === 'rec_none')).toBe(true);
+    expect(services.recordings.get(r1.id)).toBeNull();
+
+    // #69 CSV export
+    const csv = await app.inject({ method: 'GET', url: `/api/v1/recordings/export?roomId=${room.id}`, headers: { host: '127.0.0.1:43120' } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    const body = csv.body;
+    expect(body.startsWith('\uFEFF')).toBe(true); // UTF-8 BOM
+    expect(body).toContain('totalRecordings,1');
+    expect(body).toContain(r2.id); // 剩 r2
+
+    // #70 room stats
+    const stats = await app.inject({ method: 'GET', url: `/api/v1/rooms/${room.id}/stats?days=7`, headers: { host: '127.0.0.1:43120' } });
+    expect(stats.statusCode).toBe(200);
+    expect(stats.json().roomId).toBe(room.id);
+    expect(stats.json().totalRecordings).toBe(1); // r2 剩 1 条
+    expect(stats.json().successRate).toBe(100);
+    expect(Array.isArray(stats.json().byDay)).toBe(true);
+    const badStats = await app.inject({ method: 'GET', url: '/api/v1/rooms/room_none/stats', headers: { host: '127.0.0.1:43120' } });
+    expect(badStats.statusCode).toBe(404);
     await app.close();
   });
 });
