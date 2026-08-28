@@ -5,6 +5,7 @@ import { newId, nowIso } from '../../utils/id.js';
 interface RecordingRow {
   id: string;
   room_id: string;
+  room_name: string;
   platform: string;
   stream_session_id: string | null;
   stream_title: string;
@@ -34,6 +35,7 @@ export function rowToRecording(row: RecordingRow): Recording {
   const rec: Recording = {
     id: row.id,
     roomId: row.room_id,
+    roomName: row.room_name ?? '',
     platform: row.platform as Platform,
     streamSessionId: row.stream_session_id,
     streamTitle: row.stream_title,
@@ -67,6 +69,7 @@ export class RecordingRepository {
 
   create(input: {
     roomId: string;
+    roomName: string;
     platform: Platform;
     streamSessionId: string | null;
     streamTitle: string;
@@ -76,6 +79,7 @@ export class RecordingRepository {
     const rec: Recording = {
       id: newId('rec'),
       roomId: input.roomId,
+      roomName: input.roomName,
       platform: input.platform,
       streamSessionId: input.streamSessionId,
       streamTitle: input.streamTitle,
@@ -90,10 +94,10 @@ export class RecordingRepository {
     };
     this.db
       .prepare(
-        `INSERT INTO recordings (id, room_id, platform, stream_session_id, stream_title, state, started_at, created_at, quality)
-         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        `INSERT INTO recordings (id, room_id, room_name, platform, stream_session_id, stream_title, state, started_at, created_at, quality)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       )
-      .run(rec.id, rec.roomId, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null);
+      .run(rec.id, rec.roomId, rec.roomName, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null);
     return rec;
   }
 

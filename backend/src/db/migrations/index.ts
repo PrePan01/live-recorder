@@ -122,6 +122,45 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #92：删除直播间不再级联删录制历史——去掉 recordings.room_id 对 rooms 的外键
+    // （SQLite 无法 DROP CONSTRAINT，需重建表），并新增 room_name 快照列
+    // （创建录播时写入房间显示名，供删房后历史页展示房间名）。
+    // 幂等保护：若列已存在且外键已移除则跳过。
+    version: 8,
+    up: (db) => {
+      const hasRoomName = Boolean(db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'room_name'`).get());
+      const fkCount = (db.prepare(`SELECT COUNT(*) AS c FROM pragma_foreign_key_list('recordings')`).get() as { c: number }).c;
+      if (hasRoomName && fkCount === 0) return;
+      db.exec(`
+        CREATE TABLE recordings_new (
+          id TEXT PRIMARY KEY,
+          room_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          stream_session_id TEXT,
+          stream_title TEXT DEFAULT '',
+          state TEXT NOT NULL DEFAULT 'pending',
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          file_path TEXT,
+          file_size_bytes INTEGER DEFAULT 0,
+          failure_reason TEXT,
+          retry_count INTEGER DEFAULT 0,
+          quality TEXT,
+          integrity TEXT,
+          room_name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO recordings_new (id, room_id, platform, stream_session_id, stream_title, state, started_at, ended_at, file_path, file_size_bytes, failure_reason, retry_count, quality, integrity, room_name, created_at)
+          SELECT id, room_id, platform, stream_session_id, stream_title, state, started_at, ended_at, file_path, file_size_bytes, failure_reason, retry_count, quality, integrity, '', created_at FROM recordings;
+        DROP TABLE recordings;
+        ALTER TABLE recordings_new RENAME TO recordings;
+        CREATE INDEX idx_recordings_room_id ON recordings(room_id);
+        CREATE INDEX idx_recordings_stream_session ON recordings(room_id, stream_session_id);
+        CREATE INDEX idx_recordings_state ON recordings(state);
+      `);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

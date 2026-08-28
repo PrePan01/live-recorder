@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(7);
+    expect(runMigrations(db)).toBe(8);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(7);
+    expect(currentSchemaVersion(db)).toBe(8);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -46,11 +46,11 @@ describe('migrations', () => {
     const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsBefore).not.toContain('favorited');
 
-    // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列
-    expect(runMigrations(db)).toBe(5);
+    // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name）
+    expect(runMigrations(db)).toBe(6);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
-    expect(currentSchemaVersion(db)).toBe(7);
+    expect(currentSchemaVersion(db)).toBe(8);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -115,11 +115,11 @@ describe('RecordingRepository', () => {
     const rooms = new RoomRepository(db);
     const recs = new RecordingRepository(db);
     const room = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9', displayName: 'x' });
-    const a = recs.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: 't1' });
+    const a = recs.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's1', streamTitle: 't1' });
     recs.update(a.id, { state: 'recording' });
     expect(recs.hasSession(room.id, 's1')).toBe(true);
     await new Promise((r) => setTimeout(r, 2));
-    const b = recs.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 't2' });
+    const b = recs.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2', streamTitle: 't2' });
     recs.update(b.id, {
       state: 'failed',
       endedAt: new Date().toISOString(),
@@ -141,13 +141,31 @@ describe('RecordingRepository', () => {
     const rooms = new RoomRepository(db);
     const recs = new RecordingRepository(db);
     const room = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'i' });
-    const rec = recs.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 'si', streamTitle: 'i' });
+    const rec = recs.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'si', streamTitle: 'i' });
     expect(rec.integrity).toBeUndefined();
     recs.update(rec.id, { state: 'completed', integrity: 'verified' });
     expect(recs.get(rec.id)!.integrity).toBe('verified');
     recs.update(rec.id, { integrity: 'failed' });
     expect(recs.get(rec.id)!.integrity).toBe('failed');
     expect(recs.list({ roomId: room.id }).items[0]!.integrity).toBe('failed');
+  });
+
+  it('snapshots roomName on create and keeps recordings after room removal (#92)', () => {
+    const db = freshDb();
+    const rooms = new RoomRepository(db);
+    const recs = new RecordingRepository(db);
+    const room = rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/92', displayName: '抖音主播' });
+    const rec = recs.create({ roomId: room.id, roomName: room.displayName, platform: 'douyin', streamSessionId: 'd92', streamTitle: 't' });
+    expect(recs.get(rec.id)!.roomName).toBe('抖音主播');
+
+    // 删房间不再级联删录制历史，且外键已移除（可成功删除）。
+    rooms.remove(room.id);
+    expect(rooms.get(room.id)).toBeNull();
+    const kept = recs.get(rec.id);
+    expect(kept).not.toBeNull();
+    expect(kept!.roomId).toBe(room.id);
+    expect(kept!.roomName).toBe('抖音主播');
+    expect(recs.list({ roomId: room.id }).items).toHaveLength(1);
   });
 });
 

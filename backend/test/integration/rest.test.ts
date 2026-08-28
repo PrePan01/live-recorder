@@ -329,7 +329,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     const services = newServices();
     const { app } = buildApp(services);
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/1', displayName: 'd' });
-    const rec = services.recordings.create({ roomId: room.id, platform: 'douyin', streamSessionId: 's1', streamTitle: 't' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'douyin', streamSessionId: 's1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'recording', filePath: '/tmp/x.mkv' });
 
     const list = await app.inject({ method: 'GET', url: '/api/v1/recordings?pageSize=1&page=1', headers: { host: '127.0.0.1:43120' } });
@@ -377,9 +377,9 @@ describe('REST contract v1.1 (fake stack)', () => {
     await mkdir(dir, { recursive: true });
     await writeFile(file1, Buffer.from([1, 2, 3]));
     await writeFile(file2, Buffer.from([4, 5, 6]));
-    const rec1 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: '旧标题', quality: '1080p' });
+    const rec1 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's1', streamTitle: '旧标题', quality: '1080p' });
     services.recordings.update(rec1.id, { state: 'completed', startedAt: '2026-08-28T10:00:00.000Z', endedAt: '2026-08-28T10:10:00.000Z', filePath: file1 });
-    const rec2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: '第二段', quality: '720p' });
+    const rec2 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2', streamTitle: '第二段', quality: '720p' });
     services.recordings.update(rec2.id, { state: 'completed', startedAt: '2026-08-28T11:00:00.000Z', endedAt: '2026-08-28T11:05:00.000Z', filePath: file2 });
 
     // quality 输出
@@ -407,7 +407,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(services.recordings.get(rec2.id)).toBeNull();
 
     // 文件已缺失时删除容错
-    const rec3 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's3', streamTitle: '缺文件', quality: '720p' });
+    const rec3 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's3', streamTitle: '缺文件', quality: '720p' });
     services.recordings.update(rec3.id, { state: 'completed', filePath: path.join(dir, 'missing.mkv') });
     const delMissing = await app.inject({ method: 'DELETE', url: `/api/v1/recordings/${rec3.id}`, headers: { host: '127.0.0.1:43120' } });
     expect(delMissing.statusCode).toBe(204);
@@ -443,7 +443,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     const flvBytes = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01]), Buffer.alloc(100)]);
     await writeFile(file, flvBytes);
 
-    const rec = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's', streamTitle: 'p' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's', streamTitle: 'p' });
     services.recordings.update(rec.id, { state: 'completed', filePath: file });
 
     // completed + 有文件 → 200 + FLV
@@ -456,7 +456,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(body[2]).toBe(0x56);
 
     // recording 状态（未完成）→ 404
-    const rec2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'p2' });
+    const rec2 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'p2' });
     const noFile = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec2.id}/file`, headers: { host: '127.0.0.1:43120' } });
     expect(noFile.statusCode).toBe(404);
 
@@ -477,9 +477,9 @@ describe('REST contract v1.1 (fake stack)', () => {
     const f2 = path.join(dir, 'b.flv');
     await writeFile(f1, Buffer.from([1, 2, 3]));
     await writeFile(f2, Buffer.from([4, 5, 6]));
-    const r1 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: 'a', quality: '720p' });
+    const r1 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's1', streamTitle: 'a', quality: '720p' });
     services.recordings.update(r1.id, { state: 'completed', startedAt: '2026-08-28T10:00:00.000Z', endedAt: '2026-08-28T10:10:00.000Z', filePath: f1, integrity: 'verified' });
-    const r2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'b' });
+    const r2 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2', streamTitle: 'b' });
     services.recordings.update(r2.id, { state: 'completed', startedAt: '2026-08-28T11:00:00.000Z', endedAt: '2026-08-28T11:05:00.000Z', filePath: f2 });
 
     // #67 batch-delete：删 1 个存在 + 1 个不存在

@@ -154,7 +154,7 @@ export class RoomRepository {
   }
 
   remove(id: string): void {
-    this.db.prepare('DELETE FROM recordings WHERE room_id = ?').run(id);
+    // #92：仅移除监控配置，不再级联删除该房间的录制历史（迁移 v8 已去掉外键）。
     this.db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
   }
 }

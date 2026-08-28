@@ -15,11 +15,11 @@ describe('recoverStaleRecordings (#82)', () => {
     await writeFile(goodFile, Buffer.from([0x46, 0x4c, 0x56, 0x01]));
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'r' });
 
-    const r1 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: '有文件' });
+    const r1 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's1', streamTitle: '有文件' });
     services.recordings.update(r1.id, { state: 'recording', filePath: goodFile, fileSizeBytes: 4 });
-    const r2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: '无文件' });
+    const r2 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2', streamTitle: '无文件' });
     services.recordings.update(r2.id, { state: 'recording', filePath: path.join(dir, 'missing.flv') });
-    const r3 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's3', streamTitle: '无路径' });
+    const r3 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's3', streamTitle: '无路径' });
     services.recordings.update(r3.id, { state: 'recording' });
 
     expect(services.recordings.activeCount()).toBe(3);
