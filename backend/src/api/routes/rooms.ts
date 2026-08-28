@@ -6,8 +6,10 @@ import type { Services } from '../../core/services.js';
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 
 export function registerRoomRoutes(app: FastifyInstance, services: Services): void {
+  const enrich = (room: import('../../types/index.js').Room) => services.manager.enrichRoom(room);
+
   app.get('/api/v1/rooms', async (_req, reply) => {
-    return reply.send({ rooms: services.rooms.list() });
+    return reply.send({ rooms: services.rooms.list().map(enrich) });
   });
 
   app.post('/api/v1/rooms', async (req, reply) => {
@@ -26,7 +28,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       enabled: body.enabled ?? true,
     });
     services.events.emit({ type: 'room:updated', data: room });
-    return reply.status(201).send({ room });
+    return reply.status(201).send({ room: enrich(room) });
   });
 
   app.patch('/api/v1/rooms/:id', async (req, reply) => {
@@ -45,7 +47,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     const room = services.rooms.update(id, patch);
     services.events.emit({ type: 'room:updated', data: room });
-    return reply.send({ room });
+    return reply.send({ room: enrich(room) });
   });
 
   app.patch('/api/v1/rooms/:id/enable', async (req, reply) => {
@@ -56,7 +58,18 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     }
     const room = services.rooms.update(id, { enabled: body.enabled });
     services.events.emit({ type: 'room:updated', data: room });
-    return reply.send({ room });
+    return reply.send({ room: enrich(room) });
+  });
+
+  app.patch('/api/v1/rooms/:id/favorite', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { favorited?: boolean };
+    if (typeof body.favorited !== 'boolean') {
+      throw new AppError('ROOM_LINK_INVALID', 'favorited 必须为布尔值', { roomId: id });
+    }
+    const room = services.rooms.setFavorite(id, body.favorited);
+    services.events.emit({ type: 'room:updated', data: room });
+    return reply.send({ room: enrich(room) });
   });
 
   app.delete('/api/v1/rooms/:id', async (req, reply) => {

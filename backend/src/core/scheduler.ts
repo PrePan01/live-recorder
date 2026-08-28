@@ -62,10 +62,16 @@ export class Scheduler {
     return task;
   }
 
+  private emitRoom(roomId: string): void {
+    const room = this.services.rooms.get(roomId);
+    if (!room) return;
+    this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
+  }
+
   private async runCheckRoom(room: Room, opts: { manual?: boolean } = {}): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
-    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+    this.emitRoom(room.id);
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {
@@ -74,7 +80,7 @@ export class Scheduler {
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
-        this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+        this.emitRoom(room.id);
         const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso() });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
@@ -82,7 +88,7 @@ export class Scheduler {
     }
     if (status.status === 'offline') {
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
-      this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+      this.emitRoom(room.id);
       return;
     }
     const err = status.error ?? new AppError(
@@ -91,7 +97,7 @@ export class Scheduler {
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
-    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+    this.emitRoom(room.id);
     const alert = this.services.alerts.create({
       level: status.status === 'restricted' ? 'warning' : 'error',
       source: 'platform',

@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.4 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.5 · 2026-08-28）
 
-相对 v1.3 的变更：新增设置页目录选择与配置导出/导入——`GET /settings/browse-directories`（目录树浏览，仅绝对路径、防穿越）、`POST /settings/pick-directory`（系统原生目录选择器，取消返回 null）、`GET /config/export` 与 `POST /config/import`（settings+rooms+alerts 打包，密钥/Cookie 值仅 hasXxx 标记不回显）。
+相对 v1.4 的变更：新增手动收藏直播间（`Room.favorited` + `PATCH /rooms/:id/favorite`）与监控总览录制时长（`Room.activeRecording`，含 recordingId/startedAt，未录制为 null）。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -17,15 +17,21 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
   "url": "https://live.bilibili.com/123",
   "displayName": "主播名",
   "enabled": true,
+  "favorited": false,
   "monitorState": "idle",
   "lastCheckedAt": "2026-08-28T01:00:00.000Z",
   "lastError": null,
+  "activeRecording": null,
   "createdAt": "2026-08-28T01:00:00.000Z",
   "updatedAt": "2026-08-28T01:00:00.000Z"
 }
 ```
 
 `monitorState`：`idle | checking | recording | reconnecting | completed | failed | disabled`。停用条目的状态为 `disabled`；录制项不使用 `checking` 或 `disabled`。
+
+`favorited`（v1.5）：手动收藏标记，`PATCH /rooms/:id/favorite` 切换，监控总览按收藏置顶。
+
+`activeRecording`（v1.5）：当前录制会话信息，未录制为 `null`；录制中为 `{ "recordingId": "rec_01J...", "startedAt": "2026-08-28T01:00:00.000Z" }`。`startedAt` 为该场次首次开始时间（断流重连续录不重置），前端秒级走时显示录制时长。
 
 `lastError`（Room）与 `failureReason`（Recording）为结构化对象或 `null`：`{ "code": "...", "message": "...", "occurredAt": "...", "retryable": true|false, "recordingId?": "..." }`（v1.1 第 6 项口径：DB 存 JSON，repository 层解析后输出，全链路无转义字符串，FE 直接断言 code）。
 
@@ -59,6 +65,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 - 操作类端点（无资源返回时）：`{ "ok": true }`（必要时附资源字段）
 - `POST /rooms` 成功：`201` + `{ "room": ... }`；`DELETE /rooms/:id` 成功：`204` 无 body
 - `PATCH /rooms/:id/enable` body：`{ "enabled": true|false }` → `{ "room": ... }`
+- `PATCH /rooms/:id/favorite` body：`{ "favorited": true|false }` → `{ "room": ... }`（v1.5）
 
 ## 端点
 
@@ -67,6 +74,7 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 | 房间 | `GET` / `POST` `/rooms` | 查询 / 新建关注直播间 |
 | 房间 | `PATCH` / `DELETE` `/rooms/:id` | 编辑 / 删除直播间 |
 | 房间 | `PATCH` `/rooms/:id/enable` | 启用/停用监控 |
+| 房间 | `PATCH` `/rooms/:id/favorite` | 手动收藏/取消收藏（v1.5） |
 | 房间 | `POST` `/rooms/:id/check` | 立即检测（供 UI 调试） |
 | 房间 | `POST` `/rooms/:id/stop-recording` | 手动停止录制 |
 | 录制 | `GET` `/recordings` | 历史查询；参数 `page`、`pageSize`（默认 20，上限 100）、`roomId`、`state`、`sessionId`、`groupBy`；默认 `startedAt` 倒序 |

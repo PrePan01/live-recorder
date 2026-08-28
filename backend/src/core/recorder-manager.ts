@@ -19,6 +19,7 @@ interface ActiveSession {
   streamSessionId: string | null;
   stopRequested: boolean;
   size: number;
+  startedAt: string;
 }
 
 export class RecorderManager {
@@ -38,6 +39,17 @@ export class RecorderManager {
 
   activeRoomIds(): string[] {
     return [...this.active.keys()];
+  }
+
+  /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
+  activeRecordingFor(roomId: string): Room['activeRecording'] {
+    const session = this.active.get(roomId);
+    return session ? { recordingId: session.recordingId, startedAt: session.startedAt } : null;
+  }
+
+  /** 将 activeRecording 附加到房间对象，供 API/SSE 输出。 */
+  enrichRoom(room: Room): Room {
+    return { ...room, activeRecording: this.activeRecordingFor(room.id) };
   }
 
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
@@ -84,11 +96,11 @@ export class RecorderManager {
       quality: stream.actualQuality,
     });
     this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
-    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+    const session: ActiveSession = { recordingId: recording.id, roomId: room.id, streamSessionId: sessionId, stopRequested: false, size: 0, startedAt: recording.startedAt };
+    this.active.set(room.id, session);
+    this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     this.services.events.emit({ type: 'recording:updated', data: recording });
 
-    const session: ActiveSession = { recordingId: recording.id, roomId: room.id, streamSessionId: sessionId, stopRequested: false, size: 0 };
-    this.active.set(room.id, session);
     void this.runSession(room, recording.id, stream, filePath, session, 0);
   }
 
@@ -189,7 +201,7 @@ export class RecorderManager {
       const next = this.services.recordings.create({ roomId: room.id, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0 }, attempt + 1);
+      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
     } catch {
       this.preview?.closeRoom(room.id, 4004, 'stream_lost');
       await this.failRecording(room, recordingId, error, 'recorder');

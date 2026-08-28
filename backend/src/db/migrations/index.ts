@@ -62,6 +62,12 @@ CREATE TABLE alerts (
 CREATE INDEX idx_alerts_resolved ON alerts(resolved);
 `,
   },
+  {
+    version: 2,
+    sql: `
+ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ];
 
 export function runMigrations(db: DB): number {

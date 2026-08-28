@@ -85,6 +85,45 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('favorites a room and surfaces activeRecording in room responses', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { platform: 'bilibili', url: 'https://live.bilibili.com/456', displayName: '收藏' },
+    });
+    const room = created.json().room;
+    expect(room.favorited).toBe(false);
+    expect(room.activeRecording).toBeNull();
+
+    const fav = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}/favorite`, headers: { host: '127.0.0.1:43120' },
+      payload: { favorited: true },
+    });
+    expect(fav.json().room.favorited).toBe(true);
+
+    const badFav = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}/favorite`, headers: { host: '127.0.0.1:43120' },
+      payload: { favorited: 'yes' },
+    });
+    expect(badFav.statusCode).toBe(422);
+
+    const list = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
+    expect(list.json().rooms.find((r: { id: string }) => r.id === room.id).favorited).toBe(true);
+
+    services.rooms.setState(room.id, 'recording');
+    await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 's9' });
+    const during = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
+    const active = during.json().rooms.find((r: { id: string }) => r.id === room.id).activeRecording;
+    expect(active).not.toBeNull();
+    expect(active.recordingId).toMatch(/^rec_/);
+    expect(active.startedAt).toBeTruthy();
+
+    await services.manager.stopRecording(room.id);
+    await new Promise((r) => setTimeout(r, 50));
+    await app.close();
+  });
+
   it('settings: password write-only, passwordSet derived, validate-directory semantics', async () => {
     const services = newServices();
     const { app } = buildApp(services);

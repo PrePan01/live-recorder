@@ -8,6 +8,7 @@ interface RoomRow {
   url: string;
   display_name: string;
   enabled: number;
+  favorited: number;
   monitor_state: string;
   last_checked_at: string | null;
   last_error: string | null;
@@ -31,9 +32,11 @@ export function rowToRoom(row: RoomRow): Room {
     url: row.url,
     displayName: row.display_name,
     enabled: row.enabled === 1,
+    favorited: row.favorited === 1,
     monitorState: row.monitor_state as MonitorState,
     lastCheckedAt: row.last_checked_at,
     lastError: parseError(row.last_error),
+    activeRecording: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -72,19 +75,21 @@ export class RoomRepository {
       url: input.url,
       displayName: input.displayName,
       enabled: input.enabled ?? true,
+      favorited: false,
       monitorState: input.enabled === false ? 'disabled' : 'idle',
       lastCheckedAt: null,
       lastError: null,
+      activeRecording: null,
       createdAt: now,
       updatedAt: now,
     };
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
         )
-        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.monitorState, now, now);
+        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.monitorState, now, now);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: this.findIdByPlatformUrl(room.platform, room.url) });
@@ -99,7 +104,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -109,9 +114,9 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
-        .run(next.url, next.displayName, next.enabled ? 1 : 0, next.monitorState, next.updatedAt, id);
+        .run(next.url, next.displayName, next.enabled ? 1 : 0, next.favorited ? 1 : 0, next.monitorState, next.updatedAt, id);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: id });
@@ -119,6 +124,12 @@ export class RoomRepository {
       throw err;
     }
     return this.get(id)!;
+  }
+
+  setFavorite(id: string, favorited: boolean): Room {
+    const existing = this.get(id);
+    if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    return this.update(id, { favorited });
   }
 
   setState(id: string, state: MonitorState, opts: { lastCheckedAt?: string; lastError?: ErrorObject | null } = {}): void {

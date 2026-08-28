@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(1);
+    expect(runMigrations(db)).toBe(2);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(1);
+    expect(currentSchemaVersion(db)).toBe(2);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -53,6 +53,26 @@ describe('RoomRepository', () => {
     expect(rooms.listEnabled()).toHaveLength(0);
     const re = rooms.update(room.id, { enabled: true });
     expect(re.monitorState).toBe('idle');
+  });
+
+  it('persists favorited flag and defaults activeRecording to null', () => {
+    const rooms = new RoomRepository(freshDb());
+    const room = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/789', displayName: '收藏' });
+    expect(room.favorited).toBe(false);
+    expect(room.activeRecording).toBeNull();
+
+    const fav = rooms.setFavorite(room.id, true);
+    expect(fav.favorited).toBe(true);
+    expect(rooms.get(room.id)!.favorited).toBe(true);
+
+    const un = rooms.setFavorite(room.id, false);
+    expect(un.favorited).toBe(false);
+    expect(() => rooms.setFavorite('room_none', true)).toThrowError(AppError);
+    try {
+      rooms.setFavorite('room_none', true);
+    } catch (err) {
+      expect((err as AppError).code).toBe('RESOURCE_NOT_FOUND');
+    }
   });
 });
 
