@@ -9,6 +9,7 @@ export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
 export interface Recording {
   id: string;
   roomId: string;
+  roomName: string;
   platform: Platform;
   streamSessionId: string | null;
   streamTitle: string;

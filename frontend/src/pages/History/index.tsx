@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -44,6 +44,7 @@ export default function History() {
   }, [fetchHistory, roomId, dateRange]);
 
   const roomName = useMemo(() => new Map(rooms.map((r) => [r.id, r.displayName])), [rooms]);
+  const roomLabel = useCallback((r: Recording) => r.roomName || roomName.get(r.roomId) || r.roomId, [roomName]);
 
   const handleBatchDelete = async () => {
     setBatchBusy(true);
@@ -79,7 +80,7 @@ export default function History() {
 
   const columns: ColumnsType<Recording> = useMemo(
     () => [
-      { title: '房间', dataIndex: 'roomId', width: 140, ellipsis: true, render: (id: string) => roomName.get(id) ?? id },
+      { title: '房间', dataIndex: 'roomId', width: 140, ellipsis: true, render: (_id: string, r) => roomLabel(r) },
       { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformLogoTag platform={p} /> },
       {
         title: '标题',
@@ -172,7 +173,7 @@ export default function History() {
         ),
       },
     ],
-    [roomName, openDirectory, removeRecording, message],
+    [roomLabel, openDirectory, removeRecording, message],
   );
 
   const groups = useMemo(() => {
@@ -229,7 +230,7 @@ export default function History() {
               <Space>
                 <Typography.Text strong>{recs[0].streamTitle || '未命名场次'}</Typography.Text>
                 <Typography.Text type="secondary">
-                  {dayjs(recs[0].startedAt).format('MM-DD HH:mm')} · {recs.length} 段 · {roomName.get(recs[0].roomId) ?? recs[0].roomId}
+                  {dayjs(recs[0].startedAt).format('MM-DD HH:mm')} · {recs.length} 段 · {roomLabel(recs[0])}
                 </Typography.Text>
               </Space>
             ),
