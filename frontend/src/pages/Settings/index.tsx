@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { App, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
+import { DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
 import { validateDirectory, testSmtp } from '../../api/settings';
+import { exportConfig, importConfig } from '../../api/config';
+import DirectoryPicker from '../../components/DirectoryPicker';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatTime } from '../../utils/format';
@@ -18,6 +21,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearCookie, setClearCookie] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void load();
@@ -82,16 +89,67 @@ export default function SettingsPage() {
     }
   };
 
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      const config = await exportConfig();
+      const blob = new Blob([JSON.stringify({ config }, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `live-recorder-config-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('配置已导出（密码/Cookie 不含值，导入后需重配）');
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const onImportFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { config?: unknown };
+      if (!parsed.config) throw new Error('bad format');
+      const result = await importConfig(parsed.config as never);
+      message.success(
+        `导入完成：设置${result.appliedSettings ? '已应用' : '未变更'}，房间新增 ${result.importedRooms} 个、跳过 ${result.skippedRooms} 个，告警 ${result.importedAlerts} 条`,
+      );
+      await load();
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '导入失败：文件格式或内容非法');
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
   return (
     <Row gutter={16}>
       <Col xs={24} lg={14}>
-        <Card title="服务设置">
+        <Card
+          title="服务设置"
+          extra={
+            <Space>
+              <Button size="small" icon={<DownloadOutlined />} loading={exporting} onClick={() => void onExport()}>
+                导出配置
+              </Button>
+              <Button size="small" icon={<UploadOutlined />} loading={importing} onClick={() => fileRef.current?.click()}>
+                导入配置
+              </Button>
+            </Space>
+          }
+        >
           <Form form={form} layout="vertical" onFinish={onFinish} disabled={!settings}>
             <Form.Item label="保存目录">
               <Space.Compact style={{ width: '100%' }}>
                 <Form.Item name="recordingDirectory" noStyle rules={[{ required: true, message: '必填' }]}>
                   <Input />
                 </Form.Item>
+                <Button onClick={() => setPickerOpen(true)}>浏览…</Button>
                 <Button onClick={() => void checkDir()}>校验</Button>
               </Space.Compact>
             </Form.Item>
@@ -139,7 +197,9 @@ export default function SettingsPage() {
             <Typography.Paragraph type="secondary">退避间隔 5s / 15s / 45s，共 3 次（服务端固定，不可配）</Typography.Paragraph>
             <Typography.Title level={5}>抖音 Cookie</Typography.Title>
             <Typography.Paragraph type="secondary">
-              部分抖音直播间需登录 Cookie 才能取流；Cookie 仅存本机钥匙串，不会显示或上传
+              部分抖音直播间需登录 Cookie 才能取流。获取方式：电脑浏览器登录
+              douyin.com → 按 F12 打开开发者工具 → 「Application/应用」→ 「Cookies」→ 选择
+              https://www.douyin.com → 复制全部 Cookie 值粘贴到下方。Cookie 仅存本机钥匙串，不会显示或上传。
             </Typography.Paragraph>
             <Row gutter={16}>
               <Col span={12}>
@@ -226,6 +286,25 @@ export default function SettingsPage() {
               保存设置
             </Button>
           </Form>
+          <DirectoryPicker
+            open={pickerOpen}
+            initialPath={settings?.recordingDirectory}
+            onClose={() => setPickerOpen(false)}
+            onPick={(dir) => {
+              form.setFieldValue('recordingDirectory', dir);
+              message.success('目录已选择，点击保存生效');
+            }}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onImportFile(f);
+            }}
+          />
         </Card>
       </Col>
       <Col xs={24} lg={10}>
