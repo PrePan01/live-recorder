@@ -2,7 +2,10 @@ import type { DB } from '../connection.js';
 
 export interface Migration {
   version: number;
-  sql: string;
+  /** 简单 SQL 迁移（原子执行）。 */
+  sql?: string;
+  /** 需要幂等/条件判断的迁移（如 ALTER 加列前 PRAGMA 判存在）。与 sql 二选一。 */
+  up?: (db: DB) => void;
 }
 
 /** 迁移脚本注册表：按版本号顺序执行，幂等（schema_version 记录已应用版本）。 */
@@ -68,8 +71,20 @@ CREATE INDEX idx_alerts_resolved ON alerts(resolved);
 ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
 `,
   },
+  {
+    // #39：v2 在部分存量库（schema_version 已记录 2 但列缺失）被跳过，
+    // 追加 v3 幂等补列，确保任意历史 DB 都具备 favorited 列。
+    version: 3,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'favorited'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;`);
+      }
+    },
+  },
 ];
 
+/** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
 export function runMigrations(db: DB): number {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -82,7 +97,11 @@ export function runMigrations(db: DB): number {
   for (const m of MIGRATIONS) {
     if (applied.has(m.version)) continue;
     db.transaction(() => {
-      db.exec(m.sql);
+      if (m.up) {
+        m.up(db);
+      } else if (m.sql) {
+        db.exec(m.sql);
+      }
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version);
     })();
     count += 1;
