@@ -102,6 +102,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!names.has('error_code')) db.exec(`ALTER TABLE alerts ADD COLUMN error_code TEXT;`);
     },
   },
+  {
+    // #75：房间级自动录制开关（覆盖全局 settings.autoRecord），幂等加列。
+    version: 6,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'auto_record'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE rooms ADD COLUMN auto_record INTEGER;`);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

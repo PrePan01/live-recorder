@@ -62,3 +62,12 @@ body {
   font-size: 12px;
   color: rgba(0, 0, 0, 0.45);
 }
+
+.lr-room-card {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.lr-room-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}

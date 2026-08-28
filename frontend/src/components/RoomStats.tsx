@@ -39,7 +39,7 @@ export default function RoomStats({
   const tone = state === 'failed' ? 'failed' : recording ? 'recording' : state === 'checking' ? 'checking' : 'default';
 
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', gap: 8, width: '100%' }}>
       <StatCard label="最近检测" value={agoValue(lastCheckedAt)} tone={tone} />
       <StatCard label="已录制" value={durationValue(startedAt)} tone={recording ? 'recording' : 'default'} />
     </div>

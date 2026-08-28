@@ -21,6 +21,7 @@ export interface Room {
   lastCheckedAt: string | null;
   lastError: ApiErrorEnvelope | null;
   favorited: boolean;
+  autoRecord: boolean | null;
   activeRecording: ActiveRecording | null;
   createdAt: string;
   updatedAt: string;
@@ -42,4 +43,5 @@ export interface RoomUpdateInput {
   url?: string;
   displayName?: string;
   cookie?: string;
+  autoRecord?: boolean | null;
 }

@@ -18,6 +18,8 @@ export interface Room {
   displayName: string;
   enabled: boolean;
   favorited: boolean;
+  /** 是否单独设置自动录制（v4 P0 #75）：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
+  autoRecord: boolean | null;
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ErrorObject | null;

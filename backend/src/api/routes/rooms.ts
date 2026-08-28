@@ -73,8 +73,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
 
   app.patch('/api/v1/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean };
-    const patch: { url?: string; displayName?: string; enabled?: boolean } = {};
+    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null };
+    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
       const adapter = services.adapterFor(existing?.platform ?? 'bilibili');
@@ -85,6 +85,13 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     }
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.enabled !== undefined) patch.enabled = body.enabled;
+    if (body.autoRecord !== undefined) {
+      // null=恢复继承全局；布尔=单独覆盖。
+      if (body.autoRecord !== null && typeof body.autoRecord !== 'boolean') {
+        throw new AppError('ROOM_LINK_INVALID', 'autoRecord 必须为布尔值或 null', { roomId: id });
+      }
+      patch.autoRecord = body.autoRecord;
+    }
     const room = services.rooms.update(id, patch);
     services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.send({ room: enrich(room) });

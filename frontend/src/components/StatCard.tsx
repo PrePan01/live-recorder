@@ -14,7 +14,7 @@ export default function StatCard({ label, value, tone = 'default' }: StatCardPro
         minWidth: 0,
         background: '#fafafa',
         borderRadius: 8,
-        padding: '10px 12px',
+        padding: '8px 10px',
         border: '1px solid #f0f0f0',
       }}
     >

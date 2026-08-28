@@ -20,12 +20,12 @@ const ITEMS = [
 export default function AppLayout() {
   const { pathname } = useLocation();
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ padding: 0, background: '#fff', lineHeight: 'normal' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+      <Header style={{ padding: 0, background: '#fff', lineHeight: 'normal', flexShrink: 0 }}>
         <StatusBar />
       </Header>
       <Layout>
-        <Sider theme="light" width={180} style={{ borderRight: '1px solid #f0f0f0' }}>
+        <Sider theme="light" width={180} style={{ borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
           <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px' }}>直播录制台</div>
           <Menu
             mode="inline"

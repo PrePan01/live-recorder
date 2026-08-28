@@ -6,6 +6,7 @@ function normalizeRoom(room: Room): Room {
   return {
     ...room,
     favorited: room.favorited ?? false,
+    autoRecord: room.autoRecord ?? null,
     activeRecording: room.activeRecording ?? null,
   };
 }
@@ -20,6 +21,7 @@ interface RoomState {
   removeRoom: (id: string) => Promise<void>;
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
+  setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
   checkRoomNow: (id: string) => Promise<void>;
   stopRoomRecording: (id: string) => Promise<void>;
   upsertRoom: (room: Room) => void;
@@ -59,6 +61,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
   async favoriteRoom(id, favorited) {
     get().upsertRoom(normalizeRoom(await roomsApi.setRoomFavorite(id, favorited)));
+  },
+  async setAutoRecord(id, value) {
+    get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })));
   },
   async checkRoomNow(id) {
     const room = get().rooms.find((r) => r.id === id);

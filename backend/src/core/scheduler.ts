@@ -75,9 +75,12 @@ export class Scheduler {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     if (status.status === 'live') {
-      // autoRecord=false：自动调度只检测不自动录（手动 /check 仍可手动触发录制）。
-      const autoRecord = this.services.settings.load()?.autoRecord ?? true;
-      if (!opts.manual && !autoRecord) {
+      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
+      // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
+      // true 时检测即自动开始。
+      const globalAuto = this.services.settings.load()?.autoRecord ?? true;
+      const effectiveAuto = room.autoRecord ?? globalAuto;
+      if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
         this.emitRoom(room.id);
         return;
