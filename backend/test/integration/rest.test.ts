@@ -237,6 +237,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     const list = await app.inject({ method: 'GET', url: '/api/v1/recordings?pageSize=1&page=1', headers: { host: '127.0.0.1:43120' } });
     expect(list.json().total).toBe(1);
     expect(list.json().items[0].state).toBe('recording');
+    // 未记录 quality 的记录不输出该字段；有 quality 的记录会输出（见 history 用例）。
     expect(list.json().items[0]).not.toHaveProperty('quality');
 
     const open = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec.id}/open`, headers: { host: '127.0.0.1:43120' } });
@@ -254,6 +255,68 @@ describe('REST contract v1.1 (fake stack)', () => {
     const readAll = await app.inject({ method: 'POST', url: '/api/v1/alerts/read-all', headers: { host: '127.0.0.1:43120' } });
     expect(readAll.json().ok).toBe(true);
     expect((await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } })).json().alerts).toHaveLength(0);
+    await app.close();
+  });
+
+  it('history: quality output, date filter, rename (file sync), delete (file remove, tolerant)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-hist-'));
+    const services = newServices();
+    services.settings.save({
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'h' });
+    const { mkdir, writeFile, access } = await import('node:fs/promises');
+    const file1 = path.join(dir, '20260828_100000.mkv');
+    const file2 = path.join(dir, '20260828_110000.mkv');
+    await mkdir(dir, { recursive: true });
+    await writeFile(file1, Buffer.from([1, 2, 3]));
+    await writeFile(file2, Buffer.from([4, 5, 6]));
+    const rec1 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's1', streamTitle: '旧标题', quality: '1080p' });
+    services.recordings.update(rec1.id, { state: 'completed', startedAt: '2026-08-28T10:00:00.000Z', endedAt: '2026-08-28T10:10:00.000Z', filePath: file1 });
+    const rec2 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's2', streamTitle: '第二段', quality: '720p' });
+    services.recordings.update(rec2.id, { state: 'completed', startedAt: '2026-08-28T11:00:00.000Z', endedAt: '2026-08-28T11:05:00.000Z', filePath: file2 });
+
+    // quality 输出
+    const list = await app.inject({ method: 'GET', url: '/api/v1/recordings', headers: { host: '127.0.0.1:43120' } });
+    expect(list.json().items.find((r: { id: string }) => r.id === rec1.id).quality).toBe('1080p');
+
+    // 日期筛选
+    const byDate = await app.inject({ method: 'GET', url: '/api/v1/recordings?dateFrom=2026-08-28T10:30:00.000Z', headers: { host: '127.0.0.1:43120' } });
+    expect(byDate.json().items.map((r: { id: string }) => r.id)).toEqual([rec2.id]);
+
+    // 重命名同步文件
+    const ren = await app.inject({
+      method: 'PATCH', url: `/api/v1/recordings/${rec1.id}`, headers: { host: '127.0.0.1:43120' },
+      payload: { streamTitle: '新标题' },
+    });
+    expect(ren.json().recording.streamTitle).toBe('新标题');
+    expect(ren.json().recording.filePath).toBe(path.join(dir, '新标题.mkv'));
+    await access(path.join(dir, '新标题.mkv'));
+    await access(file1).then(() => { throw new Error('old file should be renamed'); }).catch(() => undefined);
+
+    // 删除连带删文件
+    const del = await app.inject({ method: 'DELETE', url: `/api/v1/recordings/${rec2.id}`, headers: { host: '127.0.0.1:43120' } });
+    expect(del.statusCode).toBe(204);
+    await access(file2).then(() => { throw new Error('deleted file should be gone'); }).catch(() => undefined);
+    expect(services.recordings.get(rec2.id)).toBeNull();
+
+    // 文件已缺失时删除容错
+    const rec3 = services.recordings.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 's3', streamTitle: '缺文件', quality: '720p' });
+    services.recordings.update(rec3.id, { state: 'completed', filePath: path.join(dir, 'missing.mkv') });
+    const delMissing = await app.inject({ method: 'DELETE', url: `/api/v1/recordings/${rec3.id}`, headers: { host: '127.0.0.1:43120' } });
+    expect(delMissing.statusCode).toBe(204);
+    expect(services.recordings.get(rec3.id)).toBeNull();
+
+    const badRen = await app.inject({ method: 'PATCH', url: '/api/v1/recordings/rec_none', headers: { host: '127.0.0.1:43120' }, payload: { streamTitle: 'x' } });
+    expect(badRen.statusCode).toBe(404);
     await app.close();
   });
 });

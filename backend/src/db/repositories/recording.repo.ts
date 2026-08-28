@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Recording, RecordingState } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingState } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -28,7 +28,7 @@ function parseError(raw: string | null): ErrorObject | null {
   }
 }
 
-/** quality 为内部字段（阶段 C 清晰度追踪），API 模型不输出。 */
+/** quality 为内部字段（阶段 C 清晰度追踪），v2.0 起输出到 API 供历史页展示。 */
 export function rowToRecording(row: RecordingRow): Recording {
   return {
     id: row.id,
@@ -44,6 +44,7 @@ export function rowToRecording(row: RecordingRow): Recording {
     failureReason: parseError(row.failure_reason),
     retryCount: row.retry_count ?? 0,
     createdAt: row.created_at,
+    quality: (row.quality as Quality) ?? undefined,
   };
 }
 
@@ -54,6 +55,8 @@ export interface RecordingListQuery {
   state?: RecordingState | undefined;
   sessionId?: string | undefined;
   groupBy?: 'session' | undefined;
+  dateFrom?: string | undefined;
+  dateTo?: string | undefined;
 }
 
 export class RecordingRepository {
@@ -113,6 +116,14 @@ export class RecordingRepository {
       where.push('stream_session_id = ?');
       params.push(query.sessionId);
     }
+    if (query.dateFrom) {
+      where.push('started_at >= ?');
+      params.push(query.dateFrom);
+    }
+    if (query.dateTo) {
+      where.push('started_at <= ?');
+      params.push(query.dateTo);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM recordings ${whereSql}`).get(...params) as { c: number }).c;
     const sql = `SELECT * FROM recordings ${whereSql} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`;
@@ -146,12 +157,16 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.state !== undefined) {
       sets.push('state = ?');
       params.push(patch.state);
+    }
+    if (patch.startedAt !== undefined) {
+      sets.push('started_at = ?');
+      params.push(patch.startedAt);
     }
     if (patch.endedAt !== undefined) {
       sets.push('ended_at = ?');
@@ -173,9 +188,17 @@ export class RecordingRepository {
       sets.push('retry_count = ?');
       params.push(patch.retryCount);
     }
+    if (patch.streamTitle !== undefined) {
+      sets.push('stream_title = ?');
+      params.push(patch.streamTitle);
+    }
     if (sets.length) {
       this.db.prepare(`UPDATE recordings SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     }
     return this.get(id)!;
+  }
+
+  remove(id: string): void {
+    this.db.prepare('DELETE FROM recordings WHERE id = ?').run(id);
   }
 }

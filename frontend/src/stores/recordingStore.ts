@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchRecordings, openRecordingDirectory } from '../api/recordings';
+import { fetchRecordings, openRecordingDirectory, renameRecording, deleteRecording } from '../api/recordings';
 import type { Recording, RecordingQuery } from '../types/recording';
 
 interface RecordingState {
@@ -11,6 +11,8 @@ interface RecordingState {
   query: RecordingQuery;
   fetchHistory: (q?: RecordingQuery) => Promise<void>;
   openDirectory: (id: string) => Promise<void>;
+  renameRecording: (id: string, streamTitle: string) => Promise<void>;
+  removeRecording: (id: string) => Promise<void>;
   upsertRecording: (rec: Recording) => void;
 }
 
@@ -33,6 +35,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   },
   async openDirectory(id) {
     await openRecordingDirectory(id);
+  },
+  async renameRecording(id, streamTitle) {
+    const rec = await renameRecording(id, streamTitle);
+    get().upsertRecording(rec);
+  },
+  async removeRecording(id) {
+    await deleteRecording(id);
+    set((s) => ({ items: s.items.filter((r) => r.id !== id), total: Math.max(s.total - 1, 0) }));
   },
   upsertRecording(rec) {
     set((s) => {
