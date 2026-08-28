@@ -127,6 +127,37 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
+  it('keeps the recorder active when preview WS and SSE clients disconnect (#84)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/84', displayName: 'lifecycle' });
+
+    await server.services.manager.maybeStartRecording(room, { streamSessionId: 'session-84' });
+    expect(server.services.manager.isRoomActive(room.id)).toBe(true);
+    expect(server.services.rooms.get(room.id)!.monitorState).toBe('recording');
+
+    const preview = connect(server.url, room.id);
+    await preview.opened;
+    const events = openEventStream(server.url);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // 页面卸载会关闭预览 WS；路由切换也会销毁 SSE。两者均只能回收客户端，
+    // 不得影响后台录制会话。
+    preview.ws.close();
+    await preview.closed;
+    events.req.destroy();
+    await events.done;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(server.services.manager.isRoomActive(room.id)).toBe(true);
+    expect(server.services.rooms.get(room.id)!.monitorState).toBe('recording');
+    expect(server.services.recordings.activeCount()).toBe(1);
+
+    await server.services.manager.stopRecording(room.id);
+    (server.services.clock as FakeClock).advance(1_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await server.close();
+  });
+
   it('closes with 4002 when room is not recording', async () => {
     const server = await listen();
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'ws' });
