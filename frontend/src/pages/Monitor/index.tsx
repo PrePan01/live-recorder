@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
-import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
+import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { MonitorStateTag } from '../../components/StatusTags';
@@ -73,6 +73,9 @@ function RoomCard({
           onClick={() => onFavorite(room, !room.favorited)}
         >
           {room.favorited ? '已收藏' : '收藏'}
+        </Button>,
+        <Button key="live" type="text" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
+          去直播间
         </Button>,
       ]}
     >
