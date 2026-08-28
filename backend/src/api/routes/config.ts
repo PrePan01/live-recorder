@@ -55,14 +55,14 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     let skippedRooms = 0;
     if (Array.isArray(incoming.rooms)) {
       const existing = new Set(services.rooms.list().map((r) => `${r.platform}|${r.url}`));
-      for (const item of incoming.rooms) {
-        if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin')) continue;
-        const key = `${item.platform}|${item.url}`;
-        if (existing.has(key)) {
-          skippedRooms += 1;
-          continue;
-        }
-        try {
+      try {
+        for (const item of incoming.rooms) {
+          if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin')) continue;
+          const key = `${item.platform}|${item.url}`;
+          if (existing.has(key)) {
+            skippedRooms += 1;
+            continue;
+          }
           services.rooms.create({
             platform: item.platform as Platform,
             url: item.url,
@@ -71,18 +71,22 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
           });
           existing.add(key);
           importedRooms += 1;
-        } catch {
-          skippedRooms += 1;
         }
+      } catch (err) {
+        throw new AppError('CONFIG_LOAD_FAILED', '房间导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
       }
     }
     let importedAlerts = 0;
     if (Array.isArray(incoming.alerts)) {
-      for (const a of incoming.alerts) {
-        if (!a || typeof a.message !== 'string' || a.resolved === true) continue;
-        const level = a.level === 'error' || a.level === 'warning' ? a.level : 'info';
-        services.alerts.create({ level, source: typeof a.source === 'string' ? a.source : 'import', message: a.message, occurredAt: typeof a.occurredAt === 'string' ? a.occurredAt : services.clock.iso() });
-        importedAlerts += 1;
+      try {
+        for (const a of incoming.alerts) {
+          if (!a || typeof a.message !== 'string' || a.resolved === true) continue;
+          const level = a.level === 'error' || a.level === 'warning' ? a.level : 'info';
+          services.alerts.create({ level, source: typeof a.source === 'string' ? a.source : 'import', message: a.message, occurredAt: typeof a.occurredAt === 'string' ? a.occurredAt : services.clock.iso() });
+          importedAlerts += 1;
+        }
+      } catch {
+        throw new AppError('CONFIG_LOAD_FAILED', '告警导入失败', { details: { appliedSettings, importedRooms, skippedRooms, importedAlerts } });
       }
     }
     if (appliedSettings) {
