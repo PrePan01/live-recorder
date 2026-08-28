@@ -33,7 +33,7 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
     const create = () => {
       if (disposed || !videoRef.current) return;
       player = mpegts.createPlayer(
-        { type: 'ws_flv', url: previewWsUrl(roomId), isLive: true },
+        { type: 'flv', url: previewWsUrl(roomId), isLive: true },
         { enableStashBuffer: false, liveBufferLatencyChasing: true },
       );
       player.attachMediaElement(videoRef.current);
