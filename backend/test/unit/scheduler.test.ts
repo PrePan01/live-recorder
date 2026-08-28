@@ -41,6 +41,28 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('persists adapter display names and emits updated rooms for Bilibili and Douyin (#91)', async () => {
+    const { services } = newServices();
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/91', displayName: '', autoRecord: false });
+    const douyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/91', displayName: '', autoRecord: false });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 'b91', displayName: 'B站主播' },
+      { status: 'live', streamSessionId: 'd91', displayName: '抖音主播' },
+    ]);
+    const updates: Array<{ id: string; displayName: string }> = [];
+    services.events.on((event) => {
+      if (event.type === 'room:updated') updates.push({ id: event.data.id, displayName: event.data.displayName });
+    });
+
+    await services.scheduler.triggerImmediateCheck(bilibili.id);
+    await services.scheduler.triggerImmediateCheck(douyin.id);
+
+    expect(services.rooms.get(bilibili.id)!.displayName).toBe('B站主播');
+    expect(services.rooms.get(douyin.id)!.displayName).toBe('抖音主播');
+    expect(updates).toContainEqual({ id: bilibili.id, displayName: 'B站主播' });
+    expect(updates).toContainEqual({ id: douyin.id, displayName: '抖音主播' });
+  });
+
   it('checks each platform at its own interval and reschedules serially', async () => {
     const { services, clock } = newServices();
     services.settings.save(baseSettings());

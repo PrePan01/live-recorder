@@ -48,6 +48,17 @@ interface BiliPlayResponse {
   };
 }
 
+/** getRoomPlayInfo 已不再返回 room_info/anchor_info，改用以下两个免 Cookie 端点补充名称信息。 */
+interface BiliAnchorResponse {
+  code?: number;
+  data?: { info?: { uname?: string } };
+}
+
+interface BiliRoomInfoResponse {
+  code?: number;
+  data?: { title?: string; uid?: number };
+}
+
 function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
@@ -94,6 +105,27 @@ export class BilibiliAdapter implements PlatformAdapter {
     });
     if (!res.ok) throw new Error(`bilibili api http ${res.status}`);
     return (await res.json()) as BiliPlayResponse;
+  }
+
+  /** getRoomPlayInfo 响应已不含主播名/标题；用 get_anchor_in_room 取昵称、get_info 取标题，均免 Cookie 且无风控。 */
+  private async fetchRoomMeta(roomId: number): Promise<{ uname?: string; title?: string }> {
+    const headers = {
+      'User-Agent': UA,
+      Referer: `${this.roomBase}/${roomId}`,
+    };
+    const [anchor, info] = await Promise.all([
+      this.fetcher(`${this.apiBase}/live_user/v1/UserInfo/get_anchor_in_room?roomid=${roomId}`, {
+        signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
+        headers,
+      }).then(async (r) => (r.ok ? ((await r.json()) as BiliAnchorResponse) : null)).catch(() => null),
+      this.fetcher(`${this.apiBase}/room/v1/Room/get_info?room_id=${roomId}`, {
+        signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
+        headers,
+      }).then(async (r) => (r.ok ? ((await r.json()) as BiliRoomInfoResponse) : null)).catch(() => null),
+    ]);
+    const uname = anchor?.code === 0 ? anchor.data?.info?.uname : undefined;
+    const title = info?.code === 0 ? info.data?.title : undefined;
+    return { ...(uname ? { uname } : {}), ...(title ? { title } : {}) };
   }
 
   /** 取流：优先 http_stream/flv + avc；实际档位按 codec.current_qn 回报。 */
@@ -149,8 +181,10 @@ export class BilibiliAdapter implements PlatformAdapter {
     if (data.code !== 0 || !data.data) {
       return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
     }
-    const title = data.data.room_info?.title ?? '';
-    const uname = data.data.anchor_info?.base_info?.uname;
+    // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
+    const meta = await this.fetchRoomMeta(roomId);
+    const title = data.data.room_info?.title ?? meta.title ?? '';
+    const uname = data.data.anchor_info?.base_info?.uname ?? meta.uname;
     if (data.data.live_status !== 1) {
       return { status: 'offline', ...(uname ? { displayName: uname } : {}) };
     }

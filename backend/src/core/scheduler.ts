@@ -74,6 +74,14 @@ export class Scheduler {
     this.emitRoom(room.id);
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
+    // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
+    // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
+    const detectedName = status.displayName?.trim();
+    // 仅填补空名称，保留用户手动设置的自定义名称。
+    const checkedRoom = detectedName && !room.displayName.trim()
+      ? this.services.rooms.update(room.id, { displayName: detectedName })
+      : room;
+    if (checkedRoom !== room) this.emitRoom(room.id);
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
       this.services.rooms.setLiveStatus(room.id, status.status);
@@ -83,14 +91,14 @@ export class Scheduler {
       // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
       // true 时检测即自动开始。
       const globalAuto = this.services.settings.load()?.autoRecord ?? true;
-      const effectiveAuto = room.autoRecord ?? globalAuto;
+      const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
       if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
         this.emitRoom(room.id);
         return;
       }
       try {
-        await this.manager.maybeStartRecording({ ...room, monitorState: 'checking' }, status, opts);
+        await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
