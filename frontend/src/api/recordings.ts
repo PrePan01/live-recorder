@@ -6,6 +6,21 @@ export async function fetchRecordings(query: RecordingQuery): Promise<PagedRecor
   return data;
 }
 
+export interface BatchDeleteResult {
+  deleted: string[];
+  failed: Array<{ id: string; reason: string }>;
+}
+
+export async function batchDeleteRecordings(ids: string[]): Promise<BatchDeleteResult> {
+  const { data } = await http.post<BatchDeleteResult>('/recordings/batch-delete', { ids });
+  return data;
+}
+
+export async function exportRecordingsCsv(): Promise<string> {
+  const res = await http.get('/recordings/export', { responseType: 'blob' });
+  return (res.data as Blob).text();
+}
+
 export async function openRecordingDirectory(id: string): Promise<void> {
   await http.post(`/recordings/${id}/open`);
 }

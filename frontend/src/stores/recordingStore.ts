@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import { fetchRecordings, openRecordingDirectory, renameRecording, deleteRecording } from '../api/recordings';
+import {
+  fetchRecordings,
+  openRecordingDirectory,
+  renameRecording,
+  deleteRecording,
+  batchDeleteRecordings,
+  exportRecordingsCsv,
+} from '../api/recordings';
 import type { Recording, RecordingQuery } from '../types/recording';
 
 function normalizeRecording(rec: Recording): Recording {
@@ -17,6 +24,8 @@ interface RecordingState {
   openDirectory: (id: string) => Promise<void>;
   renameRecording: (id: string, streamTitle: string) => Promise<void>;
   removeRecording: (id: string) => Promise<void>;
+  batchRemove: (ids: string[]) => Promise<{ deleted: string[]; failed: Array<{ id: string; reason: string }> }>;
+  exportCsv: () => Promise<string>;
   upsertRecording: (rec: Recording) => void;
 }
 
@@ -47,6 +56,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   async removeRecording(id) {
     await deleteRecording(id);
     set((s) => ({ items: s.items.filter((r) => r.id !== id), total: Math.max(s.total - 1, 0) }));
+  },
+  async batchRemove(ids) {
+    const res = await batchDeleteRecordings(ids);
+    const del = new Set(res.deleted);
+    set((s) => ({ items: s.items.filter((r) => !del.has(r.id)), total: Math.max(s.total - del.size, 0) }));
+    return res;
+  },
+  async exportCsv() {
+    return exportRecordingsCsv();
   },
   upsertRecording(rec) {
     set((s) => {
