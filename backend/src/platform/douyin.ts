@@ -39,6 +39,22 @@ interface DouyinEnterResponse {
   data?: DouyinEnterData;
 }
 
+/**
+ * 区分抖音非 0 status_code 的根因：#56 第二部分——
+ * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查 Cookie；
+ * 仅结构异常（连 status_code 都无法解析）→ PLATFORM_CHANGED 真接口变更。
+ */
+function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): AppError {
+  const message = String(json?.data && 'message' in json.data ? (json.data as unknown as { message?: string }).message : '');
+  const code = json.status_code;
+  // 凭证相关信号：请求参数错误/服务繁忙/需登录等（抖音风控常见 status_code）。
+  const credentialLike = code === 10011 || /请求参数|服务繁忙|请稍后|登录|风控|verify|RiskControl/i.test(message);
+  if (credentialLike || !hasCookie) {
+    return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，Cookie 可能已失效，请到设置页更新' : '平台访问受限，请配置抖音 Cookie', { retryable: false });
+  }
+  return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+}
+
 function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
@@ -117,7 +133,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
+      const appErr = classifyStatusError(data, Boolean(cookie));
+      return { status: appErr.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: appErr.toObject() };
     }
     const entry = arr[0];
     if (!entry) {
@@ -154,7 +171,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw classifyStatusError(data, Boolean(cookie));
     }
     const entry = arr[0];
     if (!entry) {
