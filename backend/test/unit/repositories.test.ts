@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(3);
+    expect(runMigrations(db)).toBe(4);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(3);
+    expect(currentSchemaVersion(db)).toBe(4);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -46,11 +46,11 @@ describe('migrations', () => {
     const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsBefore).not.toContain('favorited');
 
-    // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列
-    expect(runMigrations(db)).toBe(1);
+    // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列
+    expect(runMigrations(db)).toBe(2);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
-    expect(currentSchemaVersion(db)).toBe(3);
+    expect(currentSchemaVersion(db)).toBe(4);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -134,6 +134,20 @@ describe('RecordingRepository', () => {
     expect(page.items[0]!.retryCount).toBe(3);
     expect(recs.list({ state: 'recording' }).items).toHaveLength(1);
     expect(recs.activeCount()).toBe(1);
+  });
+
+  it('persists and outputs integrity field (verified/failed/pending)', () => {
+    const db = freshDb();
+    const rooms = new RoomRepository(db);
+    const recs = new RecordingRepository(db);
+    const room = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'i' });
+    const rec = recs.create({ roomId: room.id, platform: 'bilibili', streamSessionId: 'si', streamTitle: 'i' });
+    expect(rec.integrity).toBeUndefined();
+    recs.update(rec.id, { state: 'completed', integrity: 'verified' });
+    expect(recs.get(rec.id)!.integrity).toBe('verified');
+    recs.update(rec.id, { integrity: 'failed' });
+    expect(recs.get(rec.id)!.integrity).toBe('failed');
+    expect(recs.list({ roomId: room.id }).items[0]!.integrity).toBe('failed');
   });
 });
 

@@ -82,6 +82,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #50：录制完整性校验列（ffprobe 结果），幂等加列。
+    version: 4,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'integrity'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE recordings ADD COLUMN integrity TEXT;`);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

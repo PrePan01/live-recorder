@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Quality, Recording, RecordingState } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingState } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -16,6 +16,7 @@ interface RecordingRow {
   failure_reason: string | null;
   retry_count: number | null;
   quality: string | null;
+  integrity: string | null;
   created_at: string;
 }
 
@@ -30,7 +31,7 @@ function parseError(raw: string | null): ErrorObject | null {
 
 /** quality 为内部字段（阶段 C 清晰度追踪），v2.0 起输出到 API 供历史页展示。 */
 export function rowToRecording(row: RecordingRow): Recording {
-  return {
+  const rec: Recording = {
     id: row.id,
     roomId: row.room_id,
     platform: row.platform as Platform,
@@ -44,8 +45,10 @@ export function rowToRecording(row: RecordingRow): Recording {
     failureReason: parseError(row.failure_reason),
     retryCount: row.retry_count ?? 0,
     createdAt: row.created_at,
-    quality: (row.quality as Quality) ?? undefined,
   };
+  if (row.quality) rec.quality = row.quality as Quality;
+  if (row.integrity) rec.integrity = row.integrity as RecordingIntegrity;
+  return rec;
 }
 
 export interface RecordingListQuery {
@@ -157,12 +160,16 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.state !== undefined) {
       sets.push('state = ?');
       params.push(patch.state);
+    }
+    if (patch.integrity !== undefined) {
+      sets.push('integrity = ?');
+      params.push(patch.integrity);
     }
     if (patch.startedAt !== undefined) {
       sets.push('started_at = ?');

@@ -10,6 +10,9 @@ export type RecordingState =
   | 'completed'
   | 'failed';
 
+/** 录制文件完整性：verified=ffprobe 校验通过、failed=损坏/截断、pending=校验中或 ffprobe 缺失。 */
+export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
+
 export interface Recording {
   id: string;
   roomId: string;
@@ -25,4 +28,5 @@ export interface Recording {
   retryCount: number;
   createdAt: string;
   quality?: Quality;
+  integrity?: RecordingIntegrity;
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { AppError } from '../types/error.js';
 import type { AppSettings, ErrorObject, Room } from '../types/index.js';
 import { recordingFilePath } from '../storage/file-organizer.js';
+import { checkFileIntegrity } from '../recorder/integrity.js';
 import type { RecordingEvent } from '../recorder/engine.js';
 import type { Notifier } from './notifier.js';
 import type { Services } from './services.js';
@@ -286,6 +287,20 @@ export class RecorderManager {
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
     this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
+    // 异步校验文件完整性，不阻塞录制完成响应。
+    if (rec.filePath) this.verifyIntegrity(rec);
+  }
+
+  /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
+  private verifyIntegrity(rec: import('../types/index.js').Recording): void {
+    void (async () => {
+      const integrity = await checkFileIntegrity(rec.filePath!);
+      const updated = this.services.recordings.update(rec.id, { integrity });
+      this.services.events.emit({ type: 'recording:updated', data: updated });
+      if (integrity === 'failed') {
+        this.raiseAlert('warning', 'recorder', new AppError('RECORDING_FILE_CORRUPTED', '录制文件校验失败，可能损坏或截断', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
+      }
+    })();
   }
 
   private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string): Promise<void> {
