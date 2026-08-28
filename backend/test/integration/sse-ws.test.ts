@@ -71,6 +71,25 @@ describe('WebSocket preview', () => {
     return { ws, closed, opened };
   }
 
+  it('accepts connections proxied from vite dev server host (localhost:5173)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'proxy' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    const ws = new WebSocket(`ws://127.0.0.1:${new URL(server.url).port}/ws/preview/${room.id}`, {
+      headers: { Host: 'localhost:5173', Origin: 'http://localhost:5173' },
+    });
+    const opened = new Promise<void>((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+    const closed = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
+    await opened;
+    ws.close();
+    await closed;
+    await server.close();
+  });
+
   it('closes with 4002 when room is not recording', async () => {
     const server = await listen();
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'ws' });

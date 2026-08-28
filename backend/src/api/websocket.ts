@@ -110,7 +110,8 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   const handleUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const host = req.headers.host ?? '';
     const origin = req.headers.origin;
-    const allowedHosts = new Set(['127.0.0.1:43120', 'localhost:43120']);
+    // 兜底：允许 Vite 代理（5173）转发的 Host，避免未设 changeOrigin 时被误拒。
+    const allowedHosts = new Set(['127.0.0.1:43120', 'localhost:43120', '127.0.0.1:5173', 'localhost:5173']);
     const allowedOrigins = new Set(['http://127.0.0.1:43120', 'http://localhost:43120', ...extraOrigins]);
     if (!allowedHosts.has(host)) {
       socket.destroy();
