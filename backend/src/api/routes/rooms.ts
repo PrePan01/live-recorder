@@ -31,6 +31,46 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     return reply.status(201).send({ room: enrich(room) });
   });
 
+  app.post('/api/v1/rooms/batch', async (req, reply) => {
+    const body = (req.body ?? {}) as { urls?: unknown };
+    if (!Array.isArray(body.urls) || body.urls.length === 0) {
+      throw new AppError('ROOM_LINK_INVALID', 'urls 必须为非空数组');
+    }
+    if (body.urls.length > 100) {
+      throw new AppError('ROOM_LINK_INVALID', '单次批量最多 100 条');
+    }
+    // 批内+现库去重，按规范化链接识别。
+    const existing = new Set(services.rooms.list().map((r) => `${r.platform}|${r.url}`));
+    const seen = new Set<string>();
+    const succeeded: Array<import('../../types/index.js').Room> = [];
+    const failed: Array<{ url: string; reason: string }> = [];
+    for (const raw of body.urls) {
+      const url = typeof raw === 'string' ? raw.trim() : '';
+      if (!url) {
+        failed.push({ url: typeof raw === 'string' ? raw : String(raw), reason: 'URL 为空' });
+        continue;
+      }
+      const platform = PLATFORMS.find((p) => services.adapterFor(p).validateUrl(url));
+      if (!platform) {
+        failed.push({ url, reason: '无效链接或平台不支持' });
+        continue;
+      }
+      const adapter = services.adapterFor(platform);
+      const normalized = adapter.normalizeUrl(url);
+      const key = `${platform}|${normalized}`;
+      if (existing.has(key) || seen.has(key)) {
+        failed.push({ url, reason: '该直播间已存在' });
+        continue;
+      }
+      const room = services.rooms.create({ platform, url: normalized, displayName: '' });
+      existing.add(key);
+      seen.add(key);
+      succeeded.push(room);
+    }
+    for (const room of succeeded) services.events.emit({ type: 'room:updated', data: enrich(room) });
+    return reply.send({ succeeded: succeeded.map(enrich), failed });
+  });
+
   app.patch('/api/v1/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean };
