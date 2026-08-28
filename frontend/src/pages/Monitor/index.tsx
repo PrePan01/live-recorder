@@ -1,11 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
-import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
+import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
+import RoomHealth from '../../components/RoomHealth';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -74,6 +75,9 @@ function RoomCard({
         >
           {room.favorited ? '已收藏' : '收藏'}
         </Button>,
+        <Button key="live" type="text" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
+          去直播间
+        </Button>,
       ]}
     >
       <RoomStats
@@ -81,6 +85,9 @@ function RoomCard({
         startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
         state={room.monitorState}
       />
+      <div style={{ marginTop: 10 }}>
+        <RoomHealth roomId={room.id} />
+      </div>
       {room.lastError ? (
         <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 0, marginTop: 8 }}>
           {room.lastError.message}

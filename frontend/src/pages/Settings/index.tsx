@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { App, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
+import { App, Alert, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
 import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
+import { useServiceStore } from '../../stores/serviceStore';
 import { validateDirectory, testSmtp } from '../../api/settings';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
-import { formatTime } from '../../utils/format';
+import { formatBytes, formatTime } from '../../utils/format';
 import type { SettingsInput } from '../../types/settings';
 
 const LEVEL_COLOR: Record<string, string> = { info: 'blue', warning: 'orange', error: 'red' };
@@ -20,8 +21,9 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
   const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
+  const status = useServiceStore((s) => s.status);
+  const fetchStatus = useServiceStore((s) => s.fetchStatus);
   const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearCookie, setClearCookie] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -34,7 +36,8 @@ export default function SettingsPage() {
   useEffect(() => {
     void load();
     void fetchAlerts();
-  }, [load, fetchAlerts]);
+    void fetchStatus();
+  }, [load, fetchAlerts, fetchStatus]);
 
   useEffect(() => {
     if (settings) {
@@ -44,6 +47,7 @@ export default function SettingsPage() {
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
         recordingFormat: settings.recordingFormat ?? 'source_flv',
+        autoRecord: settings.autoRecord ?? true,
         douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
@@ -73,13 +77,12 @@ export default function SettingsPage() {
     }
   };
 
-  const onFinish = async (values: SettingsInput) => {
-    setSaving(true);
+  const persist = async (values: SettingsInput) => {
+    const { mail, douyinCookie, ...rest } = values as SettingsInput & {
+      mail?: Record<string, unknown> & { recipients?: string; password?: string };
+      douyinCookie?: string;
+    };
     try {
-      const { mail, douyinCookie, ...rest } = values as SettingsInput & {
-        mail?: Record<string, unknown> & { recipients?: string; password?: string };
-        douyinCookie?: string;
-      };
       await save({
         ...rest,
         ...(clearCookie
@@ -98,13 +101,16 @@ export default function SettingsPage() {
             }
           : undefined,
       });
-      message.success('设置已保存');
       setClearCookie(false);
     } catch (e) {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '保存失败');
-    } finally {
-      setSaving(false);
     }
+  };
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onValuesChange = (_changed: unknown, all: SettingsInput) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void persist(all), 500);
   };
 
   const onExport = async () => {
@@ -145,8 +151,23 @@ export default function SettingsPage() {
     }
   };
 
+  const diskFree = status?.disk?.freeBytes ?? 0;
+  const diskTotal = status?.disk?.totalBytes ?? 1;
+  const diskRatio = diskTotal > 0 ? diskFree / diskTotal : 0;
+  const diskDanger = diskFree < 20_000_000_000 || diskRatio < 0.1;
+
   return (
-    <Row gutter={16}>
+    <div>
+      {diskDanger ? (
+        <Alert
+          type="warning"
+          showIcon
+          banner
+          style={{ marginBottom: 16 }}
+          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），低于阈值可能拒绝新录制`}
+        />
+      ) : null}
+      <Row gutter={16}>
       <Col xs={24} lg={14}>
         <Card
           title="服务设置"
@@ -161,7 +182,7 @@ export default function SettingsPage() {
             </Space>
           }
         >
-          <Form form={form} layout="vertical" onFinish={onFinish} disabled={!settings}>
+          <Form form={form} layout="vertical" onValuesChange={onValuesChange} disabled={!settings}>
             <Form.Item label="保存目录">
               <Space.Compact style={{ width: '100%' }}>
                 <Form.Item name="recordingDirectory" noStyle rules={[{ required: true, message: '必填' }]}>
@@ -207,6 +228,14 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
+            <Form.Item
+              label="检测到开播时自动录制"
+              name="autoRecord"
+              valuePropName="checked"
+              extra="开启后检测到直播自动开始录制；关闭后仅检测、不自动录（手动「立即检测」仍可触发录制）"
+            >
+              <Switch />
+            </Form.Item>
             <Typography.Title level={5}>检测间隔（秒，按平台）</Typography.Title>
             <Row gutter={16}>
               <Col span={8}>
@@ -316,9 +345,9 @@ export default function SettingsPage() {
                 </Button>
               </Col>
             </Row>
-            <Button type="primary" htmlType="submit" loading={saving}>
-              保存设置
-            </Button>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              设置改动自动保存（500ms 防抖），无需手动保存。
+            </Typography.Paragraph>
           </Form>
           <DirectoryPicker
             open={pickerOpen}
@@ -452,5 +481,6 @@ export default function SettingsPage() {
         </Card>
       </Col>
     </Row>
+    </div>
   );
 }

@@ -10,6 +10,7 @@ import History from './pages/History';
 import SettingsPage from './pages/Settings';
 import { useSSE } from './hooks/useSSE';
 import { useServiceStore } from './stores/serviceStore';
+import RecordingCompleteNotice from './components/RecordingCompleteNotice';
 
 function SetupGuard({ children }: { children: JSX.Element }) {
   const status = useServiceStore((s) => s.status);
@@ -29,7 +30,9 @@ function SetupGuard({ children }: { children: JSX.Element }) {
 export default function App() {
   useSSE();
   return (
-    <Routes>
+    <>
+      <RecordingCompleteNotice />
+      <Routes>
       <Route
         path="/setup"
         element={
@@ -52,6 +55,7 @@ export default function App() {
       </Route>
       <Route path="/" element={<Navigate to="/monitor" replace />} />
       <Route path="*" element={<Navigate to="/monitor" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, WarningOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
+import FilePlayer from '../../components/FilePlayer';
+import { recordingFileUrl } from '../../api/client';
 import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -16,7 +18,7 @@ const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'b
 
 export default function History() {
   const { message } = App.useApp();
-  const { items, total, page, pageSize, loading, fetchHistory, openDirectory, renameRecording, removeRecording } =
+  const { items, total, page, pageSize, loading, fetchHistory, openDirectory, renameRecording, removeRecording, batchRemove, exportCsv } =
     useRecordingStore();
   const rooms = useRoomStore((s) => s.rooms);
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
@@ -26,6 +28,10 @@ export default function History() {
   const [renaming, setRenaming] = useState<Recording | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
+  const [playing, setPlaying] = useState<Recording | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const q: { page: number; roomId?: string; dateFrom?: string; dateTo?: string } = { page: 1, roomId };
@@ -38,6 +44,38 @@ export default function History() {
   }, [fetchHistory, roomId, dateRange]);
 
   const roomName = useMemo(() => new Map(rooms.map((r) => [r.id, r.displayName])), [rooms]);
+
+  const handleBatchDelete = async () => {
+    setBatchBusy(true);
+    try {
+      const res = await batchRemove(selectedKeys.map(String));
+      setSelectedKeys([]);
+      message.success(`已删除 ${res.deleted.length} 条${res.failed.length > 0 ? `，失败 ${res.failed.length} 条` : ''}`);
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量删除失败');
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const csv = await exportCsv();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recordings-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('CSV 已导出');
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const columns: ColumnsType<Recording> = useMemo(
     () => [
@@ -98,6 +136,15 @@ export default function History() {
             <Button
               size="small"
               type="link"
+              icon={<PlayCircleOutlined />}
+              disabled={r.state !== 'completed' || !r.filePath}
+              onClick={() => setPlaying(r)}
+            >
+              播放
+            </Button>
+            <Button
+              size="small"
+              type="link"
               icon={<FolderOpenOutlined />}
               disabled={!r.filePath}
               onClick={() =>
@@ -155,6 +202,18 @@ export default function History() {
             value={dateRange}
             onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
           />
+          <Button size="small" loading={exporting} onClick={() => void handleExportCsv()}>
+            导出 CSV
+          </Button>
+          <Popconfirm
+            title={`确定删除所选 ${selectedKeys.length} 条录制？将连带删除文件且不可恢复。`}
+            onConfirm={() => void handleBatchDelete()}
+            disabled={selectedKeys.length === 0}
+          >
+            <Button size="small" danger disabled={batchBusy || selectedKeys.length === 0}>
+              批量删除{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
+            </Button>
+          </Popconfirm>
           <Space>
             <Typography.Text type="secondary">按场次分组</Typography.Text>
             <Switch checked={grouped} onChange={setGrouped} />
@@ -182,6 +241,7 @@ export default function History() {
           columns={columns}
           dataSource={items}
           loading={loading}
+          rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
           pagination={{
             current: page,
             pageSize,
@@ -191,6 +251,16 @@ export default function History() {
           }}
         />
       )}
+      <Modal
+        title={`播放：${playing?.streamTitle || playing?.id || ''}`}
+        open={playing !== null}
+        footer={null}
+        width={820}
+        destroyOnHidden
+        onCancel={() => setPlaying(null)}
+      >
+        {playing ? <FilePlayer url={recordingFileUrl(playing.id)} /> : null}
+      </Modal>
       <Modal
         title="重命名录制"
         open={renaming !== null}

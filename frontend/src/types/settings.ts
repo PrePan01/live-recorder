@@ -36,6 +36,7 @@ export interface Settings {
   checkIntervalSec: PlatformIntervals;
   quality: Quality;
   recordingFormat: RecordingFormat;
+  autoRecord: boolean;
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
@@ -61,6 +62,7 @@ export interface SettingsInput {
   checkIntervalSec?: Partial<PlatformIntervals>;
   quality?: Quality;
   recordingFormat?: RecordingFormat;
+  autoRecord?: boolean;
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;

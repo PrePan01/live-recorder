@@ -47,3 +47,21 @@ export async function checkRoomNow(id: string): Promise<void> {
 export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }
+
+export interface RoomStats {
+  roomId: string;
+  days: number;
+  totalRecordings: number;
+  totalBytes: number;
+  successRate: number;
+  completed: number;
+  failed: number;
+  lastCheckedAt: string | null;
+  lastError: Record<string, unknown> | null;
+  byDay: Array<{ date: string; count: number; bytes: number }>;
+}
+
+export async function fetchRoomStats(id: string): Promise<RoomStats> {
+  const { data } = await http.get<RoomStats>(`/rooms/${id}/stats`);
+  return data;
+}

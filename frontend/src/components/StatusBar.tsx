@@ -58,7 +58,9 @@ export default function StatusBar() {
         </Tag>
       </Space>
       <Space>
-        <Typography.Text type="secondary">磁盘可用</Typography.Text>
+        <Typography.Text type={spaceDanger ? 'danger' : 'secondary'}>
+          {spaceDanger ? '⚠ 磁盘空间不足' : '磁盘可用'}
+        </Typography.Text>
         <Progress
           percent={Math.round(freeRatio * 100)}
           status={spaceDanger ? 'exception' : 'normal'}
@@ -66,6 +68,7 @@ export default function StatusBar() {
           style={{ width: 120 }}
           format={() => formatBytes(free)}
         />
+        {spaceDanger ? <Tag color="red">需清理</Tag> : null}
       </Space>
       <div style={{ marginLeft: 'auto' }}>
         <Popover
