@@ -21,7 +21,6 @@ export default function SettingsPage() {
   const { settings, load, save } = useSettingsStore();
   const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
   const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearCookie, setClearCookie] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -72,13 +71,12 @@ export default function SettingsPage() {
     }
   };
 
-  const onFinish = async (values: SettingsInput) => {
-    setSaving(true);
+  const persist = async (values: SettingsInput) => {
+    const { mail, douyinCookie, ...rest } = values as SettingsInput & {
+      mail?: Record<string, unknown> & { recipients?: string; password?: string };
+      douyinCookie?: string;
+    };
     try {
-      const { mail, douyinCookie, ...rest } = values as SettingsInput & {
-        mail?: Record<string, unknown> & { recipients?: string; password?: string };
-        douyinCookie?: string;
-      };
       await save({
         ...rest,
         ...(clearCookie
@@ -97,13 +95,16 @@ export default function SettingsPage() {
             }
           : undefined,
       });
-      message.success('设置已保存');
       setClearCookie(false);
     } catch (e) {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '保存失败');
-    } finally {
-      setSaving(false);
     }
+  };
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onValuesChange = (_changed: unknown, all: SettingsInput) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void persist(all), 500);
   };
 
   const onExport = async () => {
@@ -160,7 +161,7 @@ export default function SettingsPage() {
             </Space>
           }
         >
-          <Form form={form} layout="vertical" onFinish={onFinish} disabled={!settings}>
+          <Form form={form} layout="vertical" onValuesChange={onValuesChange} disabled={!settings}>
             <Form.Item label="保存目录">
               <Space.Compact style={{ width: '100%' }}>
                 <Form.Item name="recordingDirectory" noStyle rules={[{ required: true, message: '必填' }]}>
@@ -301,9 +302,9 @@ export default function SettingsPage() {
                 </Button>
               </Col>
             </Row>
-            <Button type="primary" htmlType="submit" loading={saving}>
-              保存设置
-            </Button>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              设置改动自动保存（500ms 防抖），无需手动保存。
+            </Typography.Paragraph>
           </Form>
           <DirectoryPicker
             open={pickerOpen}
