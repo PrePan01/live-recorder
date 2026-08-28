@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Form, Input, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Typography } from 'antd';
+import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Typography } from 'antd';
 import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
@@ -19,8 +19,12 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
   const [modalOpen, setModalOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchBusy2, setBatchBusy2] = useState(false);
+  const [batchText, setBatchText] = useState('');
+  const [batchResult, setBatchResult] = useState<Awaited<ReturnType<typeof batchAddRooms>> | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<{ url: string; displayName?: string }>();
@@ -139,6 +143,25 @@ export default function Rooms() {
 
   const urlValue = Form.useWatch('url', form);
 
+  const submitBatch = async () => {
+    const urls = batchText.split(/\n/).map((s) => s.trim()).filter(Boolean);
+    if (urls.length === 0) {
+      message.warning('请粘贴至少一行直播链接');
+      return;
+    }
+    setBatchBusy2(true);
+    setBatchResult(null);
+    try {
+      const res = await batchAddRooms(urls);
+      setBatchResult(res);
+      message.success(`成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`);
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量添加失败');
+    } finally {
+      setBatchBusy2(false);
+    }
+  };
+
   const columns: ColumnsType<Room> = [
     {
       title: '收藏',
@@ -220,9 +243,14 @@ export default function Rooms() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
         </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
-          添加直播间
-        </Button>
+        <Space>
+          <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
+            批量添加
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+            添加直播间
+          </Button>
+        </Space>
       </Space>
       <Space style={{ marginBottom: 16, flexWrap: 'wrap' }}>
         <Input.Search
@@ -329,6 +357,56 @@ export default function Rooms() {
             <Input placeholder="主播昵称" />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="批量添加直播间"
+        open={batchOpen}
+        onCancel={() => {
+          setBatchOpen(false);
+          setBatchResult(null);
+          setBatchText('');
+        }}
+        onOk={() => void submitBatch()}
+        confirmLoading={batchBusy2}
+        okText="批量添加"
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          每行一个直播链接，支持 B站 / 抖音 混排，最多 100 条。自动去重（含已存在房间与批内重复）。
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={6}
+          placeholder={'https://live.bilibili.com/...\nhttps://live.douyin.com/...'}
+          value={batchText}
+          onChange={(e) => setBatchText(e.target.value)}
+        />
+        {batchResult ? (
+          <div style={{ marginTop: 12 }}>
+            {batchResult.failed.length > 0 ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={`失败 ${batchResult.failed.length} 条`}
+                description={
+                  <List
+                    size="small"
+                    dataSource={batchResult.failed}
+                    renderItem={(f) => (
+                      <List.Item>
+                        <Typography.Text type="secondary" ellipsis style={{ maxWidth: 260 }}>
+                          {f.url}
+                        </Typography.Text>
+                        <Typography.Text type="danger">{f.reason}</Typography.Text>
+                      </List.Item>
+                    )}
+                  />
+                }
+              />
+            ) : (
+              <Alert type="success" showIcon message={`全部成功（${batchResult.succeeded.length} 条）`} />
+            )}
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

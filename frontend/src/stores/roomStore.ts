@@ -15,6 +15,7 @@ interface RoomState {
   loading: boolean;
   fetchRooms: () => Promise<void>;
   addRoom: (input: RoomCreateInput) => Promise<Room>;
+  batchAddRooms: (urls: string[]) => Promise<roomsApi.BatchRoomResult>;
   editRoom: (id: string, input: RoomUpdateInput) => Promise<void>;
   removeRoom: (id: string) => Promise<void>;
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
@@ -40,6 +41,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     const room = normalizeRoom(await roomsApi.createRoom(input));
     get().upsertRoom(room);
     return room;
+  },
+  async batchAddRooms(urls) {
+    const res = await roomsApi.batchCreateRooms(urls);
+    res.succeeded.forEach((room) => get().upsertRoom(normalizeRoom(room)));
+    return res;
   },
   async editRoom(id, input) {
     get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, input)));
