@@ -20,7 +20,7 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord } = useRoomStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchBusy2, setBatchBusy2] = useState(false);
@@ -182,6 +182,28 @@ export default function Rooms() {
       ),
     },
     { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformLogoTag platform={p} /> },
+    {
+      title: '自动录制',
+      dataIndex: 'autoRecord',
+      width: 130,
+      render: (v: boolean | null, room) => (
+        <Select
+          size="small"
+          value={v === null ? 'inherit' : v ? 'on' : 'off'}
+          style={{ width: 112 }}
+          onChange={(val) =>
+            void setAutoRecord(room.id, val === 'inherit' ? null : val === 'on')
+              .then(() => message.success(val === 'inherit' ? '已恢复跟随全局' : `已${val === 'on' ? '开启' : '关闭'}`))
+              .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'))
+          }
+          options={[
+            { value: 'inherit', label: '跟随全局' },
+            { value: 'on', label: '开启' },
+            { value: 'off', label: '关闭' },
+          ]}
+        />
+      ),
+    },
     { title: '显示名', dataIndex: 'displayName', ellipsis: true },
     {
       title: '链接',
