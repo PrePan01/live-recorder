@@ -110,6 +110,31 @@ describe('Scheduler', () => {
     expect(alerts[0]!.message).toContain('PLATFORM_ACCESS_RESTRICTED');
   });
 
+  it('manual triggerImmediateCheck re-records the same broadcast after a manual stop', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-schm-'));
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/19', displayName: 'M' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    const first = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 10 && services.recordings.get(first.id)!.state !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.get(first.id)!.state === 'completed');
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(2);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+  });
+
   it('coalesces concurrent checks for the same room into one platform request', async () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/44', displayName: 'single-flight' });

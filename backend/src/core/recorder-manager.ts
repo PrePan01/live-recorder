@@ -40,12 +40,12 @@ export class RecorderManager {
     return [...this.active.keys()];
   }
 
-  /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。 */
-  async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }): Promise<void> {
+  /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
+  async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
     if (this.active.has(room.id)) return;
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
-    if (sessionId && this.services.recordings.hasSession(room.id, sessionId)) {
+    if (!opts.manual && sessionId && this.services.recordings.hasSession(room.id, sessionId)) {
       // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });

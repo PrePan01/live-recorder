@@ -131,7 +131,7 @@ export class RecordingRepository {
     return { items: rows.map(rowToRecording), total, page, pageSize };
   }
 
-  /** 同一场直播去重依据：该 room+session 是否已有非 failed 的录制。 */
+  /** 同一场直播去重依据：该 room+session 是否已有非 failed 的录制。手动重录由 maybeStartRecording 的 manual 标志处理，此处不排除。 */
   hasSession(roomId: string, streamSessionId: string): boolean {
     const row = this.db
       .prepare(`SELECT 1 AS x FROM recordings WHERE room_id = ? AND stream_session_id = ? AND state != 'failed' LIMIT 1`)

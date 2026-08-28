@@ -246,4 +246,33 @@ describe('RecorderManager', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
     expect(preview.closed).toContainEqual({ roomId: room.id, code: 1000, reason: 'ended' });
   });
+
+  it('manual re-check re-records the same broadcast after a manual stop (skips dedup)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6m-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/19', displayName: 'M' });
+
+    // 第一次录制同一场（session s1），随后手动停止 → completed
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const first = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 10 && services.recordings.get(first.id)!.state !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.get(first.id)!.state === 'completed');
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+
+    // 自动轮询（非手动）应被同场去重，不再重复录制
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+
+    // 手动再次检测应跳过去重、重新录制同一场
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' }, { manual: true });
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(2);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+  });
 });
