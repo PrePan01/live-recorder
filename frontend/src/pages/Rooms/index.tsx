@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { App, Button, Form, Input, Modal, Popconfirm, Space, Switch, Table, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
 import { MonitorStateTag, PlatformTag } from '../../components/StatusTags';
@@ -19,7 +19,7 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, editRoom, removeRoom, toggleRoom } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, editRoom, removeRoom, toggleRoom, favoriteRoom } = useRoomStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +68,23 @@ export default function Rooms() {
   const urlValue = Form.useWatch('url', form);
 
   const columns: ColumnsType<Room> = [
+    {
+      title: '收藏',
+      dataIndex: 'favorited',
+      width: 70,
+      render: (v: boolean, room) => (
+        <Button
+          type="text"
+          size="small"
+          icon={v ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+          onClick={() =>
+            void favoriteRoom(room.id, !v).catch((e) =>
+              message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'),
+            )
+          }
+        />
+      ),
+    },
     { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformTag platform={p} /> },
     { title: '显示名', dataIndex: 'displayName', ellipsis: true },
     {

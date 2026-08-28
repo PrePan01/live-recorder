@@ -1,9 +1,10 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { App, Button, Card, Col, Empty, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
-import { EyeOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
+import { EyeOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { MonitorStateTag, PlatformTag } from '../../components/StatusTags';
+import RecordingDuration from '../../components/RecordingDuration';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { formatRelative } from '../../utils/format';
 import { ApiError } from '../../types/error';
@@ -15,11 +16,13 @@ function RoomCard({
   onWatch,
   onCheck,
   onStop,
+  onFavorite,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
   onCheck: (r: Room) => void;
   onStop: (r: Room) => void;
+  onFavorite: (r: Room, favorited: boolean) => void;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   return (
@@ -63,9 +66,23 @@ function RoomCard({
             停止
           </Button>
         ),
+        <Button
+          key="favorite"
+          type="text"
+          icon={room.favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+          onClick={() => onFavorite(room, !room.favorited)}
+        >
+          {room.favorited ? '已收藏' : '收藏'}
+        </Button>,
       ]}
     >
       <Typography.Text type="secondary">最近检测：{formatRelative(room.lastCheckedAt)}</Typography.Text>
+      {recording && room.activeRecording ? (
+        <div style={{ marginTop: 8 }}>
+          <Typography.Text strong>已录制：</Typography.Text>
+          <RecordingDuration startedAt={room.activeRecording.startedAt} />
+        </div>
+      ) : null}
       {room.lastError ? (
         <Typography.Paragraph type="danger" ellipsis={{ rows: 1 }} style={{ marginBottom: 0, marginTop: 8 }}>
           {room.lastError.message}
@@ -77,7 +94,7 @@ function RoomCard({
 
 export default function Monitor() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, checkRoomNow, stopRoomRecording } = useRoomStore();
+  const { rooms, loading, fetchRooms, checkRoomNow, stopRoomRecording, favoriteRoom } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
   const [watching, setWatching] = useState<Room | null>(null);
@@ -87,7 +104,7 @@ export default function Monitor() {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
 
-  const monitorRooms = rooms.filter((r) => r.enabled);
+  const monitorRooms = rooms.filter((r) => r.enabled).sort((a, b) => Number(b.favorited) - Number(a.favorited));
 
   const handleWatch = (room: Room) => {
     if (!openPreview(room.id)) {
@@ -125,6 +142,11 @@ export default function Monitor() {
                   )
                 }
                 onStop={(r) => void stopRoomRecording(r.id).catch(() => message.error('停止请求失败'))}
+                onFavorite={(r, fav) =>
+                  void favoriteRoom(r.id, fav).catch((e) =>
+                    message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
+                  )
+                }
               />
             </Col>
           ))}

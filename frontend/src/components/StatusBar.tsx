@@ -51,7 +51,9 @@ export default function StatusBar() {
           {status?.state === 'restarting' ? '服务重启中' : online ? '服务正常' : '服务已断开'}
         </Typography.Text>
         {status?.version ? <Tag>{status.version}</Tag> : null}
-        {status && status.activeRecordings > 0 ? <Tag color="red">录制中 {status.activeRecordings}</Tag> : null}
+        <Tag color={status && status.activeRecordings > 0 ? 'red' : 'default'}>
+          {status ? `录制中 ${status.activeRecordings}` : '录制中 -'}
+        </Tag>
       </Space>
       <Space>
         <Typography.Text type="secondary">磁盘可用</Typography.Text>

@@ -25,6 +25,11 @@ export async function setRoomEnabled(id: string, enabled: boolean): Promise<Room
   return data.room;
 }
 
+export async function setRoomFavorite(id: string, favorited: boolean): Promise<Room> {
+  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}/favorite`, { favorited });
+  return data.room;
+}
+
 export async function checkRoomNow(id: string): Promise<void> {
   await http.post(`/rooms/${id}/check`);
 }

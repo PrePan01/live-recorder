@@ -20,8 +20,15 @@ export interface Room {
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ApiErrorEnvelope | null;
+  favorited: boolean;
+  activeRecording: ActiveRecording | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ActiveRecording {
+  recordingId: string;
+  startedAt: string;
 }
 
 export interface RoomCreateInput {
