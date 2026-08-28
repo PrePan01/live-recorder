@@ -1,10 +1,10 @@
-# localhost 录制服务 API 契约（v1.5 · 2026-08-28）
+# localhost 录制服务 API 契约（v1.6 · 2026-08-28）
 
-相对 v1.4 的变更：新增手动收藏直播间（`Room.favorited` + `PATCH /rooms/:id/favorite`）与监控总览录制时长（`Room.activeRecording`，含 recordingId/startedAt，未录制为 null）。
+相对 v1.5 的变更：新增 `POST /rooms/batch` 批量添加直播间（部分成功 succeeded[]/failed[]）；`GET /recordings` 新增 `dateFrom`/`dateTo` 日期筛选；`Recording` 输出 `quality`（历史页清晰度列）；新增 `PATCH /recordings/:id`（重命名，同步改文件名）与 `DELETE /recordings/:id`（连带删除文件，文件缺失容错）。
 
 Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响应统一为错误信封（见"统一错误信封"）。
 
-状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）。后续变更继续走版本升级并经三方互确认。
+状态说明：v1.1 冻结口径全部保留；v1.2 经 8a5f0b88 线程互确认；v1.3 抖音 Cookie 经 QA 确认 + PM 批准；v1.4 目录选择与配置导入导出经 QA/FE 评估 + PM 定 P0.5；v1.5 收藏与录制时长经 PM 定稿（task #35/#37/#36/#38）；v1.6 批量添加与历史页增强经评审会共识（BE #44/#45 + FE #47/#48/#49）。后续变更继续走版本升级并经三方互确认。
 
 ## 资源模型
 
@@ -50,11 +50,12 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
   "fileSizeBytes": 0,
   "failureReason": null,
   "retryCount": 0,
-  "streamSessionId": "sess_01J..."
+  "streamSessionId": "sess_01J...",
+  "quality": "1080p"
 }
 ```
 
-`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。
+`state`：`pending | recording | reconnecting | completed | failed`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。
 
 字段命名统一 camelCase。
 
@@ -66,6 +67,9 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 - `POST /rooms` 成功：`201` + `{ "room": ... }`；`DELETE /rooms/:id` 成功：`204` 无 body
 - `PATCH /rooms/:id/enable` body：`{ "enabled": true|false }` → `{ "room": ... }`
 - `PATCH /rooms/:id/favorite` body：`{ "favorited": true|false }` → `{ "room": ... }`（v1.5）
+- `POST /rooms/batch` body：`{ "urls": ["...", "..."] }`（≤100）→ `{ "succeeded": [Room...], "failed": [{ "url", "reason" }] }`（v1.6，部分成功，逐条去重含现库与批内）
+- `PATCH /recordings/:id` body：`{ "streamTitle": "新标题" }` → `{ "recording": ... }`（v1.6，同步改名文件）
+- `DELETE /recordings/:id` → `204`（v1.6，连带删除文件，文件缺失容错）
 
 ## 端点
 
@@ -77,8 +81,11 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 | 房间 | `PATCH` `/rooms/:id/favorite` | 手动收藏/取消收藏（v1.5） |
 | 房间 | `POST` `/rooms/:id/check` | 立即检测（供 UI 调试） |
 | 房间 | `POST` `/rooms/:id/stop-recording` | 手动停止录制 |
-| 录制 | `GET` `/recordings` | 历史查询；参数 `page`、`pageSize`（默认 20，上限 100）、`roomId`、`state`、`sessionId`、`groupBy`；默认 `startedAt` 倒序 |
+| 房间 | `POST` `/rooms/batch` | 批量添加直播间（v1.6，部分成功） |
+| 录制 | `GET` `/recordings` | 历史查询；参数 `page`、`pageSize`（默认 20，上限 100）、`roomId`、`state`、`sessionId`、`groupBy`、`dateFrom`/`dateTo`（v1.6，按 started_at 范围）；默认 `startedAt` 倒序 |
 | 录制 | `POST` `/recordings/:id/open` | 打开录像所在目录 |
+| 录制 | `PATCH` `/recordings/:id` | 重命名录制（v1.6，同步改文件名） |
+| 录制 | `DELETE` `/recordings/:id` | 删除录制（v1.6，连带删文件，缺失容错） |
 | 设置 | `GET` / `PUT` `/settings` | 读取 / 更新全局设置 |
 | 设置 | `POST` `/settings/validate-directory` | 校验录像目录 |
 | 设置 | `POST` `/settings/test-smtp` | SMTP 连通性测试 |
