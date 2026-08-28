@@ -130,9 +130,10 @@ export default function History() {
       },
       {
         title: '操作',
-        width: 150,
+        width: 180,
+        fixed: 'right',
         render: (_, r) => (
-          <Space size={0}>
+          <Space size={0} wrap>
             <Button
               size="small"
               type="link"
@@ -232,7 +233,7 @@ export default function History() {
                 </Typography.Text>
               </Space>
             ),
-            children: <Table rowKey="id" size="small" columns={columns} dataSource={recs} pagination={false} />,
+            children: <Table rowKey="id" size="small" columns={columns} dataSource={recs} pagination={false} scroll={{ x: 1400 }} />,
           }))}
         />
       ) : (
@@ -242,6 +243,7 @@ export default function History() {
           dataSource={items}
           loading={loading}
           rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+          scroll={{ x: 1400 }}
           pagination={{
             current: page,
             pageSize,

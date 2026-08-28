@@ -19,6 +19,7 @@ function RoomCard({
   onStop,
   onRecord,
   onFavorite,
+  layout,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -26,12 +27,13 @@ function RoomCard({
   onStop: (r: Room) => void;
   onRecord: (r: Room) => void;
   onFavorite: (r: Room, favorited: boolean) => void;
+  layout: 'card' | 'list';
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
   return (
     <Card
-      className="lr-room-card"
+      className={`lr-room-card ${layout === 'list' ? 'lr-room-card--list' : ''}`}
       styles={{ body: { padding: 14 } }}
       title={
         <Space style={{ minWidth: 0 }}>
@@ -51,27 +53,27 @@ function RoomCard({
         </Space>
       }
     >
-      <div style={{ marginBottom: 8 }}>
+      <div className="lr-room-card__status" style={{ marginBottom: 8 }}>
         <LiveStatusTag status={room.lastLiveStatus} />
       </div>
-      <div style={{ marginBottom: 10, width: '100%' }}>
+      <div className="lr-room-card__stats" style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}
           startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
           state={room.monitorState}
         />
       </div>
-      <div style={{ marginBottom: 10 }}>
+      <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
         <RoomHealth roomId={room.id} />
       </div>
       {room.lastError ? (
-        <Typography.Paragraph type="danger" style={{ marginBottom: 10, marginTop: 0 }}>
+        <Typography.Paragraph className="lr-room-card__error" type="danger" style={{ marginBottom: 10, marginTop: 0 }}>
           {room.lastError.message}
         </Typography.Paragraph>
       ) : null}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+      <div className="lr-room-card__actions">
         <Button
-          size="small"
+          size="middle"
           icon={<ReloadOutlined />}
           disabled={room.monitorState === 'checking' || recording}
           onClick={() => onCheck(room)}
@@ -79,29 +81,29 @@ function RoomCard({
           立即检测
         </Button>
         {recording ? (
-          <Button size="small" type="primary" icon={<EyeOutlined />} onClick={() => onWatch(room)}>
+          <Button size="middle" type="primary" icon={<EyeOutlined />} onClick={() => onWatch(room)}>
             观看
           </Button>
         ) : (
           <Tooltip title="仅录制中可观看">
-            <Button size="small" icon={<EyeOutlined />} disabled>
+            <Button size="middle" icon={<EyeOutlined />} disabled>
               观看
             </Button>
           </Tooltip>
         )}
         {room.monitorState === 'recording' ? (
           <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
-            <Button size="small" danger icon={<StopOutlined />}>
+            <Button size="middle" danger icon={<StopOutlined />}>
               停止
             </Button>
           </Popconfirm>
         ) : (
-          <Button size="small" icon={<StopOutlined />} disabled>
+          <Button size="middle" icon={<StopOutlined />} disabled>
             停止
           </Button>
         )}
         <Button
-          size="small"
+          size="middle"
           type={recording ? 'default' : 'primary'}
           icon={<VideoCameraAddOutlined />}
           disabled={!onAir || recording}
@@ -109,7 +111,7 @@ function RoomCard({
         >
           {recording ? '录制中' : '录制'}
         </Button>
-        <Button size="small" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
+        <Button size="middle" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
           直播间
         </Button>
       </div>
@@ -180,9 +182,9 @@ export default function Monitor() {
       {monitorRooms.length === 0 && !loading ? (
         <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
       ) : (
-        <Row gutter={[16, 16]}>
+        <Row className={view === '列表' ? 'lr-monitor-list' : undefined} gutter={[16, 16]}>
           {monitorRooms.map((room) => (
-            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === "列表" ? { span: 24 } : {})} style={{ minWidth: 320 }}>
+            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === '列表' ? { span: 24 } : {})} style={{ minWidth: 320 }}>
               <RoomCard
                 room={room}
                 onWatch={handleWatch}
@@ -202,6 +204,7 @@ export default function Monitor() {
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
                   )
                 }
+                layout={view === '列表' ? 'list' : 'card'}
               />
             </Col>
           ))}

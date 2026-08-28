@@ -6,15 +6,13 @@ import { useRoomStore } from '../stores/roomStore';
 export default function RecordingCompleteNotice() {
   const { notification } = App.useApp();
   const seenRef = useRef<Set<string>>(new Set());
-  const ids = useRecordingStore((s) => s.items.map((r) => r.id).join(','));
+  const completed = useRecordingStore((s) => s.completionNotice);
   const roomName = useRoomName();
 
   useEffect(() => {
-    const items = useRecordingStore.getState().items;
-    const completed = items.filter((r) => r.state === 'completed' && r.filePath && !seenRef.current.has(r.id));
-    completed.forEach((r) => seenRef.current.add(r.id));
-    if (completed.length > 0) {
-      const latest = completed[completed.length - 1]!;
+    if (completed?.filePath && !seenRef.current.has(completed.id)) {
+      const latest = completed;
+      seenRef.current.add(latest.id);
       const name = roomName[latest.roomId] ?? latest.roomId;
       notification.info({
         key: `rec-complete-${latest.id}`,
@@ -35,7 +33,7 @@ export default function RecordingCompleteNotice() {
         ),
       });
     }
-  }, [ids, roomName, notification]);
+  }, [completed, roomName, notification]);
 
   return null;
 }

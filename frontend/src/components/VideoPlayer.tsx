@@ -6,7 +6,7 @@ import { previewWsUrl } from '../api/client';
 const MAX_RETRY = 3;
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const EVENTS = mpegts.Events as unknown as Record<
-  'PLAYING' | 'ERROR',
+  'ERROR',
   Parameters<mpegts.Player['on']>[0]
 >;
 
@@ -32,15 +32,18 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
 
     const create = () => {
       if (disposed || !videoRef.current) return;
-      player = mpegts.createPlayer(
+      const instance = mpegts.createPlayer(
         { type: 'flv', url: previewWsUrl(roomId), isLive: true },
         { enableStashBuffer: false, liveBufferLatencyChasing: true },
       );
-      player.attachMediaElement(videoRef.current);
-      player.on(EVENTS.PLAYING, () => setState('playing'));
-      player.on(EVENTS.ERROR, (_t, _detail) => {
-        player?.destroy();
-        player = null;
+      player = instance;
+      instance.attachMediaElement(videoRef.current);
+      instance.on(EVENTS.ERROR, (_t, _detail) => {
+        // 旧连接在重试期间的异步错误不能销毁新播放器。
+        if (player === instance) {
+          instance.destroy();
+          player = null;
+        }
         if (disposed) return;
         if (retry >= MAX_RETRY) {
           setState('error');
@@ -51,8 +54,8 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
         timer = setTimeout(create, RETRY_DELAYS_MS[retry]);
         retry += 1;
       });
-      player.load();
-      void player.play()?.catch?.(() => undefined);
+      instance.load();
+      void instance.play()?.catch?.(() => undefined);
     };
 
     create();
@@ -66,7 +69,7 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
   return (
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
       {state === 'loading' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
           <Spin tip="连接预览流…" />
         </div>
       )}
@@ -85,6 +88,8 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
         controls
         muted
         autoPlay
+        onCanPlay={() => setState((current) => (current === 'loading' ? 'playing' : current))}
+        onPlaying={() => setState('playing')}
         style={{
           width: '100%',
           aspectRatio: '16 / 9',

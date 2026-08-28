@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Spin } from 'antd';
 import mpegts from 'mpegts.js';
 
-const EVENTS = mpegts.Events as unknown as Record<'PLAYING' | 'ERROR' | 'RECOVERED', Parameters<mpegts.Player['on']>[0]>;
+const EVENTS = mpegts.Events as unknown as Record<'ERROR', Parameters<mpegts.Player['on']>[0]>;
 
 export default function FilePlayer({ url }: { url: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -20,22 +20,24 @@ export default function FilePlayer({ url }: { url: string }) {
 
     const create = () => {
       if (disposed || !videoRef.current) return;
-      player = mpegts.createPlayer(
+      const instance = mpegts.createPlayer(
         { type: 'flv', url, isLive: false },
         { enableStashBuffer: false },
       );
-      player.attachMediaElement(videoRef.current);
-      player.on(EVENTS.PLAYING, () => setState('playing'));
-      player.on(EVENTS.ERROR, (_t, _d) => {
-        player?.destroy();
-        player = null;
+      player = instance;
+      instance.attachMediaElement(videoRef.current);
+      instance.on(EVENTS.ERROR, (_t, _d) => {
+        if (player === instance) {
+          instance.destroy();
+          player = null;
+        }
         if (!disposed) {
           setState('error');
           setErrorMsg('视频加载失败或格式不受支持');
         }
       });
-      player.load();
-      void player.play()?.catch?.(() => undefined);
+      instance.load();
+      void instance.play()?.catch?.(() => undefined);
     };
 
     create();
@@ -48,7 +50,7 @@ export default function FilePlayer({ url }: { url: string }) {
   return (
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
       {state === 'loading' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
           <Spin tip="加载视频…" />
         </div>
       )}
@@ -60,6 +62,8 @@ export default function FilePlayer({ url }: { url: string }) {
       <video
         ref={videoRef}
         controls
+        onCanPlay={() => setState((current) => (current === 'loading' ? 'playing' : current))}
+        onPlaying={() => setState('playing')}
         style={{
           width: '100%',
           aspectRatio: '16 / 9',

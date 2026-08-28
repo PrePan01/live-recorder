@@ -27,6 +27,9 @@ interface RecordingState {
   batchRemove: (ids: string[]) => Promise<{ deleted: string[]; failed: Array<{ id: string; reason: string }> }>;
   exportCsv: () => Promise<string>;
   upsertRecording: (rec: Recording) => void;
+  /** 仅由 SSE 写入，用于避免打开历史页时把旧记录误报成刚完成。 */
+  upsertRecordingFromEvent: (rec: Recording) => void;
+  completionNotice: Recording | null;
 }
 
 export const useRecordingStore = create<RecordingState>((set, get) => ({
@@ -35,6 +38,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   page: 1,
   pageSize: 20,
   loading: false,
+  completionNotice: null,
   query: {},
   async fetchHistory(q) {
     const query = { ...get().query, ...q };
@@ -73,6 +77,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       const next = [...s.items];
       next[idx] = rec;
       return { items: next };
+    });
+  },
+  upsertRecordingFromEvent(rec) {
+    set((s) => {
+      const previous = s.items.find((item) => item.id === rec.id);
+      const idx = s.items.findIndex((item) => item.id === rec.id);
+      const items = idx === -1 ? s.items : s.items.map((item, index) => (index === idx ? normalizeRecording(rec) : item));
+      const justCompleted = rec.state === 'completed' && previous?.state !== 'completed';
+      return { items, completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice };
     });
   },
 }));

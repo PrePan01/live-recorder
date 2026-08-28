@@ -19,7 +19,7 @@ export function applyServerEvent(e: ServerEvent) {
       useRoomStore.getState().upsertRoom(e.room);
       break;
     case 'recording:updated':
-      useRecordingStore.getState().upsertRecording(e.recording);
+      useRecordingStore.getState().upsertRecordingFromEvent(e.recording);
       break;
     case 'alert:created':
     case 'alert:updated':
