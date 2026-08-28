@@ -65,6 +65,7 @@ body {
 
 .lr-room-card {
   transition: box-shadow 0.2s ease, transform 0.2s ease;
+  overflow: hidden;
 }
 
 .lr-room-card:hover {
@@ -97,17 +98,15 @@ body {
 
 .lr-room-card__actions .ant-btn {
   width: 100%;
+  min-height: 42px;
   padding-inline: 6px;
   border-radius: 0;
   white-space: nowrap;
 }
 
-.lr-room-card__actions > :first-child .ant-btn {
-  border-radius: 6px 0 0 6px;
-}
-
-.lr-room-card__actions > :last-child .ant-btn {
-  border-radius: 0 6px 6px 0;
+.lr-room-card:not(.lr-room-card--list) .lr-room-card__actions {
+  margin: 4px -14px -14px;
+  padding-top: 0;
 }
 
 .lr-room-card--list .ant-card-body {
