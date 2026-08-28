@@ -47,13 +47,13 @@ function RoomCard({
         </Space>
       }
     >
-      <Space style={{ marginBottom: 10, width: '100%' }}>
+      <div style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}
           startedAt={recording && room.activeRecording ? room.activeRecording.startedAt : null}
           state={room.monitorState}
         />
-      </Space>
+      </div>
       <div style={{ marginBottom: 10 }}>
         <RoomHealth roomId={room.id} />
       </div>
