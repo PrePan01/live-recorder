@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../../src/db/connection.ts';
-import { currentSchemaVersion, runMigrations } from '../../src/db/migrations/index.ts';
+import { currentSchemaVersion, MIGRATIONS, runMigrations } from '../../src/db/migrations/index.ts';
 import { RoomRepository } from '../../src/db/repositories/room.repo.ts';
 import { RecordingRepository } from '../../src/db/repositories/recording.repo.ts';
 import { SettingsRepository } from '../../src/db/repositories/settings.repo.ts';
@@ -17,12 +17,45 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(2);
+    expect(runMigrations(db)).toBe(3);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(2);
+    expect(currentSchemaVersion(db)).toBe(3);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
+  });
+
+  it('v3 idempotently backfills favorited on a DB that skipped v2 (task #39)', () => {
+    // 模拟存量库：仅应用 v1，且手工把 schema_version 记为 2（对应早前撞号的 v2），但 rooms 表无 favorited 列。
+    const db = openDatabase(':memory:');
+    db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    const applied = new Set(db.prepare('SELECT version FROM schema_version').all().map((r: unknown) => (r as { version: number }).version));
+    for (const m of MIGRATIONS.filter((m) => m.version <= 1)) {
+      if (applied.has(m.version)) continue;
+      db.transaction(() => {
+        if (m.up) m.up(db);
+        else if (m.sql) db.exec(m.sql);
+        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version);
+      })();
+    }
+    // 伪造：schema_version 已有 2，但 favorited 列从未加过（模拟撞号被跳过的库）
+    db.prepare('INSERT INTO schema_version (version) VALUES (2)').run();
+    const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
+    expect(colsBefore).not.toContain('favorited');
+
+    // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列
+    expect(runMigrations(db)).toBe(1);
+    const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
+    expect(colsAfter).toContain('favorited');
+    expect(currentSchemaVersion(db)).toBe(3);
+
+    // 再次运行不再补列也不报错（幂等）
+    expect(runMigrations(db)).toBe(0);
+    db.prepare(`INSERT INTO rooms (id, platform, url, favorited) VALUES ('r2', 'bilibili', 'https://live.bilibili.com/2', 1)`).run();
+    expect((db.prepare('SELECT favorited FROM rooms WHERE id = ?').get('r2') as { favorited: number }).favorited).toBe(1);
   });
 });
 

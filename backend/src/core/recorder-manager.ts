@@ -60,7 +60,7 @@ export class RecorderManager {
     if (!opts.manual && sessionId && this.services.recordings.hasSession(room.id, sessionId)) {
       // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
-      this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+      this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
       return;
     }
 
@@ -225,7 +225,7 @@ export class RecorderManager {
     this.active.delete(room.id);
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
     this.services.events.emit({ type: 'recording:updated', data: rec });
-    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+    this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
   }
 
   private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string): Promise<void> {
@@ -238,7 +238,7 @@ export class RecorderManager {
     this.active.delete(room.id);
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
     this.services.events.emit({ type: 'recording:updated', data: rec });
-    this.services.events.emit({ type: 'room:updated', data: this.services.rooms.get(room.id)! });
+    this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     this.raiseAlert('error', source, err);
     await this.notifier.notify('recording_failed', room.id, { title: room.displayName });
   }
