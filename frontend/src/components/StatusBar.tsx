@@ -16,6 +16,8 @@ export default function StatusBar() {
   const fetchAlerts = useAlertStore((s) => s.fetchAlerts);
   const markRead = useAlertStore((s) => s.markRead);
   const markAllRead = useAlertStore((s) => s.markAllRead);
+  const retryFailure = useAlertStore((s) => s.retryFailure);
+  const retryingId = useAlertStore((s) => s.retryingId);
 
   useEffect(() => {
     void fetchAlerts();
@@ -93,10 +95,39 @@ export default function StatusBar() {
                   actions={
                     a.resolved
                       ? []
-                      : [<Button key="read" size="small" type="link" onClick={() => void markRead(a.id)}>已读</Button>]
+                      : [
+                          a.roomId && a.failureReason ? (
+                            <Button
+                              key="retry"
+                              size="small"
+                              type="link"
+                              loading={retryingId === a.id}
+                              onClick={() => void retryFailure(a).catch(() => undefined)}
+                            >
+                              重试
+                            </Button>
+                          ) : null,
+                          <Button key="read" size="small" type="link" onClick={() => void markRead(a.id)}>
+                            已读
+                          </Button>,
+                        ]
                   }
                 >
-                  <List.Item.Meta title={a.message} description={`${a.source} · ${formatRelative(a.occurredAt)}`} />
+                  <List.Item.Meta
+                    title={a.message}
+                    description={
+                      <Space direction="vertical" size={0}>
+                        <span>
+                          {a.source} · {formatRelative(a.occurredAt)}
+                        </span>
+                        {a.failureReason ? (
+                          <Typography.Text type="danger">
+                            [{a.failureReason.code}] {a.failureReason.message}
+                          </Typography.Text>
+                        ) : null}
+                      </Space>
+                    }
+                  />
                 </List.Item>
               )}
             />

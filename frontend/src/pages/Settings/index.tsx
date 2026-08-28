@@ -19,7 +19,7 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异�
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
-  const { alerts, fetchAlerts, markRead, markAllRead } = useAlertStore();
+  const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -388,6 +388,21 @@ export default function SettingsPage() {
                   a.resolved
                     ? [<Tag key="done">已读</Tag>]
                     : [
+                        a.roomId && a.failureReason ? (
+                          <Button
+                            key="retry"
+                            size="small"
+                            type="link"
+                            loading={retryingId === a.id}
+                            onClick={() =>
+                              void retryFailure(a)
+                                .then(() => message.success('已触发重新检测'))
+                                .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '重试失败'))
+                            }
+                          >
+                            重试
+                          </Button>
+                        ) : null,
                         <Button key="read" size="small" type="link" onClick={() => void markRead(a.id)}>
                           标记已读
                         </Button>,
@@ -401,7 +416,18 @@ export default function SettingsPage() {
                       <Typography.Text>{a.message}</Typography.Text>
                     </Space>
                   }
-                  description={`${a.source} · ${formatTime(a.occurredAt)}`}
+                  description={
+                    <Space direction="vertical" size={0}>
+                      <Typography.Text type="secondary">
+                        {a.source} · {formatTime(a.occurredAt)}
+                      </Typography.Text>
+                      {a.failureReason ? (
+                        <Typography.Text type="danger">
+                          [{a.failureReason.code}] {a.failureReason.message}
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
+                  }
                 />
               </List.Item>
             )}
