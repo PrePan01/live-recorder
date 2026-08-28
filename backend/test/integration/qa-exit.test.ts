@@ -192,6 +192,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
 
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'sess_qa1', streamTitle: 'QA 冒烟' },
+      { status: 'offline' },
     ]);
 
     const created = await app.inject({
@@ -220,6 +221,10 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     }
     expect(services.recordings.get(rec.id)!.state).toBe('completed');
     expect(services.recordings.get(rec.id)!.fileSizeBytes).toBeGreaterThan(13);
+    // 自然结束收口：handleNaturalEnd 短暂退避后确认下播才置 completed。
+    for (let i = 0; i < 20 && services.rooms.get(roomId)!.monitorState !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
     expect(services.rooms.get(roomId)!.monitorState).toBe('completed');
 
     const list = await app.inject({ method: 'GET', url: `/api/v1/recordings?roomId=${roomId}`, headers: HOST });

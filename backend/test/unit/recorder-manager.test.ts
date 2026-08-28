@@ -65,7 +65,7 @@ describe('RecorderManager', () => {
     const preview = new FakePreview();
     services.manager.preview = preview;
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
-      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+      { status: 'offline' },
     ]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/10', displayName: '主播X' });
 
@@ -77,13 +77,17 @@ describe('RecorderManager', () => {
     expect(withPath.filePath).toMatch(new RegExp(`^${dir}/bilibili/`));
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
 
-    for (let i = 0; i < 12 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
+    for (let i = 0; i < 40 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
       await settle(clock, 500);
     }
     await waitFor(() => services.recordings.get(rec.id)!.state === 'completed');
     const done = services.recordings.get(rec.id)!;
     expect(done.state).toBe('completed');
     expect(done.fileSizeBytes).toBeGreaterThan(13);
+    // 自然结束后 handleNaturalEnd 需等待短暂退避再确认下播，最终收口为 completed。
+    for (let i = 0; i < 20 && services.rooms.get(room.id)!.monitorState !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
     expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
     expect(preview.frames.get(room.id)! >= 1).toBe(true);
     expect(preview.closed).toContainEqual({ roomId: room.id, code: 1000, reason: 'ended' });
@@ -274,5 +278,46 @@ describe('RecorderManager', () => {
     await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(2);
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+  });
+
+  it('immediately continues recording on natural end while still live (#43)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6n-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    // 自然结束后的 checkLiveStatus 返回 live → 立即开新段续录，无需等调度器。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1' },
+      { status: 'live', streamSessionId: 's1' },
+    ]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/20', displayName: 'N' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const first = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
+
+    // 引擎自然结束后，handleNaturalEnd 检测仍 live → 立即开第二段。
+    for (let i = 0; i < 20 && services.recordings.list({ roomId: room.id }).items.length < 2; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length >= 2);
+    const recs = services.recordings.list({ roomId: room.id }).items;
+    expect(recs.length).toBeGreaterThanOrEqual(2);
+    // list 按 started_at 倒序：recs[0]=新段（recording），recs[1]=旧段（completed）
+    expect(recs[0]!.state).toBe('recording');
+    expect(recs.some((r) => r.state === 'completed')).toBe(true);
+    // 会话保持激活：同一场连续录制，room 仍 recording，不经过 completed/idle。
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    expect(services.recordings.activeCount()).toBe(1);
+
+    const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 20 && services.recordings.get(activeRec.id)!.state !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
   });
 });
