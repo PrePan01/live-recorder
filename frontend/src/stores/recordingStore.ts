@@ -2,6 +2,10 @@ import { create } from 'zustand';
 import { fetchRecordings, openRecordingDirectory, renameRecording, deleteRecording } from '../api/recordings';
 import type { Recording, RecordingQuery } from '../types/recording';
 
+function normalizeRecording(rec: Recording): Recording {
+  return { ...rec, integrity: rec.integrity ?? null };
+}
+
 interface RecordingState {
   items: Recording[];
   total: number;
@@ -28,7 +32,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set({ loading: true, query });
     try {
       const res = await fetchRecordings(query);
-      set({ items: res.items, total: res.total, page: res.page, pageSize: res.pageSize, loading: false });
+      set({ items: res.items.map(normalizeRecording), total: res.total, page: res.page, pageSize: res.pageSize, loading: false });
     } catch {
       set({ loading: false });
     }

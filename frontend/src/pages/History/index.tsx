@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined } from '@ant-design/icons';
+import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
 import { useRoomStore } from '../../stores/roomStore';
-import { PlatformTag, RecordingStateTag } from '../../components/StatusTags';
+import { PlatformTag, RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
 import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -62,6 +62,21 @@ export default function History() {
         ),
       },
       { title: '清晰度', dataIndex: 'quality', width: 80, render: (q: string | null) => (q ? QUALITY_LABEL[q] ?? q : '-') },
+      {
+        title: '完整性',
+        dataIndex: 'integrity',
+        width: 90,
+        render: (v: Recording['integrity'], r) => (
+          <Space size={4}>
+            <IntegrityTag integrity={v} />
+            {v === 'failed' && r.failureReason ? (
+              <Tooltip title={r.failureReason.message}>
+                <WarningOutlined style={{ color: '#ff4d4f' }} />
+              </Tooltip>
+            ) : null}
+          </Space>
+        ),
+      },
       { title: '开始', dataIndex: 'startedAt', width: 165, render: formatTime },
       { title: '结束', dataIndex: 'endedAt', width: 165, render: formatTime },
       { title: '时长', width: 85, render: (_, r) => formatDuration(r.startedAt, r.endedAt) },

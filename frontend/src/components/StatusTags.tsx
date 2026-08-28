@@ -1,6 +1,6 @@
 import { Tag } from 'antd';
 import type { MonitorState } from '../types/room';
-import type { RecordingState } from '../types/recording';
+import type { RecordingIntegrity, RecordingState } from '../types/recording';
 
 const MONITOR_META: Record<MonitorState, { color: string; text: string }> = {
   idle: { color: 'default', text: '空闲' },
@@ -20,6 +20,12 @@ const RECORDING_META: Record<RecordingState, { color: string; text: string }> = 
   failed: { color: 'error', text: '失败' },
 };
 
+const INTEGRITY_META: Record<RecordingIntegrity, { color: string; text: string }> = {
+  verified: { color: 'green', text: '完整' },
+  failed: { color: 'error', text: '损坏' },
+  pending: { color: 'default', text: '校验中' },
+};
+
 export function MonitorStateTag({ state }: { state: MonitorState }) {
   const meta = MONITOR_META[state];
   return <Tag color={meta.color}>{meta.text}</Tag>;
@@ -27,6 +33,12 @@ export function MonitorStateTag({ state }: { state: MonitorState }) {
 
 export function RecordingStateTag({ state }: { state: RecordingState }) {
   const meta = RECORDING_META[state];
+  return <Tag color={meta.color}>{meta.text}</Tag>;
+}
+
+export function IntegrityTag({ integrity }: { integrity: RecordingIntegrity | null }) {
+  if (!integrity) return <Tag>待校验</Tag>;
+  const meta = INTEGRITY_META[integrity];
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 

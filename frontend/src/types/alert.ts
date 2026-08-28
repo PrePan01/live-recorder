@@ -1,5 +1,10 @@
 export type AlertLevel = 'info' | 'warning' | 'error';
 
+export interface AlertFailureReason {
+  code: string;
+  message: string;
+}
+
 export interface Alert {
   id: string;
   level: AlertLevel;
@@ -7,4 +12,6 @@ export interface Alert {
   message: string;
   occurredAt: string;
   resolved: boolean;
+  roomId?: string;
+  failureReason?: AlertFailureReason | null;
 }
