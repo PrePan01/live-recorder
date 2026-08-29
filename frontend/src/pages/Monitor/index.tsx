@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
+import { App, Badge, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
@@ -20,6 +20,8 @@ function RoomCard({
   onRecord,
   onFavorite,
   layout,
+  actingAction,
+  acting,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -28,6 +30,8 @@ function RoomCard({
   onRecord: (r: Room) => void;
   onFavorite: (r: Room, favorited: boolean) => void;
   layout: 'card' | 'list';
+  actingAction?: 'check' | 'record' | 'stop';
+  acting?: boolean;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
@@ -71,11 +75,17 @@ function RoomCard({
           {room.lastError.message}
         </Typography.Paragraph>
       ) : null}
+      {onAir && !recording && room.autoRecord === false ? (
+        <Typography.Paragraph type="warning" style={{ marginBottom: 10, marginTop: 0 }}>
+          该房间已关闭自动录制，开播未自动录，可手动「录制」
+        </Typography.Paragraph>
+      ) : null}
       <div className="lr-room-card__actions">
         <Button
           size="middle"
           icon={<ReloadOutlined />}
-          disabled={room.monitorState === 'checking' || recording}
+          loading={acting && actingAction === 'check'}
+          disabled={acting || room.monitorState === 'checking' || recording}
           onClick={() => onCheck(room)}
         >
           立即检测
@@ -93,7 +103,7 @@ function RoomCard({
         )}
         {room.monitorState === 'recording' ? (
           <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
-            <Button size="middle" danger icon={<StopOutlined />}>
+            <Button size="middle" danger loading={acting && actingAction === 'stop'} icon={<StopOutlined />}>
               停止
             </Button>
           </Popconfirm>
@@ -106,7 +116,8 @@ function RoomCard({
           size="middle"
           type={recording ? 'default' : 'primary'}
           icon={<VideoCameraAddOutlined />}
-          disabled={!onAir || recording}
+          loading={acting && actingAction === 'record'}
+          disabled={acting || !onAir || recording}
           onClick={() => onRecord(room)}
         >
           {recording ? '录制中' : '录制'}
@@ -121,7 +132,7 @@ function RoomCard({
 
 export default function Monitor() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
+  const { rooms, loading, actingRoomId, actingAction, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
   const [watching, setWatching] = useState<Room | null>(null);
@@ -146,6 +157,12 @@ export default function Monitor() {
     })
     .sort((a, b) => Number(b.favorited) - Number(a.favorited));
 
+  const enabledRooms = rooms.filter((r) => r.enabled);
+  const liveCount = enabledRooms.filter((r) => r.lastLiveStatus === 'live').length;
+  const recordingCount = enabledRooms.filter(
+    (r) => r.monitorState === 'recording' || r.monitorState === 'reconnecting',
+  ).length;
+
   const handleWatch = (room: Room) => {
     if (!openPreview(room.id)) {
       message.warning(describeError('PREVIEW_LIMIT_REACHED'));
@@ -157,9 +174,35 @@ export default function Monitor() {
   return (
     <div>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          监控总览
-        </Typography.Title>
+        <Space size={16} wrap>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            监控总览
+          </Typography.Title>
+          <Space size={8} wrap>
+            <Badge
+              color="green"
+              count={liveCount}
+              showZero
+              title={`开播中 ${liveCount} 间`}
+              style={{ boxShadow: 'none' }}
+            >
+              <Button size="small" icon={<EyeOutlined />}>
+                开播中 {liveCount}
+              </Button>
+            </Badge>
+            <Badge
+              color="red"
+              count={recordingCount}
+              showZero
+              title={`录制中 ${recordingCount} 间`}
+              style={{ boxShadow: 'none' }}
+            >
+              <Button size="small" icon={<VideoCameraAddOutlined />}>
+                录制中 {recordingCount}
+              </Button>
+            </Badge>
+          </Space>
+        </Space>
         <Space>
           <Segmented
             options={['全部', '录制中', '收藏']}
@@ -187,6 +230,8 @@ export default function Monitor() {
             <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === '列表' ? { span: 24 } : {})} style={{ minWidth: 320 }}>
               <RoomCard
                 room={room}
+                acting={actingRoomId === room.id}
+                actingAction={actingRoomId === room.id ? (actingAction ?? undefined) : undefined}
                 onWatch={handleWatch}
                 onCheck={(r) =>
                   void checkRoomNow(r.id).catch((e) =>

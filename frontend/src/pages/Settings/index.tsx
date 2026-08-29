@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { App, Alert, Button, Card, Col, Form, Input, InputNumber, List, Row, Select, Space, Switch, Tag, Typography } from 'antd';
+import { App, Alert, Button, Card, Col, Form, Input, InputNumber, List, Radio, Row, Select, Space, Switch, Tag, Typography } from 'antd';
 import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
 import { useServiceStore } from '../../stores/serviceStore';
+import { useAppTheme } from '../../theme';
+import type { ThemePreference } from '../../types/settings';
 import { validateDirectory, testSmtp } from '../../api/settings';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
@@ -13,6 +15,11 @@ import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
 import type { SettingsInput } from '../../types/settings';
 
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统' },
+];
 const LEVEL_COLOR: Record<string, string> = { info: 'blue', warning: 'orange', error: 'red' };
 const CHECK_COLOR: Record<SelfCheckStatus, string> = { ok: 'success', fail: 'error', warn: 'warning', pending: 'default' };
 const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异常', warn: '警告', pending: '检测中' };
@@ -20,6 +27,7 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异�
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
+  const { preference, setPreference } = useAppTheme();
   const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
   const status = useServiceStore((s) => s.status);
   const fetchStatus = useServiceStore((s) => s.fetchStatus);
@@ -48,11 +56,12 @@ export default function SettingsPage() {
         quality: settings.quality,
         recordingFormat: settings.recordingFormat ?? 'source_flv',
         autoRecord: settings.autoRecord ?? true,
+        theme: settings.theme ?? preference,
         douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
       });
     }
-  }, [settings, form]);
+  }, [settings, form, preference]);
 
   const checkDir = async () => {
     const dir = form.getFieldValue('recordingDirectory') as string;
@@ -183,6 +192,19 @@ export default function SettingsPage() {
           }
         >
           <Form form={form} layout="vertical" onValuesChange={onValuesChange} disabled={!settings}>
+            <Typography.Title level={5}>外观</Typography.Title>
+            <Form.Item
+              label="主题"
+              name="theme"
+              extra="深色/浅色即时预览；「跟随系统」随系统外观自动切换"
+            >
+              <Radio.Group
+                options={THEME_OPTIONS}
+                optionType="button"
+                buttonStyle="solid"
+                onChange={(e) => setPreference(e.target.value as ThemePreference)}
+              />
+            </Form.Item>
             <Form.Item label="保存目录">
               <Space.Compact style={{ width: '100%' }}>
                 <Form.Item name="recordingDirectory" noStyle rules={[{ required: true, message: '必填' }]}>

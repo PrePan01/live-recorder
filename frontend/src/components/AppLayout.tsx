@@ -7,6 +7,7 @@ import {
 } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import StatusBar from './StatusBar';
+import { useAppTheme } from '../theme';
 
 const { Sider, Content, Header } = Layout;
 
@@ -19,13 +20,14 @@ const ITEMS = [
 
 export default function AppLayout() {
   const { pathname } = useLocation();
+  const { mode } = useAppTheme();
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      <Header style={{ padding: 0, background: '#fff', lineHeight: 'normal', flexShrink: 0 }}>
+      <Header style={{ padding: 0, background: 'var(--lr-surface)', lineHeight: 'normal', flexShrink: 0 }}>
         <StatusBar />
       </Header>
       <Layout>
-        <Sider theme="light" width={180} style={{ borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
+        <Sider theme={mode === 'dark' ? 'dark' : 'light'} width={180} style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}>
           <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px' }}>直播录制台</div>
           <Menu
             mode="inline"

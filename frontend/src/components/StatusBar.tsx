@@ -42,8 +42,8 @@ export default function StatusBar() {
         alignItems: 'center',
         gap: 24,
         padding: '0 24px',
-        background: '#fff',
-        borderBottom: '1px solid #f0f0f0',
+        background: 'var(--lr-surface)',
+        borderBottom: '1px solid var(--lr-border)',
         height: 48,
       }}
     >
