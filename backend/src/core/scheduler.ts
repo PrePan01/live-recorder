@@ -69,7 +69,7 @@ export class Scheduler {
     return dueSchedules(this.services, nowMs);
   }
 
-  async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
+  async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
@@ -84,7 +84,7 @@ export class Scheduler {
     this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
   }
 
-  private async runCheckRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
+  private async runCheckRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
     this.emitRoom(room.id);
@@ -103,7 +103,7 @@ export class Scheduler {
     }
   }
 
-  private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
+  private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
@@ -123,6 +123,12 @@ export class Scheduler {
       this.services.rooms.setLiveStatus(room.id, status.status);
     }
     if (status.status === 'live') {
+      // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
+      if (opts.nameOnly) {
+        this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.emitRoom(room.id);
+        return;
+      }
       // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
       // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
       // true 时检测即自动开始。
@@ -171,9 +177,9 @@ export class Scheduler {
     this.services.events.emit({ type: 'alert:created', data: alert });
   }
 
-  async triggerImmediateCheck(roomId: string): Promise<void> {
+  async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
-    await this.checkRoom(room, { manual: true }).catch(() => undefined);
+    await this.checkRoom(room, { manual: true, ...opts }).catch(() => undefined);
   }
 }

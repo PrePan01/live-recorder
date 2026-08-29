@@ -170,7 +170,7 @@ export class RecorderManager {
     this.services.events.emit({ type: 'recording:updated', data: recording });
     this.emitServiceStatus();
 
-    void this.runSession(room, recording.id, stream, filePath, session, 0);
+    void this.runSession(room, recording.id, stream, filePath, session, 0).catch(() => undefined);
   }
 
   private async runSession(room: Room, recordingId: string, stream: { url: string; format: 'flv' | 'hls'; headers?: Record<string, string> }, filePath: string, session: ActiveSession, attempt: number): Promise<void> {
@@ -292,7 +292,7 @@ export class RecorderManager {
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
+      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1).catch(() => undefined);
     } catch {
       this.preview?.closeRoom(room.id, 4004, 'stream_lost');
       await this.failRecording(room, recordingId, error, 'recorder');
@@ -346,7 +346,7 @@ export class RecorderManager {
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const cur = this.active.get(room.id);
       if (cur) cur.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
+      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1).catch(() => undefined);
     } catch {
       await this.completeRecording(room, recordingId, size, 'ended');
     }
