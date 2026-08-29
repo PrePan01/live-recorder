@@ -18,7 +18,13 @@ export type ErrorCode =
   | 'PREVIEW_LIMIT_REACHED'
   | 'RESOURCE_NOT_FOUND'
   | 'PREVIEW_NOT_RECORDING'
-  | 'QUALITY_DOWNGRADED';
+  | 'QUALITY_DOWNGRADED'
+  | 'TAG_INVALID'
+  | 'SEARCH_QUERY_INVALID'
+  | 'SEARCH_TIMEOUT'
+  | 'DIAGNOSTIC_ACTION_INVALID'
+  | 'DIAGNOSTIC_CONFLICT'
+  | 'PIPELINE_CONFIG_INVALID';
 
 export interface ErrorObject {
   code: ErrorCode;
@@ -88,16 +94,23 @@ export class AppError extends Error {
 export function httpStatusFor(code: ErrorCode): number {
   switch (code) {
     case 'ROOM_LINK_INVALID':
+    case 'TAG_INVALID':
+    case 'SEARCH_QUERY_INVALID':
+    case 'PIPELINE_CONFIG_INVALID':
+    case 'DIAGNOSTIC_ACTION_INVALID':
       return 422;
     case 'ROOM_LINK_DUPLICATE':
     case 'DISK_SPACE_INSUFFICIENT':
     case 'CONCURRENT_LIMIT_REACHED':
     case 'RECORDING_NOT_AVAILABLE':
+    case 'DIAGNOSTIC_CONFLICT':
       return 409;
     case 'DIRECTORY_NOT_WRITABLE':
       return 422;
     case 'SMTP_SEND_FAILED':
       return 502;
+    case 'SEARCH_TIMEOUT':
+      return 504;
     case 'SERVICE_UNAVAILABLE':
       return 503;
     case 'CONFIG_LOAD_FAILED':

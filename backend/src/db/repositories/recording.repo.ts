@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingState } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -18,6 +18,9 @@ interface RecordingRow {
   retry_count: number | null;
   quality: string | null;
   integrity: string | null;
+  pipeline_status: string | null;
+  metadata: string | null;
+  cover_path: string | null;
   created_at: string;
 }
 
@@ -27,6 +30,15 @@ function parseError(raw: string | null): ErrorObject | null {
     return JSON.parse(raw) as ErrorObject;
   } catch {
     return null;
+  }
+}
+
+function parseMetadata(raw: string | null): RecordingMetadata | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as RecordingMetadata;
+  } catch {
+    return undefined;
   }
 }
 
@@ -50,6 +62,10 @@ export function rowToRecording(row: RecordingRow): Recording {
   };
   if (row.quality) rec.quality = row.quality as Quality;
   if (row.integrity) rec.integrity = row.integrity as RecordingIntegrity;
+  if (row.pipeline_status) rec.pipelineStatus = row.pipeline_status as PipelineStatus;
+  const metadata = parseMetadata(row.metadata);
+  if (metadata) rec.metadata = metadata;
+  if (row.cover_path) rec.coverPath = row.cover_path;
   return rec;
 }
 
@@ -164,7 +180,7 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.state !== undefined) {
@@ -174,6 +190,18 @@ export class RecordingRepository {
     if (patch.integrity !== undefined) {
       sets.push('integrity = ?');
       params.push(patch.integrity);
+    }
+    if (patch.pipelineStatus !== undefined) {
+      sets.push('pipeline_status = ?');
+      params.push(patch.pipelineStatus);
+    }
+    if (patch.metadata !== undefined) {
+      sets.push('metadata = ?');
+      params.push(patch.metadata ? JSON.stringify(patch.metadata) : null);
+    }
+    if (patch.coverPath !== undefined) {
+      sets.push('cover_path = ?');
+      params.push(patch.coverPath);
     }
     if (patch.startedAt !== undefined) {
       sets.push('started_at = ?');

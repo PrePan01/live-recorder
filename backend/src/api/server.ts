@@ -7,6 +7,10 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerServiceRoutes } from './routes/service.js';
 import { registerConfigRoutes } from './routes/config.js';
+import { registerTagRoutes } from './routes/tags.js';
+import { registerSearchRoutes } from './routes/search.js';
+import { registerStatsRoutes } from './routes/stats.js';
+import { registerDiagnosticRoutes } from './routes/diagnostics.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 import { DEFAULT_PORT } from '../sidecar/ports.js';
@@ -98,6 +102,10 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerAlertRoutes(app, services);
   registerServiceRoutes(app, services);
   registerConfigRoutes(app, services);
+  registerTagRoutes(app, services);
+  registerSearchRoutes(app, services);
+  registerStatsRoutes(app, services);
+  registerDiagnosticRoutes(app, services);
   registerSse(app, services, sse);
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, port);

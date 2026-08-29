@@ -161,6 +161,88 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       `);
     },
   },
+  {
+    // #93 V5 Phase 0：标签分组（Tag + RoomTag）与房间上传开关（Room.uploadEnabled）。
+    // 幂等保护：表存在即跳过；rooms.upload_enabled 列存在即跳过列迁移。
+    version: 9,
+    up: (db) => {
+      const tagsExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'tags'`).get());
+      if (!tagsExists) {
+        db.exec(`
+          CREATE TABLE tags (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT '#1677ff',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE TABLE room_tags (
+            room_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (room_id, tag_id)
+          );
+          CREATE INDEX idx_room_tags_tag_id ON room_tags(tag_id);
+        `);
+      }
+      const cols = db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[];
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has('upload_enabled')) db.exec(`ALTER TABLE rooms ADD COLUMN upload_enabled INTEGER;`);
+      if (!names.has('title_source')) db.exec(`ALTER TABLE rooms ADD COLUMN title_source TEXT;`);
+      if (!names.has('title_updated_at')) db.exec(`ALTER TABLE rooms ADD COLUMN title_updated_at TEXT;`);
+      if (!names.has('title_fallback_used')) db.exec(`ALTER TABLE rooms ADD COLUMN title_fallback_used INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
+  {
+    // #93 V5 Phase 0：Recording 增加 processing 态与后处理管线字段
+    // （pipeline_status、metadata JSON、cover_path）。幂等加列。
+    version: 10,
+    up: (db) => {
+      const cols = db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[];
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has('pipeline_status')) db.exec(`ALTER TABLE recordings ADD COLUMN pipeline_status TEXT;`);
+      if (!names.has('metadata')) db.exec(`ALTER TABLE recordings ADD COLUMN metadata TEXT;`);
+      if (!names.has('cover_path')) db.exec(`ALTER TABLE recordings ADD COLUMN cover_path TEXT;`);
+    },
+  },
+  {
+    // #93 V5 Phase 0：诊断自愈工作台——诊断项与动作审计（幂等键防并发重复执行）。
+    version: 11,
+    up: (db) => {
+      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'diagnostics'`).get());
+      if (!exists) {
+        db.exec(`
+          CREATE TABLE diagnostics (
+            id TEXT PRIMARY KEY,
+            room_id TEXT,
+            recording_id TEXT,
+            code TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK(severity IN ('info', 'warning', 'error')),
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'processing', 'resolved', 'expired')),
+            suggestion TEXT NOT NULL DEFAULT '',
+            details TEXT,
+            occurred_at TEXT NOT NULL,
+            resolved_at TEXT
+          );
+          CREATE INDEX idx_diagnostics_status ON diagnostics(status);
+          CREATE INDEX idx_diagnostics_room ON diagnostics(room_id);
+          CREATE UNIQUE INDEX idx_diagnostics_active
+            ON diagnostics(recording_id, code)
+            WHERE status IN ('open', 'processing');
+
+          CREATE TABLE diagnostic_actions (
+            id TEXT PRIMARY KEY,
+            diagnostic_id TEXT NOT NULL REFERENCES diagnostics(id) ON DELETE CASCADE,
+            action TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            result TEXT NOT NULL,
+            detail TEXT,
+            performed_at TEXT NOT NULL
+          );
+          CREATE UNIQUE INDEX idx_diagnostic_actions_key ON diagnostic_actions(idempotency_key);
+        `);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

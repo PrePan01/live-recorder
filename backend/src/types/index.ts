@@ -3,3 +3,5 @@ export * from './room.js';
 export * from './recording.js';
 export * from './settings.js';
 export * from './alert.js';
+export * from './tag.js';
+export * from './diagnostic.js';
