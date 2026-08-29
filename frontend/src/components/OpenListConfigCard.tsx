@@ -46,26 +46,22 @@ export default function OpenListConfigCard() {
       <Form.Item label="启用自动上传" name="enabled" valuePropName="checked" extra="管线完成后自动上传到 OpenList（WebDAV）">
         <Switch />
       </Form.Item>
-      {config?.enabled ? (
-        <>
-          <Form.Item label="服务器地址" name="serverUrl" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="https://dav.example.com/remote.php/dav/files/user/" />
-          </Form.Item>
-          <Form.Item label="目录模板" name="directoryTemplate" extra="支持 {room}/{platform}/{date} 等变量">
-            <Input placeholder="{platform}/{room}" />
-          </Form.Item>
-          <Form.Item label="用户名" name="username">
-            <Input autoComplete="username" />
-          </Form.Item>
-          <Form.Item
-            label="令牌（WebDAV 密码）"
-            name="token"
-            extra={config.hasToken ? '已保存，留空则不修改' : undefined}
-          >
-            <Input.Password placeholder={config.hasToken ? '••••••' : '输入令牌'} autoComplete="new-password" />
-          </Form.Item>
-        </>
-      ) : null}
+      <Form.Item label="服务器地址" name="serverUrl" rules={[{ required: true, message: '必填' }]}>
+        <Input placeholder="https://dav.example.com/remote.php/dav/files/user/" />
+      </Form.Item>
+      <Form.Item label="目录模板" name="directoryTemplate" extra="支持 {room}/{platform}/{date} 等变量">
+        <Input placeholder="{platform}/{room}" />
+      </Form.Item>
+      <Form.Item label="用户名" name="username">
+        <Input autoComplete="username" />
+      </Form.Item>
+      <Form.Item
+        label="令牌（WebDAV 密码）"
+        name="token"
+        extra={config?.hasToken ? '已保存，留空则不修改' : undefined}
+      >
+        <Input.Password placeholder={config?.hasToken ? '••••••' : '输入令牌'} autoComplete="new-password" />
+      </Form.Item>
       <Space>
         <Button size="small" loading={testing} onClick={() => void onTest()}>
           测试连接
