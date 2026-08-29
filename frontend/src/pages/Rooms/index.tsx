@@ -4,6 +4,7 @@ import { PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined } from '@ant-d
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
 import { useTagStore } from '../../stores/tagStore';
+import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import TagSelect from '../../components/TagSelect';
@@ -331,6 +332,8 @@ export default function Rooms() {
     },
   ];
 
+  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Room>(columns);
+
   return (
     <div>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -418,7 +421,8 @@ export default function Rooms() {
       </Space>
       <Table
         rowKey="id"
-        columns={columns}
+        columns={resizedColumns}
+        components={resizableComponents}
         dataSource={paginated}
         loading={loading}
         scroll={{ x: 1200 }}

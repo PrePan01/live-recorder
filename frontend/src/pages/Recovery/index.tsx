@@ -17,6 +17,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useDiagnosticStore } from '../../stores/diagnosticStore';
 import { useRoomStore } from '../../stores/roomStore';
+import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatRelative } from '../../utils/format';
@@ -137,6 +138,8 @@ export default function Recovery() {
     },
   ];
 
+  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Diagnostic>(columns);
+
   const actionForCode = (code: string): string | null => {
     if (code.includes('RECORDING_START_FAILED')) return 'retry';
     if (code.includes('PLATFORM_ACCESS_RESTRICTED')) return 'refresh_cookie';
@@ -206,7 +209,8 @@ export default function Recovery() {
       </Space>
       <Table
         rowKey="id"
-        columns={columns}
+        columns={resizedColumns}
+        components={resizableComponents}
         dataSource={items}
         loading={loading}
         scroll={{ x: 800 }}
