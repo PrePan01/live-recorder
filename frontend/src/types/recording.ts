@@ -2,9 +2,18 @@ import type { Platform } from './room';
 import type { ApiErrorEnvelope } from './error';
 
 
-export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'completed' | 'failed';
+export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'processing' | 'completed' | 'failed';
 
 export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
+
+export type PipelineStatus = 'not_required' | 'queued' | 'running' | 'ok' | 'partial' | 'failed';
+
+export interface PipelineMetadata {
+  durationMs: number;
+  segmentCount: number;
+  quality: string;
+  size: number;
+}
 
 export interface Recording {
   id: string;
@@ -16,6 +25,9 @@ export interface Recording {
   quality: string | null;
   integrity: RecordingIntegrity | null;
   state: RecordingState;
+  pipelineStatus: PipelineStatus | null;
+  metadata: PipelineMetadata | null;
+  coverPath: string | null;
   startedAt: string;
   endedAt: string | null;
   filePath: string | null;

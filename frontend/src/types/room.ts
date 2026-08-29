@@ -1,4 +1,5 @@
 import type { ApiErrorEnvelope } from './error';
+import type { Tag } from './tag';
 
 export type Platform = 'bilibili' | 'douyin';
 
@@ -13,6 +14,8 @@ export type MonitorState =
   | 'failed'
   | 'disabled';
 
+export type TitleSource = 'adapter' | 'fallback' | 'manual';
+
 export interface Room {
   id: string;
   platform: Platform;
@@ -26,6 +29,11 @@ export interface Room {
   favorited: boolean;
   autoRecord: boolean | null;
   activeRecording: ActiveRecording | null;
+  tags: Tag[];
+  uploadEnabled: boolean | null;
+  titleSource: TitleSource | null;
+  titleUpdatedAt: string | null;
+  titleFallbackUsed: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,4 +55,5 @@ export interface RoomUpdateInput {
   displayName?: string;
   cookie?: string;
   autoRecord?: boolean | null;
+  uploadEnabled?: boolean | null;
 }

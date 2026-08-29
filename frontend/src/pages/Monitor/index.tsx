@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Badge, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
+import { App, Badge, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
@@ -60,6 +60,17 @@ function RoomCard({
       <div className="lr-room-card__status" style={{ marginBottom: 8 }}>
         <LiveStatusTag status={room.lastLiveStatus} />
       </div>
+      {room.tags.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <Space size={[4, 4]} wrap>
+            {room.tags.map((t) => (
+              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
+                {t.name}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+      ) : null}
       <div className="lr-room-card__stats" style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Typography } from 'antd';
+import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
+import { useTagStore } from '../../stores/tagStore';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
+import TagSelect from '../../components/TagSelect';
 import type { Room } from '../../types/room';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -20,7 +22,8 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord, updateRoomTags } = useRoomStore();
+  const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchBusy2, setBatchBusy2] = useState(false);
@@ -28,11 +31,13 @@ export default function Rooms() {
   const [batchResult, setBatchResult] = useState<Awaited<ReturnType<typeof batchAddRooms>> | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [form] = Form.useForm<{ url: string; displayName?: string }>();
   const [keyword, setKeyword] = useState('');
   const [platform, setPlatform] = useState<string>();
   const [state, setState] = useState<string>();
   const [favOnly, setFavOnly] = useState<boolean>(false);
+  const [tagId, setTagId] = useState<string>();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
@@ -42,6 +47,10 @@ export default function Rooms() {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
 
+  useEffect(() => {
+    void useTagStore.getState().load().catch(() => undefined);
+  }, []);
+
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return rooms.filter((r) => {
@@ -49,9 +58,10 @@ export default function Rooms() {
       if (platform && r.platform !== platform) return false;
       if (state && r.monitorState !== state) return false;
       if (favOnly && !r.favorited) return false;
+      if (tagId && !r.tags.some((t) => t.id === tagId)) return false;
       return true;
     });
-  }, [rooms, keyword, platform, state, favOnly]);
+  }, [rooms, keyword, platform, state, favOnly, tagId]);
 
   const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
@@ -109,12 +119,14 @@ export default function Rooms() {
   const openAdd = () => {
     setEditing(null);
     form.resetFields();
+    setTagIds([]);
     setModalOpen(true);
   };
 
   const openEdit = (room: Room) => {
     setEditing(room);
     form.setFieldsValue({ url: room.url, displayName: room.displayName });
+    setTagIds(room.tags.map((t) => t.id));
     setModalOpen(true);
   };
 
@@ -129,6 +141,9 @@ export default function Rooms() {
     try {
       if (editing) {
         await editRoom(editing.id, values);
+        if (tagIds.length > 0 || editing.tags.length > 0) {
+          await updateRoomTags(editing.id, tagIds);
+        }
         message.success('房间已更新');
       } else {
         await addRoom({ ...values, platform });
@@ -205,6 +220,23 @@ export default function Rooms() {
       ),
     },
     { title: '显示名', dataIndex: 'displayName', ellipsis: true },
+    {
+      title: '标签',
+      dataIndex: 'tags',
+      width: 160,
+      render: (ts: Room['tags']) =>
+        ts.length === 0 ? (
+          <Typography.Text type="secondary">-</Typography.Text>
+        ) : (
+          <Space size={[4, 4]} wrap>
+            {ts.map((t) => (
+              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
+                {t.name}
+              </Tag>
+            ))}
+          </Space>
+        ),
+    },
     {
       title: '链接',
       dataIndex: 'url',
@@ -319,6 +351,17 @@ export default function Rooms() {
             { value: 'disabled', label: '已停用' },
           ]}
         />
+        <Select
+          allowClear
+          placeholder="标签"
+          style={{ width: 120 }}
+          value={tagId}
+          onChange={(v) => {
+            setTagId(v);
+            resetPage();
+          }}
+          options={tags.map((t) => ({ value: t.id, label: t.name }))}
+        />
         <Button
           type={favOnly ? 'primary' : 'default'}
           icon={<StarOutlined />}
@@ -379,6 +422,11 @@ export default function Rooms() {
           <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
             <Input placeholder="主播昵称" />
           </Form.Item>
+          {editing ? (
+            <Form.Item label="标签" extra="单房间最多 20 个；在弹层内可创建/删除标签">
+              <TagSelect value={tagIds} onChange={setTagIds} />
+            </Form.Item>
+          ) : null}
         </Form>
       </Modal>
       <Modal
