@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useServiceStore } from '../stores/serviceStore';
 import { useAlertStore, selectUnreadCount } from '../stores/alertStore';
 import { formatBytes, formatRelative } from '../utils/format';
+import GlobalSearch from './GlobalSearch';
 
 export default function StatusBar() {
   const { pathname } = useLocation();
@@ -57,6 +58,7 @@ export default function StatusBar() {
           {status ? `录制中 ${status.activeRecordings}` : '录制中 -'}
         </Tag>
       </Space>
+      <GlobalSearch />
       <Space>
         <Typography.Text type={spaceDanger ? 'danger' : 'secondary'}>
           {spaceDanger ? '⚠ 磁盘空间不足' : '磁盘可用'}

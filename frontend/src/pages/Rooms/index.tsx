@@ -65,6 +65,29 @@ export default function Rooms() {
 
   const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const focusId = params.get('focus');
+    if (!focusId || rooms.length === 0) return;
+    const idx = rooms.findIndex((r) => r.id === focusId);
+    if (idx === -1) return;
+    const targetPage = Math.floor(idx / pageSize) + 1;
+    setPage(targetPage);
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-room-id="${focusId}"]`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.transition = 'background 1s ease';
+        el.style.background = 'var(--lr-hover-bg)';
+        setTimeout(() => {
+          el.style.background = '';
+        }, 2000);
+      }
+    }, 400);
+    window.history.replaceState({}, '', '/rooms');
+    return () => clearTimeout(timer);
+  }, [rooms, pageSize]);
+
   const resetPage = () => setPage(1);
 
   const runBatch = async (fn: (r: Room) => Promise<void>, okMsg: string) => {
@@ -382,6 +405,7 @@ export default function Rooms() {
         columns={columns}
         dataSource={paginated}
         loading={loading}
+        onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         pagination={{
           current: page,

@@ -43,6 +43,22 @@ export default function History() {
     if (rooms.length === 0) void fetchRooms();
   }, [fetchHistory, roomId, dateRange]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const focusId = params.get('focus');
+    if (!focusId || items.length === 0) return;
+    const el = document.querySelector(`[data-rec-id="${focusId}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.transition = 'background 1s ease';
+      el.style.background = 'var(--lr-hover-bg)';
+      setTimeout(() => {
+        el.style.background = '';
+      }, 2000);
+    }
+    window.history.replaceState({}, '', '/history');
+  }, [items]);
+
   const roomName = useMemo(() => new Map(rooms.map((r) => [r.id, r.displayName])), [rooms]);
   const roomLabel = useCallback((r: Recording) => r.roomName || roomName.get(r.roomId) || r.roomId, [roomName]);
 
@@ -243,6 +259,7 @@ export default function History() {
           columns={columns}
           dataSource={items}
           loading={loading}
+          onRow={(r) => ({ 'data-rec-id': r.id } as React.HTMLAttributes<HTMLElement>)}
           rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
           scroll={{ x: 1400 }}
           pagination={{
