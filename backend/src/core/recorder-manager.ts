@@ -13,6 +13,8 @@ export interface PreviewSink {
   canAccept(): boolean;
   broadcastFrame(roomId: string, chunk: Buffer): void;
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void;
+  /** 新录制/新分段开始时清空该房间预览头缓冲，确保下一段流的 FLV 头被重新捕获。 */
+  resetRoom(roomId: string): void;
 }
 
 interface ActiveSession {
@@ -124,6 +126,8 @@ export class RecorderManager {
     const settings = this.settings();
     const engine = this.services.engineFor();
     this.services.rooms.setState(room.id, 'recording');
+    // 新录制/新分段：清空预览头缓冲，让本段流的 FLV 头被重新捕获（跨录制不残留旧头，QA #150）。
+    this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
     const pendingTimeout = this.services.clock.setTimeout(() => {

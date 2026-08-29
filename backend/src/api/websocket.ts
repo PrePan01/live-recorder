@@ -107,6 +107,14 @@ export class PreviewManager {
     this.rooms.delete(roomId);
   }
 
+  /** 新录制/新分段开始：清空该房间流头缓冲，确保下一段流的 FLV 头被重新捕获（跨录制不残留旧头）。 */
+  resetRoom(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    room.headerBuffer = [];
+    room.headerBytes = 0;
+  }
+
   closeRoomWithError(roomId: string, code: number): void {
     const room = this.rooms.get(roomId);
     if (!room) return;

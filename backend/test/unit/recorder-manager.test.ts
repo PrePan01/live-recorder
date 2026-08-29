@@ -41,6 +41,7 @@ async function settle(clock: FakeClock, ms: number): Promise<void> {
 class FakePreview implements PreviewSink {
   frames = new Map<string, number>();
   closed: { roomId: string; code: number; reason?: 'ended' | 'stream_lost' }[] = [];
+  resets: string[] = [];
   canAccept(): boolean {
     return true;
   }
@@ -49,6 +50,9 @@ class FakePreview implements PreviewSink {
   }
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void {
     this.closed.push({ roomId, code, reason });
+  }
+  resetRoom(roomId: string): void {
+    this.resets.push(roomId);
   }
 }
 
@@ -125,6 +129,23 @@ describe('RecorderManager', () => {
     const afterEnd = recordingUpdates;
     await settle(clock, 2000);
     expect(recordingUpdates).toBe(afterEnd);
+  });
+
+  it('resets the preview header buffer at each new recording session so a fresh FLV header is captured (#150 跨录制不残留旧头)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-reset-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/8', displayName: 'Reset' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'r1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
+    // 每个新录制会话开始（runSession）都会清空预览头缓冲，确保下一段流的 FLV 头被重新捕获。
+    expect(preview.resets).toContain(room.id);
   });
 
   it('enforces maxConcurrentRecordings and raises CONCURRENT_LIMIT_REACHED', async () => {
