@@ -48,6 +48,12 @@ export default function SettingsPage() {
   }, [load, fetchAlerts, fetchStatus]);
 
   useEffect(() => {
+    if (settings && settings.theme) {
+      setPreference(settings.theme);
+    }
+  }, [settings, setPreference]);
+
+  useEffect(() => {
     if (settings) {
       form.setFieldsValue({
         recordingDirectory: settings.recordingDirectory,
