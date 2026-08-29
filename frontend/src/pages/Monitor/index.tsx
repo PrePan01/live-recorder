@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Badge, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
@@ -199,28 +199,12 @@ export default function Monitor() {
             监控总览
           </Typography.Title>
           <Space size={8} wrap>
-            <Badge
-              color="green"
-              count={liveCount}
-              showZero
-              title={`开播中 ${liveCount} 间`}
-              style={{ boxShadow: 'none' }}
-            >
-              <Button size="small" icon={<EyeOutlined />}>
-                开播中 {liveCount}
-              </Button>
-            </Badge>
-            <Badge
-              color="red"
-              count={recordingCount}
-              showZero
-              title={`录制中 ${recordingCount} 间`}
-              style={{ boxShadow: 'none' }}
-            >
-              <Button size="small" icon={<VideoCameraAddOutlined />}>
-                录制中 {recordingCount}
-              </Button>
-            </Badge>
+            <Button size="small" icon={<EyeOutlined />}>
+              开播中 {liveCount}
+            </Button>
+            <Button size="small" icon={<VideoCameraAddOutlined />}>
+              录制中 {recordingCount}
+            </Button>
           </Space>
         </Space>
         <Space>
