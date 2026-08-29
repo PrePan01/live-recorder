@@ -140,9 +140,9 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   const handleUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const host = req.headers.host ?? '';
     const origin = req.headers.origin;
-    // 兜底：允许 Vite 代理（5173）转发的 Host，避免未设 changeOrigin 时被误拒。
-    const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1:5173', 'localhost:5173']);
-    const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...extraOrigins]);
+    // 兜底：允许 Vite 代理（5173）与 Tauri WebView（tauri.localhost）转发的 Host，避免未设 changeOrigin 时被误拒。
+    const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1:5173', 'localhost:5173', 'tauri.localhost', 'tauri://localhost']);
+    const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, 'http://tauri.localhost', 'tauri://localhost', ...extraOrigins]);
     if (!allowedHosts.has(host)) {
       socket.destroy();
       return;
