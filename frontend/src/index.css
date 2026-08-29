@@ -238,10 +238,11 @@ body {
 }
 
 .lr-room-card--list .ant-card-body {
-  display: grid;
-  grid-template-columns: auto minmax(260px, 1fr) minmax(150px, 0.55fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   column-gap: 20px;
+  row-gap: 8px;
 }
 
 .lr-room-card--list .lr-room-card__status,
@@ -251,24 +252,41 @@ body {
 }
 
 .lr-room-card--list .lr-room-card__actions {
+  margin-left: auto;
   border-top: 0;
   border-left: 1px solid var(--lr-border);
   padding: 0 0 0 16px;
   justify-content: flex-end;
 }
 
+.lr-room-card--list .lr-room-card__actions > * {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.lr-room-card--list .lr-room-card__actions .ant-btn {
+  width: auto;
+  padding-inline: 8px;
+}
+
 .lr-room-card--list .lr-room-card__error {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
   margin-top: 10px;
+}
+
+.lr-room-card--list .lr-room-card__warning {
+  flex-basis: 100%;
 }
 
 @media (max-width: 900px) {
   .lr-room-card--list .ant-card-body {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
     row-gap: 10px;
   }
 
   .lr-room-card--list .lr-room-card__actions {
+    margin-left: 0;
     border-left: 0;
     border-top: 1px solid var(--lr-border);
     padding: 10px 0 0;
