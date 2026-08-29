@@ -322,6 +322,14 @@ body {
   object-fit: contain;
 }
 
+/* 固定列表格单元格：补不透明背景+阴影，避免滚动时未固定列表头文字透过固定列显示（QA #164 根因） */
+.ant-table-cell-fix-right,
+.ant-table-cell-fix-right-last,
+.ant-table-cell-fix-end {
+  background: var(--lr-surface) !important;
+  box-shadow: -8px 0 8px -4px rgba(0, 0, 0, 0.15);
+}
+
 /* 遵循 prefers-reduced-motion：降低非必要动效 */
 @media (prefers-reduced-motion: reduce) {
   *,
