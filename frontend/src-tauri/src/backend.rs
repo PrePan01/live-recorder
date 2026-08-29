@@ -65,9 +65,14 @@ impl BackendManager {
 
     /// Spawn the backend sidecar as a child and poll until
     /// `GET /api/v1/health` reports ready, returning the AppInstance.
+    /// 反复启动兜底：先探测既有健康实例（ready 文件/端口），存在则直接复用，
+    /// 不再 spawn 新后端，避免多实例/端口冲突/资源占用。
     pub fn start(&self) -> Result<AppInstance, String> {
         if self.is_running() {
             return self.wait_ready();
+        }
+        if let Some(existing) = fetch_ready() {
+            return Ok(existing);
         }
         let cwd = Self::backend_cwd().ok_or_else(|| "未找到后端运行目录".to_string())?;
         let ready_file = ready_file_path().ok_or_else(|| "无法确定状态目录".to_string())?;
