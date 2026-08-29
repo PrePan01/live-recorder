@@ -17,6 +17,6 @@ export async function fetchServiceStatus(): Promise<ServiceStatus> {
 }
 
 export async function fetchSelfCheck(): Promise<SelfCheckItem[]> {
-  const { data } = await http.get<{ checks: SelfCheckItem[] }>('/service/self-check');
-  return data.checks;
+  const { data } = await http.get<{ items: SelfCheckItem[] }>('/service/self-check');
+  return data.items;
 }

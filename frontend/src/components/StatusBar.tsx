@@ -48,7 +48,6 @@ export default function StatusBar() {
         borderBottom: '1px solid var(--lr-border)',
         height: 48,
         minWidth: 0,
-        overflow: 'hidden',
       }}
     >
       <Space>

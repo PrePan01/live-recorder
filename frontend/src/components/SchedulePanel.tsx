@@ -153,6 +153,7 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
         columns={columns}
         dataSource={items}
         loading={loading}
+        scroll={{ x: 800 }}
         pagination={false}
         locale={{ emptyText: '暂无定时计划' }}
       />
