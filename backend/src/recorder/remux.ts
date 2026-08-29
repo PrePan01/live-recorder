@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { rename } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 const REMUX_TIMEOUT_MS = 120_000;
@@ -14,8 +14,8 @@ export async function remuxFlvToMp4(flvPath: string): Promise<string | null> {
   try {
     const ok = await runFfmpeg(['-y', '-i', flvPath, '-c', 'copy', '-movflags', '+faststart', mp4Path]);
     if (!ok) return null;
-    // 转封装成功：删除源 FLV，返回 MP4 路径。
-    await rename(flvPath, mp4Path).catch(() => undefined);
+    // 转封装成功：删除源 FLV（mp4Path 已由 ffmpeg 生成，不能 rename 覆盖，否则 .mp4 实为 FLV 内容）。
+    await unlink(flvPath).catch(() => undefined);
     return mp4Path;
   } catch {
     return null;
