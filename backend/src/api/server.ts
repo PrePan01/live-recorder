@@ -37,7 +37,7 @@ export interface BuiltApp {
 }
 
 export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltApp {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, forceCloseConnections: true });
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
   services.manager.preview = preview;

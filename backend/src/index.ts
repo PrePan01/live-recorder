@@ -20,7 +20,7 @@ async function main(): Promise<void> {
     preferredPort,
     stateDir,
     extraOrigins,
-    mode: env.RECORDING_ADAPTER === 'real' ? 'real' : 'fake',
+    mode: env.RECORDING_ADAPTER === 'fake' ? 'fake' : 'real',
   };
   if (readyFile) options.readyFile = readyFile;
   if (instanceId) options.instanceId = instanceId;

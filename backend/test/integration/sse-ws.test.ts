@@ -95,6 +95,21 @@ describe('SSE events', () => {
     await stream.done;
     await server.close();
   });
+
+  it('returns CORS headers for cross-origin EventSource (#140 SSE gap)', async () => {
+    const server = await listen();
+    const headers = await new Promise<http.IncomingHttpHeaders>((resolve, reject) => {
+      const req = http.get(`${server.url}/api/v1/events`, { headers: { Host: '127.0.0.1:43120', Origin: 'http://tauri.localhost' } }, (res) => {
+        resolve(res.headers);
+        req.destroy();
+      });
+      req.on('error', reject);
+    });
+    expect(headers['access-control-allow-origin']).toBe('http://tauri.localhost');
+    expect(headers['access-control-allow-methods']).toContain('GET');
+    expect(headers['vary']).toBe('Origin');
+    await server.close();
+  });
 });
 
 describe('WebSocket preview', () => {
