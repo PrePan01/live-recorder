@@ -68,6 +68,7 @@ export default function GlobalSearch() {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (results.length === 0) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveIdx((i) => Math.min(i + 1, results.length - 1));
