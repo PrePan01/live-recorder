@@ -15,6 +15,9 @@ function normalizeRoom(room: Room): Room {
 interface RoomState {
   rooms: Room[];
   loading: boolean;
+  /** 房间级操作 loading（check/record/stop），键为 roomId */
+  actingRoomId: string | null;
+  actingAction: 'check' | 'record' | 'stop' | null;
   fetchRooms: () => Promise<void>;
   addRoom: (input: RoomCreateInput) => Promise<Room>;
   batchAddRooms: (urls: string[]) => Promise<roomsApi.BatchRoomResult>;
@@ -32,6 +35,8 @@ interface RoomState {
 export const useRoomStore = create<RoomState>((set, get) => ({
   rooms: [],
   loading: false,
+  actingRoomId: null,
+  actingAction: null,
   async fetchRooms() {
     set({ loading: true });
     try {
@@ -68,17 +73,32 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })));
   },
   async checkRoomNow(id) {
-    const room = get().rooms.find((r) => r.id === id);
-    if (room) {
-      get().upsertRoom({ ...room, monitorState: 'checking', lastCheckedAt: new Date().toISOString() });
+    set({ actingRoomId: id, actingAction: 'check' });
+    try {
+      const room = get().rooms.find((r) => r.id === id);
+      if (room) {
+        get().upsertRoom({ ...room, monitorState: 'checking', lastCheckedAt: new Date().toISOString() });
+      }
+      await roomsApi.checkRoomNow(id);
+    } finally {
+      set({ actingRoomId: null, actingAction: null });
     }
-    await roomsApi.checkRoomNow(id);
   },
   async startRoomRecording(id) {
-    await roomsApi.startRoomRecording(id);
+    set({ actingRoomId: id, actingAction: 'record' });
+    try {
+      await roomsApi.startRoomRecording(id);
+    } finally {
+      set({ actingRoomId: null, actingAction: null });
+    }
   },
   async stopRoomRecording(id) {
-    await roomsApi.stopRecording(id);
+    set({ actingRoomId: id, actingAction: 'stop' });
+    try {
+      await roomsApi.stopRecording(id);
+    } finally {
+      set({ actingRoomId: null, actingAction: null });
+    }
   },
   upsertRoom(room) {
     set((s) => {

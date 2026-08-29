@@ -20,6 +20,8 @@ function RoomCard({
   onRecord,
   onFavorite,
   layout,
+  actingAction,
+  acting,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -28,6 +30,8 @@ function RoomCard({
   onRecord: (r: Room) => void;
   onFavorite: (r: Room, favorited: boolean) => void;
   layout: 'card' | 'list';
+  actingAction?: 'check' | 'record' | 'stop';
+  acting?: boolean;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
@@ -75,7 +79,8 @@ function RoomCard({
         <Button
           size="middle"
           icon={<ReloadOutlined />}
-          disabled={room.monitorState === 'checking' || recording}
+          loading={acting && actingAction === 'check'}
+          disabled={acting || room.monitorState === 'checking' || recording}
           onClick={() => onCheck(room)}
         >
           立即检测
@@ -93,7 +98,7 @@ function RoomCard({
         )}
         {room.monitorState === 'recording' ? (
           <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
-            <Button size="middle" danger icon={<StopOutlined />}>
+            <Button size="middle" danger loading={acting && actingAction === 'stop'} icon={<StopOutlined />}>
               停止
             </Button>
           </Popconfirm>
@@ -106,7 +111,8 @@ function RoomCard({
           size="middle"
           type={recording ? 'default' : 'primary'}
           icon={<VideoCameraAddOutlined />}
-          disabled={!onAir || recording}
+          loading={acting && actingAction === 'record'}
+          disabled={acting || !onAir || recording}
           onClick={() => onRecord(room)}
         >
           {recording ? '录制中' : '录制'}
@@ -121,7 +127,7 @@ function RoomCard({
 
 export default function Monitor() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
+  const { rooms, loading, actingRoomId, actingAction, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
   const [watching, setWatching] = useState<Room | null>(null);
@@ -219,6 +225,8 @@ export default function Monitor() {
             <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === '列表' ? { span: 24 } : {})} style={{ minWidth: 320 }}>
               <RoomCard
                 room={room}
+                acting={actingRoomId === room.id}
+                actingAction={actingRoomId === room.id ? (actingAction ?? undefined) : undefined}
                 onWatch={handleWatch}
                 onCheck={(r) =>
                   void checkRoomNow(r.id).catch((e) =>
