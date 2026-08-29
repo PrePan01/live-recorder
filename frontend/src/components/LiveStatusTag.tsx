@@ -1,17 +1,17 @@
 import type { LiveStatus } from '../types/room';
 
-const META: Record<LiveStatus, { color: string; text: string }> = {
-  live: { color: '#52c41a', text: '直播中' },
-  offline: { color: '#d9d9d9', text: '未开播' },
-  restricted: { color: '#faad14', text: '受限' },
+const META: Record<LiveStatus, { color: string; text: string; icon: string }> = {
+  live: { color: 'var(--lr-success)', text: '直播中', icon: '●' },
+  offline: { color: 'var(--lr-text-tertiary)', text: '未开播', icon: '○' },
+  restricted: { color: 'var(--lr-warning)', text: '受限', icon: '◐' },
 };
 
 export default function LiveStatusTag({ status }: { status: LiveStatus | null }) {
   if (!status) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d9d9d9' }} />
-        <span style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }}>未检测</span>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--lr-text-tertiary)' }} />
+        <span style={{ fontSize: 12, color: 'var(--lr-text-secondary)' }}>未检测</span>
       </span>
     );
   }

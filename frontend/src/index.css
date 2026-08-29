@@ -1,3 +1,47 @@
+/* ===== V5 UI 基础：设计令牌（CSS variables 主题层） ===== */
+:root {
+  color-scheme: light dark;
+
+  /* 语义色（与 antd baseToken 同源） */
+  --lr-primary: #2563eb;
+  --lr-success: #16a34a;
+  --lr-warning: #d97706;
+  --lr-error: #dc2626;
+
+  /* 中性色 / 层级（light 主题） */
+  --lr-bg: #f5f5f5;
+  --lr-surface: #ffffff;
+  --lr-surface-2: #fbfcfe;
+  --lr-border: #f0f0f0;
+  --lr-text: rgba(0, 0, 0, 0.88);
+  --lr-text-secondary: rgba(0, 0, 0, 0.45);
+  --lr-text-tertiary: rgba(0, 0, 0, 0.25);
+  --lr-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --lr-hover-bg: #f0f7ff;
+  --lr-danger-bg: #fff1f0;
+  --lr-danger-text: #cf4f4f;
+
+  /* 圆角 / 动效 */
+  --lr-radius: 10px;
+  --lr-radius-sm: 8px;
+  --lr-motion-fast: 0.15s;
+  --lr-motion-mid: 0.25s;
+}
+
+:root[data-theme='dark'] {
+  --lr-bg: #141414;
+  --lr-surface: #1f1f1f;
+  --lr-surface-2: #262626;
+  --lr-border: #303030;
+  --lr-text: rgba(255, 255, 255, 0.88);
+  --lr-text-secondary: rgba(255, 255, 255, 0.45);
+  --lr-text-tertiary: rgba(255, 255, 255, 0.25);
+  --lr-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --lr-hover-bg: rgba(37, 99, 235, 0.18);
+  --lr-danger-bg: rgba(220, 38, 38, 0.12);
+  --lr-danger-text: #ff7875;
+}
+
 html,
 body,
 #root {
@@ -9,7 +53,13 @@ body {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     sans-serif;
-  background: #f5f5f5;
+  background: var(--lr-bg);
+}
+
+/* 键盘焦点统一 */
+:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 2px;
 }
 
 @keyframes lr-fade-in {
@@ -34,13 +84,13 @@ body {
 }
 
 .lr-stat {
-  animation: lr-fade-in 0.35s ease-out;
+  animation: lr-fade-in var(--lr-motion-mid) ease-out;
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
-  background: linear-gradient(135deg, #fcfcfc, #f7f9fc);
-  border: 1px solid #f1f3f5;
-  border-radius: 10px;
+  background: linear-gradient(135deg, var(--lr-surface), var(--lr-surface-2));
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
 }
 
 .lr-stat__value {
@@ -48,29 +98,29 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
-  transition: color 0.3s ease;
+  transition: color var(--lr-motion-mid) ease;
 }
 
 .lr-stat__value--recording {
-  color: #52c41a;
+  color: var(--lr-success);
   animation: lr-pulse 2s ease-in-out infinite;
 }
 
 .lr-stat__value--failed {
-  color: #ff4d4f;
+  color: var(--lr-error);
 }
 
 .lr-stat__value--checking {
-  color: #1677ff;
+  color: var(--lr-primary);
 }
 
 .lr-stat__label {
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--lr-text-secondary);
 }
 
 .lr-room-card {
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow var(--lr-motion-mid) ease, transform var(--lr-motion-mid) ease;
   overflow: hidden;
 }
 
@@ -89,7 +139,7 @@ body {
 }
 
 .lr-room-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--lr-shadow);
   transform: translateY(-2px);
 }
 
@@ -97,9 +147,9 @@ body {
   display: flex;
   gap: 0;
   flex-wrap: nowrap;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--lr-border);
   padding-top: 10px;
-  background: #fbfcfe;
+  background: var(--lr-surface-2);
   overflow: hidden;
 }
 
@@ -121,10 +171,10 @@ body {
   width: 100%;
   min-height: 40px;
   padding-inline: 6px;
-  color: rgba(0, 0, 0, 0.62);
+  color: var(--lr-text-secondary);
   font-weight: 500;
   border: 0;
-  border-right: 1px solid #edf0f3;
+  border-right: 1px solid var(--lr-border);
   border-radius: 0;
   box-shadow: none;
   white-space: nowrap;
@@ -135,40 +185,40 @@ body {
 }
 
 .lr-room-card__actions .ant-btn-primary {
-  color: #1677ff;
-  background: #edf6ff;
+  color: var(--lr-primary);
+  background: var(--lr-hover-bg);
 }
 
 .lr-room-card__actions .ant-btn-dangerous:not(:disabled) {
-  color: #d46b6b;
-  background: #fffafa;
+  color: var(--lr-danger-text);
+  background: var(--lr-danger-bg);
 }
 
 .lr-room-card__actions .ant-btn:not(:disabled):hover,
 .lr-room-card__actions .ant-btn:not(:disabled):focus,
 .lr-room-card__actions .ant-btn:not(:disabled):active {
   border: 0 !important;
-  border-right: 1px solid #edf0f3 !important;
+  border-right: 1px solid var(--lr-border) !important;
   box-shadow: none !important;
   outline: none !important;
-  color: #1677ff;
-  background: #f0f7ff;
+  color: var(--lr-primary);
+  background: var(--lr-hover-bg);
 }
 
 .lr-room-card__actions .ant-btn-dangerous:not(:disabled):hover,
 .lr-room-card__actions .ant-btn-dangerous:not(:disabled):focus,
 .lr-room-card__actions .ant-btn-dangerous:not(:disabled):active {
   border: 0 !important;
-  border-right: 1px solid #edf0f3 !important;
+  border-right: 1px solid var(--lr-border) !important;
   box-shadow: none !important;
   outline: none !important;
-  color: #cf4f4f;
-  background: #fff1f0;
+  color: var(--lr-danger-text);
+  background: var(--lr-danger-bg);
 }
 
 .lr-room-card__actions .ant-btn:disabled {
-  color: rgba(0, 0, 0, 0.25);
-  background: #fbfcfe;
+  color: var(--lr-text-tertiary);
+  background: var(--lr-surface-2);
 }
 
 .lr-room-card:not(.lr-room-card--list) .lr-room-card__actions {
@@ -191,7 +241,7 @@ body {
 
 .lr-room-card--list .lr-room-card__actions {
   border-top: 0;
-  border-left: 1px solid #f0f0f0;
+  border-left: 1px solid var(--lr-border);
   padding: 0 0 0 16px;
   justify-content: flex-end;
 }
@@ -209,7 +259,7 @@ body {
 
   .lr-room-card--list .lr-room-card__actions {
     border-left: 0;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--lr-border);
     padding: 10px 0 0;
     justify-content: flex-start;
   }
@@ -241,4 +291,16 @@ body {
   display: block;
   border-radius: 3px;
   object-fit: contain;
+}
+
+/* 遵循 prefers-reduced-motion：降低非必要动效 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -6,18 +6,21 @@ import { BrowserRouter } from 'react-router-dom';
 import 'dayjs/locale/zh-cn';
 import dayjs from 'dayjs';
 import App from './App';
+import { AppThemeProvider } from './theme';
 import './index.css';
 
 dayjs.locale('zh-cn');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { borderRadius: 6 } }}>
-      <AntdApp>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </AntdApp>
+    <ConfigProvider locale={zhCN}>
+      <AppThemeProvider>
+        <AntdApp>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </AntdApp>
+      </AppThemeProvider>
     </ConfigProvider>
   </StrictMode>,
 );

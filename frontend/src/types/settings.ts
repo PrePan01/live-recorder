@@ -2,6 +2,8 @@ export type Quality = 'original' | '1080p' | '720p' | '360p';
 
 export type RecordingFormat = 'source_flv' | 'mp4_after';
 
+export type ThemePreference = 'light' | 'dark' | 'system';
+
 export type PlatformIntervals = {
   default: number;
   bilibili: number;
@@ -42,6 +44,8 @@ export interface Settings {
   mail: MailSettings;
   /** v1.3：抖音 Cookie（SecretStore 存，GET 仅回显是否存在，永回明文） */
   douyinCookie: { hasCookie: boolean };
+  /** V5：主题偏好（light | dark | system） */
+  theme?: ThemePreference;
 }
 
 export interface MailInput {
@@ -66,5 +70,7 @@ export interface SettingsInput {
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;
+  /** V5：主题偏好 */
+  theme?: ThemePreference;
 }
 
