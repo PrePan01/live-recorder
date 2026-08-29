@@ -4,6 +4,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
 import { AppError } from '../../src/types/error.js';
 import { validatePipelineConfig } from '../../src/api/routes/settings.js';
+import { livePrediction } from '../../src/api/routes/notifications.js';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -245,5 +246,72 @@ describe('V5 Phase 0: recording processing state + pipeline fields', () => {
     expect(loaded.metadata?.durationMs).toBe(9000);
     expect(loaded.metadata?.segmentCount).toBe(2);
     expect(loaded.coverPath).toBe('/tmp/cover.jpg');
+  });
+});
+describe('V5 notifications + live prediction contract', () => {
+  it('reads defaults and persists notification preferences', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/notifications' })).json();
+    expect(def.notifications.desktopEnabled).toBe(true);
+    expect(def.notifications.dedupeWindowMinutes).toBe(30);
+
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: false, liveStarted: true, dedupeWindowMinutes: 60 } });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().notifications.desktopEnabled).toBe(false);
+    expect(set.json().notifications.dedupeWindowMinutes).toBe(60);
+
+    const bad = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 9999 } });
+    expect(bad.statusCode).toBe(500);
+    await app.close();
+  });
+
+  it('test notification returns desktop flag and skipped email when SMTP unconfigured', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: '/api/v1/notifications/test' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+    expect(res.json().email).toBe('skipped');
+    await app.close();
+  });
+
+  it('live prediction returns null with insufficient samples and window with enough', () => {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'pred' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'pd1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', endedAt: '2026-08-27T11:00:00.000Z' });
+    services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run('2026-08-27T09:00:00.000Z', rec.id);
+    // 仅 1 天样本 → null
+    const single = livePrediction(services, room.id);
+    expect(single.predictedWindow).toBeNull();
+    expect(single.sampleDays).toBe(1);
+
+    // 补足 3 天 → 给出窗口
+    for (const [day, start, end] of [
+      ['2026-08-25', '09:00:00.000Z', '11:00:00.000Z'],
+      ['2026-08-26', '09:30:00.000Z', '11:30:00.000Z'],
+    ] as const) {
+      const r = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: `pd_${day}`, streamTitle: 't' });
+      services.recordings.update(r.id, { state: 'completed', endedAt: `${day}T${end}` });
+      services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${day}T${start}`, r.id);
+    }
+    const win = livePrediction(services, room.id);
+    expect(win.sampleDays).toBe(3);
+    expect(win.predictedWindow).not.toBeNull();
+    expect(win.predictedWindow!.start).toMatch(/^\d{2}:\d{2}$/);
+    expect(win.predictedWindow!.end).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it('live prediction endpoint 404s for unknown room', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'GET', url: '/api/v1/rooms/room_none/live-prediction' });
+    expect(res.statusCode).toBe(404);
+    await app.close();
   });
 });
