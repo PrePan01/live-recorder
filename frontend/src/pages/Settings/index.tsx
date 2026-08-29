@@ -27,7 +27,7 @@ const CHECK_COLOR: Record<SelfCheckStatus, string> = { ok: 'success', fail: 'err
 const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异常', warn: '警告', pending: '检测中' };
 
 export default function SettingsPage() {
-const { message } = App.useApp();
+  const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
   const { preference, setPreference } = useAppTheme();
   const { preferences, load: loadNotifications, save: saveNotifications } = useNotificationStore();
