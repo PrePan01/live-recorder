@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
-import { UploadManager } from '../../src/core/upload-manager.js';
+import { UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
 
 function enablePipeline(services: Services): void {
   const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
@@ -201,6 +201,29 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(res.json().upload.recordingId).toBe(rec.id);
     expect(res.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
     await app.close();
+  });
+
+  it('RealWebDavClient sends stream body with duplex:half (Node undici fetch 必需，否则上传必失败)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-'));
+    const file = path.join(dir, 'u.flv');
+    await writeFile(file, 'flvdata');
+    let seenInit: Record<string, unknown> | undefined;
+    let seenBodyIsStream = false;
+    const client = new RealWebDavClient();
+    // 注入 mock fetch 捕获 init
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url, init) => {
+      seenInit = init as Record<string, unknown>;
+      seenBodyIsStream = typeof init?.body === 'object' && init.body !== null && typeof (init.body as { pipe?: unknown }).pipe === 'function';
+      return new Response('', { status: 201 }) as unknown as Response;
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/x.flv', file, 'u', 'tok', () => undefined);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(seenInit?.duplex).toBe('half');
+    expect(seenBodyIsStream).toBe(true);
   });
 });
 
