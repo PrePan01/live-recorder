@@ -117,24 +117,23 @@ export default function Recovery() {
     {
       title: '操作',
       width: 150,
-      render: (_, d) => (
-        <Space size={0}>
-          <Button size="small" type="link" onClick={() => setDetailId(d.id)}>
-            详情
-          </Button>
-          {d.status === 'open' ? (
-            <Popconfirm title="确定执行该自愈动作？" onConfirm={() => void doAction(d, 'retry')}>
-              <Button
-                size="small"
-                type="link"
-                loading={actingId === d.id && actingAction === 'retry'}
-              >
-                修复
-              </Button>
-            </Popconfirm>
-          ) : null}
-        </Space>
-      ),
+      render: (_, d) => {
+        const action = actionForCode(d.code);
+        return (
+          <Space size={0}>
+            <Button size="small" type="link" onClick={() => setDetailId(d.id)}>
+              详情
+            </Button>
+            {d.status === 'open' && action ? (
+              <Popconfirm title="确定执行该自愈动作？" onConfirm={() => void doAction(d, action)}>
+                <Button size="small" type="link" loading={actingId === d.id && actingAction === action}>
+                  修复
+                </Button>
+              </Popconfirm>
+            ) : null}
+          </Space>
+        );
+      },
     },
   ];
 
