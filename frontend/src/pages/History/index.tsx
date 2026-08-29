@@ -13,6 +13,7 @@ import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
+import UploadStatus from '../../components/UploadStatus';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
@@ -298,7 +299,15 @@ export default function History() {
         width={520}
         onClose={() => setPipelineRec(null)}
       >
-        {pipelineRec ? <PipelineTimeline recordingId={pipelineRec.id} /> : null}
+        {pipelineRec ? (
+          <Space direction="vertical" style={{ width: '100%' }} size={20}>
+            <PipelineTimeline recordingId={pipelineRec.id} />
+            <Typography.Title level={5} style={{ marginBottom: 0 }}>
+              上传
+            </Typography.Title>
+            <UploadStatus recordingId={pipelineRec.id} />
+          </Space>
+        ) : null}
       </Drawer>
       <Modal
         title="重命名录制"

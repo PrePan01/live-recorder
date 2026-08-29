@@ -14,6 +14,7 @@ import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../
 import DirectoryPicker from '../../components/DirectoryPicker';
 import PipelineConfigCard from '../../components/PipelineConfigCard';
 import NamingRuleCard from '../../components/NamingRuleCard';
+import OpenListConfigCard from '../../components/OpenListConfigCard';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
@@ -423,6 +424,9 @@ export default function SettingsPage() {
         </Card>
         <Card title="录制文件命名规则" style={{ marginTop: 16 }}>
           <NamingRuleCard />
+        </Card>
+        <Card title="OpenList 自动上传" style={{ marginTop: 16 }}>
+          <OpenListConfigCard />
         </Card>
       </Col>
       <Col xs={24} lg={10}>
