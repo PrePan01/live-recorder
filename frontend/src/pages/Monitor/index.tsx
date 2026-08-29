@@ -108,7 +108,7 @@ function RoomCard({
           disabled={acting || room.monitorState === 'checking' || recording}
           onClick={() => onCheck(room)}
         >
-          立即检测
+          检测
         </Button>
         {recording ? (
           <Button size="middle" type="primary" icon={<EyeOutlined />} onClick={() => onWatch(room)}>

@@ -12,7 +12,8 @@ export interface SearchQuery {
 export async function searchGlobal(q: SearchQuery): Promise<SearchResult> {
   const params: Record<string, string | number | undefined> = {
     q: q.q,
-    type: q.type,
+    // 'all' 是前端语义；后端 /search 的 type 仅收 room/recording/alert，省略即全类型。
+    type: q.type === 'all' ? undefined : q.type,
     tagId: q.tagId,
     page: q.page,
     pageSize: q.pageSize,
