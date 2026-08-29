@@ -27,6 +27,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
     });
+    // #162：添加后立即触发一次检测，让显示名尽快自动解析（否则要等调度器最长 120s，期间名字为空）。
+    void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
     services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.status(201).send({ room: enrich(room) });
   });
@@ -66,6 +68,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       existing.add(key);
       seen.add(key);
       succeeded.push(room);
+      // #162：批量添加同样即时触发检测，让显示名尽快自动解析。
+      void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
     }
     for (const room of succeeded) services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.send({ succeeded: succeeded.map(enrich), failed });

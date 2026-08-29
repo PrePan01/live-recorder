@@ -109,13 +109,13 @@ export class StreamRecordingEngine implements RecordingEngine {
     return Promise.resolve();
   }
 
-  async *start(input: StreamInput, outputPath: string): AsyncIterable<RecordingEvent> {
+  async *start(input: StreamInput, outputPath?: string | null): AsyncIterable<RecordingEvent> {
     this.stopped = false;
     try {
       if (input.format === 'hls') {
-        yield* this.runHls(input, outputPath);
+        yield* this.runHls(input, outputPath ?? '');
       } else {
-        yield* this.runHttp(input, outputPath);
+        yield* this.runHttp(input, outputPath ?? null);
       }
     } catch (err) {
       if (this.stopped) return;
@@ -123,7 +123,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     }
   }
 
-  private async *runHttp(input: StreamInput, outputPath: string): AsyncIterable<RecordingEvent> {
+  private async *runHttp(input: StreamInput, outputPath: string | null): AsyncIterable<RecordingEvent> {
     this.controller = new AbortController();
     let res: Response;
     try {
@@ -135,10 +135,10 @@ export class StreamRecordingEngine implements RecordingEngine {
     if (!res.ok || !res.body) {
       throw new AppError('NETWORK_UNAVAILABLE', `拉流失败 HTTP ${res.status}`, { retryable: true });
     }
-    const ws = createWriteStream(outputPath);
+    const ws = outputPath ? createWriteStream(outputPath) : null;
     const normalizer = new FlvTimestampNormalizer();
     let size = 0;
-    yield { type: 'file_created', filePath: outputPath };
+    if (outputPath) yield { type: 'file_created', filePath: outputPath };
     const reader = res.body.getReader();
     try {
       while (!this.stopped) {
@@ -150,7 +150,9 @@ export class StreamRecordingEngine implements RecordingEngine {
         // 文件时长正确（#148），且预览流时间戳为相对值，mpegts.js 实时模式（isLive:true）才能正常推进（#150）。
         for (const part of normalizer.push(chunk)) {
           size += part.length;
-          if (!ws.write(part)) await once(ws, 'drain');
+          if (ws) {
+            if (!ws.write(part)) await once(ws, 'drain');
+          }
           yield { type: 'data', chunk: part };
         }
       }
@@ -160,10 +162,12 @@ export class StreamRecordingEngine implements RecordingEngine {
       const rest = normalizer.remaining();
       if (rest.length > 0) {
         size += rest.length;
-        if (!ws.write(rest)) await once(ws, 'drain');
+        if (ws) {
+          if (!ws.write(rest)) await once(ws, 'drain');
+        }
         yield { type: 'data', chunk: rest };
       }
-      await new Promise<void>((resolve) => ws.end(() => resolve()));
+      await new Promise<void>((resolve) => (ws ? ws.end(() => resolve()) : resolve()));
     }
     if (this.stopped) return;
     yield { type: 'completed', fileSize: size };

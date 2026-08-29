@@ -125,7 +125,7 @@ describe('B-E7 error code catalog (v1.2, 19 codes)', () => {
     });
     expect(put.statusCode).toBe(200);
 
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'restricted' }]);
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'restricted' }, { status: 'restricted' }]);
     const created = await app.inject({
       method: 'POST', url: '/api/v1/rooms', headers: HOST,
       payload: { platform: 'bilibili', url: 'https://live.bilibili.com/7002', displayName: 'R' },

@@ -193,6 +193,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
 
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'sess_qa1', streamTitle: 'QA 冒烟' },
+      { status: 'live', streamSessionId: 'sess_qa1', streamTitle: 'QA 冒烟' },
       { status: 'offline' },
     ]);
 

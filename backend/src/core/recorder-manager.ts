@@ -68,6 +68,57 @@ export class RecorderManager {
     });
   }
 
+  // ---- 预览专用拉流（#163：预览=纯观看，不触发录制、不落盘）----
+  private previewSessions = new Map<string, { stop: () => Promise<void> }>();
+
+  isPreviewStreaming(roomId: string): boolean {
+    return this.previewSessions.has(roomId);
+  }
+
+  /**
+   * 为开播但未录制的房间启动预览专用拉流（outputPath=null，引擎只产出 data 事件供预览转发，不写文件）。
+   * 仅当房间开播、且既无录制会话也无预览会话时启动；后续帧由引擎 data 事件转发到 preview。
+   */
+  async ensurePreviewStream(roomId: string): Promise<void> {
+    if (this.previewSessions.has(roomId) || this.active.has(roomId)) return;
+    const room = this.services.rooms.get(roomId);
+    if (!room || room.lastLiveStatus !== 'live') return;
+    try {
+      const settings = this.settings();
+      const cookie = await this.services.platformCookie(room.platform);
+      const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
+      const engine = this.services.engineFor();
+      const controller = new AbortController();
+      const session = { stop: async () => { controller.abort(); await engine.stop(); } };
+      this.previewSessions.set(roomId, session);
+      void (async () => {
+        try {
+          const input = { url: stream.url, format: stream.format, ...(stream.headers ? { headers: stream.headers } : {}) };
+          for await (const event of engine.start(input, null)) {
+            if (controller.signal.aborted) break;
+            if (event.type === 'data') this.preview?.broadcastFrame(roomId, event.chunk);
+            if (event.type === 'error') break;
+          }
+        } catch {
+          // 预览拉流异常：静默收束（前端连接错误/重试处理）
+        } finally {
+          this.previewSessions.delete(roomId);
+          this.preview?.closeRoom(roomId, 4004, 'stream_lost');
+        }
+      })();
+    } catch {
+      // 取流失败：不阻塞，前端按无帧处理
+    }
+  }
+
+  /** 停止预览专用拉流（最后一个预览客户端断开时调用）。 */
+  async stopPreviewStream(roomId: string): Promise<void> {
+    const session = this.previewSessions.get(roomId);
+    if (!session) return;
+    this.previewSessions.delete(roomId);
+    await session.stop().catch(() => undefined);
+  }
+
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
     if (this.active.has(room.id)) return;
@@ -119,7 +170,7 @@ export class RecorderManager {
     this.services.events.emit({ type: 'recording:updated', data: recording });
     this.emitServiceStatus();
 
-    void this.runSession(room, recording.id, stream, filePath, session, 0);
+    void this.runSession(room, recording.id, stream, filePath, session, 0).catch(() => undefined);
   }
 
   private async runSession(room: Room, recordingId: string, stream: { url: string; format: 'flv' | 'hls'; headers?: Record<string, string> }, filePath: string, session: ActiveSession, attempt: number): Promise<void> {
@@ -241,7 +292,7 @@ export class RecorderManager {
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
+      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1).catch(() => undefined);
     } catch {
       this.preview?.closeRoom(room.id, 4004, 'stream_lost');
       await this.failRecording(room, recordingId, error, 'recorder');
@@ -295,7 +346,7 @@ export class RecorderManager {
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const cur = this.active.get(room.id);
       if (cur) cur.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1);
+      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt }, attempt + 1).catch(() => undefined);
     } catch {
       await this.completeRecording(room, recordingId, size, 'ended');
     }
