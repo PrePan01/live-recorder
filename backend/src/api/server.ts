@@ -9,9 +9,15 @@ import { registerServiceRoutes } from './routes/service.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
+import { DEFAULT_PORT } from '../sidecar/ports.js';
+import { APP_VERSION } from '../sidecar/types.js';
+import type { AppInstance } from '../sidecar/types.js';
 
-export const ALLOWED_HOSTS = new Set(['127.0.0.1:43120', 'localhost:43120']);
-export const BASE_ORIGINS = ['http://127.0.0.1:43120', 'http://localhost:43120'];
+export interface BuildAppOptions {
+  extraOrigins?: string[];
+  /** 桌面 sidecar 实例上下文：注入健康响应实例/端口字段，并据此放行本机 Host/Origin。 */
+  instance?: AppInstance;
+}
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -20,21 +26,26 @@ export interface BuiltApp {
   ws: { dispose: () => void };
 }
 
-export function buildApp(services: Services, opts: { extraOrigins?: string[] } = {}): BuiltApp {
+export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltApp {
   const app = Fastify({ logger: false });
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
   services.manager.preview = preview;
   const extraOrigins = opts.extraOrigins ?? [];
+  const port = opts.instance?.port ?? DEFAULT_PORT;
+  const instance = opts.instance ?? null;
+
+  const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+  const baseOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
 
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host;
-    if (host && !ALLOWED_HOSTS.has(host)) {
+    if (host && !allowedHosts.has(host)) {
       return reply.status(403).send({
         error: { code: 'SERVICE_UNAVAILABLE', message: '仅允许本机访问', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
-    const allowedOrigins = new Set([...BASE_ORIGINS, ...extraOrigins]);
+    const allowedOrigins = new Set([...baseOrigins, ...extraOrigins]);
     if (req.headers.origin !== undefined && !allowedOrigins.has(req.headers.origin)) {
       return reply.status(403).send({
         error: { code: 'SERVICE_UNAVAILABLE', message: 'Origin 不在白名单', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
@@ -64,9 +75,19 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '0.1.0',
+        version: APP_VERSION,
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored && stored.recordingDirectory.length > 0),
+        ...(instance
+          ? {
+              ready: true,
+              instanceId: instance.instanceId,
+              apiVersion: instance.apiVersion,
+              port: instance.port,
+              baseUrl: instance.baseUrl,
+              startedAt: instance.startedAt,
+            }
+          : {}),
       },
     });
   });
@@ -79,7 +100,7 @@ export function buildApp(services: Services, opts: { extraOrigins?: string[] } =
   registerConfigRoutes(app, services);
   registerSse(app, services, sse);
 
-  const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins);
+  const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, port);
   app.addHook('onClose', async () => {
     services.scheduler.stop();
     ws.dispose();
