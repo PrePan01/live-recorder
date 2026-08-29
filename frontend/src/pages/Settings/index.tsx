@@ -12,6 +12,7 @@ import { testNotification } from '../../api/notification';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
+import PipelineConfigCard from '../../components/PipelineConfigCard';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
@@ -415,6 +416,9 @@ export default function SettingsPage() {
               if (f) void onImportFile(f);
             }}
           />
+        </Card>
+        <Card title="后处理管线" style={{ marginTop: 16 }}>
+          <PipelineConfigCard />
         </Card>
       </Col>
       <Col xs={24} lg={10}>

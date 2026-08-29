@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { App, Button, Collapse, DatePicker, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined } from '@ant-design/icons';
+import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
@@ -12,6 +12,7 @@ import { recordingFileUrl } from '../../api/client';
 import { formatBytes, formatDuration, formatTime } from '../../utils/format';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
+import PipelineTimeline from '../../components/PipelineTimeline';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
@@ -29,6 +30,7 @@ export default function History() {
   const [renameValue, setRenameValue] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
   const [playing, setPlaying] = useState<Recording | null>(null);
+  const [pipelineRec, setPipelineRec] = useState<Recording | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -163,6 +165,15 @@ export default function History() {
             <Button
               size="small"
               type="link"
+              icon={<ExperimentOutlined />}
+              disabled={r.pipelineStatus == null || r.pipelineStatus === 'not_required'}
+              onClick={() => setPipelineRec(r)}
+            >
+              管线
+            </Button>
+            <Button
+              size="small"
+              type="link"
               icon={<FolderOpenOutlined />}
               disabled={!r.filePath}
               onClick={() =>
@@ -281,6 +292,14 @@ export default function History() {
       >
         {playing ? <FilePlayer url={recordingFileUrl(playing.id)} /> : null}
       </Modal>
+      <Drawer
+        title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ''}`}
+        open={pipelineRec !== null}
+        width={520}
+        onClose={() => setPipelineRec(null)}
+      >
+        {pipelineRec ? <PipelineTimeline recordingId={pipelineRec.id} /> : null}
+      </Drawer>
       <Modal
         title="重命名录制"
         open={renaming !== null}
