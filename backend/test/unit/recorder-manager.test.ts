@@ -8,6 +8,7 @@ import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import { FakeRecordingEngine, type FakeEngineScript } from '../../src/recorder/fake-engine.js';
+import type { RecordingEngine } from '../../src/recorder/engine.js';
 import { FakeDiskGuard } from '../../src/storage/disk-guard.js';
 import type { AppSettings } from '../../src/types/index.js';
 
@@ -146,6 +147,32 @@ describe('RecorderManager', () => {
     await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
     // 每个新录制会话开始（runSession）都会清空预览头缓冲，确保下一段流的 FLV 头被重新捕获。
     expect(preview.resets).toContain(room.id);
+  });
+
+  it('marks a 0-byte recording as failed and removes the empty file, not completed (#165 空文件)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-empty-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    // 自定义引擎：file_created 后立即 completed(fileSize 0)——模拟取流无数据。
+    const emptyEngine: RecordingEngine = {
+      stop: async () => undefined,
+      async *start(input, outputPath) {
+        yield { type: 'file_created', filePath: outputPath ?? '' };
+        yield { type: 'completed', fileSize: 0 };
+      },
+    };
+    services.engineFor = () => emptyEngine as never;
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/77', displayName: 'Empty' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'e1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    for (let i = 0; i < 40 && services.recordings.get(rec.id)!.state !== 'failed'; i += 1) await settle(clock, 1000);
+    const after = services.recordings.get(rec.id)!;
+    expect(after.state).toBe('failed');
+    expect(after.failureReason?.code).toBe('RECORDING_EMPTY');
+    expect(services.rooms.get(room.id)!.monitorState).toBe('failed');
   });
 
   it('enforces maxConcurrentRecordings and raises CONCURRENT_LIMIT_REACHED', async () => {

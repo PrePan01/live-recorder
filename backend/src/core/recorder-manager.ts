@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../types/error.js';
 import type { AppSettings, ErrorObject, Room } from '../types/index.js';
@@ -353,6 +353,16 @@ export class RecorderManager {
   }
 
   private async completeRecording(room: Room, recordingId: string, size: number, endReason: 'ended' | 'stream_lost'): Promise<void> {
+    // 0 字节录制（流连接后无数据/立即关闭）应标 failed 而非 completed 空文件（QA #165 边界）。
+    if (size <= 0) {
+      const rec = this.services.recordings.get(recordingId);
+      if (rec?.filePath) {
+        await unlink(rec.filePath).catch(() => undefined);
+      }
+      const err = new AppError('RECORDING_EMPTY', '录制文件为空（未获取到流数据）', { roomId: room.id, recordingId, retryable: true });
+      await this.failRecording(room, recordingId, err.toObject(), 'recorder');
+      return;
+    }
     const rec = this.services.recordings.update(recordingId, {
       state: 'completed',
       endedAt: this.services.clock.iso(),

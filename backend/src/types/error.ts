@@ -25,7 +25,8 @@ export type ErrorCode =
   | 'DIAGNOSTIC_ACTION_INVALID'
   | 'DIAGNOSTIC_CONFLICT'
   | 'PIPELINE_CONFIG_INVALID'
-  | 'CHECK_FAILED';
+  | 'CHECK_FAILED'
+  | 'RECORDING_EMPTY';
 
 export interface ErrorObject {
   code: ErrorCode;
