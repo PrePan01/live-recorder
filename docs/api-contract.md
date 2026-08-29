@@ -433,3 +433,48 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 ### Recording processing 态
 
 `state=processing`：录制文件生成后进入后处理管线的中间态（`recording→processing→completed`）。`pipelineStatus` 字段跟踪管线各阶段（`not_required|queued|running|ok|partial|failed`），`metadata` 携带管线写入的真实时长/片段数/清晰度/大小，`coverPath` 为封面帧路径（无封面时媒体封面端点 404 占位）。历史、统计、SSE `recording:updated` 均随 `state` 同步。
+
+## v5 通知与开播预测契约（#93 后续，2026-08-29）
+
+### `GET /settings/notifications` / `PUT /settings/notifications`
+
+```json
+{
+  "notifications": {
+    "desktopEnabled": true,
+    "liveStarted": true,
+    "recordingStarted": true,
+    "recordingFailed": true,
+    "diskSpaceLow": true,
+    "dedupeWindowMinutes": 30
+  }
+}
+```
+
+- 各事件布尔开关；`dedupeWindowMinutes` 1-1440（非法 → `CONFIG_LOAD_FAILED`）。邮件 SMTP 配置仍走 `mail`（`mail.enabled` 生效时才发邮件）。
+- `PUT` 部分更新合并；写入后 `settings:updated` SSE 推送。
+
+### `POST /notifications/test`
+
+```json
+{ "ok": true, "desktop": true, "email": "sent" }
+```
+
+- `email`：`sent`（SMTP 已配置且发送成功）/ `skipped`（SMTP 未配置）/ `failed`（发送失败）。桌面通知由 FE 经 Tauri 触发，BE 返回 `desktop` 偏好。
+
+### `GET /rooms/:id/live-prediction`
+
+```json
+{
+  "roomId": "room_01J...",
+  "startAt": "09:30",
+  "endAt": "11:30",
+  "confidence": "high",
+  "basedOnDays": 12,
+  "notice": null,
+  "generatedAt": "2026-08-29T01:00:00.000Z"
+}
+```
+
+- 只读近 30 天录制/开播事实：按天聚合最早开始-最晚结束，取开始/结束时间中位数（本地时区 HH:MM）。
+- `confidence`：样本天数 ≥10 高 / ≥5 中 / ≥3 低；样本不足（<3 天）时 `startAt/endAt/confidence` 为 `null` 且 `notice` 返回「近 30 天样本不足，暂无开播预测」，FE 显示「暂无预测」；房间不存在 → 404 `RESOURCE_NOT_FOUND`。

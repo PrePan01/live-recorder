@@ -1,5 +1,5 @@
 import type { CheckIntervalSec, DiskGuardConfig, RetryConfig } from '../types/settings.js';
-import { DEFAULT_PIPELINE_CONFIG } from '../types/settings.js';
+import { DEFAULT_PIPELINE_CONFIG, DEFAULT_NOTIFICATION_PREFERENCE } from '../types/settings.js';
 
 export const SERVICE_PORT = 43120;
 export const SERVICE_HOST = '127.0.0.1';
@@ -41,5 +41,6 @@ export const DEFAULT_SETTINGS = {
   },
   dedupeWindowMinutes: 30,
   theme: 'system' as const,
+  notifications: DEFAULT_NOTIFICATION_PREFERENCE,
   pipeline: DEFAULT_PIPELINE_CONFIG,
 };

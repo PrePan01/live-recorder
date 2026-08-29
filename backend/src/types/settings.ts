@@ -54,9 +54,42 @@ export interface AppSettings {
   dedupeWindowMinutes: number;
   /** V5 界面主题偏好（FE 持久化经此字段）；缺省 system。 */
   theme: ThemePreference;
+  /** V5 通知偏好（开播/录制/磁盘事件预设+开关）。 */
+  notifications?: NotificationPreference;
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
   pipeline?: PipelineConfig;
 }
+
+/** V5 通知偏好：各事件开关 + 去重窗口；邮件 SMTP 配置仍走 mail（mail.enabled 生效时才发邮件）。 */
+export interface NotificationPreference {
+  /** 桌面/系统通知总开关（FE 侧经 Tauri 通知；BE 持久化偏好）。 */
+  desktopEnabled: boolean;
+  /** 开播提醒：直播检测到开播时通知。 */
+  liveStarted: boolean;
+  /** 录制开始提醒。 */
+  recordingStarted: boolean;
+  /** 录制结束提醒。 */
+  recordingEnded: boolean;
+  /** 录制失败提醒。 */
+  recordingFailed: boolean;
+  /** 磁盘空间不足提醒。 */
+  diskSpaceLow: boolean;
+  /** 上传失败提醒（OpenList 等）。 */
+  uploadFailed: boolean;
+  /** 去重窗口（分钟）：同房间同类事件在该窗口内只发一次。 */
+  dedupeWindowMinutes: number;
+}
+
+export const DEFAULT_NOTIFICATION_PREFERENCE: NotificationPreference = {
+  desktopEnabled: true,
+  liveStarted: true,
+  recordingStarted: true,
+  recordingEnded: false,
+  recordingFailed: true,
+  diskSpaceLow: true,
+  uploadFailed: true,
+  dedupeWindowMinutes: 30,
+};
 
 /** V5 后处理管线配置（写入 settings 扩展，管线仅消费显式启用的开关）。 */
 export interface PipelineConfig {
@@ -97,6 +130,8 @@ export interface SettingsView {
   douyinCookie: { hasCookie: boolean };
   /** V5 界面主题偏好。 */
   theme: ThemePreference;
+  /** V5 通知偏好视图（与写入契约一致）。 */
+  notifications?: NotificationPreference;
   /** V5 后处理管线配置视图（与写入契约一致）。 */
   pipeline?: PipelineConfig;
 }

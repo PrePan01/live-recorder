@@ -21,6 +21,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     mail,
     douyinCookie: { hasCookie: hasDouyinCookie },
     theme: settings.theme ?? 'system',
+    notifications: settings.notifications ?? structuredClone(DEFAULT_SETTINGS.notifications),
     pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),
   };
 }
