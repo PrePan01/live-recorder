@@ -237,3 +237,54 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 ## Mock 约定
 
 前端可用上述样例作为固定 Mock。开发模式 `RECORDING_ADAPTER=fake` 时，`POST /rooms/:id/check` 按可注入假适配器（FakePlatformAdapter / fake-recorder / FakeSecretStore / fake clock）返回状态，不访问平台、不启动外部录制器。
+
+## v5 P0-0 桌面 sidecar 启动契约（BE 先行，task #99）
+
+**启动环境变量（Tauri 壳 spawn sidecar 时注入）**：
+
+- `LIVE_RECORDER_HOST`：环回地址，默认 `127.0.0.1`。
+- `LIVE_RECORDER_PORT`：首选端口，默认 43120；占用时依次尝试受控备用列表（43121-43125），最后 OS 分配空闲端口。
+- `LIVE_RECORDER_STATE_DIR`：应用私有目录，保存单实例锁与 ready 文件。
+- `LIVE_RECORDER_READY_FILE`：受控 ready 文件绝对路径（原子写入）。
+- `LIVE_RECORDER_INSTANCE_ID`：本实例 ID；缺省自动生成 `inst_<ulid>`。
+
+**单实例锁**：`<stateDir>/instance.lock` 原子保存 `{ instanceId, pid, version, startedAt }`；启动前校验 PID 存活。已有存活实例 → 启动失败并报 `another live-recorder instance is running (pid=…)`，不覆盖锁；PID 已不存在（过期残留）→ 自动清理后重取。退出时仅删除本实例持有的锁。
+
+**ready 文件**：原子写入（临时文件 + rename）`AppInstance`：
+
+```json
+{
+  "instanceId": "inst_01H...",
+  "pid": 61111,
+  "host": "127.0.0.1",
+  "port": 43121,
+  "baseUrl": "http://127.0.0.1:43121",
+  "apiVersion": "v1",
+  "startedAt": "2026-08-29T08:38:32.617Z"
+}
+```
+
+前端/WebView 从该文件读取运行时 base URL，不写死 5173/43120 等端口。退出时删除。
+
+**健康接口**：唯一为既有 `GET /api/v1/health`，扩展实例与端口字段（不新增 `/health` 别名）：
+
+```json
+{
+  "serviceStatus": {
+    "state": "running",
+    "version": "0.1.0",
+    "uptimeSeconds": 6,
+    "setupCompleted": true,
+    "ready": true,
+    "instanceId": "inst_01H...",
+    "apiVersion": "v1",
+    "port": 43121,
+    "baseUrl": "http://127.0.0.1:43121",
+    "startedAt": "2026-08-29T08:38:32.617Z"
+  }
+}
+```
+
+**本机白名单**：Host/Origin 校验随实际端口动态放行（`127.0.0.1:<port>` / `localhost:<port>`），不固定 43120；Tauri WebView origin 与 Vite 代理（5173）兜底保留。
+
+**优雅退出顺序**：停止接收新请求（`app.close`）→ 停止调度器/收束录制与连接（`onClose` 钩子）→ 删除 ready 文件与实例锁。SIGINT/SIGTERM 均走该顺序。

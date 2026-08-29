@@ -127,7 +127,7 @@ export class PreviewManager {
   }
 }
 
-export function attachWebSocketUpgrade(services: Services, preview: PreviewManager, server: import('node:http').Server, extraOrigins: string[] = []): { wss: WSS; dispose: () => void } {
+export function attachWebSocketUpgrade(services: Services, preview: PreviewManager, server: import('node:http').Server, extraOrigins: string[] = [], port = 43120): { wss: WSS; dispose: () => void } {
   const wss = new WebSocketServer({ noServer: true });
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -138,8 +138,8 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
     const host = req.headers.host ?? '';
     const origin = req.headers.origin;
     // 兜底：允许 Vite 代理（5173）转发的 Host，避免未设 changeOrigin 时被误拒。
-    const allowedHosts = new Set(['127.0.0.1:43120', 'localhost:43120', '127.0.0.1:5173', 'localhost:5173']);
-    const allowedOrigins = new Set(['http://127.0.0.1:43120', 'http://localhost:43120', ...extraOrigins]);
+    const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1:5173', 'localhost:5173']);
+    const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...extraOrigins]);
     if (!allowedHosts.has(host)) {
       socket.destroy();
       return;
@@ -148,7 +148,7 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
       socket.destroy();
       return;
     }
-    const url = new URL(req.url ?? '', 'http://127.0.0.1:43120');
+    const url = new URL(req.url ?? '', `http://127.0.0.1:${port}`);
     const match = /^\/ws\/preview\/([^/]+)$/.exec(url.pathname);
     if (!match) {
       socket.destroy();
