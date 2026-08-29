@@ -41,7 +41,10 @@ describe('StreamRecordingEngine (HTTP)', () => {
       if (ev.type === 'data') bytes += ev.chunk.length;
       if (ev.type === 'completed') fileSize = ev.fileSize;
     }
-    expect(events).toEqual(['file_created', 'data', 'data', 'data', 'completed']);
+    // 归一化按完整标签分批输出，data 事件数量不再等于输入 chunk 数；校验字节级不变量。
+    expect(events[0]).toBe('file_created');
+    expect(events[events.length - 1]).toBe('completed');
+    expect(events.filter((e) => e === 'data').length).toBeGreaterThan(0);
     expect(bytes).toBe(Buffer.concat(chunks).length);
     expect(fileSize).toBe(bytes);
     const onDisk = await readFile(out);
@@ -90,6 +93,104 @@ describe('StreamRecordingEngine (HTTP)', () => {
       void ev;
     }
     expect(seenHeaders).toEqual({ Cookie: 'a=b', 'User-Agent': 'ua' });
+  });
+
+  it('rewrites absolute PTS to relative so duration is correct (抖音录几分钟显示 1 小时+ 根因)', async () => {
+    // 构造合法 FLV：头部 + onMetaData + 音频(3602000) + 两个视频(3609000/3609500)，绝对 PTS，大端编码。
+    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
+      const head = Buffer.alloc(11);
+      head[0] = type;
+      head.writeUIntBE(data.length, 1, 3);
+      head[4] = (ts >> 16) & 0xff;
+      head[5] = (ts >> 8) & 0xff;
+      head[6] = ts & 0xff;
+      head[7] = (ts >> 24) & 0xff;
+      return Buffer.concat([head, data]);
+    };
+    const prevSize = (t: Buffer): Buffer => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32BE(t.length);
+      return b;
+    };
+    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
+    const a1 = makeTag(0x08, 3_602_000, Buffer.from([0xaf, 0x00, 0x01]));
+    const v1 = makeTag(0x09, 3_609_000, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const v2 = makeTag(0x09, 3_609_500, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const stream = Buffer.concat([header, meta, prevSize(meta), a1, prevSize(a1), v1, prevSize(v1), v2, prevSize(v2)]);
+
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
+    const out = path.join(dir, 'norm.flv');
+    // 逐 3 字节喂入，强制标签跨 chunk 边界，验证流式归一化稳健。
+    const tiny: Uint8Array[] = [];
+    for (let i = 0; i < stream.length; i += 3) tiny.push(stream.subarray(i, i + 3));
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(tiny)));
+    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+      void ev;
+    }
+    const outBuf = await readFile(out);
+    expect(outBuf.length).toBe(stream.length);
+
+    // 解析输出文件：音频按音频 base（→0），视频按视频 base（→0/500），各自独立归零。
+    const tsByType: Record<string, number[]> = { '8': [], '9': [] };
+    let off = 13;
+    while (off + 11 <= outBuf.length) {
+      const type = outBuf[off]!;
+      const ds = outBuf.readUIntBE(off + 1, 3);
+      const len = 11 + ds + 4;
+      if (off + len > outBuf.length) break;
+      if (type === 8 || type === 9) {
+        tsByType[String(type)]!.push((outBuf[off + 4]! << 16) | (outBuf[off + 5]! << 8) | outBuf[off + 6]! | ((outBuf[off + 7]! & 0xff) << 24));
+      }
+      off += len;
+    }
+    expect(tsByType['8']).toEqual([0]);
+    expect(tsByType['9']).toEqual([0, 500]);
+  });
+
+  it('keeps normal (near-zero) FLV timestamps untouched (bilibili 首帧≈0 透传)', async () => {
+    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
+      const head = Buffer.alloc(11);
+      head[0] = type;
+      head.writeUIntBE(data.length, 1, 3);
+      head[4] = (ts >> 16) & 0xff;
+      head[5] = (ts >> 8) & 0xff;
+      head[6] = ts & 0xff;
+      head[7] = (ts >> 24) & 0xff;
+      return Buffer.concat([head, data]);
+    };
+    const prevSize = (t: Buffer): Buffer => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32BE(t.length);
+      return b;
+    };
+    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
+    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const v2 = makeTag(0x09, 80, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const stream = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1), v2, prevSize(v2)]);
+
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
+    const out = path.join(dir, 'keep.flv');
+    const tiny: Uint8Array[] = [];
+    for (let i = 0; i < stream.length; i += 3) tiny.push(stream.subarray(i, i + 3));
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(tiny)));
+    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+      void ev;
+    }
+    const outBuf = await readFile(out);
+    const vts: number[] = [];
+    let off = 13;
+    while (off + 11 <= outBuf.length) {
+      const type = outBuf[off]!;
+      const ds = outBuf.readUIntBE(off + 1, 3);
+      const len = 11 + ds + 4;
+      if (off + len > outBuf.length) break;
+      if (type === 9) vts.push((outBuf[off + 4]! << 16) | (outBuf[off + 5]! << 8) | outBuf[off + 6]! | ((outBuf[off + 7]! & 0xff) << 24));
+      off += len;
+    }
+    // 首媒体时间戳 40ms ≤ 60s：不扣减，原样保留。
+    expect(vts).toEqual([40, 80]);
   });
 });
 
