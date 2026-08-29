@@ -380,6 +380,18 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       ensureColumn('alerts', 'error_code', 'error_code TEXT');
     },
   },
+  {
+    // QA #165 性能建议：recordings 列表 ORDER BY started_at DESC 走临时 B-tree 排序
+    // （idx_recordings_state 仅覆盖 state），录制量大时排序开销大。
+    // v17 加复合索引 (state, started_at DESC) 消临时排序（幂等：索引不存在才建）。
+    version: 17,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND name = 'idx_recordings_state_started'`).get();
+      if (!has) {
+        db.exec(`CREATE INDEX idx_recordings_state_started ON recordings(state, started_at DESC);`);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
