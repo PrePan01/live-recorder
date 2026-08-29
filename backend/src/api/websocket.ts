@@ -32,6 +32,8 @@ export const PREVIEW_MAX_SESSIONS = 4;
 
 export class PreviewManager {
   private rooms = new Map<string, PreviewRoom>();
+  /** 某房间最后一个预览客户端断开时回调（用于停止 preview-only 拉流）。 */
+  onRoomEmpty: ((roomId: string) => void) | null = null;
 
   constructor(private services: Services, private maxSessions = PREVIEW_MAX_SESSIONS) {}
 
@@ -62,6 +64,7 @@ export class PreviewManager {
       // 仅当房间无 socket 时移除（会话结束），录制中保留流头缓冲供后续加入。
       if (room!.sockets.size === 0) {
         this.rooms.delete(roomId);
+        this.onRoomEmpty?.(roomId);
       }
     });
   }
@@ -182,20 +185,10 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.LIMIT));
       return;
     }
-    // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：先自动触发手动录制，
-    // 让预览有数据流（否则广播无帧、播放器一直「连接预览流」加载）。异步执行不阻塞 upgrade。
+    // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：启动 preview-only 拉流
+    // （#163：预览=纯观看，不触发录制、不生成录制文件），让预览有数据流。异步执行不阻塞 upgrade。
     if (!isRecording && isLive) {
-      void (async () => {
-        try {
-          const cookie = await services.platformCookie(room.platform);
-          const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
-          if (status.status === 'live' && !services.manager.isRoomActive(room.id)) {
-            await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
-          }
-        } catch {
-          // 预览失败由前端连接错误/重试处理
-        }
-      })();
+      void services.manager.ensurePreviewStream(room.id);
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       preview.addClient(roomId, ws);

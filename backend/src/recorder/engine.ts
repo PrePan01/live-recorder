@@ -14,6 +14,7 @@ export type RecordingEvent =
   | { type: 'stream_format_changed' };
 
 export interface RecordingEngine {
-  start(input: StreamInput, outputPath: string): AsyncIterable<RecordingEvent>;
+  /** outputPath 传 null 时为纯预览模式：拉流只产出 data 事件（预览转发），不写文件、不发 file_created。 */
+  start(input: StreamInput, outputPath?: string | null): AsyncIterable<RecordingEvent>;
   stop(): Promise<void>;
 }

@@ -182,7 +182,7 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
-  it('accepts preview for a live-but-idle room and auto-starts recording (#150 直播墙/监控观看 autoRecord=false)', async () => {
+  it('accepts preview for a live-but-idle room and starts preview-only stream without recording (#163 预览不落盘)', async () => {
     const server = await listen();
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/150', displayName: 'livePreview' });
     server.services.rooms.setLiveStatus(room.id, 'live');
@@ -191,17 +191,19 @@ describe('WebSocket preview', () => {
 
     const { ws, opened, closed } = connect(server.url, room.id);
     await opened; // 开播但未录制：不再 4002，而是接受连接
-    // 后端异步自动触发手动录制，让预览有数据流。
-    for (let i = 0; i < 20 && !server.services.manager.isRoomActive(room.id); i += 1) {
+    // 预览专用拉流启动（不触发录制、不落盘）。
+    for (let i = 0; i < 20 && !server.services.manager.isPreviewStreaming(room.id); i += 1) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    expect(server.services.manager.isRoomActive(room.id)).toBe(true);
-    // 停止录制并推进时钟收口，避免录制会话泄漏到下一个测试（DB close 前必须收束）。
-    await server.services.manager.stopRecording(room.id);
-    (server.services.clock as FakeClock).advance(5_000);
-    await new Promise((r) => setTimeout(r, 100));
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+    expect(server.services.manager.isRoomActive(room.id)).toBe(false); // 未触发录制
+    // 断开最后一个客户端 → 预览拉流停止。
     ws.close();
     await closed;
+    for (let i = 0; i < 20 && server.services.manager.isPreviewStreaming(room.id); i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(false);
     await server.close();
   });
 

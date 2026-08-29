@@ -41,6 +41,10 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
   services.manager.preview = preview;
+  // 最后一个预览客户端断开时，停止该房间的 preview-only 拉流（#163）。
+  preview.onRoomEmpty = (roomId) => {
+    void services.manager.stopPreviewStream(roomId).catch(() => undefined);
+  };
   const extraOrigins = opts.extraOrigins ?? [];
   const port = opts.instance?.port ?? DEFAULT_PORT;
   const instance = opts.instance ?? null;
