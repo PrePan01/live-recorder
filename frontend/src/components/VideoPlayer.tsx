@@ -12,9 +12,10 @@ const EVENTS = mpegts.Events as unknown as Record<
 
 export interface VideoPlayerProps {
   roomId: string;
+  muted?: boolean;
 }
 
-export default function VideoPlayer({ roomId }: VideoPlayerProps) {
+export default function VideoPlayer({ roomId, muted = true }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<'loading' | 'playing' | 'ended' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -86,7 +87,7 @@ export default function VideoPlayer({ roomId }: VideoPlayerProps) {
       <video
         ref={videoRef}
         controls
-        muted
+        muted={muted}
         autoPlay
         onCanPlay={() => setState((current) => (current === 'loading' ? 'playing' : current))}
         onPlaying={() => setState('playing')}

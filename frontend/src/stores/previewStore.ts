@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const MAX_PREVIEWS = 2;
+const MAX_PREVIEWS = 4;
 
 interface PreviewState {
   openRoomIds: string[];
