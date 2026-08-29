@@ -186,3 +186,62 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
     await app.close();
   });
 });
+describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
+  it('openlist token never returned in view; clear via empty string', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'secret-token' } });
+    const view = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
+    expect(view.openlist.hasToken).toBe(true);
+    expect(JSON.stringify(view)).not.toContain('secret-token');
+    expect(view.openlist.token).toBeUndefined();
+    // 空串清除令牌
+    await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { token: '' } });
+    const cleared = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
+    expect(cleared.openlist.hasToken).toBe(false);
+    await app.close();
+  });
+
+  it('openlist config validation and upload job lifecycle', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const badEnabled = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: 'yes' } });
+    expect(badEnabled.statusCode).toBe(500);
+    const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/97', displayName: 'up' } })).json().room;
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'up1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/up.flv' });
+    // 未启用 → 手动上传 500
+    const noConf = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(noConf.statusCode).toBe(500);
+    // 启用+令牌 → 入队成功
+    await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'tok' } });
+    const enq = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(enq.statusCode).toBe(200);
+    expect(enq.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
+    // 列表可见
+    const list = (await inj({ method: 'GET', url: '/api/v1/uploads' })).json();
+    expect(list.uploads.length).toBeGreaterThanOrEqual(1);
+    // 取消
+    const cancel = await inj({ method: 'POST', url: `/api/v1/uploads/${enq.json().upload.id}/cancel` });
+    expect(cancel.json().upload.status).toBe('cancelled');
+    // 不存在 404
+    const missing = await inj({ method: 'POST', url: '/api/v1/uploads/up_none/retry' });
+    expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('email presets detect provider and test unconfigured fails', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const presets = (await inj({ method: 'GET', url: '/api/v1/settings/email/presets' })).json();
+    expect(presets.presets.some((p: { id: string }) => p.id === 'qq')).toBe(true);
+    // 未配置 SMTP → test 502
+    const test = await inj({ method: 'POST', url: '/api/v1/settings/email/test' });
+    expect(test.statusCode).toBe(502);
+    expect(test.json().error.code).toBe('SMTP_SEND_FAILED');
+    await app.close();
+  });
+});
