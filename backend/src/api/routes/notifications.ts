@@ -4,9 +4,11 @@ import type { Services } from '../../core/services.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
 
-/** 预测样本窗口：近 30 天；至少 3 天样本才给出预测（否则 predictedWindow=null）。 */
+/** 预测样本窗口：近 30 天；样本不足 3 天则无预测（返回提示）。 */
 const PREDICTION_WINDOW_DAYS = 30;
 const MIN_SAMPLE_DAYS = 3;
+
+export type PredictionConfidence = 'high' | 'medium' | 'low';
 
 /** V5 通知偏好读写（GET/PUT /settings/notifications，随 settings 存储）。 */
 export function notificationPreference(services: Services): NotificationPreference {
@@ -15,11 +17,17 @@ export function notificationPreference(services: Services): NotificationPreferen
   return { ...DEFAULT_NOTIFICATION_PREFERENCE, ...(stored ?? {}) };
 }
 
-/** V5 开播预测：只读近 30 天录制/开播事实，按「最早开始-最晚结束」聚合典型开播窗口。 */
+/**
+ * V5 开播预测：只读近 30 天录制/开播事实，按「最早开始-最晚结束」聚合典型开播窗口。
+ * 返回 { roomId, startAt, endAt, confidence, basedOnDays }；样本不足返回 confidence=null + notice。
+ */
 export function livePrediction(services: Services, roomId: string): {
   roomId: string;
-  predictedWindow: { start: string; end: string } | null;
-  sampleDays: number;
+  startAt: string | null;
+  endAt: string | null;
+  confidence: PredictionConfidence | null;
+  basedOnDays: number;
+  notice: string | null;
   generatedAt: string;
 } {
   const from = new Date(services.clock.now() - PREDICTION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -40,17 +48,23 @@ export function livePrediction(services: Services, roomId: string): {
     }
   }
   const days = [...byDay.values()].sort((a, b) => a.start - b.start);
+  const generatedAt = services.clock.iso();
   if (days.length < MIN_SAMPLE_DAYS) {
-    return { roomId, predictedWindow: null, sampleDays: days.length, generatedAt: services.clock.iso() };
+    return { roomId, startAt: null, endAt: null, confidence: null, basedOnDays: days.length, notice: '近 30 天样本不足，暂无开播预测', generatedAt };
   }
   // 中位数起始/结束（抗离群），转本地时区 HH:MM。
   const startMs = median(days.map((d) => d.start));
   const endMs = median(days.map((d) => d.end));
+  // 置信度按样本天数：≥10 高、≥5 中、≥3 低。
+  const confidence: PredictionConfidence = days.length >= 10 ? 'high' : days.length >= 5 ? 'medium' : 'low';
   return {
     roomId,
-    predictedWindow: { start: hhmm(startMs), end: hhmm(endMs) },
-    sampleDays: days.length,
-    generatedAt: services.clock.iso(),
+    startAt: hhmm(startMs),
+    endAt: hhmm(endMs),
+    confidence,
+    basedOnDays: days.length,
+    notice: null,
+    generatedAt,
   };
 }
 
@@ -115,7 +129,7 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
 
 /** V5 通知偏好校验：返回 AppError 或 null。 */
 export function validateNotifications(prefs: NotificationPreference): AppError | null {
-  for (const k of ['desktopEnabled', 'liveStarted', 'recordingStarted', 'recordingFailed', 'diskSpaceLow'] as const) {
+  for (const k of ['desktopEnabled', 'liveStarted', 'recordingStarted', 'recordingEnded', 'recordingFailed', 'diskSpaceLow', 'uploadFailed'] as const) {
     if (typeof prefs[k] !== 'boolean') return new AppError('CONFIG_LOAD_FAILED', `${k} 必须为布尔值`);
   }
   if (typeof prefs.dedupeWindowMinutes !== 'number' || prefs.dedupeWindowMinutes < 1 || prefs.dedupeWindowMinutes > 1440) {

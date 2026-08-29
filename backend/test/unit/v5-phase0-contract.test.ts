@@ -285,12 +285,14 @@ describe('V5 notifications + live prediction contract', () => {
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'pd1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'completed', endedAt: '2026-08-27T11:00:00.000Z' });
     services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run('2026-08-27T09:00:00.000Z', rec.id);
-    // 仅 1 天样本 → null
+    // 仅 1 天样本 → null + notice
     const single = livePrediction(services, room.id);
-    expect(single.predictedWindow).toBeNull();
-    expect(single.sampleDays).toBe(1);
+    expect(single.startAt).toBeNull();
+    expect(single.confidence).toBeNull();
+    expect(single.notice).toContain('样本不足');
+    expect(single.basedOnDays).toBe(1);
 
-    // 补足 3 天 → 给出窗口
+    // 补足 3 天 → 给出窗口（低置信）
     for (const [day, start, end] of [
       ['2026-08-25', '09:00:00.000Z', '11:00:00.000Z'],
       ['2026-08-26', '09:30:00.000Z', '11:30:00.000Z'],
@@ -300,10 +302,11 @@ describe('V5 notifications + live prediction contract', () => {
       services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${day}T${start}`, r.id);
     }
     const win = livePrediction(services, room.id);
-    expect(win.sampleDays).toBe(3);
-    expect(win.predictedWindow).not.toBeNull();
-    expect(win.predictedWindow!.start).toMatch(/^\d{2}:\d{2}$/);
-    expect(win.predictedWindow!.end).toMatch(/^\d{2}:\d{2}$/);
+    expect(win.basedOnDays).toBe(3);
+    expect(win.confidence).toBe('low');
+    expect(win.startAt).toMatch(/^\d{2}:\d{2}$/);
+    expect(win.endAt).toMatch(/^\d{2}:\d{2}$/);
+    expect(win.notice).toBeNull();
   });
 
   it('live prediction endpoint 404s for unknown room', async () => {

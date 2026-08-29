@@ -467,11 +467,14 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 ```json
 {
   "roomId": "room_01J...",
-  "predictedWindow": { "start": "09:30", "end": "11:30" },
-  "sampleDays": 12,
+  "startAt": "09:30",
+  "endAt": "11:30",
+  "confidence": "high",
+  "basedOnDays": 12,
+  "notice": null,
   "generatedAt": "2026-08-29T01:00:00.000Z"
 }
 ```
 
 - 只读近 30 天录制/开播事实：按天聚合最早开始-最晚结束，取开始/结束时间中位数（本地时区 HH:MM）。
-- 样本不足（<3 天）或无可推断数据时 `predictedWindow` 为 `null`，FE 显示「暂无预测」；房间不存在 → 404 `RESOURCE_NOT_FOUND`。
+- `confidence`：样本天数 ≥10 高 / ≥5 中 / ≥3 低；样本不足（<3 天）时 `startAt/endAt/confidence` 为 `null` 且 `notice` 返回「近 30 天样本不足，暂无开播预测」，FE 显示「暂无预测」；房间不存在 → 404 `RESOURCE_NOT_FOUND`。

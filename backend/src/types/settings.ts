@@ -64,14 +64,18 @@ export interface AppSettings {
 export interface NotificationPreference {
   /** 桌面/系统通知总开关（FE 侧经 Tauri 通知；BE 持久化偏好）。 */
   desktopEnabled: boolean;
-  /** 开播提醒（live_started）：直播检测到开播时通知。 */
+  /** 开播提醒：直播检测到开播时通知。 */
   liveStarted: boolean;
   /** 录制开始提醒。 */
   recordingStarted: boolean;
+  /** 录制结束提醒。 */
+  recordingEnded: boolean;
   /** 录制失败提醒。 */
   recordingFailed: boolean;
   /** 磁盘空间不足提醒。 */
   diskSpaceLow: boolean;
+  /** 上传失败提醒（OpenList 等）。 */
+  uploadFailed: boolean;
   /** 去重窗口（分钟）：同房间同类事件在该窗口内只发一次。 */
   dedupeWindowMinutes: number;
 }
@@ -80,8 +84,10 @@ export const DEFAULT_NOTIFICATION_PREFERENCE: NotificationPreference = {
   desktopEnabled: true,
   liveStarted: true,
   recordingStarted: true,
+  recordingEnded: false,
   recordingFailed: true,
   diskSpaceLow: true,
+  uploadFailed: true,
   dedupeWindowMinutes: 30,
 };
 
