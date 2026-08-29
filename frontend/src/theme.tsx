@@ -45,19 +45,18 @@ export function systemPrefersDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
-export function resolveMode(preference: ThemePreference): AppThemeMode {
-  if (preference === 'system') return systemPrefersDark() ? 'dark' : 'light';
-  return preference;
-}
-
 export function AppThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreference] = useState<ThemePreference>(initialPreference);
+  const [systemDark, setSystemDark] = useState<boolean>(systemPrefersDark);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, preference);
   }, [preference]);
 
-  const mode = useMemo(() => resolveMode(preference), [preference]);
+  const mode = useMemo<AppThemeMode>(() => {
+    if (preference === 'system') return systemDark ? 'dark' : 'light';
+    return preference;
+  }, [preference, systemDark]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -66,12 +65,12 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
   }, [mode]);
 
   useEffect(() => {
-    if (preference !== 'system') return;
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = () => setPreference('system');
+    setSystemDark(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
-  }, [preference]);
+  }, []);
 
   const value = useMemo(() => ({ preference, mode, setPreference }), [preference, mode]);
 
