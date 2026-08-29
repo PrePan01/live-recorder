@@ -96,7 +96,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
     // 归为 CONFIG_LOAD_FAILED，不落 500 内部错误（QA：空 body+JSON Content-Type 曾误报 500）。
     if (validation.statusCode === 400 && (validation.code?.startsWith('FST_ERR_VALIDATION') || validation.code?.startsWith('FST_ERR_CTP'))) {
       return reply.status(400).send({
-        error: { code: 'CONFIG_LOAD_FAILED', message: '请求字段非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        error: { code: 'CONFIG_INVALID', message: '请求字段非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
     const alert = services.alerts.create({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });

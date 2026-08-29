@@ -17,12 +17,12 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     const pageSize = Number(q.pageSize ?? '20');
     if (!Number.isFinite(page) || page < 1 || !Number.isFinite(pageSize) || pageSize < 1) {
       return reply.status(400).send({
-        error: { code: 'CONFIG_LOAD_FAILED', message: '分页参数非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        error: { code: 'CONFIG_INVALID', message: '分页参数非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
     if (q.state && !STATES.includes(q.state as RecordingState)) {
       return reply.status(400).send({
-        error: { code: 'CONFIG_LOAD_FAILED', message: 'state 过滤值非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        error: { code: 'CONFIG_INVALID', message: 'state 过滤值非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
     const result = services.recordings.list({
@@ -82,7 +82,7 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
       throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     }
     if (typeof body.streamTitle !== 'string' || body.streamTitle.trim().length === 0) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'streamTitle 必须为非空字符串', { recordingId: id });
+      throw new AppError('CONFIG_INVALID', 'streamTitle 必须为非空字符串', { recordingId: id });
     }
     const title = body.streamTitle.trim();
     // 重命名同步改名落盘文件（保留目录与扩展名），文件缺失时仅改记录并容错。
@@ -124,10 +124,10 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
   app.post('/api/v1/recordings/batch-delete', async (req, reply) => {
     const body = (req.body ?? {}) as { ids?: unknown };
     if (!Array.isArray(body.ids) || body.ids.length === 0) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'ids 必须为非空数组');
+      throw new AppError('CONFIG_INVALID', 'ids 必须为非空数组');
     }
     if (body.ids.length > 100) {
-      throw new AppError('CONFIG_LOAD_FAILED', '单次批量删除最多 100 条');
+      throw new AppError('CONFIG_INVALID', '单次批量删除最多 100 条');
     }
     const deleted: string[] = [];
     const failed: Array<{ id: string; reason: string }> = [];

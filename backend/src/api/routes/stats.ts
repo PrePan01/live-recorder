@@ -91,13 +91,13 @@ export function registerStatsRoutes(app: FastifyInstance, services: Services): v
     const to = qs.to ?? services.clock.iso();
     const from = qs.from ?? new Date(Date.parse(to) - 30 * 24 * 60 * 60 * 1000).toISOString();
     if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(from) > Date.parse(to)) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'from/to 时间范围非法');
+      throw new AppError('CONFIG_INVALID', 'from/to 时间范围非法');
     }
     if (Date.parse(to) - Date.parse(from) > MAX_DAYS * 24 * 60 * 60 * 1000) {
-      throw new AppError('CONFIG_LOAD_FAILED', `统计时间跨度最长 ${MAX_DAYS} 天`);
+      throw new AppError('CONFIG_INVALID', `统计时间跨度最长 ${MAX_DAYS} 天`);
     }
     if (qs.platform !== undefined && qs.platform !== 'bilibili' && qs.platform !== 'douyin') {
-      throw new AppError('CONFIG_LOAD_FAILED', 'platform 仅支持 bilibili/douyin');
+      throw new AppError('CONFIG_INVALID', 'platform 仅支持 bilibili/douyin');
     }
     return reply.send(
       aggregateStats(services, {

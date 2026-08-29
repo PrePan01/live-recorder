@@ -208,7 +208,7 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     const { app } = buildApp(services);
     const inj = host(app);
     const badEnabled = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: 'yes' } });
-    expect(badEnabled.statusCode).toBe(500);
+    expect(badEnabled.statusCode).toBe(422);
     const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/97', displayName: 'up' } })).json().room;
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'up1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/up.flv' });
@@ -268,9 +268,9 @@ describe('QA Batch2 #114/#115 gaps: pipeline & naming', () => {
     const { app } = buildApp(services);
     const inj = host(app);
     const empty = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '' } });
-    expect(empty.statusCode).toBe(500);
+    expect(empty.statusCode).toBe(422);
     const tooLong = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: 'x'.repeat(201) } });
-    expect(tooLong.statusCode).toBe(500);
+    expect(tooLong.statusCode).toBe(422);
     const ok = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '{room}_{date}_{time}_{platform}_{quality}_{roomId}' } });
     expect(ok.statusCode).toBe(200);
     // preview 渲染占位值
@@ -312,9 +312,9 @@ describe('QA Batch3 #125/#127/#128 gaps', () => {
     expect(disabled.json().schedule.enabled).toBe(false);
     expect(disabled.json().schedule.nextRunAt).toBeNull();
     const badDays = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [7], startTime: '22:00' } });
-    expect(badDays.statusCode).toBe(500);
+    expect(badDays.statusCode).toBe(422);
     const badTime = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '25:00' } });
-    expect(badTime.statusCode).toBe(500);
+    expect(badTime.statusCode).toBe(422);
     await app.close();
   });
 
@@ -326,7 +326,7 @@ describe('QA Batch3 #125/#127/#128 gaps', () => {
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'e1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/exp.flv' });
     const bad = await inj({ method: 'POST', url: '/api/v1/exports', payload: { recordingIds: [rec.id] } });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(422);
     const missing = await inj({ method: 'GET', url: '/api/v1/exports/exp_none' });
     expect(missing.statusCode).toBe(404);
     await app.close();

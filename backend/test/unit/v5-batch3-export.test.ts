@@ -59,9 +59,9 @@ describe('V5 Batch3 #127: backups & export', () => {
     const base = await mkdtemp(path.join(tmpdir(), 'lr-exp2-'));
 
     const bad = await inj({ method: 'POST', url: '/api/v1/exports', payload: { recordingIds: [], baseDir: base } });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(422);
     const noBase = await inj({ method: 'POST', url: '/api/v1/exports', payload: { recordingIds: ['rec_x'] } });
-    expect(noBase.statusCode).toBe(500);
+    expect(noBase.statusCode).toBe(422);
 
     const list = (await inj({ method: 'GET', url: '/api/v1/exports' })).json();
     expect(Array.isArray(list.exports)).toBe(true);

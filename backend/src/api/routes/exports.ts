@@ -7,13 +7,13 @@ export function registerExportRoutes(app: FastifyInstance, services: Services): 
   app.post('/api/v1/exports', async (req, reply) => {
     const body = (req.body ?? {}) as { recordingIds?: unknown; baseDir?: unknown };
     if (!Array.isArray(body.recordingIds) || body.recordingIds.length === 0 || body.recordingIds.length > 100) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'recordingIds 需为非空数组（≤100）');
+      throw new AppError('CONFIG_INVALID', 'recordingIds 需为非空数组（≤100）');
     }
     if (typeof body.baseDir !== 'string' || body.baseDir.length === 0) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'baseDir 必填（用户选择的导出目录）');
+      throw new AppError('CONFIG_INVALID', 'baseDir 必填（用户选择的导出目录）');
     }
     for (const id of body.recordingIds) {
-      if (typeof id !== 'string') throw new AppError('CONFIG_LOAD_FAILED', 'recordingIds 必须为字符串数组');
+      if (typeof id !== 'string') throw new AppError('CONFIG_INVALID', 'recordingIds 必须为字符串数组');
     }
     const job = await services.exporter.create(body.recordingIds as string[], body.baseDir);
     services.events.emit({ type: 'export:updated', data: job });

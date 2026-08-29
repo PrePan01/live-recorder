@@ -17,18 +17,18 @@ function validateSchedule(input: { daysOfWeek?: unknown; startTime?: unknown; en
 } {
   const days = input.daysOfWeek as unknown;
   if (!Array.isArray(days) || days.length === 0 || days.some((d) => typeof d !== 'number' || !DAYS.includes(d as ScheduleDay))) {
-    throw new AppError('CONFIG_LOAD_FAILED', 'daysOfWeek 需为非空 0-6 数字数组（0=周日）');
+    throw new AppError('CONFIG_INVALID', 'daysOfWeek 需为非空 0-6 数字数组（0=周日）');
   }
   const uniq = [...new Set(days as number[])] as ScheduleDay[];
   if (typeof input.startTime !== 'string' || !TIME_RE.test(input.startTime)) {
-    throw new AppError('CONFIG_LOAD_FAILED', 'startTime 需为 HH:mm（24h）');
+    throw new AppError('CONFIG_INVALID', 'startTime 需为 HH:mm（24h）');
   }
   const endTime = input.endTime as unknown;
   if (endTime !== undefined && endTime !== null && (typeof endTime !== 'string' || !TIME_RE.test(endTime))) {
-    throw new AppError('CONFIG_LOAD_FAILED', 'endTime 需为 HH:mm 或 null');
+    throw new AppError('CONFIG_INVALID', 'endTime 需为 HH:mm 或 null');
   }
   if (input.timezone !== undefined && typeof input.timezone !== 'string') {
-    throw new AppError('CONFIG_LOAD_FAILED', 'timezone 必须为字符串');
+    throw new AppError('CONFIG_INVALID', 'timezone 必须为字符串');
   }
   return {
     daysOfWeek: uniq,
