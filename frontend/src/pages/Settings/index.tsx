@@ -458,10 +458,28 @@ const { message } = App.useApp();
               <Col span={12}>
                 <Space>
                   <Switch
+                    checked={preferences?.recordingEnded ?? false}
+                    onChange={(v) => void saveNotifications({ recordingEnded: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>录制结束</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
                     checked={preferences?.recordingFailed ?? false}
                     onChange={(v) => void saveNotifications({ recordingFailed: v }).catch(() => message.error('保存失败'))}
                   />
                   <span>录制失败</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.uploadFailed ?? false}
+                    onChange={(v) => void saveNotifications({ uploadFailed: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>上传失败</span>
                 </Space>
               </Col>
               <Col span={12}>

@@ -2,8 +2,10 @@ export interface NotificationPreference {
   desktopEnabled: boolean;
   liveStarted: boolean;
   recordingStarted: boolean;
+  recordingEnded: boolean;
   recordingFailed: boolean;
   diskSpaceLow: boolean;
+  uploadFailed: boolean;
   dedupeWindowMinutes: number;
 }
 
