@@ -51,6 +51,15 @@ export default function History() {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [, setTick] = useState(0);
+
+  // 录制中记录时长本地走时：每秒重渲染一次，不再依赖后端每秒 SSE（QA 性能建议③）。
+  useEffect(() => {
+    const hasRecording = items.some((r) => r.state === 'recording' || r.state === 'reconnecting');
+    if (!hasRecording) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [items]);
 
   useEffect(() => {
     // 显式传全量筛选（roomId/dateFrom/dateTo 用 undefined 表示清除），

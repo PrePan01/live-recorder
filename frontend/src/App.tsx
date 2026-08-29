@@ -1,22 +1,24 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import type { JSX } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { NavigateBlock } from './NavigateGuard';
 import AppLayout from './components/AppLayout';
 import Setup from './pages/Setup';
-import Rooms from './pages/Rooms';
 import Monitor from './pages/Monitor';
-import History from './pages/History';
-import SettingsPage from './pages/Settings';
-import Recovery from './pages/Recovery';
-import Stats from './pages/Stats';
-import Wall from './pages/Wall';
 import Startup from './pages/Startup';
 import StartupDiagnostics from './pages/StartupDiagnostics';
 import { useSSE } from './hooks/useSSE';
 import { useServiceStore } from './stores/serviceStore';
 import { useBootStore, subscribeBridgeEvents } from './stores/bootStore';
 import RecordingCompleteNotice from './components/RecordingCompleteNotice';
+
+// 路由级懒加载：重页面按需拆分，首屏 bundle 显著变小（QA 性能建议）。
+const Rooms = lazy(() => import('./pages/Rooms'));
+const History = lazy(() => import('./pages/History'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const Recovery = lazy(() => import('./pages/Recovery'));
+const Stats = lazy(() => import('./pages/Stats'));
+const Wall = lazy(() => import('./pages/Wall'));
 
 function SetupGuard({ children }: { children: JSX.Element }) {
   const status = useServiceStore((s) => s.status);
@@ -62,7 +64,8 @@ export default function App() {
     <>
       <RecordingCompleteNotice />
       <BootGate>
-        <Routes>
+        <Suspense fallback={<div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>加载中…</div>}>
+          <Routes>
           <Route path="/startup" element={<Startup />} />
           <Route path="/startup-diagnostics" element={<StartupDiagnostics />} />
           <Route
@@ -85,12 +88,13 @@ export default function App() {
             <Route path="/history" element={<History />} />
             <Route path="/recovery" element={<Recovery />} />
             <Route path="/stats" element={<Stats />} />
-<Route path="/wall" element={<Wall />} />
+            <Route path="/wall" element={<Wall />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="/" element={<Navigate to="/monitor" replace />} />
           <Route path="*" element={<Navigate to="/monitor" replace />} />
         </Routes>
+        </Suspense>
       </BootGate>
     </>
   );
