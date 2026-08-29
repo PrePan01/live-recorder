@@ -1,4 +1,6 @@
-# localhost 录制服务 API 契约（v2.2 · 2026-08-29）
+# localhost 录制服务 API 契约（v2.4 · 2026-08-29）
+
+相对 v2.3 的变更（V5 Batch2，#114-#117）：新增后处理管线（GET /recordings/:id/pipeline、POST retry、GET /media/cover）、命名规则（GET/PUT /settings/naming-rule、preview）、OpenList 上传（settings/openlist、/uploads、/recordings/:id/upload）、邮件简化（settings/email、presets、test）。Recording 增 `processing` 态 + `pipelineStatus/metadata/coverPath` 完整落地；迁移 v12 pipeline_runs/artifacts、v13 upload_jobs。SSE 增 `upload:updated`。
 
 相对 v2.1 的变更（V5 Phase 0 契约先行，task #93）：
 - `Room` 新增 `tags`（标签分组，`Tag[]`）、`uploadEnabled`（上传开关，`null`=继承全局）、`titleSource`/`titleUpdatedAt`/`titleFallbackUsed`（标题识别元数据）。
@@ -478,3 +480,54 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 
 - 只读近 30 天录制/开播事实：按天聚合最早开始-最晚结束，取开始/结束时间中位数（本地时区 HH:MM）。
 - `confidence`：样本天数 ≥10 高 / ≥5 中 / ≥3 低；样本不足（<3 天）时 `startAt/endAt/confidence` 为 `null` 且 `notice` 返回「近 30 天样本不足，暂无开播预测」，FE 显示「暂无预测」；房间不存在 → 404 `RESOURCE_NOT_FOUND`。
+
+## v5 Batch2 契约（#114-#117，2026-08-29）
+
+### 后处理管线（#114）
+
+`GET /recordings/:id/pipeline` → `{ run } | { run: null }`；`run` 为 PipelineRun + artifacts：
+
+```json
+{
+  "run": {
+    "id": "prun_01J...",
+    "recordingId": "rec_01J...",
+    "status": "partial",
+    "configSnapshot": { "enabled": true, "verify": true, "segmentSeconds": 0, "crf": null, "archiveDirectory": "", "maxConcurrency": 2, "attempt": 0 },
+    "startedAt": "2026-08-29T01:00:00.000Z",
+    "endedAt": "2026-08-29T01:01:00.000Z",
+    "createdAt": "2026-08-29T01:00:00.000Z",
+    "artifacts": [
+      { "id": "part_01J...", "runId": "prun_01J...", "step": "verify", "status": "ok", "path": null, "sizeBytes": null, "error": null, "startedAt": "...", "endedAt": "..." }
+    ]
+  }
+}
+```
+
+- `status`：`queued | running | ok | partial | failed`；步骤：`verify | sidecar | cover | segment | compress | archive`（artifacts.status 含 `skipped`）。
+- `POST /recordings/:id/pipeline/retry` → `{ ok, run }`：为新 run（快照当前配置），排队/运行中 → `CONFIG_LOAD_FAILED`；无文件 → 500。
+- `GET /media/cover/:recordingId` → jpg（有 coverPath）；无封面/记录不存在 → 404 `RESOURCE_NOT_FOUND`（`details.resource='cover'`）。
+- 录制 `state=processing` 期间；管线完成回 `completed` + `pipelineStatus=ok|partial|failed`。未启用管线 → `pipelineStatus=not_required`。并发 N=2 FIFO、录制主链路优先（异步执行不占录制线程）。单步失败 `partial` 保成功产物；源文件损坏 `failed` 保留源文件。配置快照随 run，改配置不追溯历史。
+
+### 命名规则（#115）
+
+- `GET/PUT /settings/naming-rule`：body `{ namingRule }`（1-200 字符）；非法 → `CONFIG_LOAD_FAILED`。
+- `POST /settings/naming-rule/preview`：body `{ namingRule?, room?, platform? }` → `{ example }` 实时示例。
+- 变量：`{room} {platform} {date} {time} {quality} {roomId}`；服务端过滤非法字符（`\ / : * ? " < > |` + 控制字符）、压缩空白、截断 120 字符、空模板回退时间戳。修改只影响新录制。
+
+### OpenList 上传（#116）
+
+- `GET/PUT /settings/openlist`：body `{ enabled, serverUrl, directoryTemplate, username, token? }`；令牌经 SecretStore（`openlist.token`）不落盘、`GET` 仅返回 `hasToken`，永不回显值。空串 token=清除。
+- `POST /settings/openlist/test` → `{ ok }`（OPTIONS 可达性，10s 超时；失败 `CONFIG_LOAD_FAILED` retryable）。
+- `GET /uploads?limit=N` → `{ uploads: [UploadJob...] }`。
+- `POST /uploads/:id/retry`、`POST /uploads/:id/cancel` → `{ upload }`（cancel 不删本地原件）；不存在 → 404。
+- `POST /recordings/:id/upload`：手动触发上传（幂等键=`rec_{recordingId}`），未启用/无令牌 → `CONFIG_LOAD_FAILED`。
+- `UploadJob`：`{ id, recordingId, status: queued|running|ok|failed|cancelled, progress(0-100), remotePath, error, retryCount, idempotencyKey, createdAt, updatedAt }`。
+- 自动上传：管线完成后（ok/partial）触发；`SSE upload:updated` 推送进度。失败 3 次退避重试（5/15/45s）。远端路径 = `{serverUrl}/{directoryTemplate}/{文件名}`。
+
+### 邮件简化（#117）
+
+- `GET /settings/email/presets` → `{ presets: [{ id, name, host, port, secure }] }`（QQ/163/Gmail/Outlook/自定义）。
+- `GET/PUT /settings/email`：独立端点，body 含 MailConfig 字段 + `password?` + 顶层 `recordingDirectory?`；`GET` 返回 `passwordSet` 且回显 `provider`（按 host 探测），密码永不回显。
+- `POST /settings/email/test` → `{ ok }`；SMTP 失败 → `SMTP_SEND_FAILED`。
+- 同类事件 30min 去重（Notifier 既有逻辑）。
