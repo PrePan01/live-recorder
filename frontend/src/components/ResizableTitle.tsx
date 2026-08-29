@@ -8,13 +8,14 @@ interface Props {
   onResize: (width: number) => void;
   className?: string;
   style?: React.CSSProperties;
+  [key: string]: unknown;
 }
 
 /**
  * 可拖拽调整宽度的表头单元格：右侧手柄拖拽更新列宽。
  * 用于实现表格列宽手动调整（无第三方依赖，原生 mousedown/mousemove）。
  */
-export default function ResizableTitle({ children, width, minWidth = 60, onResize, className, style }: Props) {
+export default function ResizableTitle({ children, width, minWidth = 60, onResize, className, style, ...rest }: Props) {
   const startX = useRef(0);
   const startW = useRef(width);
   const raf = useRef<number | null>(null);
@@ -44,6 +45,7 @@ export default function ResizableTitle({ children, width, minWidth = 60, onResiz
   return (
     <th
       className={className}
+      {...rest}
       style={{
         ...style,
         position: 'relative',

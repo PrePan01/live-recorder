@@ -36,30 +36,33 @@ export function useResizableColumns<T>(columns: ColumnsType<T>) {
   const components = useMemo(
     () => ({
       header: {
-        cell: (props: {
-          children: React.ReactNode;
+        cell: (props: Record<string, unknown> & {
+          children?: React.ReactNode;
           className?: string;
           style?: React.CSSProperties;
           width?: number;
           minWidth?: number;
           onResize?: (w: number) => void;
-          'data-key'?: string;
-        }) =>
-          props.onResize && props.width ? (
+        }) => {
+          // 透传其余 props（含 antd fixed 列定位所需属性），避免自定义组件覆盖后丢失固定逻辑。
+          const { onResize, width, minWidth, children, className, style, ...rest } = props;
+          return onResize && width ? (
             <ResizableTitle
-              width={props.width}
-              minWidth={props.minWidth ?? 60}
-              onResize={props.onResize}
-              className={props.className}
-              style={props.style}
+              width={width}
+              minWidth={minWidth ?? 60}
+              onResize={onResize}
+              className={className}
+              style={style}
+              {...rest}
             >
-              {props.children}
+              {children}
             </ResizableTitle>
           ) : (
-            <th className={props.className} style={props.style}>
-              {props.children}
+            <th className={className} style={style} {...rest}>
+              {children}
             </th>
-          ),
+          );
+        },
       },
     }),
     [],
