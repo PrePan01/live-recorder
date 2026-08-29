@@ -243,6 +243,64 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #114 V5 Batch2 后处理管线：PipelineRun + PipelineArtifact（步骤可独立判定与重试）。
+    version: 12,
+    up: (db) => {
+      const runsExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'`).get());
+      if (!runsExists) {
+        db.exec(`
+          CREATE TABLE pipeline_runs (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'ok', 'partial', 'failed')),
+            config_snapshot TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX idx_pipeline_runs_recording ON pipeline_runs(recording_id);
+
+          CREATE TABLE pipeline_artifacts (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+            step TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'ok', 'failed', 'skipped')),
+            path TEXT,
+            size_bytes INTEGER,
+            error TEXT,
+            started_at TEXT,
+            ended_at TEXT
+          );
+          CREATE INDEX idx_pipeline_artifacts_run ON pipeline_artifacts(run_id);
+        `);
+      }
+    },
+  },
+  {
+    // #116 V5 Batch2 OpenList 自动上传：UploadJob（状态/进度/重试/幂等键）。
+    version: 13,
+    up: (db) => {
+      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`).get());
+      if (!exists) {
+        db.exec(`
+          CREATE TABLE upload_jobs (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'ok', 'failed', 'cancelled')),
+            progress INTEGER NOT NULL DEFAULT 0,
+            remote_path TEXT,
+            error TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX idx_upload_jobs_recording ON upload_jobs(recording_id);
+        `);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

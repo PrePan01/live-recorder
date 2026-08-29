@@ -1,4 +1,5 @@
 import type { Quality } from './recording.js';
+import type { OpenListConfig } from './upload.js';
 
 export interface RetryConfig {
   maxAttempts: number;
@@ -58,7 +59,16 @@ export interface AppSettings {
   notifications?: NotificationPreference;
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
   pipeline?: PipelineConfig;
+  /** V5 录制文件命名模板（Batch2 #115）；修改只影响新录制。 */
+  namingRule?: string;
+  /** V5 OpenList 上传配置（Batch2 #116；令牌经 SecretStore 不落盘）。 */
+  openlist?: OpenListConfig;
 }
+
+export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';
+
+/** 命名模板支持的变量（#115）。 */
+export const NAMING_VARS = ['room', 'platform', 'date', 'time', 'quality', 'roomId'] as const;
 
 /** V5 通知偏好：各事件开关 + 去重窗口；邮件 SMTP 配置仍走 mail（mail.enabled 生效时才发邮件）。 */
 export interface NotificationPreference {
@@ -134,4 +144,6 @@ export interface SettingsView {
   notifications?: NotificationPreference;
   /** V5 后处理管线配置视图（与写入契约一致）。 */
   pipeline?: PipelineConfig;
+  /** V5 录制文件命名模板（Batch2 #115）。 */
+  namingRule: string;
 }

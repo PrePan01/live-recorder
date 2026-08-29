@@ -43,4 +43,5 @@ export const DEFAULT_SETTINGS = {
   theme: 'system' as const,
   notifications: DEFAULT_NOTIFICATION_PREFERENCE,
   pipeline: DEFAULT_PIPELINE_CONFIG,
+  namingRule: '{room}_{date}_{time}',
 };

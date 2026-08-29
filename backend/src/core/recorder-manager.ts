@@ -101,7 +101,7 @@ export class RecorderManager {
 
     const cookie = await this.services.platformCookie(room.platform);
     const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-    const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
+    const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
     const recording = this.services.recordings.create({
       roomId: room.id,
       roomName: room.displayName,
@@ -211,7 +211,7 @@ export class RecorderManager {
     try {
       const cookie = await this.services.platformCookie(room.platform);
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
+      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
@@ -266,7 +266,7 @@ export class RecorderManager {
         return;
       }
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat);
+      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       const recording = this.services.recordings.get(recordingId)!;
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const cur = this.active.get(room.id);
@@ -291,8 +291,10 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     // 异步校验文件完整性，不阻塞录制完成响应。
     if (rec.filePath) this.verifyIntegrity(rec);
-    // mp4_after：完成后异步转封装 MP4。
-    if (this.settings().recordingFormat === 'mp4_after' && rec.filePath) {
+    // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）。
+    this.services.pipeline.enqueue(recordingId);
+    // mp4_after：完成后异步转封装 MP4（管线启用时由 compress 步骤覆盖，跳过此处以免重复）。
+    if (this.settings().recordingFormat === 'mp4_after' && rec.filePath && !(this.services.pipeline.pipelineConfig().enabled)) {
       this.remuxToMp4(rec);
     }
   }

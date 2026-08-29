@@ -103,6 +103,50 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     return reply.send({ ok: true, path: target, parent, directories });
   });
 
+  // V5 邮件简化（Batch2 #117）：SMTP 服务商预设 + 独立 email 端点。
+  app.get('/api/v1/settings/email/presets', async (_req, reply) => {
+    return reply.send({ presets: SMTP_PRESETS });
+  });
+
+  app.get('/api/v1/settings/email', async (_req, reply) => {
+    const view = await settingsView(services);
+    return reply.send({ email: { ...view.mail, provider: detectProvider(view.mail.host) } });
+  });
+
+  app.put('/api/v1/settings/email', async (req, reply) => {
+    const body = (req.body ?? {}) as MailConfig & { password?: string; provider?: string; recordingDirectory?: string };
+    const stored = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
+    const { password, provider, ...mailPatch } = body;
+    void provider;
+    // 顶层设置字段（如 recordingDirectory）合并，mail 单独合并。
+    const topLevel = { ...stored, ...pickTopLevel(mailPatch as Record<string, unknown>) };
+    const merged: AppSettings = { ...topLevel, mail: { ...stored.mail, ...mailPatch } };
+    validateSettings(merged);
+    services.settings.save(merged);
+    if (typeof password === 'string') {
+      if (password.length > 0) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
+      else await services.secretStore.delete(MAIL_PASSWORD_KEY);
+    }
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return reply.send({ email: { ...view.mail, provider: detectProvider(view.mail.host) } });
+  });
+
+  app.post('/api/v1/settings/email/test', async (_req, reply) => {
+    const stored = services.settings.load();
+    if (!stored || !stored.mail.host) throw new AppError('SMTP_SEND_FAILED', 'SMTP 未配置', { retryable: true });
+    try {
+      await services.mailer.send(stored.mail, {
+        to: stored.mail.recipients,
+        subject: '[直播录制助手] 邮件测试',
+        text: '这是一封测试邮件。',
+      });
+    } catch {
+      throw new AppError('SMTP_SEND_FAILED', '邮件发送失败', { retryable: true });
+    }
+    return reply.send({ ok: true });
+  });
+
   app.post('/api/v1/settings/pick-directory', async (_req, reply) => {
     if (process.env.VITEST === 'true') return reply.send({ ok: true, directory: null });
     const directory = await nativePickDirectory();
@@ -143,6 +187,32 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
     return new AppError('PIPELINE_CONFIG_INVALID', 'maxConcurrency 需为 1-2（V5 定 N=2）');
   }
   return null;
+}
+
+/** V5 邮件服务商预设（#117）：常用 SMTP 一键填充。 */
+export const SMTP_PRESETS = [
+  { id: 'qq', name: 'QQ 邮箱', host: 'smtp.qq.com', port: 465, secure: true },
+  { id: '163', name: '网易 163', host: 'smtp.163.com', port: 465, secure: true },
+  { id: 'gmail', name: 'Gmail', host: 'smtp.gmail.com', port: 465, secure: true },
+  { id: 'outlook', name: 'Outlook', host: 'smtp-mail.outlook.com', port: 587, secure: false },
+  { id: 'custom', name: '自定义', host: '', port: 465, secure: true },
+] as const;
+
+/** 按 host 探测服务商 id（供 FE 预设下拉回显）。 */
+export function detectProvider(host: string): string {
+  if (!host) return 'custom';
+  const found = SMTP_PRESETS.find((p) => p.host && host.includes(p.host.replace(/^smtp\./, '')));
+  return found ? found.id : 'custom';
+}
+
+/** 从 mail 更新 payload 中提取顶层设置字段（非 MailConfig 键）。 */
+function pickTopLevel(body: Record<string, unknown>): Record<string, unknown> {
+  const mailKeys = new Set(['enabled', 'host', 'port', 'secure', 'username', 'from', 'recipients']);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (!mailKeys.has(k)) out[k] = v;
+  }
+  return out;
 }
 
 /** 系统原生目录选择器（macOS 访达 / Windows 资源管理器），取消返回 null。 */
