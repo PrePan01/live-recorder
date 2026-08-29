@@ -4,6 +4,7 @@ import { useRecordingStore } from './recordingStore';
 import { useAlertStore } from './alertStore';
 import { useSettingsStore } from './settingsStore';
 import { useServiceStore } from './serviceStore';
+import { useDiagnosticStore } from './diagnosticStore';
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -33,6 +34,9 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case 'disk:space':
       useServiceStore.getState().patchStatus({ disk: e.disk });
+      break;
+    case 'diagnostic:updated':
+      useDiagnosticStore.getState().upsert(e.diagnostic);
       break;
   }
 }
