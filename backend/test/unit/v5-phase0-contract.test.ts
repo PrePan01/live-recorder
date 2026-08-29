@@ -219,7 +219,7 @@ describe('V5 Phase 0 contract: pipeline config', () => {
     expect(themed.statusCode).toBe(200);
     expect(themed.json().settings.theme).toBe('dark');
     const badTheme = await inj({ method: 'PUT', url: '/api/v1/settings', payload: { recordingDirectory: '/tmp/vids', theme: 'neon' } });
-    expect(badTheme.statusCode).toBe(500);
+    expect(badTheme.statusCode).toBe(422);
     await app.close();
   });
 
@@ -264,7 +264,7 @@ describe('V5 notifications + live prediction contract', () => {
     expect(set.json().notifications.dedupeWindowMinutes).toBe(60);
 
     const bad = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 9999 } });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(422);
     await app.close();
   });
 

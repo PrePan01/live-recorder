@@ -200,7 +200,7 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 
 错误对象始终包含 `code`、`message`、`roomId`、`recordingId`（无关联时 `null`）、`occurredAt`、`retryable`；`retryable` 即 FE"重试"按钮依据。
 
-### 错误码全集（26 码，v2.3）
+### 错误码全集（27 码，v2.4）
 
 | 码 | 触发面 | HTTP | retryable | 告警级别 |
 | --- | --- | --- | --- | --- |
@@ -230,6 +230,7 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 | `DIAGNOSTIC_CONFLICT`（v2.2 新增） | 诊断项已过期无法执行动作 | 409 | false | — |
 | `PIPELINE_CONFIG_INVALID`（v2.2 新增） | 管线配置非法（enabled/verify/segmentSeconds/crf/archiveDirectory/maxConcurrency） | 422 | false | — |
 | `CHECK_FAILED`（v2.3 新增） | 房间检测的兜底异常码——检测链路任意意外错误（DB 缺列、平台接口变动等）时房间落到 failed+lastError，防止卡死在 checking | 503 | true | error |
+| `CONFIG_INVALID`（v2.4 新增） | 客户端提交的配置/通知字段校验非法（如并发数越界、主题非法、通知布尔值非法等）——区别于 CONFIG_LOAD_FAILED（启动/结构加载失败，500） | 422 | false | — |
 
 边界（v1.2 明确）：WS 预览握手"房间不存在/未在录制"仍走 4002/`PREVIEW_NOT_RECORDING`（冻结表），HTTP 资源不存在走 `RESOURCE_NOT_FOUND`，两套不混用。`RESOURCE_NOT_FOUND` 的 `details.resource` 放资源类型，message 由服务端给出、FE 直接渲染（兜底文案"资源不存在或已被删除"）。
 

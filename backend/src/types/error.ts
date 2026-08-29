@@ -25,7 +25,8 @@ export type ErrorCode =
   | 'DIAGNOSTIC_ACTION_INVALID'
   | 'DIAGNOSTIC_CONFLICT'
   | 'PIPELINE_CONFIG_INVALID'
-  | 'CHECK_FAILED';
+  | 'CHECK_FAILED'
+  | 'CONFIG_INVALID';
 
 export interface ErrorObject {
   code: ErrorCode;
@@ -99,6 +100,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'SEARCH_QUERY_INVALID':
     case 'PIPELINE_CONFIG_INVALID':
     case 'DIAGNOSTIC_ACTION_INVALID':
+    case 'CONFIG_INVALID':
       return 422;
     case 'ROOM_LINK_DUPLICATE':
     case 'DISK_SPACE_INSUFFICIENT':

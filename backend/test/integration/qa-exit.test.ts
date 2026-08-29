@@ -306,8 +306,8 @@ describe('QA v1.4: browse-directories traversal + config import semantics', () =
         },
       },
     });
-    expect(res.statusCode).toBe(500);
-    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('CONFIG_INVALID');
     expect(services.rooms.list().some((r) => r.url === 'https://live.bilibili.com/9004')).toBe(false);
     await app.close();
   });

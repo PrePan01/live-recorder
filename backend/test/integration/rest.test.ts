@@ -270,8 +270,8 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(putMp4.json().settings.recordingFormat).toBe('mp4_after');
 
     const bad = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' }, payload: { ...base, recordingFormat: 'avi' } });
-    expect(bad.statusCode).toBe(500);
-    expect(bad.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('CONFIG_INVALID');
     await app.close();
   });
 

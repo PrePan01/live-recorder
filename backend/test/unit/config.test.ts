@@ -35,6 +35,18 @@ describe('error code mapping', () => {
     expect(httpStatusFor('SMTP_SEND_FAILED')).toBe(502);
     expect(httpStatusFor('SERVICE_UNAVAILABLE')).toBe(503);
     expect(httpStatusFor('CONFIG_LOAD_FAILED')).toBe(500);
+    expect(httpStatusFor('CONFIG_INVALID')).toBe(422);
+  });
+
+  it('validateSettings rejects invalid field values with CONFIG_INVALID (422), not CONFIG_LOAD_FAILED (500)', () => {
+    let caught: AppError | undefined;
+    try {
+      validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', maxConcurrentRecordings: 99 });
+    } catch (err) {
+      caught = err as AppError;
+    }
+    expect(caught?.code).toBe('CONFIG_INVALID');
+    expect(httpStatusFor(caught?.code as never)).toBe(422);
   });
 
   it('serializes the unified error envelope', () => {

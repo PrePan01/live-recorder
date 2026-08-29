@@ -130,10 +130,10 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
 /** V5 通知偏好校验：返回 AppError 或 null。 */
 export function validateNotifications(prefs: NotificationPreference): AppError | null {
   for (const k of ['desktopEnabled', 'liveStarted', 'recordingStarted', 'recordingEnded', 'recordingFailed', 'diskSpaceLow', 'uploadFailed'] as const) {
-    if (typeof prefs[k] !== 'boolean') return new AppError('CONFIG_LOAD_FAILED', `${k} 必须为布尔值`);
+    if (typeof prefs[k] !== 'boolean') return new AppError('CONFIG_INVALID', `${k} 必须为布尔值`);
   }
   if (typeof prefs.dedupeWindowMinutes !== 'number' || prefs.dedupeWindowMinutes < 1 || prefs.dedupeWindowMinutes > 1440) {
-    return new AppError('CONFIG_LOAD_FAILED', 'dedupeWindowMinutes 需在 1-1440 之间');
+    return new AppError('CONFIG_INVALID', 'dedupeWindowMinutes 需在 1-1440 之间');
   }
   return null;
 }
