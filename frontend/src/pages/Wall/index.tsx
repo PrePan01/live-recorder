@@ -98,7 +98,7 @@ export default function Wall() {
               }
             >
               <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
-                <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} muted={!muted[room.id]} />
+                <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
               </Suspense>
             </Card>
           ))}
@@ -136,7 +136,7 @@ export default function Wall() {
         destroyOnHidden
         onCancel={() => setFullscreen(null)}
       >
-        {fullscreen ? <VideoPlayer roomId={fullscreen.id} /> : null}
+        {fullscreen ? <VideoPlayer roomId={fullscreen.id} platform={fullscreen.platform} /> : null}
       </Modal>
     </div>
   );

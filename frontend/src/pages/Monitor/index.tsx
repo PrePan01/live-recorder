@@ -364,7 +364,7 @@ export default function Monitor() {
       >
         {watching ? (
           <Suspense fallback={<Spin style={{ display: 'block', margin: '80px auto' }} />}>
-            <VideoPlayer roomId={watching.id} />
+            <VideoPlayer roomId={watching.id} platform={watching.platform} />
           </Suspense>
         ) : null}
       </Modal>

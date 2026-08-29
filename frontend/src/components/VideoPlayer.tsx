@@ -13,9 +13,11 @@ const EVENTS = mpegts.Events as unknown as Record<
 export interface VideoPlayerProps {
   roomId: string;
   muted?: boolean;
+  /** 平台：douyin 无 Cookie 受限时加载超时给明确提示 */
+  platform?: 'bilibili' | 'douyin';
 }
 
-export default function VideoPlayer({ roomId, muted = true }: VideoPlayerProps) {
+export default function VideoPlayer({ roomId, muted = true, platform }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<'loading' | 'playing' | 'ended' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -30,6 +32,7 @@ export default function VideoPlayer({ roomId, muted = true }: VideoPlayerProps) 
     let retry = 0;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
 
     const create = () => {
       if (disposed || !videoRef.current) return;
@@ -57,15 +60,23 @@ export default function VideoPlayer({ roomId, muted = true }: VideoPlayerProps) 
       });
       instance.load();
       void instance.play()?.catch?.(() => undefined);
+      // douyin 无 Cookie 受限时预览可能无帧：加载超时给明确提示而非一直转圈。
+      stallTimer = setTimeout(() => {
+        if (!disposed && platform === 'douyin') {
+          setState((s) => (s === 'loading' ? 'error' : s));
+          if (platform === 'douyin') setErrorMsg('请先在设置页配置抖音 Cookie 后观看（无 Cookie 时抖音预览受限）');
+        }
+      }, 10_000);
     };
 
     create();
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
+      if (stallTimer) clearTimeout(stallTimer);
       player?.destroy();
     };
-  }, [roomId]);
+  }, [roomId, platform]);
 
   return (
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
