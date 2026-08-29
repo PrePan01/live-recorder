@@ -113,12 +113,12 @@ function RoomCard({
         >
           检测
         </Button>
-        {recording ? (
-          <Button size="middle" type="primary" icon={<EyeOutlined />} onClick={() => onWatch(room)}>
+        {onAir || recording ? (
+          <Button size="middle" type={recording ? 'primary' : 'default'} icon={<EyeOutlined />} onClick={() => onWatch(room)}>
             观看
           </Button>
         ) : (
-          <Tooltip title="仅录制中可观看">
+          <Tooltip title="未开播，暂时无法观看">
             <Button size="middle" icon={<EyeOutlined />} disabled>
               观看
             </Button>
@@ -250,7 +250,7 @@ export default function Monitor() {
             <Button size="small" type="link" icon={<ReloadOutlined />} loading={acting && actingAction === 'check'} disabled={acting || room.monitorState === 'checking' || recording} onClick={() => void checkRoomNow(room.id).catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '检测失败'))}>
               检测
             </Button>
-            <Button size="small" type="link" icon={<EyeOutlined />} disabled={!recording} onClick={() => handleWatch(room)}>
+            <Button size="small" type="link" icon={<EyeOutlined />} disabled={!onAir && !recording} onClick={() => handleWatch(room)}>
               观看
             </Button>
             {recording ? (
