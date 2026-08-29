@@ -112,8 +112,8 @@ describe('v1.4 config export/import', () => {
       method: 'POST', url: '/api/v1/config/import', headers: HOST,
       payload: { config: { settings: { recordingDirectory: '/tmp/vids', maxConcurrentRecordings: 99 } } },
     });
-    expect(res.statusCode).toBe(500);
-    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('CONFIG_INVALID');
     await app.close();
   });
 

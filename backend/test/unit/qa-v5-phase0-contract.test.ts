@@ -139,10 +139,10 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
     const { app } = buildApp(services);
     const inj = host(app);
     const badBool = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: 'yes' } });
-    expect(badBool.statusCode).toBe(500);
-    expect(badBool.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(badBool.statusCode).toBe(422);
+    expect(badBool.json().error.code).toBe('CONFIG_INVALID');
     const badDedupe = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 0 } });
-    expect(badDedupe.statusCode).toBe(500);
+    expect(badDedupe.statusCode).toBe(422);
     const ok = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { recordingEnded: true, uploadFailed: false, dedupeWindowMinutes: 45 } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().notifications.recordingEnded).toBe(true);
