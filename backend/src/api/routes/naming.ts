@@ -44,7 +44,7 @@ export function registerNamingRoutes(app: FastifyInstance, services: Services): 
   app.put('/api/v1/settings/naming-rule', async (req, reply) => {
     const body = (req.body ?? {}) as { namingRule?: unknown };
     if (typeof body.namingRule !== 'string' || body.namingRule.length === 0 || body.namingRule.length > MAX_TEMPLATE_LEN) {
-      throw new AppError('CONFIG_LOAD_FAILED', `namingRule 需为 1-${MAX_TEMPLATE_LEN} 字符`);
+      throw new AppError('CONFIG_INVALID', `namingRule 需为 1-${MAX_TEMPLATE_LEN} 字符`);
     }
     const settings = services.settings.load() ?? ({ recordingDirectory: '' } as Record<string, unknown>);
     const next = { ...settings, namingRule: body.namingRule };
@@ -58,7 +58,7 @@ export function registerNamingRoutes(app: FastifyInstance, services: Services): 
   app.post('/api/v1/settings/naming-rule/preview', async (req, reply) => {
     const body = (req.body ?? {}) as { namingRule?: unknown; room?: unknown; platform?: unknown };
     const template = typeof body.namingRule === 'string' && body.namingRule.length > 0 ? body.namingRule : DEFAULT_NAMING_RULE;
-    if (template.length > MAX_TEMPLATE_LEN) throw new AppError('CONFIG_LOAD_FAILED', `namingRule 过长`);
+    if (template.length > MAX_TEMPLATE_LEN) throw new AppError('CONFIG_INVALID', `namingRule 过长`);
     const ctx: NamingContext = {
       room: typeof body.room === 'string' && body.room ? body.room : '主播名',
       platform: body.platform === 'douyin' ? 'douyin' : 'bilibili',

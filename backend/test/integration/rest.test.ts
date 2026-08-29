@@ -29,7 +29,7 @@ describe('REST contract v1.1 (fake stack)', () => {
     const { app } = buildApp(newServices());
     const res = await app.inject({ method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120', 'content-type': 'application/json' }, payload: '' });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(res.json().error.code).toBe('CONFIG_INVALID');
     expect(res.json().error.retryable).toBe(false);
     await app.close();
   });

@@ -130,7 +130,7 @@ describe('V5 Batch2 naming rule (#115)', () => {
     expect(set.json().namingRule).toBe('{platform}_{date}_{room}');
 
     const bad = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '' } });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(422);
 
     const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{time}' } });
     expect(preview.statusCode).toBe(200);

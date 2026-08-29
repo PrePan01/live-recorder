@@ -14,13 +14,13 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     const current = await openListView(services);
     const { token, ...rest } = body;
     if (typeof rest.enabled !== 'undefined' && typeof rest.enabled !== 'boolean') {
-      throw new AppError('CONFIG_LOAD_FAILED', 'enabled 必须为布尔值');
+      throw new AppError('CONFIG_INVALID', 'enabled 必须为布尔值');
     }
     if (typeof rest.serverUrl !== 'undefined' && typeof rest.serverUrl !== 'string') {
-      throw new AppError('CONFIG_LOAD_FAILED', 'serverUrl 必须为字符串');
+      throw new AppError('CONFIG_INVALID', 'serverUrl 必须为字符串');
     }
     if (typeof rest.username !== 'undefined' && typeof rest.username !== 'string') {
-      throw new AppError('CONFIG_LOAD_FAILED', 'username 必须为字符串');
+      throw new AppError('CONFIG_INVALID', 'username 必须为字符串');
     }
     const merged: OpenListConfig = { ...current, ...rest, hasToken: current.hasToken };
     const settings = services.settings.load() ?? ({ recordingDirectory: '' } as Record<string, unknown>);

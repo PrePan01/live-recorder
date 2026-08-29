@@ -66,9 +66,9 @@ it('honors timezone when computing nextRunAt (#135)', () => {
 
     // 校验非法输入
     const badDays = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [9], startTime: '20:00' } });
-    expect(badDays.statusCode).toBe(500);
+    expect(badDays.statusCode).toBe(422);
     const badTime = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '25:99' } });
-    expect(badTime.statusCode).toBe(500);
+    expect(badTime.statusCode).toBe(422);
 
     const del = await inj({ method: 'DELETE', url: `/api/v1/rooms/${room.id}/schedules/${schedule.id}` });
     expect(del.statusCode).toBe(204);

@@ -128,7 +128,7 @@ describe('V5 Phase 0 contract: stats aggregation', () => {
 
     // 非法时间范围 → 错误信封
     const bad = await inj({ method: 'GET', url: '/api/v1/stats/recordings?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z' });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(422);
     await app.close();
   });
 });

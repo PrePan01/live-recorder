@@ -20,12 +20,12 @@ export function registerDiagnosticRoutes(app: FastifyInstance, services: Service
     const qs = req.query as Record<string, string | undefined>;
     const status = qs.status as DiagnosticStatus | undefined;
     if (status !== undefined && !STATUSES.includes(status)) {
-      throw new AppError('CONFIG_LOAD_FAILED', 'status 仅支持 open/processing/resolved/expired');
+      throw new AppError('CONFIG_INVALID', 'status 仅支持 open/processing/resolved/expired');
     }
     const page = Number(qs.page ?? '1');
     const pageSize = Number(qs.pageSize ?? '20');
     if (!Number.isFinite(page) || page < 1 || !Number.isFinite(pageSize) || pageSize < 1) {
-      throw new AppError('CONFIG_LOAD_FAILED', '分页参数非法');
+      throw new AppError('CONFIG_INVALID', '分页参数非法');
     }
     // 每次查询前把超龄 open/processing 项标记 expired（30 天归档口径）。
     const olderThan = new Date(services.clock.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
