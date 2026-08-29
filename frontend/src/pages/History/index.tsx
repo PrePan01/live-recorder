@@ -261,11 +261,11 @@ export default function History() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           录制历史
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Select
             allowClear
             placeholder="按房间筛选"

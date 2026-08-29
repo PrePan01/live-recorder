@@ -333,11 +333,11 @@ export default function Rooms() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
             批量添加
           </Button>
@@ -421,6 +421,7 @@ export default function Rooms() {
         columns={columns}
         dataSource={paginated}
         loading={loading}
+        scroll={{ x: 1200 }}
         onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         pagination={{

@@ -304,3 +304,27 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ===== 响应式适配（窗口缩放） ===== */
+.lr-statusbar {
+  flex-wrap: nowrap;
+}
+
+.lr-statusbar > .lr-statusbar__disk {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* 窄窗：隐藏磁盘详情，避免溢出 */
+@media (max-width: 1100px) {
+  .lr-statusbar__disk {
+    display: none !important;
+  }
+}
+
+/* 很窄窗口：隐藏版本 Tag，服务文本截断 */
+@media (max-width: 720px) {
+  .lr-statusbar > .ant-space:first-child .ant-tag {
+    display: none;
+  }
+}

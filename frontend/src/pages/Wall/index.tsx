@@ -49,12 +49,9 @@ export default function Wall() {
     setWallRooms((prev) => prev.filter((r) => r.id !== room.id));
   };
 
-  const gridCols = grid === '2x2' ? 2 : 3;
-  const cellSize = grid === '2x2' ? '1fr' : '1fr';
-
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           多路直播墙
         </Typography.Title>
@@ -68,7 +65,7 @@ export default function Wall() {
       {wallRooms.length === 0 ? (
         <Empty description="从右侧「添加房间」选择直播，默认静音，最多 4 路" style={{ marginTop: 60 }} />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${gridCols}, ${cellSize})`, gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(min(${grid === '2x2' ? 320 : 260}px, 100%), 1fr))`, gap: 12 }}>
           {wallRooms.map((room) => (
             <Card
               key={room.id}

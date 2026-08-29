@@ -4,7 +4,7 @@ import {
   HistoryOutlined,
   SettingOutlined,
   VideoCameraOutlined,
-ToolOutlined,
+  ToolOutlined,
   BarChartOutlined,
   AppstoreOutlined,
 } from '@ant-design/icons';
@@ -19,7 +19,7 @@ const ITEMS = [
   { key: '/rooms', icon: <VideoCameraOutlined />, label: <NavLink to="/rooms">直播间</NavLink> },
   { key: '/history', icon: <HistoryOutlined />, label: <NavLink to="/history">录制历史</NavLink> },
   { key: '/recovery', icon: <ToolOutlined />, label: <NavLink to="/recovery">自愈工作台</NavLink> },
-{ key: '/stats', icon: <BarChartOutlined />, label: <NavLink to="/stats">统计看板</NavLink> },
+  { key: '/stats', icon: <BarChartOutlined />, label: <NavLink to="/stats">统计看板</NavLink> },
   { key: '/wall', icon: <AppstoreOutlined />, label: <NavLink to="/wall">直播墙</NavLink> },
   { key: '/settings', icon: <SettingOutlined />, label: <NavLink to="/settings">设置</NavLink> },
 ];
@@ -33,8 +33,14 @@ export default function AppLayout() {
         <StatusBar />
       </Header>
       <Layout>
-        <Sider theme={mode === 'dark' ? 'dark' : 'light'} width={180} style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}>
-          <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px' }}>直播录制台</div>
+        <Sider
+          theme={mode === 'dark' ? 'dark' : 'light'}
+          width={180}
+          breakpoint="lg"
+          collapsedWidth={0}
+          style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px', whiteSpace: 'nowrap' }}>直播录制台</div>
           <Menu
             mode="inline"
             selectedKeys={[ITEMS.find((i) => pathname.startsWith(i.key))?.key ?? '']}
@@ -42,7 +48,13 @@ export default function AppLayout() {
             style={{ paddingTop: 4 }}
           />
         </Sider>
-        <Content style={{ padding: 24, overflow: 'auto' }}>
+        <Content
+          style={{
+            padding: 'clamp(12px, 2vw, 24px)',
+            overflow: 'auto',
+            minWidth: 0,
+          }}
+        >
           <Outlet />
         </Content>
       </Layout>

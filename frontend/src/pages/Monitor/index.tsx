@@ -247,7 +247,7 @@ export default function Monitor() {
       ) : (
         <Row className={view === '列表' ? 'lr-monitor-list' : undefined} gutter={[16, 16]}>
           {monitorRooms.map((room) => (
-            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === '列表' ? { span: 24 } : {})} style={{ minWidth: 320 }}>
+            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6} {...(view === '列表' ? { span: 24 } : {})}>
               <RoomCard
                 room={room}
                 acting={actingRoomId === room.id}

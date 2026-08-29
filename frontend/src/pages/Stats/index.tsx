@@ -56,7 +56,7 @@ export default function Stats() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           统计看板
         </Typography.Title>
@@ -150,7 +150,7 @@ export default function Stats() {
                 <Space direction="vertical" style={{ width: '100%' }} size={12}>
                   {stats.byPlatform.map((p) => (
                     <div key={p.platform}>
-                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
                         <Typography.Text>{PLATFORM_LABEL[p.platform] ?? p.platform}</Typography.Text>
                         <Typography.Text type="secondary">
                           {p.recordings} 场 · {formatBytes(p.bytes)}

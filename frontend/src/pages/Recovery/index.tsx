@@ -147,7 +147,7 @@ export default function Recovery() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Space size={16}>
           <Typography.Title level={4} style={{ margin: 0 }}>
             自愈工作台
@@ -209,6 +209,7 @@ export default function Recovery() {
         columns={columns}
         dataSource={items}
         loading={loading}
+        scroll={{ x: 800 }}
         locale={{ emptyText: '暂无诊断项' }}
         pagination={{
           current: page,
