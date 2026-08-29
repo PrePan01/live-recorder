@@ -8,8 +8,11 @@ import Rooms from './pages/Rooms';
 import Monitor from './pages/Monitor';
 import History from './pages/History';
 import SettingsPage from './pages/Settings';
+import Startup from './pages/Startup';
+import StartupDiagnostics from './pages/StartupDiagnostics';
 import { useSSE } from './hooks/useSSE';
 import { useServiceStore } from './stores/serviceStore';
+import { useBootStore, subscribeBridgeEvents } from './stores/bootStore';
 import RecordingCompleteNotice from './components/RecordingCompleteNotice';
 
 function SetupGuard({ children }: { children: JSX.Element }) {
@@ -27,35 +30,62 @@ function SetupGuard({ children }: { children: JSX.Element }) {
   return children;
 }
 
+function BootGate({ children }: { children: JSX.Element }) {
+  const state = useBootStore((s) => s.state);
+  const { pathname } = useLocation();
+
+  if (pathname === '/startup-diagnostics') return children;
+
+  if (state !== 'ready') {
+    // Booting/degraded/existing-instance all funnel through the startup page.
+    if (pathname === '/startup') return children;
+    return <Navigate to="/startup" replace />;
+  }
+  return children;
+}
+
 export default function App() {
   useSSE();
+  const bootState = useBootStore((s) => s.state);
+  const boot = useBootStore((s) => s.boot);
+
+  useEffect(() => {
+    const unsub = subscribeBridgeEvents();
+    if (bootState === 'booting') void boot();
+    return unsub;
+  }, [bootState, boot]);
+
   return (
     <>
       <RecordingCompleteNotice />
-      <Routes>
-      <Route
-        path="/setup"
-        element={
-          <SetupGuard>
-            <Setup />
-          </SetupGuard>
-        }
-      />
-      <Route
-        element={
-          <SetupGuard>
-            <AppLayout />
-          </SetupGuard>
-        }
-      >
-        <Route path="/rooms" element={<Rooms />} />
-        <Route path="/monitor" element={<Monitor />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Route>
-      <Route path="/" element={<Navigate to="/monitor" replace />} />
-      <Route path="*" element={<Navigate to="/monitor" replace />} />
-      </Routes>
+      <BootGate>
+        <Routes>
+          <Route path="/startup" element={<Startup />} />
+          <Route path="/startup-diagnostics" element={<StartupDiagnostics />} />
+          <Route
+            path="/setup"
+            element={
+              <SetupGuard>
+                <Setup />
+              </SetupGuard>
+            }
+          />
+          <Route
+            element={
+              <SetupGuard>
+                <AppLayout />
+              </SetupGuard>
+            }
+          >
+            <Route path="/rooms" element={<Rooms />} />
+            <Route path="/monitor" element={<Monitor />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
+          <Route path="/" element={<Navigate to="/monitor" replace />} />
+          <Route path="*" element={<Navigate to="/monitor" replace />} />
+        </Routes>
+      </BootGate>
     </>
   );
 }
