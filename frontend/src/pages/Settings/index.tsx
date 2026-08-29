@@ -7,7 +7,7 @@ import { useServiceStore } from '../../stores/serviceStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useAppTheme } from '../../theme';
 import type { ThemePreference } from '../../types/settings';
-import { validateDirectory, testSmtp } from '../../api/settings';
+import { validateDirectory } from '../../api/settings';
 import { testNotification } from '../../api/notification';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
@@ -337,62 +337,6 @@ export default function SettingsPage() {
                   }}
                 >
                   清除已存 Cookie
-                </Button>
-              </Col>
-            </Row>
-            <Typography.Title level={5}>SMTP 邮件告警</Typography.Title>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item label="服务器" name={['mail', 'host']}>
-                  <Input placeholder="smtp.example.com" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="端口" name={['mail', 'port']}>
-                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="TLS" name={['mail', 'secure']} valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="用户名" name={['mail', 'username']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="发件地址" name={['mail', 'from']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="收件地址（逗号分隔）" name={['mail', 'recipients']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  label="密码"
-                  name={['mail', 'password']}
-                  extra={settings?.mail.passwordSet ? '已保存，留空则不修改' : undefined}
-                >
-                  <Input.Password
-                    placeholder={settings?.mail.passwordSet ? '••••••' : '输入 SMTP 密码'}
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
-                <Button
-                  onClick={() =>
-                    testSmtp()
-                      .then(() => message.success('测试邮件已发送'))
-                      .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '发送失败'))
-                  }
-                >
-                  测试发送
                 </Button>
               </Col>
             </Row>
