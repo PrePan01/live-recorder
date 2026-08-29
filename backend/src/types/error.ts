@@ -24,7 +24,8 @@ export type ErrorCode =
   | 'SEARCH_TIMEOUT'
   | 'DIAGNOSTIC_ACTION_INVALID'
   | 'DIAGNOSTIC_CONFLICT'
-  | 'PIPELINE_CONFIG_INVALID';
+  | 'PIPELINE_CONFIG_INVALID'
+  | 'CHECK_FAILED';
 
 export interface ErrorObject {
   code: ErrorCode;
@@ -111,6 +112,7 @@ export function httpStatusFor(code: ErrorCode): number {
       return 502;
     case 'SEARCH_TIMEOUT':
       return 504;
+    case 'CHECK_FAILED':
     case 'SERVICE_UNAVAILABLE':
       return 503;
     case 'CONFIG_LOAD_FAILED':

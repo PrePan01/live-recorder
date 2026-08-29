@@ -350,6 +350,36 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // QA 生产阻断级修复：历史 DB 曾因迁移脚本改版（v9 在部分库已记录版本号后才补 title_* 等列）
+    // 导致版本号已记录但列缺失，runMigrations 跳过 → 检测/新建房间引用缺失列报
+    // 「no such column」并卡死房间状态。v16 全表审计：对比各表期望列与 pragma_table_info 实际列，
+    // 幂等补所有 ALTER 新增过的列（PRAGMA 判存在，任意历史 DB 都可自愈）。
+    version: 16,
+    up: (db) => {
+      const ensureColumn = (table: string, column: string, ddl: string): void => {
+        const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('${table}') WHERE name = '${column}'`).get();
+        if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+      };
+      // rooms（v2/v3 favorited、v6 auto_record、v7 last_live_status、v9 upload_enabled + title_*）
+      ensureColumn('rooms', 'favorited', 'favorited INTEGER NOT NULL DEFAULT 0');
+      ensureColumn('rooms', 'auto_record', 'auto_record INTEGER');
+      ensureColumn('rooms', 'last_live_status', 'last_live_status TEXT');
+      ensureColumn('rooms', 'upload_enabled', 'upload_enabled INTEGER');
+      ensureColumn('rooms', 'title_source', 'title_source TEXT');
+      ensureColumn('rooms', 'title_updated_at', 'title_updated_at TEXT');
+      ensureColumn('rooms', 'title_fallback_used', 'title_fallback_used INTEGER NOT NULL DEFAULT 0');
+      // recordings（v4 integrity、v8 room_name、v10 pipeline_status/metadata/cover_path）
+      ensureColumn('recordings', 'integrity', 'integrity TEXT');
+      ensureColumn('recordings', 'room_name', 'room_name TEXT NOT NULL DEFAULT \'\'');
+      ensureColumn('recordings', 'pipeline_status', 'pipeline_status TEXT');
+      ensureColumn('recordings', 'metadata', 'metadata TEXT');
+      ensureColumn('recordings', 'cover_path', 'cover_path TEXT');
+      // alerts（v5 room_id/error_code）
+      ensureColumn('alerts', 'room_id', 'room_id TEXT');
+      ensureColumn('alerts', 'error_code', 'error_code TEXT');
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

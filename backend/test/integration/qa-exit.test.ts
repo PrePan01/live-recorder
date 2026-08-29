@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
@@ -342,5 +343,23 @@ describe('QA v1.4: browse-directories traversal + config import semantics', () =
     expect(res.json().skippedRooms).toBe(1);
     expect(services.settings.load()?.recordingDirectory).toBe(dir);
     await app.close();
+  });
+});
+
+describe('QA stage-B exit: graceful shutdown with open SSE connections', () => {
+  it('app.close resolves promptly even with an SSE client connected (forceCloseConnections, 反复启动根因)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as { port: number }).port;
+
+    // 真实网络 SSE 连接（桌面端常态）：close() 若不销毁长连接会永久挂起 → 锁不释放 → 下次启动「another instance running」。
+    const req = http.get(`http://127.0.0.1:${port}/api/v1/events`, { headers: { Host: '127.0.0.1:43120' } }, () => undefined);
+    await new Promise((r) => setTimeout(r, 150));
+
+    const started = Date.now();
+    await app.close();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    req.destroy();
   });
 });

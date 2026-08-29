@@ -313,6 +313,31 @@ describe('Scheduler', () => {
     expect(services.alerts.list().some((a) => a.message.includes('RECORDING_START_FAILED'))).toBe(true);
   });
 
+  it('does not leave a room stuck in checking when checkLiveStatus throws (DB 缺列/平台异常容错)', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/405783317287', displayName: '' });
+    const throwing: PlatformAdapter = {
+      platform: 'douyin',
+      async checkLiveStatus() {
+        throw new Error('no such column: title_source');
+      },
+      async getStreamUrl() {
+        return { url: 'https://x/flv', format: 'flv', actualQuality: 'original' };
+      },
+      normalizeUrl: (u) => u,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => throwing;
+
+    await expect(services.scheduler.triggerImmediateCheck(room.id)).resolves.toBeUndefined();
+    const after = services.rooms.get(room.id)!;
+    // 不卡在 checking：落到 failed + lastError + 告警，下一轮检测可恢复。
+    expect(after.monitorState).toBe('failed');
+    expect(after.lastError?.code).toBe('CHECK_FAILED');
+    expect(after.lastError?.message).toContain('no such column');
+    expect(services.alerts.list().some((a) => a.message.includes('CHECK_FAILED'))).toBe(true);
+  });
+
   it('passes the configured douyin cookie to the adapter on check', async () => {
     const { services } = newServices();
     await services.secretStore.set('douyin.cookie', 'sessionid=abc');

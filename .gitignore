@@ -3,3 +3,6 @@ node_modules/
 dist/
 *.local
 .env
+# dev 测试录制产物（recordingDirectory 指向 backend/ 时残留，勿入库）
+backend/bilibili/
+backend/douyin/

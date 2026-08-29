@@ -1,4 +1,5 @@
 import type { Platform, Room } from '../types/index.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
@@ -87,6 +88,22 @@ export class Scheduler {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
     this.emitRoom(room.id);
+    try {
+      await this.runCheckRoomInner(room, adapter, opts);
+    } catch (err) {
+      // 容错：任何意外异常（平台接口变动、DB 缺列等）都不能让房间卡死在 checking——
+      // 一律落到 failed + lastError 并补告警，等待下一轮检测恢复。
+      const appErr = err instanceof AppError
+        ? err
+        : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
+      this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
+      this.emitRoom(room.id);
+      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+      this.services.events.emit({ type: 'alert:created', data: alert });
+    }
+  }
+
+  private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，

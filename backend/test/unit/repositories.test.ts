@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(15);
+    expect(runMigrations(db)).toBe(16);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(15);
+    expect(currentSchemaVersion(db)).toBe(16);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -47,16 +47,54 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(13);
+    expect(runMigrations(db)).toBe(14);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(15);
+    expect(currentSchemaVersion(db)).toBe(16);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
     db.prepare(`INSERT INTO rooms (id, platform, url, favorited) VALUES ('r2', 'bilibili', 'https://live.bilibili.com/2', 1)`).run();
     expect((db.prepare('SELECT favorited FROM rooms WHERE id = ?').get('r2') as { favorited: number }).favorited).toBe(1);
+  });
+
+  it('v16 backfills all ALTER-added columns on a DB that skipped amended v9 (QA 抖音卡检测生产缺陷)', () => {
+    // 模拟存量库：仅应用 v1-v8，且 schema_version 伪造记录到 15——对应 v9 曾以不含 title_* 的旧定义
+    // 落库后版本号已记录、后续迁移被跳过，rooms 表缺 title_*/upload_enabled 列的场景。
+    const db = openDatabase(':memory:');
+    db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    for (const m of MIGRATIONS.filter((m) => m.version <= 8)) {
+      if (m.up) m.up(db);
+      else if (m.sql) db.exec(m.sql);
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version);
+    }
+    for (let v = 9; v <= 15; v += 1) db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(v);
+
+    const roomsCols = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
+    expect(roomsCols).not.toContain('title_source');
+    expect(roomsCols).not.toContain('title_updated_at');
+    expect(roomsCols).not.toContain('title_fallback_used');
+    expect(roomsCols).not.toContain('upload_enabled');
+
+    // 仅 v16 未应用：补齐缺失列并可用 repo 正常读写（此前 setTitleInfo 会 no such column）
+    expect(runMigrations(db)).toBe(1);
+    const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
+    expect(after).toContain('title_source');
+    expect(after).toContain('title_updated_at');
+    expect(after).toContain('title_fallback_used');
+    expect(after).toContain('upload_enabled');
+
+    const repo = new RoomRepository(db);
+    const room = repo.create({ platform: 'douyin', url: 'https://live.douyin.com/405783317287', displayName: '' });
+    repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
+    expect(repo.get(room.id)!.titleSource).toBe('adapter');
+
+    expect(currentSchemaVersion(db)).toBe(16);
+    expect(runMigrations(db)).toBe(0);
   });
 });
 
