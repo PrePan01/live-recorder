@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
@@ -14,9 +14,19 @@ import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
+import { createExport, cancelExport, fetchExports } from '../../api/export';
+import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
+const EXPORT_STATUS_COLOR: Record<string, string> = {
+  queued: 'default',
+  running: 'processing',
+  ok: 'green',
+  partial: 'orange',
+  failed: 'red',
+  cancelled: 'default',
+};
 
 export default function History() {
   const { message } = App.useApp();
@@ -32,6 +42,11 @@ export default function History() {
   const [renameBusy, setRenameBusy] = useState(false);
   const [playing, setPlaying] = useState<Recording | null>(null);
   const [pipelineRec, setPipelineRec] = useState<Recording | null>(null);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportDir, setExportDir] = useState('');
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportDrawer, setExportDrawer] = useState(false);
+  const [exportJobs, setExportJobs] = useState<ExportJob[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -75,6 +90,37 @@ export default function History() {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量删除失败');
     } finally {
       setBatchBusy(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (selectedKeys.length === 0) {
+      message.warning('请先选择要导出的录制');
+      return;
+    }
+    if (!exportDir.trim()) {
+      message.warning('请输入导出目录');
+      return;
+    }
+    setExportBusy(true);
+    try {
+      await createExport(selectedKeys.map(String), exportDir.trim());
+      message.success('导出任务已创建');
+      setExportModalOpen(false);
+      setExportDrawer(true);
+      void refreshExports();
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '导出失败');
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const refreshExports = async () => {
+    try {
+      setExportJobs(await fetchExports());
+    } catch {
+      /* 忽略 */
     }
   };
 
@@ -235,6 +281,9 @@ export default function History() {
           <Button size="small" loading={exporting} onClick={() => void handleExportCsv()}>
             导出 CSV
           </Button>
+          <Button size="small" icon={<ExportOutlined />} onClick={() => setExportModalOpen(true)}>
+            备份导出{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
+          </Button>
           <Popconfirm
             title={`确定删除所选 ${selectedKeys.length} 条录制？将连带删除文件且不可恢复。`}
             onConfirm={() => void handleBatchDelete()}
@@ -334,6 +383,70 @@ export default function History() {
           <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} placeholder="新标题" />
         </Space>
       </Modal>
+    <Modal
+        title={`备份导出（${selectedKeys.length} 条）`}
+        open={exportModalOpen}
+        onCancel={() => setExportModalOpen(false)}
+        onOk={() => void handleExport()}
+        confirmLoading={exportBusy}
+        okText="开始导出"
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Typography.Text type="secondary">
+            打包为目录（源文件+封面+manifest.json，不含密钥）；缺失附件标部分成功，不损坏源文件。
+          </Typography.Text>
+          <Input
+            placeholder="导出目录（如 /Users/name/Exports）"
+            value={exportDir}
+            onChange={(e) => setExportDir(e.target.value)}
+          />
+        </Space>
+      </Modal>
+      <Drawer
+        title="导出任务"
+        open={exportDrawer}
+        width={460}
+        onClose={() => setExportDrawer(false)}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Button size="small" onClick={() => void refreshExports()}>
+            刷新
+          </Button>
+          {exportJobs.length === 0 ? (
+            <Typography.Text type="secondary">暂无导出任务</Typography.Text>
+          ) : (
+            exportJobs.slice(0, 10).map((j) => (
+              <div key={j.id}>
+                <Space size={8} wrap>
+                  <Tag color={EXPORT_STATUS_COLOR[j.status]}>{j.status}</Tag>
+                  {j.status === 'running' ? <Progress percent={j.progress} size="small" style={{ width: 120 }} /> : null}
+                  {j.outputPath ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }} ellipsis>
+                      {j.outputPath}
+                    </Typography.Text>
+                  ) : null}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {formatTime(j.updatedAt)}
+                  </Typography.Text>
+                  {(j.status === 'queued' || j.status === 'running') ? (
+                    <Popconfirm title="取消导出？已生成内容保留" onConfirm={() => void cancelExport(j.id).then(() => void refreshExports()).catch((e) => message.error(describeError(e.code, e.message)))}>
+                      <Button size="small" danger>
+                        取消
+                      </Button>
+                    </Popconfirm>
+                  ) : null}
+                </Space>
+                {j.error ? (
+                  <Typography.Text type="danger" style={{ display: 'block', fontSize: 12 }}>
+                    {j.error}
+                  </Typography.Text>
+                ) : null}
+              </div>
+            ))
+          )}
+        </Space>
+      </Drawer>
     </div>
   );
 }

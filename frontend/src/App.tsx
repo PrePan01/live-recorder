@@ -10,6 +10,7 @@ import History from './pages/History';
 import SettingsPage from './pages/Settings';
 import Recovery from './pages/Recovery';
 import Stats from './pages/Stats';
+import Wall from './pages/Wall';
 import Startup from './pages/Startup';
 import StartupDiagnostics from './pages/StartupDiagnostics';
 import { useSSE } from './hooks/useSSE';
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="/history" element={<History />} />
             <Route path="/recovery" element={<Recovery />} />
             <Route path="/stats" element={<Stats />} />
+<Route path="/wall" element={<Wall />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="/" element={<Navigate to="/monitor" replace />} />
