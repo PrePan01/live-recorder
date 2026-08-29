@@ -16,10 +16,11 @@ export function useResizableColumns<T>(columns: ColumnsType<T>) {
   const resizedColumns = useMemo(
     () =>
       columns.map((col) => {
-        const colType = col as { key?: React.Key; dataIndex?: unknown; width?: number; title?: React.ReactNode };
+        const colType = col as { key?: React.Key; dataIndex?: unknown; width?: number; title?: React.ReactNode; fixed?: unknown };
         const key = String(colType.key ?? (typeof colType.dataIndex === 'string' ? colType.dataIndex : '') ?? '');
         const base = Number(colType.width) || undefined;
-        if (base === undefined) return col;
+        const canResize = base !== undefined && colType.fixed === undefined;
+        if (!canResize) return col;
         const current = widthsRef.current[key] ?? base;
         return {
           ...col,

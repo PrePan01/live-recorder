@@ -151,6 +151,7 @@ export default function History() {
       {
         title: '标题',
         dataIndex: 'streamTitle',
+        width: 240,
         ellipsis: true,
         render: (t: string, r) => (
           <Space size={4}>

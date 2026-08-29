@@ -245,7 +245,7 @@ export default function Rooms() {
         />
       ),
     },
-    { title: '显示名', dataIndex: 'displayName', ellipsis: true, render: (v: string, r) => (
+    { title: '显示名', dataIndex: 'displayName', width: 160, ellipsis: true, render: (v: string, r) => (
         <Space size={4}>
           <span>{v}</span>
           {r.titleFallbackUsed ? (
@@ -277,6 +277,7 @@ export default function Rooms() {
     {
       title: '链接',
       dataIndex: 'url',
+      width: 220,
       ellipsis: true,
       render: (u: string) => (
         <Typography.Link copyable={{ text: u }} href={u} target="_blank">
