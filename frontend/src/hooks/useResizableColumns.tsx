@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ColumnsType } from 'antd/es/table';
 import ResizableTitle from '../components/ResizableTitle';
 
@@ -6,12 +6,10 @@ import ResizableTitle from '../components/ResizableTitle';
  * 让表格列宽可手动拖拽调整。
  * 用法：const { columns: resizedColumns, components } = useResizableColumns(columns);
  * 把 resizedColumns 传给 Table columns，components 传给 Table components。
- * 注意：原列需含 width 才会渲染可拖拽手柄。
+ * 注意：所有列均渲染可拖拽手柄。
  */
 export function useResizableColumns<T>(columns: ColumnsType<T>) {
   const [widths, setWidths] = useState<Record<string, number>>({});
-  const widthsRef = useRef(widths);
-  widthsRef.current = widths;
 
   const resizedColumns = useMemo(
     () =>
@@ -20,7 +18,7 @@ export function useResizableColumns<T>(columns: ColumnsType<T>) {
         const key = String(colType.key ?? (typeof colType.dataIndex === 'string' ? colType.dataIndex : '') ?? '');
         // 所有列均支持拖拽：无显式 width 的列给默认 140（操作列等固定列也允许调整）。
         const base = Number(colType.width) || 140;
-        const current = widthsRef.current[key] ?? base;
+        const current = widths[key] ?? base;
         return {
           ...col,
           width: current,
@@ -31,7 +29,7 @@ export function useResizableColumns<T>(columns: ColumnsType<T>) {
           }),
         };
       }),
-    [columns],
+    [columns, widths],
   );
 
   const components = useMemo(

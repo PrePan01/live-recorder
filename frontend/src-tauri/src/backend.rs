@@ -88,7 +88,10 @@ impl BackendManager {
             .stderr(Stdio::null())
             .env("LR_EXTRA_ORIGINS", tauri_origin_list())
             .env("LIVE_RECORDER_STATE_DIR", &state_dir)
-            .env("LIVE_RECORDER_READY_FILE", &ready_file);
+            .env("LIVE_RECORDER_READY_FILE", &ready_file)
+            // 桌面端是生产环境：后端必须走真实适配器/录制引擎。
+            // 默认 real；仅当调用方显式设置 RECORDING_ADAPTER 时才尊重其值（例如手动 fake 调试）。
+            .env("RECORDING_ADAPTER", std::env::var("RECORDING_ADAPTER").unwrap_or_else(|_| "real".to_string()));
         let child = command
             .spawn()
             .map_err(|e| format!("启动后端失败: {e}"))?;
