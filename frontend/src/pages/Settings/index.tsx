@@ -15,6 +15,7 @@ import DirectoryPicker from '../../components/DirectoryPicker';
 import PipelineConfigCard from '../../components/PipelineConfigCard';
 import NamingRuleCard from '../../components/NamingRuleCard';
 import OpenListConfigCard from '../../components/OpenListConfigCard';
+import EmailConfigCard from '../../components/EmailConfigCard';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
@@ -427,6 +428,9 @@ export default function SettingsPage() {
         </Card>
         <Card title="OpenList 自动上传" style={{ marginTop: 16 }}>
           <OpenListConfigCard />
+        </Card>
+        <Card title="邮件通知（服务商预设）" style={{ marginTop: 16 }}>
+          <EmailConfigCard />
         </Card>
       </Col>
       <Col xs={24} lg={10}>
