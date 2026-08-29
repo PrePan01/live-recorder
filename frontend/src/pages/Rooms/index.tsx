@@ -24,7 +24,7 @@ const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', dou
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord, updateRoomTags } = useRoomStore();
+  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord, updateRoomTags, checkRoomNow } = useRoomStore();
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -172,8 +172,10 @@ export default function Rooms() {
         }
         message.success('房间已更新');
       } else {
-        await addRoom({ ...values, platform });
-        message.success('房间已添加');
+        const room = await addRoom({ ...values, platform });
+        message.success('房间已添加，正在识别显示名…');
+        // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
+        void checkRoomNow(room.id).catch(() => undefined);
       }
       setModalOpen(false);
     } catch (e) {
