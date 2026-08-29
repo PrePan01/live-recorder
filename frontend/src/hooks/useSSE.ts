@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { API_BASE } from '../api/client';
+import { EndpointResolver } from '../api/endpoint';
 import { SSE_EVENT_NAMES } from '../types/events';
 import type { ServerEvent } from '../types/events';
 import type { Room } from '../types/room';
@@ -57,7 +57,7 @@ export function useSSE() {
     const connect = () => {
       if (disposed) return;
       es?.close();
-      es = new EventSource(`${API_BASE}/events`);
+      es = new EventSource(`${EndpointResolver.base}/events`);
       es.onopen = () => {
         attempt = 0;
         setConnected(true);

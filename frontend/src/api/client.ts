@@ -1,12 +1,12 @@
 import axios, { AxiosError } from 'axios';
 import { ApiError } from '../types/error';
 import type { ApiErrorEnvelope } from '../types/error';
+import { EndpointResolver } from './endpoint';
 
-export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:43120/api/v1';
+export const API_BASE: string = EndpointResolver.base;
 
 function httpOrigin(): string {
-  if (/^https?:\/\//i.test(API_BASE)) return new URL(API_BASE).origin;
+  if (/^https?:\/\//i.test(EndpointResolver.base)) return new URL(EndpointResolver.base).origin;
   return window.location.origin;
 }
 
@@ -17,10 +17,15 @@ export function previewWsUrl(roomId: string): string {
 }
 
 export function recordingFileUrl(recordingId: string): string {
-  return `${API_BASE}/recordings/${recordingId}/file`;
+  return `${EndpointResolver.base}/recordings/${recordingId}/file`;
 }
 
 export const http = axios.create({ baseURL: API_BASE, timeout: 10000 });
+
+http.interceptors.request.use((config) => {
+  config.baseURL = EndpointResolver.base;
+  return config;
+});
 
 http.interceptors.response.use(
   (response) => response,
@@ -49,3 +54,7 @@ http.interceptors.response.use(
     });
   },
 );
+
+export function baseUrl(): string {
+  return EndpointResolver.base;
+}
