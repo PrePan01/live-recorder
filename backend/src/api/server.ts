@@ -88,7 +88,9 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
       return reply.status(httpStatusFor(err.code)).send({ error: err.toObject() });
     }
     const validation = (err as { statusCode?: number; code?: string; message?: string });
-    if (validation.statusCode === 400 && validation.code?.startsWith('FST_ERR_VALIDATION')) {
+    // 客户端请求非法（字段校验 FST_ERR_VALIDATION*、空 JSON body FST_ERR_CTP* 等）→ 400，
+    // 归为 CONFIG_LOAD_FAILED，不落 500 内部错误（QA：空 body+JSON Content-Type 曾误报 500）。
+    if (validation.statusCode === 400 && (validation.code?.startsWith('FST_ERR_VALIDATION') || validation.code?.startsWith('FST_ERR_CTP'))) {
       return reply.status(400).send({
         error: { code: 'CONFIG_LOAD_FAILED', message: '请求字段非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
