@@ -3,6 +3,7 @@ import type { Recording } from './recording';
 import type { Alert } from './alert';
 import type { Settings } from './settings';
 import type { DiskSpace, ServiceStatus } from './service';
+import type { Diagnostic } from './diagnostic';
 
 export type ServerEvent =
   | { type: 'room:updated'; room: Room }
@@ -11,7 +12,8 @@ export type ServerEvent =
   | { type: 'alert:updated'; alert: Alert }
   | { type: 'settings:updated'; settings: Settings }
   | { type: 'service:status'; serviceStatus: ServiceStatus }
-  | { type: 'disk:space'; disk: DiskSpace };
+  | { type: 'disk:space'; disk: DiskSpace }
+  | { type: 'diagnostic:updated'; diagnostic: Diagnostic };
 
 export const SSE_EVENT_NAMES = [
   'room:updated',
@@ -21,4 +23,5 @@ export const SSE_EVENT_NAMES = [
   'settings:updated',
   'service:status',
   'disk:space',
+  'diagnostic:updated',
 ] as const satisfies ServerEvent['type'][];

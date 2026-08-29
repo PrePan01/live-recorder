@@ -4,6 +4,7 @@ import {
   HistoryOutlined,
   SettingOutlined,
   VideoCameraOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import StatusBar from './StatusBar';
@@ -15,6 +16,7 @@ const ITEMS = [
   { key: '/monitor', icon: <DashboardOutlined />, label: <NavLink to="/monitor">监控总览</NavLink> },
   { key: '/rooms', icon: <VideoCameraOutlined />, label: <NavLink to="/rooms">直播间</NavLink> },
   { key: '/history', icon: <HistoryOutlined />, label: <NavLink to="/history">录制历史</NavLink> },
+  { key: '/recovery', icon: <ToolOutlined />, label: <NavLink to="/recovery">自愈工作台</NavLink> },
   { key: '/settings', icon: <SettingOutlined />, label: <NavLink to="/settings">设置</NavLink> },
 ];
 
