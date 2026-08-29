@@ -25,6 +25,15 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('empty body with JSON Content-Type returns 400 (FST_ERR_CTP_*), not 500', async () => {
+    const { app } = buildApp(newServices());
+    const res = await app.inject({ method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120', 'content-type': 'application/json' }, payload: '' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(res.json().error.retryable).toBe(false);
+    await app.close();
+  });
+
   it('service self-check returns per-item status without leaking secrets', async () => {
     const { app } = buildApp(newServices());
     const res = await app.inject({ method: 'GET', url: '/api/v1/service/self-check', headers: { host: '127.0.0.1:43120' } });
