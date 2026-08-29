@@ -291,8 +291,10 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     // 异步校验文件完整性，不阻塞录制完成响应。
     if (rec.filePath) this.verifyIntegrity(rec);
-    // mp4_after：完成后异步转封装 MP4。
-    if (this.settings().recordingFormat === 'mp4_after' && rec.filePath) {
+    // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）。
+    this.services.pipeline.enqueue(recordingId);
+    // mp4_after：完成后异步转封装 MP4（管线启用时由 compress 步骤覆盖，跳过此处以免重复）。
+    if (this.settings().recordingFormat === 'mp4_after' && rec.filePath && !(this.services.pipeline.pipelineConfig().enabled)) {
       this.remuxToMp4(rec);
     }
   }
