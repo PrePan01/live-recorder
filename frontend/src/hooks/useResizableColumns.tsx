@@ -18,9 +18,8 @@ export function useResizableColumns<T>(columns: ColumnsType<T>) {
       columns.map((col) => {
         const colType = col as { key?: React.Key; dataIndex?: unknown; width?: number; title?: React.ReactNode; fixed?: unknown };
         const key = String(colType.key ?? (typeof colType.dataIndex === 'string' ? colType.dataIndex : '') ?? '');
-        const base = Number(colType.width) || undefined;
-        const canResize = base !== undefined && colType.fixed === undefined;
-        if (!canResize) return col;
+        // 所有列均支持拖拽：无显式 width 的列给默认 140（操作列等固定列也允许调整）。
+        const base = Number(colType.width) || 140;
         const current = widthsRef.current[key] ?? base;
         return {
           ...col,
