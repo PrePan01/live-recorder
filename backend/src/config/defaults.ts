@@ -40,5 +40,6 @@ export const DEFAULT_SETTINGS = {
     recipients: [] as string[],
   },
   dedupeWindowMinutes: 30,
+  theme: 'system' as const,
   pipeline: DEFAULT_PIPELINE_CONFIG,
 };

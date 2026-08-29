@@ -211,6 +211,14 @@ describe('V5 Phase 0 contract: pipeline config', () => {
     // settings 视图包含 pipeline
     const view = (await inj({ method: 'GET', url: '/api/v1/settings' })).json().settings;
     expect(view.pipeline.enabled).toBe(true);
+
+    // theme 偏好随 settings 读写（缺省 system）
+    expect(view.theme).toBe('system');
+    const themed = await inj({ method: 'PUT', url: '/api/v1/settings', payload: { recordingDirectory: '/tmp/vids', theme: 'dark' } });
+    expect(themed.statusCode).toBe(200);
+    expect(themed.json().settings.theme).toBe('dark');
+    const badTheme = await inj({ method: 'PUT', url: '/api/v1/settings', payload: { recordingDirectory: '/tmp/vids', theme: 'neon' } });
+    expect(badTheme.statusCode).toBe(500);
     await app.close();
   });
 

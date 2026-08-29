@@ -34,6 +34,9 @@ export interface MailConfigView extends MailConfig {
 /** 录制文件格式：source_flv=源 FLV 直写（.flv，无损最快）；mp4_after=完成后 ffmpeg 转封装 MP4。 */
 export type RecordingFormat = 'source_flv' | 'mp4_after';
 
+/** 界面主题（V5）：light=浅色、dark=深色、system=跟随系统；随 settings 读写。 */
+export type ThemePreference = 'light' | 'dark' | 'system';
+
 export interface AppSettings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
@@ -49,6 +52,8 @@ export interface AppSettings {
   mail: MailConfig;
   /** 邮件去重窗口 v1 固定 30 分钟，不暴露到 /settings。 */
   dedupeWindowMinutes: number;
+  /** V5 界面主题偏好（FE 持久化经此字段）；缺省 system。 */
+  theme: ThemePreference;
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
   pipeline?: PipelineConfig;
 }
@@ -90,6 +95,8 @@ export interface SettingsView {
   mail: MailConfigView;
   /** v1.3：抖音 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）。 */
   douyinCookie: { hasCookie: boolean };
+  /** V5 界面主题偏好。 */
+  theme: ThemePreference;
   /** V5 后处理管线配置视图（与写入契约一致）。 */
   pipeline?: PipelineConfig;
 }

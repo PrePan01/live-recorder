@@ -369,6 +369,7 @@ function defaultsLite(): AppSettings {
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },
     mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
     dedupeWindowMinutes: 30,
+    theme: 'system',
   };
 }
 
