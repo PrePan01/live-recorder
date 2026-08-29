@@ -75,6 +75,11 @@ function RoomCard({
           {room.lastError.message}
         </Typography.Paragraph>
       ) : null}
+      {onAir && !recording && room.autoRecord === false ? (
+        <Typography.Paragraph type="warning" style={{ marginBottom: 10, marginTop: 0 }}>
+          该房间已关闭自动录制，开播未自动录，可手动「录制」
+        </Typography.Paragraph>
+      ) : null}
       <div className="lr-room-card__actions">
         <Button
           size="middle"
