@@ -166,21 +166,31 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
-  it('accepts when recording, broadcasts frames, enforces limit, closes with stream_end', async () => {
+  it('accepts when recording, broadcasts frames, enforces 4-session limit, closes with stream_end', async () => {
     const server = await listen();
     const rooms = [
       server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'a' }),
       server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2', displayName: 'b' }),
       server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/3', displayName: 'c' }),
+      server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4', displayName: 'd' }),
+      server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'e' }),
     ];
     for (const r of rooms) server.services.rooms.setState(r.id, 'recording');
 
+    // 4 个会话（房间）可并接受；同一房间第二个 socket 共享会话不占额外配额。
     const c1 = connect(server.url, rooms[0]!.id);
     await c1.opened;
+    const c1b = connect(server.url, rooms[0]!.id);
+    await c1b.opened;
     const c2 = connect(server.url, rooms[1]!.id);
     await c2.opened;
     const c3 = connect(server.url, rooms[2]!.id);
-    expect(await c3.closed).toBe(4003);
+    await c3.opened;
+    const c4 = connect(server.url, rooms[3]!.id);
+    await c4.opened;
+    // 第 5 个会话 → 4003 超限降级。
+    const c5 = connect(server.url, rooms[4]!.id);
+    expect(await c5.closed).toBe(4003);
 
     const frame = await new Promise<Buffer>((resolve) => {
       c1.ws.once('message', (data: Buffer) => resolve(Buffer.from(data)));
@@ -194,8 +204,14 @@ describe('WebSocket preview', () => {
     expect(await c1.closed).toBe(1000);
     expect(messages.some((m) => m.toString().includes('"stream_end"') && m.toString().includes('"ended"'))).toBe(true);
 
+    c1b.ws.close();
+    await c1b.closed;
     c2.ws.close();
     await c2.closed;
+    c3.ws.close();
+    await c3.closed;
+    c4.ws.close();
+    await c4.closed;
     await server.close();
   });
 

@@ -2,6 +2,7 @@ import type { Platform, Room } from '../types/index.js';
 import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
+import { dueSchedules } from '../api/routes/schedules.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 
@@ -45,6 +46,15 @@ export class Scheduler {
   }
 
   private async runPlatform(platform: Platform): Promise<void> {
+    // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
+    const now = this.services.clock.now();
+    for (const { roomId } of this.dueScheduleChecks(now)) {
+      if (!this.running) return;
+      const room = this.services.rooms.get(roomId);
+      if (!room || room.platform !== platform) continue;
+      if (this.manager.isRoomActive(room.id)) continue;
+      await this.checkRoom(room, { scheduled: true }).catch(() => undefined);
+    }
     const rooms = this.services.rooms.listEnabled().filter((r) => r.platform === platform);
     for (const room of rooms) {
       if (!this.running) return;
@@ -53,7 +63,12 @@ export class Scheduler {
     }
   }
 
-  async checkRoom(room: Room, opts: { manual?: boolean } = {}): Promise<void> {
+  /** 到期计划清单 + 推进 nextRunAt（幂等：重复调用同 now 不会重复触发）。 */
+  private dueScheduleChecks(nowMs: number): Array<{ roomId: string }> {
+    return dueSchedules(this.services, nowMs);
+  }
+
+  async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
@@ -68,7 +83,7 @@ export class Scheduler {
     this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
   }
 
-  private async runCheckRoom(room: Room, opts: { manual?: boolean } = {}): Promise<void> {
+  private async runCheckRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean } = {}): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
     this.emitRoom(room.id);
@@ -82,6 +97,10 @@ export class Scheduler {
       ? this.services.rooms.update(room.id, { displayName: detectedName })
       : room;
     if (checkedRoom !== room) this.emitRoom(room.id);
+    // #128 抖音标题回退加固：记录标题来源/回退标记，SSE 供前端展示回退/占位状态。
+    if (status.titleSource) {
+      this.services.rooms.setTitleInfo(room.id, { titleSource: status.titleSource, titleFallbackUsed: status.titleFallbackUsed ?? false });
+    }
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
       this.services.rooms.setLiveStatus(room.id, status.status);
