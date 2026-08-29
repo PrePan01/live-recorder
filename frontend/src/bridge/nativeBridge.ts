@@ -95,29 +95,32 @@ class TauriBridge implements NativeBridge {
   }
 
   onBootState(cb: (state: BootState) => void): () => void {
-    const { listen } = window.__TAURI__.event;
     let unlisten: (() => void) | null = null;
-    listen<BootState>('boot:state', (e) => cb(e.payload)).then((fn) => (unlisten = fn));
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      unlisten = await listen<BootState>('boot:state', (e) => cb(e.payload));
+    });
     return () => unlisten?.();
   }
 
   onTray(cb: (action: 'restart' | 'diagnostics' | 'quit') => void): () => void {
-    const { listen } = window.__TAURI__.event;
     const disposers: (() => void)[] = [];
-    for (const [event, action] of [
-      ['tray:restart', 'restart'],
-      ['tray:diagnostics', 'diagnostics'],
-      ['tray:quit', 'quit'],
-    ] as const) {
-      listen<void>(event, () => cb(action)).then((fn) => disposers.push(fn));
-    }
+    void import('@tauri-apps/api/event').then(({ listen }) => {
+      for (const [event, action] of [
+        ['tray:restart', 'restart'],
+        ['tray:diagnostics', 'diagnostics'],
+        ['tray:quit', 'quit'],
+      ] as const) {
+        void listen<void>(event, () => cb(action)).then((fn) => disposers.push(fn));
+      }
+    });
     return () => disposers.forEach((d) => d());
   }
 
   onExistingInstance(cb: () => void): () => void {
-    const { listen } = window.__TAURI__.event;
     let unlisten: (() => void) | null = null;
-    listen<void>('boot:existing-instance', () => cb()).then((fn) => (unlisten = fn));
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      unlisten = await listen<void>('boot:existing-instance', () => cb());
+    });
     return () => unlisten?.();
   }
 }
