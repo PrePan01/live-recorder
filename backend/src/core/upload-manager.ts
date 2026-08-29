@@ -21,6 +21,8 @@ export class RealWebDavClient implements WebDavClient {
         'Content-Length': String(size),
       },
       body: createReadStream(localPath),
+      // Node >=18 undici fetch 发送流 body 必须带 duplex: 'half'，否则抛「duplex option is required when sending a body」。
+      duplex: 'half',
       signal: AbortSignal.timeout(300_000),
     });
     onProgress(100);
