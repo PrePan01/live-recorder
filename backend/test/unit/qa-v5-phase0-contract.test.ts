@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
+import { livePrediction } from '../../src/api/routes/notifications.js';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -128,6 +129,60 @@ describe('QA V5 Phase 0 contract gaps: pipeline & theme', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().settings.theme).toBe('dark');
     expect(events).toContain('settings:updated');
+    await app.close();
+  });
+});
+
+describe('QA V5 notifications + live prediction gaps (#112)', () => {
+  it('rejects non-boolean notification switches and out-of-range dedupe', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const badBool = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: 'yes' } });
+    expect(badBool.statusCode).toBe(500);
+    expect(badBool.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    const badDedupe = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 0 } });
+    expect(badDedupe.statusCode).toBe(500);
+    const ok = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { recordingEnded: true, uploadFailed: false, dedupeWindowMinutes: 45 } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().notifications.recordingEnded).toBe(true);
+    expect(ok.json().notifications.uploadFailed).toBe(false);
+    expect(ok.json().notifications.dedupeWindowMinutes).toBe(45);
+    // 部分更新合并：未提交的字段保留默认
+    expect(ok.json().notifications.liveStarted).toBe(true);
+    await app.close();
+  });
+
+  it('confidence escalates by sample days (5-9 medium, 10+ high)', () => {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/90', displayName: 'conf' });
+    const make = (day: number, id: string) => {
+      const iso = `2026-08-${String(day).padStart(2, '0')}`;
+      const r = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: id, streamTitle: 't' });
+      services.recordings.update(r.id, { state: 'completed', endedAt: `${iso}T11:00:00.000Z` });
+      services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${iso}T09:00:00.000Z`, r.id);
+    };
+    for (let d = 16; d <= 20; d++) make(d, `m${d}`);
+    const five = livePrediction(services, room.id);
+    expect(five.basedOnDays).toBe(5);
+    expect(five.confidence).toBe('medium');
+    for (let d = 21; d <= 25; d++) make(d, `h${d}`);
+    const ten = livePrediction(services, room.id);
+    expect(ten.basedOnDays).toBe(10);
+    expect(ten.confidence).toBe('high');
+  });
+
+  it('persists notifications in settings view and round-trips after save', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const base = await inj({ method: 'GET', url: '/api/v1/settings' });
+    expect(base.json().settings.notifications.desktopEnabled).toBe(true);
+    await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: false } });
+    const after = (await inj({ method: 'GET', url: '/api/v1/settings' })).json();
+    expect(after.settings.notifications.desktopEnabled).toBe(false);
+    const direct = (await inj({ method: 'GET', url: '/api/v1/settings/notifications' })).json();
+    expect(direct.notifications.desktopEnabled).toBe(false);
     await app.close();
   });
 });
