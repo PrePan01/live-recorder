@@ -20,5 +20,6 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     diskGuard: settings.diskGuard,
     mail,
     douyinCookie: { hasCookie: hasDouyinCookie },
+    pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),
   };
 }

@@ -1,4 +1,4 @@
-import type { Alert, Recording, Room, SettingsView } from '../types/index.js';
+import type { Alert, Diagnostic, Recording, Room, SettingsView } from '../types/index.js';
 
 export type AppEvent =
   | { type: 'room:updated'; data: Room }
@@ -7,7 +7,8 @@ export type AppEvent =
   | { type: 'alert:updated'; data: Alert }
   | { type: 'settings:updated'; data: SettingsView }
   | { type: 'service:status'; data: ServiceStatusPayload }
-  | { type: 'disk:space'; data: DiskSpacePayload };
+  | { type: 'disk:space'; data: DiskSpacePayload }
+  | { type: 'diagnostic:updated'; data: Diagnostic };
 
 export interface ServiceStatusPayload {
   state: 'running' | 'starting' | 'offline' | 'restarting';

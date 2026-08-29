@@ -7,11 +7,23 @@ export type RecordingState =
   | 'pending'
   | 'recording'
   | 'reconnecting'
+  | 'processing'
   | 'completed'
   | 'failed';
 
 /** 录制文件完整性：verified=ffprobe 校验通过、failed=损坏/截断、pending=校验中或 ffprobe 缺失。 */
 export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
+
+/** 后处理管线状态（V5）：not_required=未启用管线、queued=排队中、running=处理中、ok=成功、partial=部分成功、failed=失败。 */
+export type PipelineStatus = 'not_required' | 'queued' | 'running' | 'ok' | 'partial' | 'failed';
+
+/** 后处理 sidecar 元数据（V5）：录制完成后由管线写入，供历史页展示真实时长/断流次数/清晰度/大小。 */
+export interface RecordingMetadata {
+  durationMs: number | null;
+  segmentCount: number;
+  quality: string | null;
+  size: number;
+}
 
 export interface Recording {
   id: string;
@@ -30,4 +42,10 @@ export interface Recording {
   createdAt: string;
   quality?: Quality;
   integrity?: RecordingIntegrity;
+  /** V5 后处理管线状态（未参与管线时缺省）。 */
+  pipelineStatus?: PipelineStatus;
+  /** V5 后处理 sidecar 元数据（真实时长/片段数/清晰度/大小）。 */
+  metadata?: RecordingMetadata;
+  /** V5 封面帧路径（可选，媒体封面占位 404）。 */
+  coverPath?: string;
 }

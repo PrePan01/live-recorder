@@ -23,6 +23,8 @@ import { RoomRepository } from '../db/repositories/room.repo.js';
 import { RecordingRepository } from '../db/repositories/recording.repo.js';
 import { SettingsRepository } from '../db/repositories/settings.repo.js';
 import { AlertRepository } from '../db/repositories/alert.repo.js';
+import { TagRepository } from '../db/repositories/tag.repo.js';
+import { DiagnosticRepository } from '../db/repositories/diagnostic.repo.js';
 import os from 'node:os';
 import path from 'node:path';
 import { Notifier } from './notifier.js';
@@ -41,6 +43,10 @@ export interface Services {
   recordings: RecordingRepository;
   settings: SettingsRepository;
   alerts: AlertRepository;
+  tags: TagRepository;
+  diagnostics: DiagnosticRepository;
+  /** V5 统计短缓存（服务端聚合，TTL 5s，键=查询参数）。 */
+  statsCache: { key: string; cachedAt: number; body: unknown } | undefined;
   secretStore: SecretStore;
   diskGuard: DiskGuard;
   mailer: Mailer;
@@ -86,16 +92,21 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const useKeychain = mode === 'real';
   const secretStore: SecretStore = useKeychain ? new KeytarSecretStore() : new MemorySecretStore();
 
+  const tags = new TagRepository(db);
+
   const services: Services = {
     mode,
     startedAt: clock.now(),
     events: new AppEventBus(),
     clock,
     db,
-    rooms: new RoomRepository(db),
+    tags,
+    rooms: new RoomRepository(db, tags),
     recordings: new RecordingRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
+    diagnostics: new DiagnosticRepository(db),
+    statsCache: undefined,
     secretStore,
     diskGuard: new FakeDiskGuard(),
     mailer: undefined as unknown as Mailer,

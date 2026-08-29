@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
-import type { AppSettings, MailConfig } from '../../types/index.js';
+import type { AppSettings, MailConfig, PipelineConfig } from '../../types/index.js';
 import { validateSettings } from '../../config/schema.js';
 import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { settingsView } from './settings-view.js';
@@ -108,6 +108,41 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     const directory = await nativePickDirectory();
     return reply.send({ ok: true, directory });
   });
+
+  // V5 后处理管线配置契约：默认关闭、校验/切片/压缩/归档/并发 N=2。
+  app.get('/api/v1/settings/pipeline', async (_req, reply) => {
+    const settings = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
+    return reply.send({ pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline) });
+  });
+
+  app.put('/api/v1/settings/pipeline', async (req, reply) => {
+    const body = (req.body ?? {}) as Partial<PipelineConfig>;
+    const current = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
+    const merged: PipelineConfig = { ...structuredClone(DEFAULT_SETTINGS.pipeline), ...current.pipeline, ...body };
+    const err = validatePipelineConfig(merged);
+    if (err) throw err;
+    services.settings.save({ ...current, pipeline: merged });
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return reply.send({ pipeline: merged });
+  });
+}
+
+/** V5 管线配置校验：返回 AppError 或 null。 */
+export function validatePipelineConfig(config: PipelineConfig): AppError | null {
+  if (typeof config.enabled !== 'boolean') return new AppError('PIPELINE_CONFIG_INVALID', 'enabled 必须为布尔值');
+  if (typeof config.verify !== 'boolean') return new AppError('PIPELINE_CONFIG_INVALID', 'verify 必须为布尔值');
+  if (typeof config.segmentSeconds !== 'number' || config.segmentSeconds < 0 || config.segmentSeconds > 86400) {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'segmentSeconds 需在 0-86400 之间');
+  }
+  if (config.crf !== null && (typeof config.crf !== 'number' || config.crf < 0 || config.crf > 51)) {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'crf 需为 null 或 0-51 之间');
+  }
+  if (typeof config.archiveDirectory !== 'string') return new AppError('PIPELINE_CONFIG_INVALID', 'archiveDirectory 必须为字符串');
+  if (typeof config.maxConcurrency !== 'number' || config.maxConcurrency < 1 || config.maxConcurrency > 2) {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'maxConcurrency 需为 1-2（V5 定 N=2）');
+  }
+  return null;
 }
 
 /** 系统原生目录选择器（macOS 访达 / Windows 资源管理器），取消返回 null。 */
