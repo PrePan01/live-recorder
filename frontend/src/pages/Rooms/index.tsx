@@ -427,7 +427,7 @@ export default function Rooms() {
         components={resizableComponents}
         dataSource={paginated}
         loading={loading}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1420 }}
         onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         pagination={{
