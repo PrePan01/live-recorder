@@ -8,6 +8,7 @@ import type { Alert } from '../types/alert';
 import type { Settings } from '../types/settings';
 import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
+import type { UploadJob } from '../api/openlist';
 import { applyServerEvent } from '../stores/applyEvent';
 import { useServiceStore } from '../stores/serviceStore';
 
@@ -35,6 +36,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, disk: payload as unknown as DiskSpace };
     case 'diagnostic:updated':
       return { type, diagnostic: payload as unknown as Diagnostic };
+    case 'upload:updated':
+      return { type, upload: payload as unknown as UploadJob };
   }
 }
 

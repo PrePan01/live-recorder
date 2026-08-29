@@ -5,6 +5,7 @@ import type { UploadJob } from '../api/openlist';
 import { describeError } from '../utils/errorMap';
 import { ApiError } from '../types/error';
 import { formatRelative } from '../utils/format';
+import { useUploadStore } from '../stores/uploadStore';
 
 const STATUS_COLOR: Record<string, string> = {
   queued: 'default',
@@ -18,12 +19,15 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   const { message } = App.useApp();
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [loading, setLoading] = useState(false);
+  const liveJobs = useUploadStore((s) => s.jobs.filter((j) => j.recordingId === recordingId));
 
   const load = async () => {
     setLoading(true);
     try {
       const all = await fetchUploads(50);
-      setJobs(all.filter((u) => u.recordingId === recordingId));
+      const mine = all.filter((u) => u.recordingId === recordingId);
+      setJobs(mine);
+      useUploadStore.getState().setJobs(mine);
     } catch (e) {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '上传列表加载失败');
     } finally {
@@ -34,6 +38,10 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   useEffect(() => {
     void load();
   }, [recordingId]);
+
+  useEffect(() => {
+    if (liveJobs.length > 0) setJobs(liveJobs);
+  }, [liveJobs]);
 
   if (!loading && jobs.length === 0) {
     return (

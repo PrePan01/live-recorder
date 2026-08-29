@@ -6,6 +6,7 @@ import { useSettingsStore } from './settingsStore';
 import { useServiceStore } from './serviceStore';
 import { useDiagnosticStore } from './diagnosticStore';
 import { useNotificationStore } from './notificationStore';
+import { useUploadStore } from './uploadStore';
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -39,6 +40,9 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case 'diagnostic:updated':
       useDiagnosticStore.getState().upsert(e.diagnostic);
+      break;
+    case 'upload:updated':
+      useUploadStore.getState().upsert(e.upload);
       break;
   }
 }
