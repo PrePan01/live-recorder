@@ -45,8 +45,17 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   const port = opts.instance?.port ?? DEFAULT_PORT;
   const instance = opts.instance ?? null;
 
-  const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  const baseOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+  const allowedHosts = new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    // Tauri 2 WebView 的 Host 头（macOS http://tauri.localhost、Windows tauri://localhost）。
+    'tauri.localhost',
+    'tauri://localhost',
+    '127.0.0.1:5173',
+    'localhost:5173',
+  ]);
+  const baseOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`, 'http://tauri.localhost', 'tauri://localhost'];
+  const allowedOrigins = new Set([...baseOrigins, ...extraOrigins]);
 
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host;
@@ -55,11 +64,22 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
         error: { code: 'SERVICE_UNAVAILABLE', message: '仅允许本机访问', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
-    const allowedOrigins = new Set([...baseOrigins, ...extraOrigins]);
-    if (req.headers.origin !== undefined && !allowedOrigins.has(req.headers.origin)) {
-      return reply.status(403).send({
-        error: { code: 'SERVICE_UNAVAILABLE', message: 'Origin 不在白名单', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
-      });
+    // CORS：Origin 命中白名单时放行并回 CORS 头（WebView/浏览器跨域请求即使服务端 200，缺 ACAO 也会被浏览器拦截）。
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+      if (!allowedOrigins.has(origin)) {
+        return reply.status(403).send({
+          error: { code: 'SERVICE_UNAVAILABLE', message: 'Origin 不在白名单', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        });
+      }
+      reply.header('Access-Control-Allow-Origin', origin);
+      reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+      reply.header('Vary', 'Origin');
+    }
+    // OPTIONS 预检：直接 204，不进入路由（避免 404）。
+    if (req.method === 'OPTIONS') {
+      return reply.status(204).send();
     }
   });
 

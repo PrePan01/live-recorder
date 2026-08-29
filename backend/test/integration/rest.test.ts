@@ -56,6 +56,26 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('allows Tauri WebView origin/host and returns CORS headers + OPTIONS 204 (#140)', async () => {
+    const { app } = buildApp(newServices(), { extraOrigins: ['http://tauri.localhost', 'tauri://localhost'] });
+    // macOS WebView：Host=tauri.localhost，Origin=http://tauri.localhost。
+    const tauri = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: 'tauri.localhost', origin: 'http://tauri.localhost' } });
+    expect(tauri.statusCode).toBe(200);
+    expect(tauri.headers['access-control-allow-origin']).toBe('http://tauri.localhost');
+    expect(tauri.headers['access-control-allow-methods']).toContain('OPTIONS');
+    // Windows WebView：tauri://localhost。
+    const win = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: 'tauri://localhost', origin: 'tauri://localhost' } });
+    expect(win.statusCode).toBe(200);
+    expect(win.headers['access-control-allow-origin']).toBe('tauri://localhost');
+    // OPTIONS 预检 → 204 不 404。
+    const preflight = await app.inject({ method: 'OPTIONS', url: '/api/v1/rooms', headers: { host: 'tauri.localhost', origin: 'http://tauri.localhost' } });
+    expect(preflight.statusCode).toBe(204);
+    // 白名单外的 Origin 即使 Host 合法也拒绝。
+    const bad = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: 'tauri.localhost', origin: 'http://evil.example.com' } });
+    expect(bad.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('rooms CRUD with 409/422 and enable toggle', async () => {
     const services = newServices();
     const { app } = buildApp(services);
