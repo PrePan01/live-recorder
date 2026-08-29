@@ -56,6 +56,14 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('allows 127.0.0.1:5173 dev origin (IP access) with ACAO', async () => {
+    const { app } = buildApp(newServices(), { extraOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'] });
+    const ip = await app.inject({ method: 'GET', url: '/api/v1/health', headers: { host: '127.0.0.1:43120', origin: 'http://127.0.0.1:5173' } });
+    expect(ip.statusCode).toBe(200);
+    expect(ip.headers['access-control-allow-origin']).toBe('http://127.0.0.1:5173');
+    await app.close();
+  });
+
   it('allows Tauri WebView origin/host and returns CORS headers + OPTIONS 204 (#140)', async () => {
     const { app } = buildApp(newServices(), { extraOrigins: ['http://tauri.localhost', 'tauri://localhost'] });
     // macOS WebView：Host=tauri.localhost，Origin=http://tauri.localhost。

@@ -12,7 +12,7 @@ const readyFile = env.LIVE_RECORDER_READY_FILE;
 const stateDir = env.LIVE_RECORDER_STATE_DIR ?? path.join(defaultDataDir(), 'state');
 const instanceId = env.LIVE_RECORDER_INSTANCE_ID;
 const dbPath = env.LIVE_RECORDER_DB;
-const extraOrigins = (env.LR_EXTRA_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim()).filter(Boolean);
+const extraOrigins = (env.LR_EXTRA_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()).filter(Boolean);
 
 async function main(): Promise<void> {
   const options: Parameters<typeof startSidecar>[0] = {

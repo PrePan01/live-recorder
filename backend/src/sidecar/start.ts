@@ -65,7 +65,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<SidecarResult>
   if (recovered > 0) console.log(`recovered ${recovered} stale recording session(s)`);
   services.scheduler.start();
 
-  const extraOrigins = opts.extraOrigins ?? ['http://localhost:5173'];
+  const extraOrigins = opts.extraOrigins ?? ['http://localhost:5173', 'http://127.0.0.1:5173'];
   const { app } = buildApp(services, { extraOrigins, instance });
 
   await app.listen({ host, port });
