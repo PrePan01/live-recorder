@@ -100,7 +100,7 @@ describe('RecorderManager', () => {
     expect(mailer.sent.some((m) => m.subject.includes('已开播'))).toBe(true);
   });
 
-  it('emits recording:updated periodically while recording so live duration refreshes, and stops after end (#149)', async () => {
+  it('does not emit recording:updated every second during recording (perf: 前端本地时长 ticker 替代，FE 采纳 #165 性能建议③)', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-tick-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -119,17 +119,16 @@ describe('RecorderManager', () => {
     const atStart = recordingUpdates;
     expect(atStart).toBeGreaterThanOrEqual(1); // file_created 补发
 
-    // 录制期间（fake 引擎约 3s）推进 2 秒：ticker 应每秒补发。
+    // 录制期间推进 3 秒：不应再有每秒周期补发（后端 ticker 已移除，时长由前端本地 ticker 走时）。
     await settle(clock, 1000);
     await settle(clock, 1000);
-    expect(recordingUpdates).toBeGreaterThanOrEqual(atStart + 1);
+    await settle(clock, 1000);
+    expect(recordingUpdates).toBe(atStart);
 
-    // 结束后 ticker 停止：不再有 recording:updated。
+    // 结束后仍无多余事件。
     for (let i = 0; i < 20 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) await settle(clock, 500);
     await waitFor(() => services.recordings.get(rec.id)!.state === 'completed');
-    const afterEnd = recordingUpdates;
-    await settle(clock, 2000);
-    expect(recordingUpdates).toBe(afterEnd);
+    expect(recordingUpdates).toBe(atStart);
   });
 
   it('resets the preview header buffer at each new recording session so a fresh FLV header is captured (#150 跨录制不残留旧头)', async () => {
