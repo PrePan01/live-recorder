@@ -144,9 +144,15 @@ export class DouyinAdapter implements PlatformAdapter {
     const streamTitle = entry.title;
     // #128 标题回退加固：主源（enter 接口）取到昵称/标题 → adapter；
     // 主源缺标题/昵称 → 尝试回退源（无 Cookie 重拉或复用受限时的安全占位）。
+    // 昵称缺失但标题存在时用标题兜底作显示名（否则添加抖音房间显示名检测失败）。
     const hasTitle = Boolean(nickname || streamTitle);
     const base = hasTitle
-      ? { ...(nickname ? { displayName: nickname } : {}), ...(streamTitle ? { streamTitle } : {}), titleSource: 'adapter' as const, titleFallbackUsed: false }
+      ? {
+          ...(nickname ? { displayName: nickname } : streamTitle ? { displayName: streamTitle } : {}),
+          ...(streamTitle ? { streamTitle } : {}),
+          titleSource: 'adapter' as const,
+          titleFallbackUsed: false,
+        }
       : await this.titleFallback(roomId, cookie);
     if (entry.status !== 2) {
       return { status: 'offline', ...base };

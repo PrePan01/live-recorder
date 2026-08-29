@@ -57,6 +57,17 @@ describe('DouyinAdapter', () => {
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
   });
 
+  it('falls back to title as displayName when nickname is missing (添加抖音房间显示名检测)', async () => {
+    // user 缺 nickname、仅有 title：displayName 应用标题兜底，避免添加房间显示名为空。
+    const a = new DouyinAdapter(mockFetcher(() => livePayload({ user: {} })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.displayName).toBe('抖音直播间');
+    expect(result.streamTitle).toBe('抖音直播间');
+    expect(result.titleSource).toBe('adapter');
+    expect(result.titleFallbackUsed).toBe(false);
+  });
+
   it('reports offline when status is not 2', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ status: 4 })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456');
