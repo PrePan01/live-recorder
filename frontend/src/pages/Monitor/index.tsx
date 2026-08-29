@@ -1,9 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
+import { MonitorStateTag } from '../../components/StatusTags';
+import { formatRelative } from '../../utils/format';
 import RoomStats from '../../components/RoomStats';
 import RoomHealth from '../../components/RoomHealth';
 import LiveStatusTag from '../../components/LiveStatusTag';
@@ -191,6 +194,85 @@ export default function Monitor() {
     setWatching(room);
   };
 
+  const listColumns: ColumnsType<Room> = [
+    {
+      title: '收藏',
+      dataIndex: 'favorited',
+      width: 60,
+      render: (v: boolean, room) => (
+        <Button
+          type="text"
+          size="small"
+          icon={v ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+          onClick={() =>
+            void favoriteRoom(room.id, !v).catch((e) =>
+              message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'),
+            )
+          }
+        />
+      ),
+    },
+    { title: '平台', dataIndex: 'platform', width: 80, render: (p) => <PlatformLogoTag platform={p} /> },
+    { title: '显示名', dataIndex: 'displayName', ellipsis: true, render: (v: string, room) => (
+      <Space size={4}>
+        <span>{v}</span>
+        {room.titleFallbackUsed ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>（回退）</Typography.Text>
+        ) : null}
+      </Space>
+    ) },
+    {
+      title: '标签',
+      dataIndex: 'tags',
+      width: 160,
+      render: (ts: Room['tags']) =>
+        ts.length === 0 ? '-' : (
+          <Space size={[4, 4]} wrap>
+            {ts.map((t) => (
+              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>{t.name}</Tag>
+            ))}
+          </Space>
+        ),
+    },
+    { title: '直播状态', dataIndex: 'lastLiveStatus', width: 100, render: (s) => <LiveStatusTag status={s} /> },
+    { title: '监控状态', dataIndex: 'monitorState', width: 100, render: (s) => <MonitorStateTag state={s} /> },
+    { title: '最近检测', dataIndex: 'lastCheckedAt', width: 110, render: (t) => formatRelative(t) },
+    {
+      title: '操作',
+      width: 220,
+      fixed: 'right' as const,
+      render: (_, room) => {
+        const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
+        const onAir = room.lastLiveStatus === 'live';
+        const acting = actingRoomId === room.id;
+        return (
+          <Space size={0} wrap>
+            <Button size="small" type="link" icon={<ReloadOutlined />} loading={acting && actingAction === 'check'} disabled={acting || room.monitorState === 'checking' || recording} onClick={() => void checkRoomNow(room.id).catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '检测失败'))}>
+              检测
+            </Button>
+            <Button size="small" type="link" icon={<EyeOutlined />} disabled={!recording} onClick={() => handleWatch(room)}>
+              观看
+            </Button>
+            {recording ? (
+              <Popconfirm title="确定停止当前录制？" onConfirm={() => void stopRoomRecording(room.id).catch(() => message.error('停止失败'))}>
+                <Button size="small" type="link" danger icon={<StopOutlined />} loading={acting && actingAction === 'stop'}>
+                  停止
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Button size="small" type="link" icon={<VideoCameraAddOutlined />} disabled={!onAir} onClick={() => void startRoomRecording(room.id).catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制失败'))}>
+                录制
+              </Button>
+            )}
+            <Button size="small" type="link" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
+              直播间
+            </Button>
+          </Space>
+        );
+      },
+    },
+  ];
+
   return (
     <div>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
@@ -228,10 +310,20 @@ export default function Monitor() {
       </Space>
       {monitorRooms.length === 0 && !loading ? (
         <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
+      ) : view === '列表' ? (
+        <Table
+          rowKey="id"
+          columns={listColumns}
+          dataSource={monitorRooms}
+          loading={loading}
+          scroll={{ x: 1100 }}
+          pagination={false}
+          size="middle"
+        />
       ) : (
-        <Row className={view === '列表' ? 'lr-monitor-list' : undefined} gutter={[16, 16]}>
+        <Row gutter={[16, 16]}>
           {monitorRooms.map((room) => (
-            <Col key={room.id} {...(view === '列表' ? { span: 24, sm: 24, lg: 24, xxl: 24 } : { xs: 24, sm: 12, lg: 8, xxl: 6 })}>
+            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6}>
               <RoomCard
                 room={room}
                 acting={actingRoomId === room.id}
@@ -253,7 +345,7 @@ export default function Monitor() {
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
                   )
                 }
-                layout={view === '列表' ? 'list' : 'card'}
+                layout="card"
               />
             </Col>
           ))}

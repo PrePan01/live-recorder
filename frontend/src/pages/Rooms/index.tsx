@@ -312,6 +312,7 @@ export default function Rooms() {
     {
       title: '操作',
       width: 130,
+      fixed: 'right' as const,
       render: (_, room) => (
         <Space>
           <Button size="small" type="link" onClick={() => openEdit(room)}>

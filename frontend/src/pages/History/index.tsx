@@ -53,11 +53,14 @@ export default function History() {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    const q: { page: number; roomId?: string; dateFrom?: string; dateTo?: string } = { page: 1, roomId };
-    if (dateRange) {
-      q.dateFrom = dateRange[0].startOf('day').toISOString();
-      q.dateTo = dateRange[1].endOf('day').toISOString();
-    }
+    // 显式传全量筛选（roomId/dateFrom/dateTo 用 undefined 表示清除），
+    // 覆盖 store 合并的旧 query，避免清除筛选后残留上次筛选参数。
+    const q: { page: number; roomId?: string; dateFrom?: string; dateTo?: string } = {
+      page: 1,
+      roomId,
+      dateFrom: dateRange ? dateRange[0].startOf('day').toISOString() : undefined,
+      dateTo: dateRange ? dateRange[1].endOf('day').toISOString() : undefined,
+    };
     void fetchHistory(q);
     if (rooms.length === 0) void fetchRooms();
   }, [fetchHistory, roomId, dateRange]);

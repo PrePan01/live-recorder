@@ -341,7 +341,6 @@ body {
 
 .lr-statusbar > .lr-statusbar__disk {
   flex-shrink: 0;
-  margin-left: auto;
 }
 
 /* 窄窗：隐藏磁盘详情，避免溢出 */
