@@ -23,15 +23,32 @@ impl BackendManager {
 
     fn backend_cwd() -> Option<PathBuf> {
         let explicit = std::env::var("LR_BACKEND_CWD").ok().map(PathBuf::from);
-        if explicit.is_some() {
-            return explicit;
+        if let Some(path) = explicit {
+            return Some(path);
         }
         // Dev layout: <repo>/frontend/../backend
         let from_frontend = std::env::current_dir().ok()?.parent()?.join("backend");
         if from_frontend.join("package.json").exists() {
             return Some(from_frontend);
         }
-        // Packaged layout: resources dir shipped next to the app
+        // Packaged layout: backend shipped under app bundle Resources.
+        //   macOS: <app>.app/Contents/Resources/backend
+        //   Windows: resources dir next to the exe (target/release/backend)
+        let exe = std::env::current_exe().ok()?;
+        let mut candidates = Vec::new();
+        // macOS: <exe>/../../Resources/backend  (exe = .../Contents/MacOS/app)
+        if let Some(contents) = exe.parent().and_then(|p| p.parent()) {
+            candidates.push(contents.join("Resources").join("backend"));
+        }
+        // Windows/dev fallback: <exe>/../backend (exe = target/release/app.exe)
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("backend"));
+        }
+        for c in candidates {
+            if c.join("package.json").exists() {
+                return Some(c);
+            }
+        }
         None
     }
 
