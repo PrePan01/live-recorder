@@ -41,11 +41,13 @@ describe('V5 Batch3 #127: backups & export', () => {
     expect(['ok', 'partial']).toContain(detail.status);
     expect(detail.outputPath).not.toBeNull();
     const manifestRaw = await readFile(path.join(detail.outputPath, 'manifest.json'), 'utf8');
-    const manifest = JSON.parse(manifestRaw) as { version: string; recordings: Array<{ id: string; file: string | null; status: string }> };
+    const manifest = JSON.parse(manifestRaw) as { version: string; recordings: Array<{ id: string; file: string | null; hash: string | null; status: string }> };
     expect(manifest.version).toBe('1');
     expect(manifest.recordings).toHaveLength(2);
     expect(manifest.recordings[0]!.file).toBe('x.flv');
     expect(manifest.recordings[0]!.status).toBe('ok');
+    // #136：manifest 含源文件 SHA-256 哈希。
+    expect(manifest.recordings[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.recordings[1]!.status).toBe('partial');
     await app.close();
   });

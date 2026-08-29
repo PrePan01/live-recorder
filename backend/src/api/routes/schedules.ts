@@ -40,23 +40,80 @@ function validateSchedule(input: { daysOfWeek?: unknown; startTime?: unknown; en
 }
 
 /**
- * 计算下次执行时间：在 daysOfWeek 中找 startTime 对应的最近未来时刻（本地时区）。
+ * 计算下次执行时间：在 daysOfWeek 中找 startTime 对应的最近未来时刻（按 schedule.timezone）。
  * 支持跨天窗口（end < start 时次日结束，但触发点仍为 start）。已过期 nextRunAt 会被推进。
  */
 export function computeNextRunAt(schedule: { daysOfWeek: ScheduleDay[]; startTime: string; endTime: string | null; timezone: string }, nowMs: number): string | null {
   if (schedule.daysOfWeek.length === 0) return null;
+  const tz = schedule.timezone === 'local' ? undefined : schedule.timezone;
   const [startH, startM] = schedule.startTime.split(':').map(Number) as [number, number];
   for (let offset = 0; offset <= 7; offset += 1) {
-    const candidate = new Date(nowMs + offset * 24 * 60 * 60 * 1000);
-    const dow = candidate.getDay() as ScheduleDay;
+    // 该候选日（now 起推 offset 天）在目标时区的日历日期。
+    const candidateStartMs = startOfDayInTz(nowMs, offset, tz);
+    const { dow, dayMs } = wallClockInfo(candidateStartMs, tz);
     if (!schedule.daysOfWeek.includes(dow)) continue;
-    const candidateStart = new Date(candidate);
-    candidateStart.setHours(startH, startM, 0, 0);
-    if (candidateStart.getTime() > nowMs) return candidateStart.toISOString();
-    // 今天已过 start，但仍在跨天窗口内（end < start 且 now 在 start..次日）——该窗口仍在进行，
-    // 触发点已过则推至下个匹配日；这里仅在恰好仍在窗口内且曾触发过时，跳到次日再算。
+    // 该日 startTime 在目标时区的绝对时刻。
+    const startAt = wallToEpoch(dayMs, startH, startM, tz);
+    if (startAt > nowMs) return new Date(startAt).toISOString();
+    // 今天已过 start → 下个匹配日继续。
   }
   return null;
+}
+
+/** 候选日「日历日期起点」在目标时区对应的 epoch（用该时区当天 00:00 回推）。 */
+function startOfDayInTz(nowMs: number, offsetDays: number, tz: string | undefined): number {
+  const probe = new Date(nowMs + offsetDays * 24 * 60 * 60 * 1000);
+  const ymd = partsInTz(probe, tz);
+  const epochGuess = Date.UTC(ymd.year, ymd.month - 1, ymd.day, 0, 0, 0, 0);
+  // 校正：Intl 给出的本地日历日在目标时区下的 epoch（考虑 DST，用两次迭代收敛）。
+  let guess = epochGuess;
+  for (let i = 0; i < 3; i += 1) {
+    const g = partsInTz(new Date(guess), tz);
+    const desired = Date.UTC(ymd.year, ymd.month - 1, ymd.day, 0, 0, 0, 0);
+    const delta = desired - Date.UTC(g.year, g.month - 1, g.day, 0, 0, 0, 0);
+    if (delta === 0) break;
+    guess += delta;
+  }
+  return guess;
+}
+
+/** 在目标时区解析某 epoch 的 {year,month,day,hour,minute,dow}。 */
+function partsInTz(ms: number | Date, tz: string | undefined): { year: number; month: number; day: number; hour: number; minute: number; dow: ScheduleDay } {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+    weekday: 'short',
+  });
+  const parts = dtf.formatToParts(new Date(ms));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value;
+  const dowMap: Record<string, ScheduleDay> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    year: Number(get('year')),
+    month: Number(get('month')),
+    day: Number(get('day')),
+    hour: Number(get('hour')),
+    minute: Number(get('minute')),
+    dow: dowMap[get('weekday') ?? 'Sun'] ?? 0,
+  };
+}
+
+function wallClockInfo(dayMs: number, tz: string | undefined): { dow: ScheduleDay; dayMs: number } {
+  const p = partsInTz(dayMs, tz);
+  return { dow: p.dow, dayMs };
+}
+
+/** 某时区某日历日 HH:mm → epoch（用该时区当日 00:00 + 本地时钟差校正）。 */
+function wallToEpoch(dayStartMs: number, h: number, m: number, tz: string | undefined): number {
+  const guess = dayStartMs + (h * 60 + m) * 60_000;
+  const p = partsInTz(guess, tz);
+  const delta = (h * 60 + m) - (p.hour * 60 + p.minute);
+  // DST 边缘迭代校正（最多 ±1h 漂移）。
+  return dayStartMs + ((h * 60 + m) + delta) * 60_000;
 }
 
 export function registerScheduleRoutes(app: FastifyInstance, services: Services): void {

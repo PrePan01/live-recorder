@@ -1,5 +1,7 @@
 import { mkdir, copyFile, writeFile, stat, rm } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Services } from './services.js';
 import type { ExportJob } from '../types/index.js';
 import { ExportRepository } from '../db/repositories/export.repo.js';
@@ -44,7 +46,7 @@ export class ExportManager {
       version: string;
       appVersion: string;
       exportedAt: string;
-      recordings: Array<{ id: string; file: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string }>;
+      recordings: Array<{ id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string }>;
     } = { version: '1', appVersion: APP_VERSION, exportedAt: this.services.clock.iso(), recordings: [] };
 
     try {
@@ -56,13 +58,14 @@ export class ExportManager {
         if (this.repo.get(jobId)?.status === 'cancelled') return;
         const rec = this.services.recordings.get(recId);
         if (!rec) {
-          manifest.recordings.push({ id: recId, file: null, metadata: null, cover: null, status: 'missing' });
+          manifest.recordings.push({ id: recId, file: null, hash: null, metadata: null, cover: null, status: 'missing' });
           missing += 1;
           continue;
         }
-        const entry: { id: string; file: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string } = {
+        const entry: { id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string } = {
           id: rec.id,
           file: null,
+          hash: null,
           metadata: rec.metadata ? { ...rec.metadata } : null,
           cover: null,
           status: 'ok',
@@ -73,6 +76,7 @@ export class ExportManager {
             const dest = path.join(dir, path.basename(rec.filePath));
             await copyFile(rec.filePath, dest);
             entry.file = path.basename(rec.filePath);
+            entry.hash = await sha256(rec.filePath);
           } catch {
             entry.status = 'partial';
             missing += 1;
@@ -112,4 +116,16 @@ export class ExportManager {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
+}
+
+/** SHA-256 文件哈希（manifest 完整性校验，不含密钥）。 */
+async function sha256(filePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on('data', (c: string | Buffer) => hash.update(c));
+    stream.on('end', () => resolve());
+    stream.on('error', reject);
+  });
+  return hash.digest('hex');
 }

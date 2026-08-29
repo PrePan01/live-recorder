@@ -32,6 +32,17 @@ it('computeNextRunAt finds next matching weekday start', () => {
   expect(none).toBeNull();
 });
 
+it('honors timezone when computing nextRunAt (#135)', () => {
+  // 基准：2026-08-29 00:00 UTC = 北京 08:00（UTC+8）。
+  const now = new Date('2026-08-29T00:00:00.000Z').getTime();
+  // Asia/Shanghai 时区下今天 08:00 已过，09:00 未到 → 今天 09:00 CST = 01:00 UTC。
+  const next = computeNextRunAt({ daysOfWeek: [6], startTime: '09:00', endTime: null, timezone: 'Asia/Shanghai' }, now);
+  expect(next).toBe('2026-08-29T01:00:00.000Z');
+  // UTC 时区下今天 09:00 未到 → 09:00 UTC。
+  const nextUtc = computeNextRunAt({ daysOfWeek: [6], startTime: '09:00', endTime: null, timezone: 'UTC' }, now);
+  expect(nextUtc).toBe('2026-08-29T09:00:00.000Z');
+});
+
   it('schedule CRUD with nextRunAt computation', async () => {
     const services = newServices();
     const { app } = buildApp(services);
