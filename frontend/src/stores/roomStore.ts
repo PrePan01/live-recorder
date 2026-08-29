@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as roomsApi from '../api/rooms';
+import { setRoomTags } from '../api/tags';
 import type { Room, RoomCreateInput, RoomUpdateInput } from '../types/room';
 
 function normalizeRoom(room: Room): Room {
@@ -9,6 +10,11 @@ function normalizeRoom(room: Room): Room {
     autoRecord: room.autoRecord ?? null,
     lastLiveStatus: room.lastLiveStatus ?? null,
     activeRecording: room.activeRecording ?? null,
+    tags: room.tags ?? [],
+    uploadEnabled: room.uploadEnabled ?? null,
+    titleSource: room.titleSource ?? null,
+    titleUpdatedAt: room.titleUpdatedAt ?? null,
+    titleFallbackUsed: room.titleFallbackUsed ?? false,
   };
 }
 
@@ -29,6 +35,7 @@ interface RoomState {
   checkRoomNow: (id: string) => Promise<void>;
   startRoomRecording: (id: string) => Promise<void>;
   stopRoomRecording: (id: string) => Promise<void>;
+  updateRoomTags: (id: string, tagIds: string[]) => Promise<void>;
   upsertRoom: (room: Room) => void;
 }
 
@@ -99,6 +106,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     } finally {
       set({ actingRoomId: null, actingAction: null });
     }
+  },
+  async updateRoomTags(id, tagIds) {
+    get().upsertRoom(normalizeRoom(await setRoomTags(id, tagIds)));
   },
   upsertRoom(room) {
     set((s) => {
