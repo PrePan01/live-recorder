@@ -146,21 +146,22 @@ export class StreamRecordingEngine implements RecordingEngine {
         if (done) break;
         if (this.stopped) break;
         const chunk = Buffer.from(value);
-        // 预览：转发原始字节（保持既有实时预览行为）。
-        yield { type: 'data', chunk };
-        // 文件：写入时间戳归一化后的完整标签（抖音绝对 PTS → 相对）。size 计文件字节。
+        // 写盘 + 预览都使用时间戳归一化后的完整 FLV 标签：
+        // 文件时长正确（#148），且预览流时间戳为相对值，mpegts.js 实时模式（isLive:true）才能正常推进（#150）。
         for (const part of normalizer.push(chunk)) {
           size += part.length;
           if (!ws.write(part)) await once(ws, 'drain');
+          yield { type: 'data', chunk: part };
         }
       }
     } finally {
       if (this.stopped) await reader.cancel().catch(() => undefined);
-      // 收尾：把尚未凑成完整标签的尾部字节一并写盘（不完整尾部不转发预览）。
+      // 收尾：把尚未凑成完整标签的尾部字节一并写盘并转发（不完整尾部也转发，保持字节一致）。
       const rest = normalizer.remaining();
       if (rest.length > 0) {
         size += rest.length;
         if (!ws.write(rest)) await once(ws, 'drain');
+        yield { type: 'data', chunk: rest };
       }
       await new Promise<void>((resolve) => ws.end(() => resolve()));
     }

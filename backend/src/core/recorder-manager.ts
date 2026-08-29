@@ -13,6 +13,8 @@ export interface PreviewSink {
   canAccept(): boolean;
   broadcastFrame(roomId: string, chunk: Buffer): void;
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void;
+  /** 新录制/新分段开始时清空该房间预览头缓冲，确保下一段流的 FLV 头被重新捕获。 */
+  resetRoom(roomId: string): void;
 }
 
 interface ActiveSession {
@@ -124,6 +126,8 @@ export class RecorderManager {
     const settings = this.settings();
     const engine = this.services.engineFor();
     this.services.rooms.setState(room.id, 'recording');
+    // 新录制/新分段：清空预览头缓冲，让本段流的 FLV 头被重新捕获（跨录制不残留旧头，QA #150）。
+    this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
     const pendingTimeout = this.services.clock.setTimeout(() => {
@@ -132,6 +136,24 @@ export class RecorderManager {
         void this.failRecording(room, recordingId, err, 'recorder');
       }
     }, 30_000);
+
+    // 录制期间每秒补发 recording:updated，前端历史/监控表格才能实时刷新录制时长（#149）。
+    let ticker: unknown = null;
+    const scheduleTick = (): void => {
+      ticker = this.services.clock.setTimeout(() => {
+        const rec = this.services.recordings.get(recordingId);
+        if (rec && (rec.state === 'recording' || rec.state === 'reconnecting')) {
+          this.services.events.emit({ type: 'recording:updated', data: rec });
+          scheduleTick();
+        }
+      }, 1000);
+    };
+    const stopTicker = (): void => {
+      if (ticker !== null) {
+        this.services.clock.clearTimeout(ticker);
+        ticker = null;
+      }
+    };
 
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
@@ -144,6 +166,7 @@ export class RecorderManager {
             this.services.recordings.update(recordingId, { state: 'recording', filePath: event.filePath });
             this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
             await this.notifier.notify('recording_started', room.id, { title: room.displayName });
+            scheduleTick();
             break;
           }
           case 'data': {
@@ -181,6 +204,7 @@ export class RecorderManager {
       const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `录制异常: ${(err as Error).message}`, { roomId: room.id, recordingId, retryable: true });
       await this.failRecording(room, recordingId, appErr, 'recorder');
     } finally {
+      stopTicker();
       clearTimeout2(this.services, pendingTimeout);
     }
   }
