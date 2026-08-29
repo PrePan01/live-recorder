@@ -313,7 +313,7 @@ export default function Rooms() {
     },
     {
       title: '操作',
-      width: 130,
+      width: 170,
       fixed: 'right' as const,
       render: (_, room) => (
         <Space>
