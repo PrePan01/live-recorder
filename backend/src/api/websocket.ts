@@ -167,13 +167,35 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
     }
     const roomId = decodeURIComponent(match[1]!);
     const room = services.rooms.get(roomId);
-    if (!room || !RECORDING_STATES.includes(room.monitorState)) {
+    if (!room) {
+      wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.NOT_RECORDING));
+      return;
+    }
+    const isRecording = RECORDING_STATES.includes(room.monitorState);
+    const isLive = room.lastLiveStatus === 'live';
+    if (!isRecording && !isLive) {
+      // 非录制也非开播（offline/restricted/idle）→ 拒绝。
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.NOT_RECORDING));
       return;
     }
     if (!preview.canAccept()) {
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.LIMIT));
       return;
+    }
+    // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：先自动触发手动录制，
+    // 让预览有数据流（否则广播无帧、播放器一直「连接预览流」加载）。异步执行不阻塞 upgrade。
+    if (!isRecording && isLive) {
+      void (async () => {
+        try {
+          const cookie = await services.platformCookie(room.platform);
+          const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
+          if (status.status === 'live' && !services.manager.isRoomActive(room.id)) {
+            await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+          }
+        } catch {
+          // 预览失败由前端连接错误/重试处理
+        }
+      })();
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       preview.addClient(roomId, ws);
