@@ -6,6 +6,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
+import { resolveBaseName } from '../../src/storage/file-organizer.js';
 
 function enablePipeline(services: Services): void {
   const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
@@ -101,6 +102,38 @@ describe('V5 Batch2 pipeline: cover serving', () => {
     const res = await inj({ method: 'GET', url: `/api/v1/media/cover/${rec.id}` });
     expect(res.statusCode).toBe(200);
     expect((res as unknown as { rawPayload: Buffer }).rawPayload.length).toBeGreaterThan(0);
+    await app.close();
+  });
+});
+describe('V5 Batch2 naming rule (#115)', () => {
+  it('resolves template with sanitization and truncation', () => {
+    // 默认模板 → 时间戳
+    expect(resolveBaseName('主播', '2026-08-29T18:30:00.000Z', 'bilibili', undefined, undefined, null)).toMatch(/^20260829_183000$/);
+    // 变量模板
+    expect(resolveBaseName('主播A', '2026-08-29T18:30:00.000Z', 'bilibili', '1080p', 'room_x', '{room}_{date}_{time}')).toBe('主播A_2026-08-29_18_30_00');
+    // 非法字符过滤
+    expect(resolveBaseName('a/b:c', '2026-08-29T18:30:00.000Z', 'douyin', undefined, undefined, '{room}')).toBe('a_b_c');
+    // 空模板回退时间戳
+    expect(resolveBaseName('', '2026-08-29T18:30:00.000Z', 'bilibili', undefined, undefined, '')).toMatch(/^20260829_183000$/);
+  });
+
+  it('naming-rule endpoints read/write/preview', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/naming-rule' })).json();
+    expect(def.namingRule).toBe('{room}_{date}_{time}');
+
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '{platform}_{date}_{room}' } });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().namingRule).toBe('{platform}_{date}_{room}');
+
+    const bad = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '' } });
+    expect(bad.statusCode).toBe(500);
+
+    const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{time}' } });
+    expect(preview.statusCode).toBe(200);
+    expect(typeof preview.json().example).toBe('string');
     await app.close();
   });
 });
