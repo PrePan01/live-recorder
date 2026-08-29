@@ -7,11 +7,15 @@ import { useServiceStore } from '../../stores/serviceStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useAppTheme } from '../../theme';
 import type { ThemePreference } from '../../types/settings';
-import { validateDirectory, testSmtp } from '../../api/settings';
+import { validateDirectory } from '../../api/settings';
 import { testNotification } from '../../api/notification';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
+import PipelineConfigCard from '../../components/PipelineConfigCard';
+import NamingRuleCard from '../../components/NamingRuleCard';
+import OpenListConfigCard from '../../components/OpenListConfigCard';
+import EmailConfigCard from '../../components/EmailConfigCard';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
@@ -336,62 +340,6 @@ export default function SettingsPage() {
                 </Button>
               </Col>
             </Row>
-            <Typography.Title level={5}>SMTP 邮件告警</Typography.Title>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item label="服务器" name={['mail', 'host']}>
-                  <Input placeholder="smtp.example.com" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="端口" name={['mail', 'port']}>
-                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="TLS" name={['mail', 'secure']} valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="用户名" name={['mail', 'username']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="发件地址" name={['mail', 'from']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item label="收件地址（逗号分隔）" name={['mail', 'recipients']}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  label="密码"
-                  name={['mail', 'password']}
-                  extra={settings?.mail.passwordSet ? '已保存，留空则不修改' : undefined}
-                >
-                  <Input.Password
-                    placeholder={settings?.mail.passwordSet ? '••••••' : '输入 SMTP 密码'}
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
-                <Button
-                  onClick={() =>
-                    testSmtp()
-                      .then(() => message.success('测试邮件已发送'))
-                      .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '发送失败'))
-                  }
-                >
-                  测试发送
-                </Button>
-              </Col>
-            </Row>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
               设置改动自动保存（500ms 防抖），无需手动保存。
             </Typography.Paragraph>
@@ -415,6 +363,18 @@ export default function SettingsPage() {
               if (f) void onImportFile(f);
             }}
           />
+        </Card>
+        <Card title="后处理管线" style={{ marginTop: 16 }}>
+          <PipelineConfigCard />
+        </Card>
+        <Card title="录制文件命名规则" style={{ marginTop: 16 }}>
+          <NamingRuleCard />
+        </Card>
+        <Card title="OpenList 自动上传" style={{ marginTop: 16 }}>
+          <OpenListConfigCard />
+        </Card>
+        <Card title="邮件通知（服务商预设）" style={{ marginTop: 16 }}>
+          <EmailConfigCard />
         </Card>
       </Col>
       <Col xs={24} lg={10}>
