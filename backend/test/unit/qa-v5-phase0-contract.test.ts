@@ -245,3 +245,54 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     await app.close();
   });
 });
+
+describe('QA Batch2 #114/#115 gaps: pipeline & naming', () => {
+  it('pipeline config snapshot is not retroactive across runs', async () => {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/95', displayName: 'snap' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'snap1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/snap.flv' });
+    // 启用管线并发起 run（配置快照 A）
+    const base = services.settings.load()!;
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
+    const run1 = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, attempt: 0 } });
+    // 改配置（快照 B：切片开启）——不追溯 run1
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 60, crf: 23, archiveDirectory: '', maxConcurrency: 2 } });
+    const loaded = services.pipeline.repo.getRun(run1.id);
+    expect(loaded?.configSnapshot.segmentSeconds).toBe(0);
+    expect(loaded?.configSnapshot.crf).toBeNull();
+  });
+
+  it('naming rule rejects empty/overlong and sanitizes template', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const empty = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '' } });
+    expect(empty.statusCode).toBe(500);
+    const tooLong = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: 'x'.repeat(201) } });
+    expect(tooLong.statusCode).toBe(500);
+    const ok = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '{room}_{date}_{time}_{platform}_{quality}_{roomId}' } });
+    expect(ok.statusCode).toBe(200);
+    // preview 渲染占位值
+    const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{time}', room: '主/播:名' } });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().example).not.toContain('/');
+    expect(preview.json().example).not.toContain(':');
+    expect(preview.json().example).toContain('18_30_00');
+    await app.close();
+  });
+
+  it('pipeline retry rejects while running (single-flight)', async () => {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/96', displayName: 'single' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sg1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/single.flv' });
+    const base = services.settings.load()!;
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
+    // 手动模拟运行中 run → retry 应拒绝（ok=false）
+    services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, attempt: 0 } });
+    services.pipeline.repo.setRunStatus(rec.id === '' ? '' : services.pipeline.repo.runForRecording(rec.id)!.id, 'queued', services.clock.iso());
+    const res = services.pipeline.retry(rec.id);
+    expect(res.ok).toBe(false);
+  });
+});
