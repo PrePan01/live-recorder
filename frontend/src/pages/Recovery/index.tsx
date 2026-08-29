@@ -17,6 +17,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useDiagnosticStore } from '../../stores/diagnosticStore';
 import { useRoomStore } from '../../stores/roomStore';
+import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatRelative } from '../../utils/format';
@@ -137,6 +138,8 @@ export default function Recovery() {
     },
   ];
 
+  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Diagnostic>(columns);
+
   const actionForCode = (code: string): string | null => {
     if (code.includes('RECORDING_START_FAILED')) return 'retry';
     if (code.includes('PLATFORM_ACCESS_RESTRICTED')) return 'refresh_cookie';
@@ -147,7 +150,7 @@ export default function Recovery() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Space size={16}>
           <Typography.Title level={4} style={{ margin: 0 }}>
             自愈工作台
@@ -206,9 +209,11 @@ export default function Recovery() {
       </Space>
       <Table
         rowKey="id"
-        columns={columns}
+        columns={resizedColumns}
+        components={resizableComponents}
         dataSource={items}
         loading={loading}
+        scroll={{ x: 800 }}
         locale={{ emptyText: '暂无诊断项' }}
         pagination={{
           current: page,

@@ -76,17 +76,28 @@ export function useSSE() {
         es?.close();
         es = null;
         if (disposed) return;
-        if (attempt < RECONNECT_DELAYS_MS.length) {
-          timer = setTimeout(connect, RECONNECT_DELAYS_MS[attempt]);
-          attempt += 1;
-        }
+        // 无限重连：退避序列循环（5/15/45s），避免 3 次后永久断开导致状态不更新。
+        const delay = RECONNECT_DELAYS_MS[attempt % RECONNECT_DELAYS_MS.length];
+        timer = setTimeout(connect, delay);
+        attempt += 1;
       };
     };
 
     connect();
+    // 基准地址变化（boot 注入实例端口）时重连。
+    let lastBase = EndpointResolver.base;
+    const unsub = EndpointResolver.subscribe((base) => {
+      if (disposed) return;
+      if (base === lastBase) return;
+      lastBase = base;
+      if (timer) clearTimeout(timer);
+      attempt = 0;
+      connect();
+    });
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
+      unsub();
       es?.close();
       setConnected(false);
     };

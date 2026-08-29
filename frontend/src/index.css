@@ -170,14 +170,25 @@ body {
 .lr-room-card__actions .ant-btn {
   width: 100%;
   min-height: 40px;
-  padding-inline: 6px;
+  padding-inline: 4px;
   color: var(--lr-text-secondary);
   font-weight: 500;
+  font-size: 13px;
   border: 0;
   border-right: 1px solid var(--lr-border);
   border-radius: 0;
   box-shadow: none;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+  .lr-room-card__actions .ant-btn {
+    font-size: 12px;
+    padding-inline: 2px;
+  }
 }
 
 .lr-room-card__actions > :last-child .ant-btn {
@@ -302,5 +313,29 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ===== 响应式适配（窗口缩放） ===== */
+.lr-statusbar {
+  flex-wrap: nowrap;
+}
+
+.lr-statusbar > .lr-statusbar__disk {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* 窄窗：隐藏磁盘详情，避免溢出 */
+@media (max-width: 1100px) {
+  .lr-statusbar__disk {
+    display: none !important;
+  }
+}
+
+/* 很窄窗口：隐藏版本 Tag，服务文本截断 */
+@media (max-width: 720px) {
+  .lr-statusbar > .ant-space:first-child .ant-tag {
+    display: none;
   }
 }

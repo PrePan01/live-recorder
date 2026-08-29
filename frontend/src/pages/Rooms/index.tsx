@@ -4,6 +4,7 @@ import { PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined } from '@ant-d
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
 import { useTagStore } from '../../stores/tagStore';
+import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import TagSelect from '../../components/TagSelect';
@@ -244,7 +245,7 @@ export default function Rooms() {
         />
       ),
     },
-    { title: '显示名', dataIndex: 'displayName', ellipsis: true, render: (v: string, r) => (
+    { title: '显示名', dataIndex: 'displayName', width: 160, ellipsis: true, render: (v: string, r) => (
         <Space size={4}>
           <span>{v}</span>
           {r.titleFallbackUsed ? (
@@ -276,6 +277,7 @@ export default function Rooms() {
     {
       title: '链接',
       dataIndex: 'url',
+      width: 220,
       ellipsis: true,
       render: (u: string) => (
         <Typography.Link copyable={{ text: u }} href={u} target="_blank">
@@ -331,13 +333,15 @@ export default function Rooms() {
     },
   ];
 
+  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Room>(columns);
+
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
             批量添加
           </Button>
@@ -418,9 +422,11 @@ export default function Rooms() {
       </Space>
       <Table
         rowKey="id"
-        columns={columns}
+        columns={resizedColumns}
+        components={resizableComponents}
         dataSource={paginated}
         loading={loading}
+        scroll={{ x: 1200 }}
         onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         pagination={{

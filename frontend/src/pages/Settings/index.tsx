@@ -247,12 +247,12 @@ export default function SettingsPage() {
               <Typography.Paragraph type={dirMsg.ok ? 'success' : 'danger'}>{dirMsg.text}</Typography.Paragraph>
             )}
             <Row gutter={16}>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item label="最大并发" name="maxConcurrentRecordings" rules={[{ required: true }]}>
                   <InputNumber min={1} max={8} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item label="默认清晰度" name="quality">
                   <Select
                     options={[
@@ -264,7 +264,7 @@ export default function SettingsPage() {
                   />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item
                   label="录制格式"
                   name="recordingFormat"
@@ -289,17 +289,17 @@ export default function SettingsPage() {
             </Form.Item>
             <Typography.Title level={5}>检测间隔（秒，按平台）</Typography.Title>
             <Row gutter={16}>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item label="全局默认" name={['checkIntervalSec', 'default']} rules={[{ required: true }]}>
                   <InputNumber min={10} max={3600} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item label="B站" name={['checkIntervalSec', 'bilibili']} rules={[{ required: true }]}>
                   <InputNumber min={10} max={3600} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col xs={24} md={8}>
                 <Form.Item label="抖音" name={['checkIntervalSec', 'douyin']} rules={[{ required: true }]}>
                   <InputNumber min={10} max={3600} style={{ width: '100%' }} />
                 </Form.Item>
@@ -316,7 +316,7 @@ export default function SettingsPage() {
               整段。Cookie 仅存本机钥匙串，不会显示或上传。
             </Typography.Paragraph>
             <Row gutter={16}>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Form.Item
                   label="抖音 Cookie"
                   name="douyinCookie"
@@ -328,7 +328,7 @@ export default function SettingsPage() {
                   />
                 </Form.Item>
               </Col>
-              <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
+              <Col xs={24} md={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
                 <Button
                   disabled={!settings?.douyinCookie.hasCookie}
                   onClick={() => {
@@ -388,7 +388,7 @@ export default function SettingsPage() {
         >
           <Space direction="vertical" style={{ width: '100%' }} size={12}>
             <Row gutter={[12, 8]}>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.desktopEnabled ?? false}
@@ -397,7 +397,7 @@ export default function SettingsPage() {
                   <span>启用桌面通知</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.liveStarted ?? false}
@@ -406,7 +406,7 @@ export default function SettingsPage() {
                   <span>开播提醒</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.recordingStarted ?? false}
@@ -415,7 +415,7 @@ export default function SettingsPage() {
                   <span>录制开始</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.recordingEnded ?? false}
@@ -424,7 +424,7 @@ export default function SettingsPage() {
                   <span>录制结束</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.recordingFailed ?? false}
@@ -433,7 +433,7 @@ export default function SettingsPage() {
                   <span>录制失败</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.uploadFailed ?? false}
@@ -442,7 +442,7 @@ export default function SettingsPage() {
                   <span>上传失败</span>
                 </Space>
               </Col>
-              <Col span={12}>
+              <Col xs={24} md={12}>
                 <Space>
                   <Switch
                     checked={preferences?.diskSpaceLow ?? false}

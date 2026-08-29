@@ -95,6 +95,15 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     set({ actingRoomId: id, actingAction: 'record' });
     try {
       await roomsApi.startRoomRecording(id);
+      // 乐观更新：成功后先本地标记录制中，等待 SSE room:updated 校正。
+      const room = get().rooms.find((r) => r.id === id);
+      if (room) {
+        get().upsertRoom({
+          ...room,
+          monitorState: 'recording',
+          activeRecording: room.activeRecording ?? { recordingId: '', startedAt: new Date().toISOString() },
+        });
+      }
     } finally {
       set({ actingRoomId: null, actingAction: null });
     }

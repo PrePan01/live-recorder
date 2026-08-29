@@ -38,14 +38,17 @@ export default function StatusBar() {
 
   return (
     <div
+      className="lr-statusbar"
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 24,
-        padding: '0 24px',
+        padding: '0 clamp(12px, 2vw, 24px)',
         background: 'var(--lr-surface)',
         borderBottom: '1px solid var(--lr-border)',
         height: 48,
+        minWidth: 0,
+        overflow: 'hidden',
       }}
     >
       <Space>
@@ -59,7 +62,7 @@ export default function StatusBar() {
         </Tag>
       </Space>
       <GlobalSearch />
-      <Space>
+      <Space className="lr-statusbar__disk">
         <Typography.Text type={spaceDanger ? 'danger' : 'secondary'}>
           {spaceDanger ? '⚠ 磁盘空间不足' : '磁盘可用'}
         </Typography.Text>

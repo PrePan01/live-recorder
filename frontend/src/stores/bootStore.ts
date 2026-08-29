@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { AppInstance, BootState, DiagnosticItem } from '../types/desktop';
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
+import { EndpointResolver } from '../api/endpoint';
 
 export const bridge = detectBridge();
 
@@ -27,6 +28,7 @@ export const useBootStore = create<BootStateStore>((set) => ({
     set({ loading: true, state: 'booting' });
     try {
       const event = await bridge.startService();
+      if (event.instance) EndpointResolver.set(event.instance);
       set({
         state: event.state,
         instance: event.instance ?? null,
@@ -41,6 +43,7 @@ export const useBootStore = create<BootStateStore>((set) => ({
     set({ loading: true });
     try {
       const event = await bridge.restartService();
+      if (event.instance) EndpointResolver.set(event.instance);
       set({
         state: event.state,
         instance: event.instance ?? null,
@@ -59,7 +62,10 @@ export const useBootStore = create<BootStateStore>((set) => ({
     }
   },
   setState: (s) => set({ state: s }),
-  setInstance: (i) => set({ instance: i }),
+  setInstance: (i) => {
+    EndpointResolver.set(i);
+    set({ instance: i });
+  },
   setDiagnostics: (d) => set({ diagnostics: d }),
 }));
 

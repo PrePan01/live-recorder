@@ -90,7 +90,7 @@ export default function GlobalSearch() {
   }, [activeIdx]);
 
   return (
-    <div style={{ position: 'relative', width: 280 }} onKeyDown={onKeyDown}>
+    <div className="lr-globalsearch" style={{ position: 'relative', width: 'clamp(160px, 24vw, 280px)', minWidth: 0 }} onKeyDown={onKeyDown}>
       <Input.Search
         ref={inputRef}
         allowClear

@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
 import { useRoomStore } from '../../stores/roomStore';
+import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import FilePlayer from '../../components/FilePlayer';
@@ -150,6 +151,7 @@ export default function History() {
       {
         title: '标题',
         dataIndex: 'streamTitle',
+        width: 240,
         ellipsis: true,
         render: (t: string, r) => (
           <Space size={4}>
@@ -259,13 +261,15 @@ export default function History() {
     return [...map.entries()].map(([sessionId, recs]) => ({ sessionId, recs }));
   }, [items]);
 
+  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Recording>(columns);
+
   return (
     <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           录制历史
         </Typography.Title>
-        <Space>
+        <Space wrap>
           <Select
             allowClear
             placeholder="按房间筛选"
@@ -311,13 +315,14 @@ export default function History() {
                 </Typography.Text>
               </Space>
             ),
-            children: <Table rowKey="id" size="small" columns={columns} dataSource={recs} pagination={false} scroll={{ x: 1400 }} />,
+            children: <Table rowKey="id" size="small" columns={resizedColumns} components={resizableComponents} dataSource={recs} pagination={false} scroll={{ x: 1400 }} />,
           }))}
         />
       ) : (
         <Table
           rowKey="id"
-          columns={columns}
+          columns={resizedColumns}
+          components={resizableComponents}
           dataSource={items}
           loading={loading}
           onRow={(r) => ({ 'data-rec-id': r.id } as React.HTMLAttributes<HTMLElement>)}
