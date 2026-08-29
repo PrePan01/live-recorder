@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
+import { App, Badge, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Tooltip, Typography } from 'antd';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
@@ -146,6 +146,12 @@ export default function Monitor() {
     })
     .sort((a, b) => Number(b.favorited) - Number(a.favorited));
 
+  const enabledRooms = rooms.filter((r) => r.enabled);
+  const liveCount = enabledRooms.filter((r) => r.lastLiveStatus === 'live').length;
+  const recordingCount = enabledRooms.filter(
+    (r) => r.monitorState === 'recording' || r.monitorState === 'reconnecting',
+  ).length;
+
   const handleWatch = (room: Room) => {
     if (!openPreview(room.id)) {
       message.warning(describeError('PREVIEW_LIMIT_REACHED'));
@@ -157,9 +163,35 @@ export default function Monitor() {
   return (
     <div>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          监控总览
-        </Typography.Title>
+        <Space size={16} wrap>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            监控总览
+          </Typography.Title>
+          <Space size={8} wrap>
+            <Badge
+              color="green"
+              count={liveCount}
+              showZero
+              title={`开播中 ${liveCount} 间`}
+              style={{ boxShadow: 'none' }}
+            >
+              <Button size="small" icon={<EyeOutlined />}>
+                开播中 {liveCount}
+              </Button>
+            </Badge>
+            <Badge
+              color="red"
+              count={recordingCount}
+              showZero
+              title={`录制中 ${recordingCount} 间`}
+              style={{ boxShadow: 'none' }}
+            >
+              <Button size="small" icon={<VideoCameraAddOutlined />}>
+                录制中 {recordingCount}
+              </Button>
+            </Badge>
+          </Space>
+        </Space>
         <Space>
           <Segmented
             options={['全部', '录制中', '收藏']}
