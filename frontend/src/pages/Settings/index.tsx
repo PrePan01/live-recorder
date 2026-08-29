@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { App, Alert, Button, Card, Col, Form, Input, InputNumber, List, Radio, Row, Select, Space, Switch, Tag, Typography } from 'antd';
-import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
+import { DownloadOutlined, UploadOutlined, CheckCircleOutlined, SyncOutlined, NotificationOutlined } from '@ant-design/icons';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAlertStore } from '../../stores/alertStore';
 import { useServiceStore } from '../../stores/serviceStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useAppTheme } from '../../theme';
 import type { ThemePreference } from '../../types/settings';
 import { validateDirectory, testSmtp } from '../../api/settings';
+import { testNotification } from '../../api/notification';
 import { exportConfig, importConfig } from '../../api/config';
 import { fetchSelfCheck, type SelfCheckItem, type SelfCheckStatus } from '../../api/service';
 import DirectoryPicker from '../../components/DirectoryPicker';
@@ -25,9 +27,10 @@ const CHECK_COLOR: Record<SelfCheckStatus, string> = { ok: 'success', fail: 'err
 const CHECK_TEXT: Record<SelfCheckStatus, string> = { ok: '正常', fail: '异常', warn: '警告', pending: '检测中' };
 
 export default function SettingsPage() {
-  const { message } = App.useApp();
+const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
   const { preference, setPreference } = useAppTheme();
+  const { preferences, load: loadNotifications, save: saveNotifications } = useNotificationStore();
   const { alerts, fetchAlerts, markRead, markAllRead, retryFailure, retryingId } = useAlertStore();
   const status = useServiceStore((s) => s.status);
   const fetchStatus = useServiceStore((s) => s.fetchStatus);
@@ -45,7 +48,8 @@ export default function SettingsPage() {
     void load();
     void fetchAlerts();
     void fetchStatus();
-  }, [load, fetchAlerts, fetchStatus]);
+    void loadNotifications().catch(() => undefined);
+  }, [load, fetchAlerts, fetchStatus, loadNotifications]);
 
   useEffect(() => {
     if (settings && settings.theme) {
@@ -89,6 +93,21 @@ export default function SettingsPage() {
       message.error(e instanceof ApiError ? describeError(e.code, e.message) : '自检失败');
     } finally {
       setChecking(false);
+    }
+  };
+
+  const sendTest = async () => {
+    try {
+      const res = await testNotification();
+      const parts: string[] = [];
+      if (res.desktop) parts.push('桌面通知已发送');
+      else parts.push('桌面通知未开启');
+      if (res.email === 'sent') parts.push('邮件已发送');
+      else if (res.email === 'skipped') parts.push('SMTP 未配置，邮件跳过');
+      else if (res.email === 'failed') parts.push('邮件发送失败');
+      message[res.email === 'failed' ? 'warning' : 'success'](parts.join('；'));
+    } catch (e) {
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '测试通知失败');
     }
   };
 
@@ -399,6 +418,79 @@ export default function SettingsPage() {
         </Card>
       </Col>
       <Col xs={24} lg={10}>
+        <Card
+          title="桌面通知"
+          extra={
+            <Button size="small" icon={<NotificationOutlined />} onClick={() => void sendTest()}>
+              发送测试
+            </Button>
+          }
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            <Row gutter={[12, 8]}>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.desktopEnabled ?? false}
+                    onChange={(v) => void saveNotifications({ desktopEnabled: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>启用桌面通知</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.liveStarted ?? false}
+                    onChange={(v) => void saveNotifications({ liveStarted: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>开播提醒</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.recordingStarted ?? false}
+                    onChange={(v) => void saveNotifications({ recordingStarted: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>录制开始</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.recordingFailed ?? false}
+                    onChange={(v) => void saveNotifications({ recordingFailed: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>录制失败</span>
+                </Space>
+              </Col>
+              <Col span={12}>
+                <Space>
+                  <Switch
+                    checked={preferences?.diskSpaceLow ?? false}
+                    onChange={(v) => void saveNotifications({ diskSpaceLow: v }).catch(() => message.error('保存失败'))}
+                  />
+                  <span>磁盘空间不足</span>
+                </Space>
+              </Col>
+            </Row>
+            <Form.Item label="通知去重窗口（分钟）" style={{ marginBottom: 0 }}>
+              <InputNumber
+                min={1}
+                max={1440}
+                value={preferences?.dedupeWindowMinutes}
+                onChange={(v) => {
+                  if (typeof v === 'number' && v >= 1 && v <= 1440) {
+                    void saveNotifications({ dedupeWindowMinutes: v }).catch(() => message.error('保存失败'));
+                  }
+                }}
+              />
+            </Form.Item>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              桌面通知使用系统通知能力；邮件告警需在「SMTP 邮件告警」配置并启用。测试会发送一条示例通知。
+            </Typography.Paragraph>
+          </Space>
+        </Card>
         <Card
           title="一键自检"
           extra={
