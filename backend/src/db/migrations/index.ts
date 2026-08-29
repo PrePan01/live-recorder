@@ -277,6 +277,30 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #116 V5 Batch2 OpenList 自动上传：UploadJob（状态/进度/重试/幂等键）。
+    version: 13,
+    up: (db) => {
+      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`).get());
+      if (!exists) {
+        db.exec(`
+          CREATE TABLE upload_jobs (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'ok', 'failed', 'cancelled')),
+            progress INTEGER NOT NULL DEFAULT 0,
+            remote_path TEXT,
+            error TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX idx_upload_jobs_recording ON upload_jobs(recording_id);
+        `);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

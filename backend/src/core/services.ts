@@ -31,6 +31,7 @@ import { Notifier } from './notifier.js';
 import { RecorderManager } from './recorder-manager.js';
 import { Scheduler } from './scheduler.js';
 import { PipelineManager } from './pipeline-manager.js';
+import { UploadManager } from './upload-manager.js';
 
 export type AdapterMode = 'fake' | 'real';
 
@@ -55,6 +56,7 @@ export interface Services {
   manager: RecorderManager;
   scheduler: Scheduler;
   pipeline: PipelineManager;
+  uploader: UploadManager;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
   /** 平台会话凭证（v1.3：抖音 Cookie），非该平台返回 undefined。 */
@@ -119,6 +121,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     manager: undefined as unknown as RecorderManager,
     scheduler: undefined as unknown as Scheduler,
     pipeline: undefined as unknown as PipelineManager,
+    uploader: undefined as unknown as UploadManager,
   };
   services.mailer = useKeychain
     ? new SmtpMailer(() => services.secretStore.get(MAIL_PASSWORD_KEY))
@@ -133,6 +136,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.manager = new RecorderManager(services, services.notifier);
   services.scheduler = new Scheduler(services, services.manager);
   services.pipeline = new PipelineManager(services);
+  services.uploader = new UploadManager(services);
   return services;
 }
 

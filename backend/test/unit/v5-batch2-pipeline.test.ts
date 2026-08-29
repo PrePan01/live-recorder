@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
+import { UploadManager } from '../../src/core/upload-manager.js';
 
 function enablePipeline(services: Services): void {
   const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
@@ -134,6 +135,71 @@ describe('V5 Batch2 naming rule (#115)', () => {
     const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{time}' } });
     expect(preview.statusCode).toBe(200);
     expect(typeof preview.json().example).toBe('string');
+    await app.close();
+  });
+});
+
+describe('V5 Batch2 OpenList upload (#116)', () => {
+  it('config read/write with token via secret store (never echoed)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
+    expect(def.openlist.enabled).toBe(false);
+    expect(def.openlist.hasToken).toBe(false);
+
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'secret-token' } });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().openlist.hasToken).toBe(true);
+    expect(JSON.stringify(set.json())).not.toContain('secret-token');
+    const after = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
+    expect(after.openlist.enabled).toBe(true);
+    expect(after.openlist.hasToken).toBe(true);
+    await app.close();
+  });
+
+  it('upload endpoints: list/retry/cancel + manual upload validation', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    const list = (await inj({ method: 'GET', url: '/api/v1/uploads' })).json();
+    expect(Array.isArray(list.uploads)).toBe(true);
+
+    // 无文件录制手动上传 → 500
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'u' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u1', streamTitle: 't' });
+    const noFile = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(noFile.statusCode).toBe(500);
+
+    // 不存在上传重试/取消 → 404
+    const retry = await inj({ method: 'POST', url: '/api/v1/uploads/upl_none/retry' });
+    expect(retry.statusCode).toBe(404);
+    const cancel = await inj({ method: 'POST', url: '/api/v1/uploads/upl_none/cancel' });
+    expect(cancel.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('creates upload job with recordingId idempotency key when enabled', async () => {
+    const services = newServices();
+    // 注入假 WebDAV 客户端，避免真实网络与 teardown 竞态。
+    services.uploader = new UploadManager(services, {
+      async put() { /* fake upload ok */ },
+    });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-ul-'));
+    const file = path.join(dir, 'x.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'u' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u2', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', token: 'tok' } });
+
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().upload.recordingId).toBe(rec.id);
+    expect(res.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
     await app.close();
   });
 });

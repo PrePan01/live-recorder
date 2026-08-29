@@ -6,3 +6,4 @@ export * from './alert.js';
 export * from './tag.js';
 export * from './diagnostic.js';
 export * from './pipeline.js';
+export * from './upload.js';

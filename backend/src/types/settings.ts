@@ -1,4 +1,5 @@
 import type { Quality } from './recording.js';
+import type { OpenListConfig } from './upload.js';
 
 export interface RetryConfig {
   maxAttempts: number;
@@ -60,6 +61,8 @@ export interface AppSettings {
   pipeline?: PipelineConfig;
   /** V5 录制文件命名模板（Batch2 #115）；修改只影响新录制。 */
   namingRule?: string;
+  /** V5 OpenList 上传配置（Batch2 #116；令牌经 SecretStore 不落盘）。 */
+  openlist?: OpenListConfig;
 }
 
 export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';

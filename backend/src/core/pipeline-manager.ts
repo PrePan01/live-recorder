@@ -65,8 +65,14 @@ export class PipelineManager {
 
   /** FIFO 泵：最多 N=2 并发，录制主链路永远不被阻塞（异步执行）。 */
   private pump(): void {
-    const config = this.pipelineConfig();
-    while (this.running.size < config.maxConcurrency && this.queue.length > 0) {
+    let maxConcurrency = 2;
+    try {
+      maxConcurrency = this.pipelineConfig().maxConcurrency;
+    } catch {
+      // 服务关闭中：不再派发新任务。
+      return;
+    }
+    while (this.running.size < maxConcurrency && this.queue.length > 0) {
       const entry = this.queue.shift()!;
       if (this.running.has(entry.recordingId)) continue;
       this.running.add(entry.recordingId);
@@ -75,6 +81,17 @@ export class PipelineManager {
   }
 
   private async run(entry: QueueEntry): Promise<void> {
+    try {
+      await this.runInner(entry);
+    } catch {
+      // 服务关闭/管线异常：静默收束（管线非关键路径）。
+    } finally {
+      this.running.delete(entry.recordingId);
+      this.pump();
+    }
+  }
+
+  private async runInner(entry: QueueEntry): Promise<void> {
     const config = this.pipelineConfig();
     const recording = this.services.recordings.get(entry.recordingId);
     const run = this.pipelineRepo.createRun({ recordingId: entry.recordingId, configSnapshot: { ...config, attempt: entry.attempt } });
@@ -171,9 +188,6 @@ export class PipelineManager {
       this.services.recordings.update(entry.recordingId, { state: 'completed', pipelineStatus: 'failed' });
       this.finish(run.id, 'failed');
       this.services.alerts.create({ level: 'warning', source: 'pipeline', message: `后处理管线失败（${entry.recordingId}）：${message}`, occurredAt: this.services.clock.iso() });
-    } finally {
-      this.running.delete(entry.recordingId);
-      this.pump();
     }
   }
 
@@ -185,6 +199,10 @@ export class PipelineManager {
       const pipelineStatus = status === 'ok' ? 'ok' : status === 'partial' ? 'partial' : status === 'failed' ? 'failed' : 'queued';
       this.services.recordings.update(run.recordingId, { state: 'completed', pipelineStatus });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(run.recordingId)! });
+      // 管线完成（ok/partial）后触发 OpenList 上传（若启用）。
+      if (status === 'ok' || status === 'partial') {
+        void this.services.uploader.enqueue(run.recordingId).catch(() => undefined);
+      }
     }
   }
 }
