@@ -25,6 +25,7 @@ import { SettingsRepository } from '../db/repositories/settings.repo.js';
 import { AlertRepository } from '../db/repositories/alert.repo.js';
 import { TagRepository } from '../db/repositories/tag.repo.js';
 import { DiagnosticRepository } from '../db/repositories/diagnostic.repo.js';
+import { ScheduleRepository } from '../db/repositories/schedule.repo.js';
 import os from 'node:os';
 import path from 'node:path';
 import { Notifier } from './notifier.js';
@@ -32,6 +33,7 @@ import { RecorderManager } from './recorder-manager.js';
 import { Scheduler } from './scheduler.js';
 import { PipelineManager } from './pipeline-manager.js';
 import { UploadManager } from './upload-manager.js';
+import { ExportManager } from './export-manager.js';
 
 export type AdapterMode = 'fake' | 'real';
 
@@ -47,6 +49,7 @@ export interface Services {
   alerts: AlertRepository;
   tags: TagRepository;
   diagnostics: DiagnosticRepository;
+  schedules: ScheduleRepository;
   /** V5 统计短缓存（服务端聚合，TTL 5s，键=查询参数）。 */
   statsCache: { key: string; cachedAt: number; body: unknown } | undefined;
   secretStore: SecretStore;
@@ -57,6 +60,7 @@ export interface Services {
   scheduler: Scheduler;
   pipeline: PipelineManager;
   uploader: UploadManager;
+  exporter: ExportManager;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
   /** 平台会话凭证（v1.3：抖音 Cookie），非该平台返回 undefined。 */
@@ -110,6 +114,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
     diagnostics: new DiagnosticRepository(db),
+    schedules: new ScheduleRepository(db),
     statsCache: undefined,
     secretStore,
     diskGuard: new FakeDiskGuard(),
@@ -122,6 +127,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     scheduler: undefined as unknown as Scheduler,
     pipeline: undefined as unknown as PipelineManager,
     uploader: undefined as unknown as UploadManager,
+    exporter: undefined as unknown as ExportManager,
   };
   services.mailer = useKeychain
     ? new SmtpMailer(() => services.secretStore.get(MAIL_PASSWORD_KEY))
@@ -137,6 +143,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.scheduler = new Scheduler(services, services.manager);
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);
+  services.exporter = new ExportManager(services);
   return services;
 }
 

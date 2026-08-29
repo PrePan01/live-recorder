@@ -27,14 +27,17 @@ interface PreviewRoom {
 /** 预览头缓冲上限：足够覆盖 FLV 头 + onMetaData + 若干初始帧。 */
 const PREVIEW_HEADER_MAX = 512 * 1024;
 
+/** 预览会话上限（V5 直播墙 #124）：最多 4 个活跃预览会话（按房间计数）。 */
+export const PREVIEW_MAX_SESSIONS = 4;
+
 export class PreviewManager {
   private rooms = new Map<string, PreviewRoom>();
-  private total = 0;
 
-  constructor(private services: Services, private maxTotal = 2) {}
+  constructor(private services: Services, private maxSessions = PREVIEW_MAX_SESSIONS) {}
 
+  /** 会话=房间：每个被预览的房间算一个会话（同一房间多个 socket 共享一个会话）。 */
   canAccept(): boolean {
-    return this.total < this.maxTotal;
+    return this.rooms.size < this.maxSessions;
   }
 
   addClient(roomId: string, ws: WebSocket): void {
@@ -44,7 +47,6 @@ export class PreviewManager {
       this.rooms.set(roomId, room);
     }
     room.sockets.add(ws);
-    this.total += 1;
     // 中途加入：先补发流头缓冲，mpegts.js 才能识别 FLV 并初始化解复用器。
     for (const chunk of room.headerBuffer) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -56,9 +58,11 @@ export class PreviewManager {
       }
     }
     ws.on('close', () => {
-      if (room!.sockets.delete(ws)) this.total -= 1;
-      // 不在此处删除 room：录制进行中需要保留流头缓冲供后续客户端加入；
-      // 录制结束由 closeRoom 统一清理。
+      room!.sockets.delete(ws);
+      // 仅当房间无 socket 时移除（会话结束），录制中保留流头缓冲供后续加入。
+      if (room!.sockets.size === 0) {
+        this.rooms.delete(roomId);
+      }
     });
   }
 
@@ -100,7 +104,6 @@ export class PreviewManager {
         // 忽略已断开连接
       }
     }
-    this.total -= room.sockets.size;
     this.rooms.delete(roomId);
   }
 
@@ -114,12 +117,12 @@ export class PreviewManager {
         // 忽略
       }
     }
-    this.total -= room.sockets.size;
     this.rooms.delete(roomId);
   }
 
+  /** 当前活跃预览会话数（按房间）。 */
   get activeCount(): number {
-    return this.total;
+    return this.rooms.size;
   }
 
   trackedRooms(): string[] {

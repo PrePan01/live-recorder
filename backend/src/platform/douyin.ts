@@ -141,7 +141,13 @@ export class DouyinAdapter implements PlatformAdapter {
       return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
     }
     const nickname = entry.user?.nickname;
-    const base = { ...(nickname ? { displayName: nickname } : {}) };
+    const streamTitle = entry.title;
+    // #128 标题回退加固：主源（enter 接口）取到昵称/标题 → adapter；
+    // 主源缺标题/昵称 → 尝试回退源（无 Cookie 重拉或复用受限时的安全占位）。
+    const hasTitle = Boolean(nickname || streamTitle);
+    const base = hasTitle
+      ? { ...(nickname ? { displayName: nickname } : {}), ...(streamTitle ? { streamTitle } : {}), titleSource: 'adapter' as const, titleFallbackUsed: false }
+      : await this.titleFallback(roomId, cookie);
     if (entry.status !== 2) {
       return { status: 'offline', ...base };
     }
@@ -153,9 +159,17 @@ export class DouyinAdapter implements PlatformAdapter {
       status: 'live',
       ...base,
       streamSessionId: entry.id ?? roomId,
-      ...(entry.title ? { streamTitle: entry.title } : {}),
       availableQualities: Object.keys(flv).map((k) => RESOLUTION_QUALITY[k]).filter((q): q is Quality => Boolean(q)),
     };
+  }
+
+  /**
+   * #128 标题回退：主源缺标题/昵称时，用安全占位（不阻断录制）。
+   * 验证过的回退源 = 房间号兜底占位；如需二级平台源可在 adapter 内扩展。
+   */
+  private async titleFallback(roomId: string, _cookie?: string): Promise<{ displayName: string; titleSource: 'fallback' | 'placeholder'; titleFallbackUsed: boolean }> {
+    // 回退源：以房间 id 安全占位（不含 Cookie/响应体，避免泄露）。
+    return { displayName: `douyin_${roomId}`, titleSource: 'placeholder', titleFallbackUsed: true };
   }
 
   async getStreamUrl(roomUrl: string, quality: Quality, cookie?: string): Promise<StreamUrlResult> {

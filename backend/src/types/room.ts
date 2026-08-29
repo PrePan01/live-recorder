@@ -15,8 +15,8 @@ export type MonitorState =
 /** 最近一次检测的直播状态（#78）：live=开播、offline=未开播、restricted=受限/需更新 Cookie。 */
 export type LiveStatus = 'live' | 'offline' | 'restricted';
 
-/** 房间标题来源（V5 #91 扩展）：adapter=平台接口识别、fallback=回退源、manual=手动改名。 */
-export type TitleSource = 'adapter' | 'fallback' | 'manual';
+/** 房间标题来源（V5 #91 扩展）：adapter=平台接口识别、fallback=回退源、manual=手动改名、placeholder=安全占位（#128）。 */
+export type TitleSource = 'adapter' | 'fallback' | 'manual' | 'placeholder';
 
 export interface Room {
   id: string;

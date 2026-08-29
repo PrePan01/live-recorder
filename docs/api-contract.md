@@ -1,4 +1,6 @@
-# localhost 录制服务 API 契约（v2.4 · 2026-08-29）
+# localhost 录制服务 API 契约（v2.5 · 2026-08-29）
+
+相对 v2.4 的变更（V5 Batch3，#124-#128）：预览会话上限 2→4（会话按房间计数，同房间多 socket 共享）；新增定时录制计划（/rooms/:id/schedules CRUD + 调度集成 + SSE schedule:updated）、录制备份与导出（/exports + ExportJob + manifest + SSE export:updated）、抖音标题回退（LiveStatusResult.titleSource/titleFallbackUsed + Room.titleSource 元数据写入）。统计看板沿用 #93 已交付 GET /stats/recordings。迁移 v14 recording_schedules、v15 export_jobs。
 
 相对 v2.3 的变更（V5 Batch2，#114-#117）：新增后处理管线（GET /recordings/:id/pipeline、POST retry、GET /media/cover）、命名规则（GET/PUT /settings/naming-rule、preview）、OpenList 上传（settings/openlist、/uploads、/recordings/:id/upload）、邮件简化（settings/email、presets、test）。Recording 增 `processing` 态 + `pipelineStatus/metadata/coverPath` 完整落地；迁移 v12 pipeline_runs/artifacts、v13 upload_jobs。SSE 增 `upload:updated`。
 
@@ -531,3 +533,36 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 - `GET/PUT /settings/email`：独立端点，body 含 MailConfig 字段 + `password?` + 顶层 `recordingDirectory?`；`GET` 返回 `passwordSet` 且回显 `provider`（按 host 探测），密码永不回显。
 - `POST /settings/email/test` → `{ ok }`；SMTP 失败 → `SMTP_SEND_FAILED`。
 - 同类事件 30min 去重（Notifier 既有逻辑）。
+
+## v5 Batch3 契约（#124-#128，2026-08-29）
+
+### 多路直播墙（#124）
+
+- 预览 WS `ws://.../ws/preview/:roomId`：服务端限制**最多 4 个活跃预览会话**（会话=房间，同一房间多个 socket 共享一个会话，不重复占额）。
+- 超限：第 5 个会话握手即 `4003 PREVIEW_LIMIT_REACHED`（复用既有 WS 关闭码，文案「预览数已达上限（4 路）」）。断开预览只释放预览资源，不影响 recording。
+
+### 定时录制计划（#125）
+
+- `GET/POST /rooms/:id/schedules`、`PATCH/DELETE /rooms/:id/schedules/:scheduleId`。
+- `RecordingSchedule`：`{ id, roomId, daysOfWeek:[0-6], startTime:"HH:mm", endTime:"HH:mm"|null, timezone, enabled, nextRunAt, createdAt, updatedAt }`。
+- `daysOfWeek` 非空 0-6 数字数组、`startTime/endTime` 需 `HH:mm`（校验失败 → `CONFIG_LOAD_FAILED`）。
+- `nextRunAt` 服务端计算（本地时区，跨天窗口 end<start 时触发点仍为 start）；enabled=false → null。
+- 调度集成：到期计划触发一次检测（离线不建空录制）；`nextRunAt` 持久化保证跨天/重启恢复；幂等（同 now 不重复触发）。
+- SSE `schedule:updated`。
+
+### 统计看板（#126）
+
+沿用 #93 已交付 `GET /stats/recordings?from&to&platform&tagId&roomId` → `{ totals:{recordings,completed,failed,durationMs,bytes,successRate}, byDay, byPlatform, generatedAt }`（服务端聚合 + 5s 短缓存，跨度 ≤365 天，本地时区切日）。空区间返回零值，可复算不阻塞监控。
+
+### 录制备份与导出（#127）
+
+- `POST /exports` body `{ recordingIds[]（≤100）, baseDir }` → 201 `{ export }`；`GET /exports`、`GET /exports/:id`、`POST /exports/:id/cancel`。
+- `ExportJob`：`{ id, status: queued|running|ok|partial|failed|cancelled, recordingIds, outputPath, manifestPath, sizeBytes, error, progress, createdAt, updatedAt }`。
+- 打包为目录（`<baseDir>/export_<ts>/`）：源文件 + 封面（缺失 → 该项 partial）+ `manifest.json`（`{version:"1", appVersion, exportedAt, recordings:[{id,file,metadata,cover,status}]}`，不含密钥/凭证）。缺失 sidecar/封面标 partial，不损坏源文件。取消不删已生成内容（或清理临时包由实现保证）。
+- SSE `export:updated`。
+
+### 抖音标题回退（#128）
+
+- `checkLiveStatus` 返回 `titleSource: adapter|fallback|placeholder` + `titleFallbackUsed`：主源（enter 接口）取到昵称/标题 → `adapter`；主源缺标题 → 回退源/安全占位（`douyin_<roomId>`，`titleFallbackUsed=true`），**录制不阻断**。
+- `Room.titleSource/titleUpdatedAt/titleFallbackUsed` 随检测写入，SSE `room:updated` 输出；FE 显示回退/占位非阻塞提示。
+- Cookie 失效/反爬 → `PLATFORM_ACCESS_RESTRICTED`；接口结构变化 → `PLATFORM_CHANGED`（分类保持 #56 口径）。

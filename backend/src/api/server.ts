@@ -15,6 +15,8 @@ import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
 import { registerNamingRoutes } from './routes/naming.js';
 import { registerOpenListRoutes } from './routes/openlist.js';
+import { registerScheduleRoutes } from './routes/schedules.js';
+import { registerExportRoutes } from './routes/exports.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 import { DEFAULT_PORT } from '../sidecar/ports.js';
@@ -114,6 +116,8 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerPipelineRoutes(app, services);
   registerNamingRoutes(app, services);
   registerOpenListRoutes(app, services);
+  registerScheduleRoutes(app, services);
+  registerExportRoutes(app, services);
   registerSse(app, services, sse);
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, port);

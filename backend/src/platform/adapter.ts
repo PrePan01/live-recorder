@@ -9,6 +9,10 @@ export interface LiveStatusResult {
   displayName?: string;
   availableQualities?: Quality[];
   error?: ErrorObject;
+  /** V5 #128 标题来源：adapter=主源识别、fallback=回退源、placeholder=安全占位。 */
+  titleSource?: 'adapter' | 'fallback' | 'placeholder';
+  /** V5 #128 是否使用了回退源（主源不可用但回退成功）。 */
+  titleFallbackUsed?: boolean;
 }
 
 export interface StreamUrlResult {

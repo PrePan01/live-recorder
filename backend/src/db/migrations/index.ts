@@ -301,6 +301,55 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // #125 V5 Batch3 定时录制计划：RecordingSchedule（周计划，按本地时区计算 nextRunAt）。
+    version: 14,
+    up: (db) => {
+      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'recording_schedules'`).get());
+      if (!exists) {
+        db.exec(`
+          CREATE TABLE recording_schedules (
+            id TEXT PRIMARY KEY,
+            room_id TEXT NOT NULL,
+            days_of_week TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT,
+            timezone TEXT NOT NULL DEFAULT 'local',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            next_run_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX idx_schedules_room ON recording_schedules(room_id);
+          CREATE INDEX idx_schedules_next ON recording_schedules(next_run_at);
+        `);
+      }
+    },
+  },
+  {
+    // #127 V5 Batch3 录制备份与导出：ExportJob（单场/批量打包，manifest 含哈希/版本不含密钥）。
+    version: 15,
+    up: (db) => {
+      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'export_jobs'`).get());
+      if (!exists) {
+        db.exec(`
+          CREATE TABLE export_jobs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'ok', 'partial', 'failed', 'cancelled')),
+            recording_ids TEXT NOT NULL,
+            output_path TEXT,
+            manifest_path TEXT,
+            size_bytes INTEGER,
+            error TEXT,
+            progress INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX idx_export_jobs_status ON export_jobs(status);
+        `);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
