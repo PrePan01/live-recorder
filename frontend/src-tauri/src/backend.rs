@@ -113,8 +113,78 @@ impl BackendManager {
     }
 }
 
+/// 定位可用的 node 运行时。优先使用打包进 bundle 的 node（Resources/node），
+/// 其次 PATH 中的 node，最后回退到 nvm/usr/local 常见路径（GUI 双击启动时
+/// PATH 精简，/usr/bin 通常无 node）。
 fn backend_cmd() -> String {
-    std::env::var("LR_BACKEND_CMD").unwrap_or_else(|_| "node".to_string())
+    if let Some(explicit) = std::env::var("LR_BACKEND_CMD").ok() {
+        if !explicit.is_empty() {
+            return explicit;
+        }
+    }
+    // 1) Packaged node: <bundle Resources>/node
+    if let Some(res) = bundled_resources_dir() {
+        let bundled = res.join("node");
+        if bundled.exists() {
+            return bundled.to_string_lossy().to_string();
+        }
+    }
+    // 2) PATH node（dev / 已装系统 node）
+    if command_exists("node") {
+        return "node".to_string();
+    }
+    // 3) 常见用户级安装路径（nvm / Homebrew / 独立安装）
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut fallbacks = vec![
+        format!("{home}/.nvm/versions/node"),
+        format!("{home}/.local/bin/node"),
+        "/usr/local/bin/node".to_string(),
+        "/opt/homebrew/bin/node".to_string(),
+        "/opt/local/bin/node".to_string(),
+    ];
+    // nvm 下取最高版本
+    if let Ok(entries) = std::fs::read_dir(format!("{home}/.nvm/versions/node")) {
+        let mut versions = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.join("bin/node").exists())
+            .collect::<Vec<_>>();
+        versions.sort();
+        if let Some(latest) = versions.last() {
+            fallbacks.insert(0, latest.join("bin/node").to_string_lossy().to_string());
+        }
+    }
+    for p in fallbacks {
+        if std::path::Path::new(&p).exists() {
+            return p;
+        }
+    }
+    "node".to_string()
+}
+
+/// bundle 内 Resources 目录（macOS: <app>.app/Contents/Resources；Windows: exe 同级）。
+fn bundled_resources_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    // macOS: exe = .../Contents/MacOS/app → Contents/Resources
+    if let Some(contents) = exe.parent().and_then(|p| p.parent()) {
+        let res = contents.join("Resources");
+        if res.is_dir() {
+            return Some(res);
+        }
+    }
+    // Windows / 独立可执行：exe 同级
+    exe.parent().map(|p| p.to_path_buf())
+}
+
+fn command_exists(cmd: &str) -> bool {
+    use std::process::Command;
+    Command::new(cmd)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn backend_args() -> Vec<String> {
