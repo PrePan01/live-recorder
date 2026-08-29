@@ -260,6 +260,7 @@ FE 规则：以 `stream_end.reason` 为准展示、关闭码仅兜底；仅 1011
 - `checkIntervalSec` 为按平台对象 + 全局默认兜底（废弃 `pollIntervalSeconds`）；同平台房间串行检测
 - `quality`（original/1080p/720p/360p，默认 original）用户可配，真实降级逻辑阶段 C 生效；recordings 表内部列记实际清晰度，API 不输出（v1.1 勘误补正，commit b90ec4d）
 - 通知去重窗口 v1 服务端固定 30 分钟，不暴露到 `/settings`；契约预留可选字段 `dedupeWindowMinutes`（前端不渲染）
+- `theme`（v2.2，#93）：界面主题偏好 `light | dark | system`（默认 system），随 `PUT /settings` 读写；仅持久化偏好，不影响录制与服务启动。FE U-6 设置页主题选择经此字段持久化。
 - SMTP 密码不回显，`GET /settings` 仅返回 `passwordSet: true|false`（废弃 `passwordConfigured`）；密码经 `SecretStore`（keytar / CI 用 FakeSecretStore）存本机 keychain
 - `douyinCookie`（v1.3）：POST/PUT `/settings` 可写（字符串，空串表示清除），经 `SecretStore` 存本机 keychain 不落盘；`GET /settings` 仅返回 `douyinCookie: { hasCookie: true|false }`，永不回显值；抖音房间受限/反爬时按 `PLATFORM_ACCESS_RESTRICTED` 提示，FE 引导去设置页填写
 
