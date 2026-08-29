@@ -4,6 +4,8 @@ export type RecordingFormat = 'source_flv' | 'mp4_after';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
+import type { NotificationPreference } from './notification';
+
 export type PlatformIntervals = {
   default: number;
   bilibili: number;
@@ -46,6 +48,8 @@ export interface Settings {
   douyinCookie: { hasCookie: boolean };
   /** V5：主题偏好（light | dark | system） */
   theme?: ThemePreference;
+  /** V5：通知偏好 */
+  notifications?: NotificationPreference;
 }
 
 export interface MailInput {

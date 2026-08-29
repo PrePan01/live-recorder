@@ -5,6 +5,7 @@ import { useAlertStore } from './alertStore';
 import { useSettingsStore } from './settingsStore';
 import { useServiceStore } from './serviceStore';
 import { useDiagnosticStore } from './diagnosticStore';
+import { useNotificationStore } from './notificationStore';
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -28,6 +29,7 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case 'settings:updated':
       useSettingsStore.getState().setSettings(e.settings);
+      if (e.settings.notifications) useNotificationStore.getState().setPreferences(e.settings.notifications);
       break;
     case 'service:status':
       useServiceStore.getState().patchStatus(e.serviceStatus);

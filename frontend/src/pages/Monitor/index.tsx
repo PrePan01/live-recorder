@@ -7,6 +7,7 @@ import { PlatformLogoTag } from '../../components/PlatformLogo';
 import RoomStats from '../../components/RoomStats';
 import RoomHealth from '../../components/RoomHealth';
 import LiveStatusTag from '../../components/LiveStatusTag';
+import LivePredictionBadge from '../../components/LivePredictionBadge';
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -59,6 +60,7 @@ function RoomCard({
     >
       <div className="lr-room-card__status" style={{ marginBottom: 8 }}>
         <LiveStatusTag status={room.lastLiveStatus} />
+        <LivePredictionBadge roomId={room.id} />
       </div>
       {room.tags.length > 0 ? (
         <div style={{ marginBottom: 8 }}>
