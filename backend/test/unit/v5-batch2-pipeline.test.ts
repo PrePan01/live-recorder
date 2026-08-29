@@ -203,3 +203,37 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     await app.close();
   });
 });
+
+describe('V5 Batch2 email simplification (#117)', () => {
+  it('exposes provider presets and detects provider from host', async () => {
+    const { SMTP_PRESETS, detectProvider } = await import('../../src/api/routes/settings.js');
+    expect(SMTP_PRESETS.length).toBeGreaterThanOrEqual(4);
+    expect(detectProvider('smtp.qq.com')).toBe('qq');
+    expect(detectProvider('smtp.gmail.com')).toBe('gmail');
+    expect(detectProvider('')).toBe('custom');
+  });
+
+  it('email endpoints read/write with passwordSet only', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    const presets = (await inj({ method: 'GET', url: '/api/v1/settings/email/presets' })).json();
+    expect(presets.presets.length).toBeGreaterThanOrEqual(4);
+
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/email' })).json();
+    expect(def.email.passwordSet).toBe(false);
+
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/email', payload: { recordingDirectory: '/tmp/vids', host: 'smtp.qq.com', port: 465, secure: true, username: 'u@qq.com', from: 'u@qq.com', recipients: ['me@x.com'], enabled: true, password: 'secret-pw' } });
+    expect(set.statusCode).toBe(200);
+    expect(JSON.stringify(set.json())).not.toContain('secret-pw');
+    expect(set.json().email.passwordSet).toBe(true);
+    expect(set.json().email.provider).toBe('qq');
+
+    const testRes = await inj({ method: 'POST', url: '/api/v1/settings/email/test' });
+    // FakeMailer 发送成功 → ok。
+    expect(testRes.statusCode).toBe(200);
+    expect(testRes.json().ok).toBe(true);
+    await app.close();
+  });
+});
