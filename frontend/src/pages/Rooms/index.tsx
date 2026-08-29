@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
@@ -242,7 +242,18 @@ export default function Rooms() {
         />
       ),
     },
-    { title: '显示名', dataIndex: 'displayName', ellipsis: true },
+    { title: '显示名', dataIndex: 'displayName', ellipsis: true, render: (v: string, r) => (
+        <Space size={4}>
+          <span>{v}</span>
+          {r.titleFallbackUsed ? (
+            <Tooltip title="回退/占位标题，平台接口未返回正式标题">
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                （回退）
+              </Typography.Text>
+            </Tooltip>
+          ) : null}
+        </Space>
+      ) },
     {
       title: '标签',
       dataIndex: 'tags',

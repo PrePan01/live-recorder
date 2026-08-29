@@ -44,6 +44,13 @@ function RoomCard({
         <Space style={{ minWidth: 0 }}>
           <PlatformLogoTag platform={room.platform} />
           <span>{room.displayName}</span>
+          {room.titleFallbackUsed ? (
+            <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                （回退标题）
+              </Typography.Text>
+            </Tooltip>
+          ) : null}
         </Space>
       }
       extra={
