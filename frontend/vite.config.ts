@@ -8,6 +8,9 @@ if (process.env.RECORDING_ADAPTER === 'real') {
 }
 
 export default defineConfig({
+  // Tauri WebView 用 tauri://localhost 加载，绝对路径 /assets 无法解析，
+  // 需用相对路径（#138 QA 定位白屏根因）。
+  base: './',
   plugins: [react()],
   server: {
     port: 5173,
