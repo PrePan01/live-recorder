@@ -21,14 +21,22 @@ describe('recoverStaleRecordings (#82)', () => {
     services.recordings.update(r2.id, { state: 'recording', filePath: path.join(dir, 'missing.flv') });
     const r3 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's3', streamTitle: '无路径' });
     services.recordings.update(r3.id, { state: 'recording' });
+    // #167 一致性：0 字节文件 → failed RECORDING_EMPTY（非 completed 空文件）
+    const emptyFile = path.join(dir, 'empty.flv');
+    await writeFile(emptyFile, Buffer.alloc(0));
+    const r4 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's4', streamTitle: '空文件' });
+    services.recordings.update(r4.id, { state: 'recording', filePath: emptyFile });
 
-    expect(services.recordings.activeCount()).toBe(3);
+    expect(services.recordings.activeCount()).toBe(4);
     const n = await recoverStaleRecordings(services);
-    expect(n).toBe(3);
+    expect(n).toBe(4);
     expect(services.recordings.activeCount()).toBe(0);
     expect(services.recordings.get(r1.id)!.state).toBe('completed');
+    expect(services.recordings.get(r1.id)!.fileSizeBytes).toBe(4);
     expect(services.recordings.get(r2.id)!.state).toBe('failed');
     expect(services.recordings.get(r3.id)!.state).toBe('failed');
     expect(services.recordings.get(r2.id)!.failureReason?.code).toBe('RECORDING_START_FAILED');
+    expect(services.recordings.get(r4.id)!.state).toBe('failed');
+    expect(services.recordings.get(r4.id)!.failureReason?.code).toBe('RECORDING_EMPTY');
   });
 });
