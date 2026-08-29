@@ -11,6 +11,34 @@ import './index.css';
 
 dayjs.locale('zh-cn');
 
+// 全局错误捕获：打包 WebView 白屏诊断用——错误显示在页面覆盖层并写 localStorage。
+window.addEventListener('error', (e) => {
+  const msg = `[error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
+  console.error('[live-recorder]', msg);
+  showFatalError(msg);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = `[unhandledrejection] ${String(e.reason)}`;
+  console.error('[live-recorder]', msg);
+  showFatalError(msg);
+});
+function showFatalError(msg: string) {
+  try {
+    localStorage.setItem('lr-fatal-error', msg);
+    let el = document.getElementById('fatal-error-overlay');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'fatal-error-overlay';
+      el.style.cssText =
+        'position:fixed;inset:0;z-index:9999;background:#fff;color:#c00;padding:24px;font:12px/1.5 monospace;white-space:pre-wrap;overflow:auto';
+      document.body.appendChild(el);
+    }
+    el.textContent += `\n${msg}`;
+  } catch {
+    /* 忽略 */
+  }
+}
+
 console.log('[live-recorder] main.tsx executing, rendering React root...');
 
 createRoot(document.getElementById('root')!).render(
