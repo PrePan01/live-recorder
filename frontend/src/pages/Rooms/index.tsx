@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Alert, Button, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { PlusOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { App, Alert, Button, Drawer, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
+import { PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
 import { useTagStore } from '../../stores/tagStore';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import TagSelect from '../../components/TagSelect';
+import SchedulePanel from '../../components/SchedulePanel';
 import type { Room } from '../../types/room';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
@@ -42,6 +43,7 @@ export default function Rooms() {
   const [pageSize, setPageSize] = useState(10);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
@@ -313,6 +315,9 @@ export default function Rooms() {
           <Button size="small" type="link" onClick={() => openEdit(room)}>
             编辑
           </Button>
+          <Button size="small" type="link" icon={<ScheduleOutlined />} onClick={() => setScheduleRoom(room)}>
+            计划
+          </Button>
           <Popconfirm
             title="删除后不可恢复，确定？"
             onConfirm={() => void removeRoom(room.id).catch(() => message.error('删除失败'))}
@@ -514,6 +519,14 @@ export default function Rooms() {
           </div>
         ) : null}
       </Modal>
+    <Drawer
+        title={`定时计划：${scheduleRoom?.displayName ?? ''}`}
+        open={scheduleRoom !== null}
+        width={720}
+        onClose={() => setScheduleRoom(null)}
+      >
+        {scheduleRoom ? <SchedulePanel roomId={scheduleRoom.id} /> : null}
+      </Drawer>
     </div>
   );
 }
