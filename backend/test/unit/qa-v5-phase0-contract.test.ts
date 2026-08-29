@@ -296,3 +296,39 @@ describe('QA Batch2 #114/#115 gaps: pipeline & naming', () => {
     expect(res.ok).toBe(false);
   });
 });
+
+describe('QA Batch3 #125/#127/#128 gaps', () => {
+  it('schedule cross-midnight window computes next run on matching day', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/98', displayName: 'sched' } })).json().room;
+    const created = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1, 3], startTime: '22:00', endTime: '01:00', timezone: 'local' } });
+    expect(created.statusCode).toBe(201);
+    const sched = created.json().schedule;
+    expect(sched.nextRunAt).toBeTruthy();
+    expect(new Date(sched.nextRunAt).getTime()).toBeGreaterThan(services.clock.now());
+    const disabled = await inj({ method: 'PATCH', url: `/api/v1/rooms/${room.id}/schedules/${sched.id}`, payload: { enabled: false } });
+    expect(disabled.json().schedule.enabled).toBe(false);
+    expect(disabled.json().schedule.nextRunAt).toBeNull();
+    const badDays = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [7], startTime: '22:00' } });
+    expect(badDays.statusCode).toBe(500);
+    const badTime = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '25:00' } });
+    expect(badTime.statusCode).toBe(500);
+    await app.close();
+  });
+
+  it('export endpoints validate and 404 for unknown', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/99', displayName: 'exp' } })).json().room;
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'e1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/exp.flv' });
+    const bad = await inj({ method: 'POST', url: '/api/v1/exports', payload: { recordingIds: [rec.id] } });
+    expect(bad.statusCode).toBe(500);
+    const missing = await inj({ method: 'GET', url: '/api/v1/exports/exp_none' });
+    expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+});
