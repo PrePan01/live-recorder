@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bundle:resources": "node scripts/bundle-resources.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
