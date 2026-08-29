@@ -27,9 +27,12 @@ impl BackendManager {
             return Some(path);
         }
         // Dev layout: <repo>/frontend/../backend
-        let from_frontend = std::env::current_dir().ok()?.parent()?.join("backend");
-        if from_frontend.join("package.json").exists() {
-            return Some(from_frontend);
+        // 注意：打包后（Finder 双击）current_dir 可能是 /，parent() 为 None，
+        // 不能因 dev 分支短路，否则永远到不了下面的打包布局分支。
+        if let Some(cwd) = std::env::current_dir().ok().and_then(|d| d.parent().map(|p| p.join("backend"))) {
+            if cwd.join("package.json").exists() {
+                return Some(cwd);
+            }
         }
         // Packaged layout: backend shipped under app bundle Resources.
         //   macOS: <app>.app/Contents/Resources/backend
