@@ -49,6 +49,17 @@ describe('error code mapping', () => {
     expect(httpStatusFor(caught?.code as never)).toBe(422);
   });
 
+  it('validateSettings rejects invalid quality with CONFIG_INVALID (QA #169 校验缺口)', () => {
+    for (const bad of ['4k', '2k', '', 720, null]) {
+      expect(() => validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: bad as never })).toThrowError(AppError);
+    }
+    // 合法 quality 通过
+    for (const ok of ['original', '1080p', '720p', '360p']) {
+      const s = validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: ok as never });
+      expect(s.quality).toBe(ok);
+    }
+  });
+
   it('serializes the unified error envelope', () => {
     const err = new AppError('PREVIEW_NOT_RECORDING', '当前未在录制，无法预览', { roomId: 'room_x' });
     const obj = err.toObject();
