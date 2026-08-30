@@ -30,6 +30,10 @@ function validateSchedule(input: { daysOfWeek?: unknown; startTime?: unknown; en
   if (input.timezone !== undefined && typeof input.timezone !== 'string') {
     throw new AppError('CONFIG_INVALID', 'timezone 必须为字符串');
   }
+  const tz = typeof input.timezone === 'string' && input.timezone ? input.timezone : 'local';
+  if (tz !== 'local' && !isValidIanaTimezone(tz)) {
+    throw new AppError('CONFIG_INVALID', 'timezone 需为有效 IANA 时区（如 Asia/Shanghai）');
+  }
   return {
     daysOfWeek: uniq,
     startTime: input.startTime,
@@ -45,7 +49,9 @@ function validateSchedule(input: { daysOfWeek?: unknown; startTime?: unknown; en
  */
 export function computeNextRunAt(schedule: { daysOfWeek: ScheduleDay[]; startTime: string; endTime: string | null; timezone: string }, nowMs: number): string | null {
   if (schedule.daysOfWeek.length === 0) return null;
+  // 防御：历史遗留的非法时区计划不应让调度器崩溃（返回 null，跳过）。
   const tz = schedule.timezone === 'local' ? undefined : schedule.timezone;
+  if (tz && !isValidIanaTimezone(tz)) return null;
   const [startH, startM] = schedule.startTime.split(':').map(Number) as [number, number];
   for (let offset = 0; offset <= 7; offset += 1) {
     // 该候选日（now 起推 offset 天）在目标时区的日历日期。
@@ -175,6 +181,16 @@ export function dueSchedules(services: Services, nowMs: number): Array<{ schedul
     }
   }
   return results;
+}
+
+/** 校验时区为有效 IANA 时区（非法时区在 Intl.DateTimeFormat 会抛异常 → 500）。 */
+export function isValidIanaTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type { AppEventBus };

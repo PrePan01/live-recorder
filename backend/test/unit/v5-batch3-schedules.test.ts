@@ -69,11 +69,17 @@ it('honors timezone when computing nextRunAt (#135)', () => {
     expect(badDays.statusCode).toBe(422);
     const badTime = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '25:99' } });
     expect(badTime.statusCode).toBe(422);
+    const badTz = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '20:00', timezone: 'Bad/Zone' } });
+    expect(badTz.statusCode).toBe(422);
 
     const del = await inj({ method: 'DELETE', url: `/api/v1/rooms/${room.id}/schedules/${schedule.id}` });
     expect(del.statusCode).toBe(204);
     const missing = await inj({ method: 'GET', url: `/api/v1/rooms/${room.id}/schedules` });
     expect(missing.json().schedules).toHaveLength(0);
+
+    // 有效 IANA 时区可创建（校验通过）
+    const okTz = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '20:00', timezone: 'Asia/Shanghai' } });
+    expect(okTz.statusCode).toBe(201);
     await app.close();
   });
 
