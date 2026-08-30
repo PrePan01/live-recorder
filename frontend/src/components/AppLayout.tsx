@@ -36,11 +36,12 @@ export default function AppLayout() {
         <Sider
           theme={mode === 'dark' ? 'dark' : 'light'}
           width={180}
-          breakpoint="lg"
-          collapsedWidth={0}
+          collapsible
+          breakpoint="md"
+          collapsedWidth={48}
           style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}
         >
-          <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px', whiteSpace: 'nowrap' }}>直播录制台</div>
+          <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px', whiteSpace: 'nowrap', overflow: 'hidden' }}>直播录制台</div>
           <Menu
             mode="inline"
             selectedKeys={[ITEMS.find((i) => pathname.startsWith(i.key))?.key ?? '']}
