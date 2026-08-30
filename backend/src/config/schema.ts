@@ -16,6 +16,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.recordingFormat !== undefined && s.recordingFormat !== 'source_flv' && s.recordingFormat !== 'mp4_after') {
     throw new AppError('CONFIG_INVALID', '录制格式仅支持 source_flv / mp4_after');
   }
+  if (s.quality !== undefined && s.quality !== 'original' && s.quality !== '1080p' && s.quality !== '720p' && s.quality !== '360p') {
+    throw new AppError('CONFIG_INVALID', 'quality 仅支持 original / 1080p / 720p / 360p');
+  }
   if (s.autoRecord !== undefined && typeof s.autoRecord !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'autoRecord 必须为布尔值');
   }
