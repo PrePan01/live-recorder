@@ -26,6 +26,7 @@ function RoomCard({
   layout,
   actingAction,
   acting,
+  recentlyStopped,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -36,6 +37,7 @@ function RoomCard({
   layout: 'card' | 'list';
   actingAction?: 'check' | 'record' | 'stop';
   acting?: boolean;
+  recentlyStopped?: boolean;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
@@ -140,7 +142,7 @@ function RoomCard({
           type={recording ? 'default' : 'primary'}
           icon={<VideoCameraAddOutlined />}
           loading={acting && actingAction === 'record'}
-          disabled={acting || !onAir || recording}
+          disabled={acting || recentlyStopped || !onAir || recording}
           onClick={() => onRecord(room)}
         >
           {recording ? '录制中' : '录制'}
@@ -162,6 +164,29 @@ export default function Monitor() {
   const [view, setView] = useState<'卡片' | '列表'>('卡片');
   const [filter, setFilter] = useState<'全部' | '录制中' | '收藏'>('全部');
   const [keyword, setKeyword] = useState('');
+  // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
+  const [recentStop, setRecentStop] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const ids = Object.keys(recentStop);
+    if (ids.length === 0) return;
+    const timer = setTimeout(() => {
+      setRecentStop((prev) => {
+        const now = Date.now();
+        const next = { ...prev };
+        for (const id of Object.keys(next)) {
+          if (now - next[id] >= 1200) delete next[id];
+        }
+        return next;
+      });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [recentStop]);
+
+  const onStopRoom = (room: Room) => {
+    setRecentStop((prev) => ({ ...prev, [room.id]: Date.now() }));
+    void stopRoomRecording(room.id).catch(() => message.error('停止请求失败'));
+  };
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
@@ -254,13 +279,13 @@ export default function Monitor() {
               观看
             </Button>
             {recording ? (
-              <Popconfirm title="确定停止当前录制？" onConfirm={() => void stopRoomRecording(room.id).catch(() => message.error('停止失败'))}>
+              <Popconfirm title="确定停止当前录制？" onConfirm={() => onStopRoom(room)}>
                 <Button size="small" type="link" danger icon={<StopOutlined />} loading={acting && actingAction === 'stop'}>
                   停止
                 </Button>
               </Popconfirm>
             ) : (
-              <Button size="small" type="link" icon={<VideoCameraAddOutlined />} disabled={!onAir} onClick={() => void startRoomRecording(room.id).catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制失败'))}>
+              <Button size="small" type="link" icon={<VideoCameraAddOutlined />} disabled={!onAir || recentStop[room.id] !== undefined} onClick={() => void startRoomRecording(room.id).catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制失败'))}>
                 录制
               </Button>
             )}
@@ -334,7 +359,8 @@ export default function Monitor() {
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '检测请求失败'),
                   )
                 }
-                onStop={(r) => void stopRoomRecording(r.id).catch(() => message.error('停止请求失败'))}
+                onStop={onStopRoom}
+                recentlyStopped={recentStop[room.id] !== undefined}
                 onRecord={(r) =>
                   void startRoomRecording(r.id).catch((e) =>
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制请求失败'),
