@@ -547,8 +547,11 @@ export class UploadManager {
   }
 
   private resolveRemotePath(config: OpenListConfig, localPath: string, rec: { roomId: string; roomName: string; platform: string; startedAt?: string }): string {
-    // 日期取录制 startedAt（YYYY-MM-DD），与命名规则 {date} 一致；文件基名形如 20260902_122631 无法直接 slice 出日期。
-    const date = (rec.startedAt ?? path.basename(localPath)).slice(0, 10);
+    // 日期取录制 startedAt 的【本地日期】（YYYY-MM-DD），与命名规则 {date} 一致（PrePan：凌晨录制跨 UTC 日期）。
+    const dt = new Date(rec.startedAt ?? path.basename(localPath));
+    const date = Number.isNaN(dt.getTime())
+      ? (rec.startedAt ?? path.basename(localPath)).slice(0, 10)
+      : `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
     const dir = (config.directoryTemplate ?? '{room}/{date}')
       .replaceAll('{room}', (rec.roomName || rec.roomId).replace(/[\\/:*?"<>|]/g, '_'))
       .replaceAll('{date}', date)
