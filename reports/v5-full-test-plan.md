@@ -1,7 +1,7 @@
 # Live Recorder V5 全量测试计划（Web 端 / 桌面客户端 / 后端 / 全平台）
 
 > 维护人：@QA · 状态：待 PrePan 审阅
-> 依据：`v5-detailed-design.md`、`docs/api-contract.md`（v1.2–v2.4 及 v5 契约）、`reports/live-recorder-mvp-test-plan.md`、`reports/v5-p0-0-boot-matrix-test-cases.md`
+> 依据：`v5-detailed-design.md`、`docs/api-contract.md`（v1.2–v2.5 及 v5 契约）、`reports/live-recorder-mvp-test-plan.md`、`reports/v5-p0-0-boot-matrix-test-cases.md`
 > 范围：V5 全部功能 + 此前版本（v1–v4）回归，覆盖 Web 端、桌面客户端（macOS/Windows）、后端，以及测试层级与门禁。
 
 ---
@@ -131,7 +131,7 @@
 | DC-01 | macOS | 安装、启动、通知、选择目录、打开文件跑通 |
 | DC-02 | Windows | 同一协议下安装、启动、通知、选择目录、打开文件验证 |
 | DC-03 | 最小原生能力 | `pickDirectory/openPath/notify/健康检查` 仅暴露必要能力 |
-| DC-04 | 版本兼容 | 客户端/服务版本经 `GET /health` 校验兼容性 |
+| DC-04 | 版本兼容 | 客户端/服务版本经 `GET /api/v1/health`（serviceStatus 信封内）校验兼容性 |
 | DC-05 | 手机浏览器 | 查看状态/搜索/手动录制/停止可操作，无不可操作悬浮布局（仅抽查） |
 
 ## 6. Batch2 后处理与分发测试（7–10）
@@ -264,7 +264,7 @@
 - **批次出口**：该批 L1–L3 全绿 + L4/L5 轻量冒烟 + 定向回归通过，通知 PrePan 验证。
 - **收口全量**：V5 全功能 + v1–v4 回归全绿；L8 性能/兼容 + L7 平台冒烟通过。
 - **发布前**：macOS 与 Windows 最小 smoke 各通过一次；抖音/B 站各完成一次授权公开房间实际录制验证。
-- **文档同步**：`docs/api-contract.md` 与测试用例一致；新增端点错误码入库（当前 19 码全集 + v5 新增码）。
+- **文档同步**：`docs/api-contract.md` 与测试用例一致；新增端点错误码入库（契约 v2.4 定稿 27 码全集，v2.5 未增码）。
 
 ## 11. 回归基线（v1–v4 存量功能）
 
