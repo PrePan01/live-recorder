@@ -151,14 +151,16 @@ export class UploadManager {
     }
   }
 
-  private resolveRemotePath(config: OpenListConfig, localPath: string, rec: { roomId: string; roomName: string; platform: string }): string {
-    const date = path.basename(localPath).slice(0, 10);
+  private resolveRemotePath(config: OpenListConfig, localPath: string, rec: { roomId: string; roomName: string; platform: string; startedAt?: string }): string {
+    // 日期取录制 startedAt（YYYY-MM-DD），与命名规则 {date} 一致；文件基名形如 20260902_122631 无法直接 slice 出日期。
+    const date = (rec.startedAt ?? path.basename(localPath)).slice(0, 10);
     const dir = (config.directoryTemplate ?? '{room}/{date}')
       .replaceAll('{room}', (rec.roomName || rec.roomId).replace(/[\\/:*?"<>|]/g, '_'))
       .replaceAll('{date}', date)
       .replaceAll('{platform}', rec.platform)
       .replaceAll('{roomId}', rec.roomId);
-    return `${config.serverUrl.replace(/\/+$/, '')}/${dir}/${path.basename(localPath)}`.replace(/\/+/g, '/');
+    // 仅去除 serverUrl 尾部斜杠后直接拼接；不做全局 /\/+/ 折叠（会把 http:// 压成 http:/）。
+    return `${config.serverUrl.replace(/\/+$/, '')}/${dir}/${path.basename(localPath)}`;
   }
 
   private emit(jobId: string): void {

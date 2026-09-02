@@ -246,6 +246,29 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     await app.close();
   });
 
+  it('resolveRemotePath: {date} 取自 startedAt（非文件名切片），且保留 http:// scheme（QA E2E #116）', async () => {
+    const services = newServices();
+    const captured: string[] = [];
+    services.uploader = new UploadManager(services, {
+      async put(remotePath: string) { captured.push(remotePath); },
+    });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-ul4-'));
+    const file = path.join(dir, '20260902_122631.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'u' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u2', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', startedAt: '2026-09-02T12:26:31.000Z', filePath: file });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const job = await services.uploader.enqueue(rec.id);
+    expect(job).not.toBeNull();
+    await waitFor(() => captured.length > 0);
+    // {date}=2026-09-02（完整日期，非文件名前 10 字符 20260902_1）；scheme http:// 不被折叠成 http:/
+    expect(captured[0]).toBe('https://dav.example.com/dav/u/2026-09-02/20260902_122631.flv');
+  });
+
   it('upload endpoints: list/retry/cancel + manual upload validation', async () => {
     const services = newServices();
     const { app } = buildApp(services);
