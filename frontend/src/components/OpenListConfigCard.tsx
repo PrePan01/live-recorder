@@ -30,6 +30,16 @@ export default function OpenListConfigCard() {
   };
 
   const onTest = async () => {
+    const values = form.getFieldsValue();
+    if (!values.serverUrl || !String(values.serverUrl).trim()) {
+      message.warning('请先填写服务器地址');
+      return;
+    }
+    const tokenValue = typeof values.token === 'string' ? values.token.trim() : '';
+    if (!config?.hasToken && !tokenValue) {
+      message.warning('请先填写令牌');
+      return;
+    }
     setTesting(true);
     try {
       const res = await testOpenList();
