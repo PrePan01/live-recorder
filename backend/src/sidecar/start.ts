@@ -63,6 +63,9 @@ export async function startSidecar(opts: SidecarOptions): Promise<SidecarResult>
   const services = buildServices(buildOptions);
   const recovered = await recoverStaleRecordings(services);
   if (recovered > 0) console.log(`recovered ${recovered} stale recording session(s)`);
+  // 恢复重启前排队中的上传任务（#195：上传队列为内存态，DB 中 queued/running 需启动续传）。
+  const resumedUploads = services.uploader.resumePending();
+  if (resumedUploads > 0) console.log(`resumed ${resumedUploads} pending upload job(s)`);
   services.scheduler.start();
 
   const extraOrigins = opts.extraOrigins ?? ['http://localhost:5173', 'http://127.0.0.1:5173'];
