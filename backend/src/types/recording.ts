@@ -1,5 +1,6 @@
 import type { ErrorObject } from '../types/error.js';
 import type { Platform } from '../types/room.js';
+import type { UploadJobStatus } from './upload.js';
 
 export type Quality = 'original' | '1080p' | '720p' | '360p';
 
@@ -48,4 +49,6 @@ export interface Recording {
   metadata?: RecordingMetadata;
   /** V5 封面帧路径（可选，媒体封面占位 404）。 */
   coverPath?: string;
+  /** V5 最近上传任务快照（历史页上传状态列，无任务时缺省）。 */
+  upload?: { status: UploadJobStatus; progress: number; remotePath: string | null; error: string | null };
 }

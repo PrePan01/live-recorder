@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -22,6 +22,7 @@ interface RecordingRow {
   metadata: string | null;
   cover_path: string | null;
   created_at: string;
+  upload?: { status: string; progress: number; remotePath: string | null; error: string | null };
 }
 
 function parseError(raw: string | null): ErrorObject | null {
@@ -66,6 +67,7 @@ export function rowToRecording(row: RecordingRow): Recording {
   const metadata = parseMetadata(row.metadata);
   if (metadata) rec.metadata = metadata;
   if (row.cover_path) rec.coverPath = row.cover_path;
+  if (row.upload) rec.upload = { ...row.upload, status: row.upload.status as UploadJobStatus };
   return rec;
 }
 
@@ -162,7 +164,29 @@ export class RecordingRepository {
       rows.length = 0;
       rows.push(...bySession.values());
     }
+    this.attachUploadSnapshots(rows);
     return { items: rows.map(rowToRecording), total, page, pageSize };
+  }
+
+  /** 批量附最近上传任务快照（#190）：单次窗口函数查询取每录制最新任务，避免 N+1。 */
+  private attachUploadSnapshots(rows: RecordingRow[]): void {
+    if (rows.length === 0) return;
+    const ids = rows.map((r) => r.id);
+    const marks = ids.map(() => '?').join(',');
+    const latest = this.db
+      .prepare(
+        `SELECT recording_id, status, progress, remote_path, error FROM (
+           SELECT recording_id, status, progress, remote_path, error,
+                  ROW_NUMBER() OVER (PARTITION BY recording_id ORDER BY updated_at DESC, created_at DESC, id DESC) AS rn
+           FROM upload_jobs WHERE recording_id IN (${marks})
+         ) WHERE rn = 1`,
+      )
+      .all(...ids) as Array<{ recording_id: string; status: string; progress: number; remote_path: string | null; error: string | null }>;
+    const byRec = new Map(latest.map((u) => [u.recording_id, u]));
+    for (const row of rows) {
+      const u = byRec.get(row.id);
+      if (u) row.upload = { status: u.status, progress: u.progress, remotePath: u.remote_path, error: u.error };
+    }
   }
 
   /** 同一场直播去重依据：该 room+session 是否已有非 failed 的录制。手动重录由 maybeStartRecording 的 manual 标志处理，此处不排除。 */
