@@ -68,23 +68,15 @@ export class UploadManager {
     if (!rec || !rec.filePath) return null;
     const existing = this.repo.jobForRecording(recordingId);
     // 幂等：recording 已有上传任务（任何状态，含 ok/failed/cancelled）→ 直接返回既有 job，不新建。
-    // upload_jobs.idempotency_key 有 UNIQUE 约束，新建会违反约束抛 SQL 异常 → 500（QA M7 / PrePan 实测发现）。
     if (existing) return existing;
-    let job: UploadJob | null;
-    try {
-      job = this.repo.create({ recordingId, idempotencyKey: `rec_${recordingId}` });
-    } catch (err) {
-      // 兜底：并发/重复插入导致 idempotency_key UNIQUE 冲突 → 返回既有 job，绝不抛 500。
-      if (String((err as { message?: string }).message ?? '').includes('UNIQUE constraint failed')) {
-        return this.repo.jobForRecording(recordingId);
-      }
-      throw err;
-    }
-    if (!job) return null;
-    this.queue.push(job.id);
-    this.services.events.emit({ type: 'upload:updated', data: job });
+    // 原子幂等（QA #178）：INSERT OR IGNORE——并发窗口内对方已插入同 idempotency_key 时返回 null，
+    // 回查既有 job，绝不抛 UNIQUE 500。
+    const created = this.repo.create({ recordingId, idempotencyKey: `rec_${recordingId}` });
+    if (!created) return this.repo.jobForRecording(recordingId);
+    this.queue.push(created.id);
+    this.services.events.emit({ type: 'upload:updated', data: created });
     void this.pump();
-    return job;
+    return created;
   }
 
   async retry(jobId: string): Promise<UploadJob | null> {

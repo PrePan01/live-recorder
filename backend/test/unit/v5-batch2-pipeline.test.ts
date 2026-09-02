@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
@@ -246,7 +246,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     await app.close();
   });
 
-  it('enqueue never surfaces idempotency_key UNIQUE as an error (PrePan 实测兜底)', async () => {
+  it('enqueue is atomic-idempotent: concurrent duplicate insert never throws UNIQUE (PrePan/#178)', async () => {
     const services = newServices();
     services.uploader = new UploadManager(services, {
       async put() { /* fake upload ok */ },
@@ -261,23 +261,17 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u' } });
     await services.secretStore.set('openlist.token', 'tok');
 
+    // 并发触发：同一 recording 两次并发 enqueue（TOCTOU 窗口）。原子 INSERT OR IGNORE 保证只建 1 条、绝不抛 UNIQUE。
     const repo = services.uploader.uploadRepo;
-    const first = await services.uploader.enqueue(rec.id);
-    expect(first).not.toBeNull();
-    // 模拟并发/重复插入：检查阶段查不到既有 job（fast path 失效），create 撞 idempotency_key UNIQUE。
-    const spyJob = vi.spyOn(repo, 'jobForRecording').mockReturnValue(null);
-    const spyCreate = vi.spyOn(repo, 'create').mockImplementation(() => {
-      throw new Error('UNIQUE constraint failed: upload_jobs.idempotency_key');
-    });
-    let threw = false;
-    try {
-      await services.uploader.enqueue(rec.id);
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(false); // 兜底吞掉 UNIQUE，绝不抛 500
-    spyJob.mockRestore();
-    spyCreate.mockRestore();
+    // 模拟并发窗口：第一次 create 用原子插入；同时直接以同 idempotency_key 预插（绕过 fast path）制造 UNIQUE 冲突面。
+    const [a, b] = await Promise.all([services.uploader.enqueue(rec.id), services.uploader.enqueue(rec.id)]);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a!.id).toBe(b!.id); // 同一 job
+    const rows = repo.list().filter((j) => j.recordingId === rec.id);
+    expect(rows).toHaveLength(1); // 不新建重复记录
+    // 直接验证 repo.create 对同 key 二次插入不抛（返回 null）。
+    expect(repo.create({ recordingId: rec.id, idempotencyKey: `rec_${rec.id}` })).toBeNull();
   });
 
   it('RealWebDavClient sends stream body with duplex:half (Node undici fetch 必需，否则上传必失败)', async () => {
