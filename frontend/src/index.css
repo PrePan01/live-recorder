@@ -178,8 +178,13 @@ body {
   border-right: 1px solid var(--lr-border);
   border-radius: 0;
   box-shadow: none;
-  white-space: normal;
+  white-space: nowrap;
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lr-room-card__actions .ant-btn > span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -233,7 +238,7 @@ body {
 }
 
 .lr-room-card:not(.lr-room-card--list) .lr-room-card__actions {
-  margin: 4px -14px -14px;
+  margin: 0 -14px -14px;
   padding-top: 0;
 }
 
@@ -322,11 +327,18 @@ body {
   object-fit: contain;
 }
 
-/* 固定列表格单元格：补不透明背景+阴影，避免滚动时未固定列表头文字透过固定列显示（QA #164 根因） */
+/* 固定列表格单元格：补不透明背景，避免滚动时未固定列表头文字透过固定列显示（QA #164 根因） */
 .ant-table-cell-fix-right,
 .ant-table-cell-fix-right-last,
 .ant-table-cell-fix-end {
   background: var(--lr-surface) !important;
+}
+
+/* 固定列阴影仅在有内容滚动到固定列下方时显示（antd 通过 -shadow-show 动态类控制），
+   避免非固定列贴齐固定列时阴影仍残留（PrePan UI 反馈）。 */
+.ant-table-cell-fix-right.ant-table-cell-fix-end-shadow-show,
+.ant-table-cell-fix-right-last.ant-table-cell-fix-end-shadow-show,
+.ant-table-cell-fix-end.ant-table-cell-fix-end-shadow-show {
   box-shadow: -8px 0 8px -4px rgba(0, 0, 0, 0.15);
 }
 
