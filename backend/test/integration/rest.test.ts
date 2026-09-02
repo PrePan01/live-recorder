@@ -120,8 +120,39 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(invalid.statusCode).toBe(422);
     expect(invalid.json().error.code).toBe('ROOM_LINK_INVALID');
 
+    // M2（QA 指派）：platform 缺省时按 URL 自动识别平台，有效链接不再被误拒 422。
+    const autoDetect = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { url: 'https://live.bilibili.com/456' },
+    });
+    expect(autoDetect.statusCode).toBe(201);
+    expect(autoDetect.json().room.platform).toBe('bilibili');
+    expect(autoDetect.json().room.url).toBe('https://live.bilibili.com/456');
+
+    const autoDetectDouyin = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { url: 'https://live.douyin.com/789' },
+    });
+    expect(autoDetectDouyin.statusCode).toBe(201);
+    expect(autoDetectDouyin.json().room.platform).toBe('douyin');
+
+    // 缺 platform 的有效重复链接 → 409 ROOM_LINK_DUPLICATE（此前卡在 422 到不了重复检测）。
+    const autoDup = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { url: 'https://live.bilibili.com/456' },
+    });
+    expect(autoDup.statusCode).toBe(409);
+    expect(autoDup.json().error.code).toBe('ROOM_LINK_DUPLICATE');
+
+    const invalidUrlNoPlatform = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
+      payload: { url: 'https://example.com/foo' },
+    });
+    expect(invalidUrlNoPlatform.statusCode).toBe(422);
+    expect(invalidUrlNoPlatform.json().error.code).toBe('ROOM_LINK_INVALID');
+
     const list = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
-    expect(list.json().rooms).toHaveLength(1);
+    expect(list.json().rooms).toHaveLength(3);
 
     const off = await app.inject({
       method: 'PATCH', url: `/api/v1/rooms/${room.id}/enable`, headers: { host: '127.0.0.1:43120' },

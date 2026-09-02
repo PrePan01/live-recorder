@@ -14,15 +14,21 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
 
   app.post('/api/v1/rooms', async (req, reply) => {
     const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean };
-    if (!PLATFORMS.includes(body.platform as Platform) || typeof body.url !== 'string' || body.url.length === 0) {
+    if (typeof body.url !== 'string' || body.url.trim().length === 0) {
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
-    const adapter = services.adapterFor(body.platform as Platform);
-    if (!adapter.validateUrl(body.url)) {
+    // #M2（QA 指派）：platform 缺省时按 URL 自动识别平台（与 POST /rooms/batch 一致），
+    // 修复有效链接因缺 platform 被误拒 422、重复检测（409 ROOM_LINK_DUPLICATE）永远到不了的问题。
+    const platform: Platform | undefined =
+      body.platform !== undefined && PLATFORMS.includes(body.platform as Platform)
+        ? (body.platform as Platform)
+        : PLATFORMS.find((p) => services.adapterFor(p).validateUrl(body.url as string));
+    if (!platform || !services.adapterFor(platform).validateUrl(body.url)) {
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
+    const adapter = services.adapterFor(platform);
     const room = services.rooms.create({
-      platform: body.platform as Platform,
+      platform,
       url: adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,

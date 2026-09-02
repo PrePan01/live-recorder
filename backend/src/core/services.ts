@@ -90,12 +90,11 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const db = openDatabase(dbPath);
   runMigrations(db);
   const clock = opts.clock ?? new SystemClock();
-  const fakeAdapter = new FakePlatformAdapter();
   const fakeEngine = new FakeRecordingEngine(clock);
 
   const adapters = mode === 'real'
     ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: new DouyinAdapter() as PlatformAdapter }
-    : { bilibili: fakeAdapter, douyin: fakeAdapter };
+    : { bilibili: new FakePlatformAdapter('bilibili') as PlatformAdapter, douyin: new FakePlatformAdapter('douyin') as PlatformAdapter };
 
   const useKeychain = mode === 'real';
   const secretStore: SecretStore = useKeychain ? new KeytarSecretStore() : new MemorySecretStore();
