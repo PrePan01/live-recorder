@@ -100,6 +100,33 @@ describe('V5 Phase 0 contract: search', () => {
     expect(badType.statusCode).toBe(422);
     await app.close();
   });
+
+  it('caps type=all aggregated items at pageSize (M5 QA off-by-one)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    // 造多类型命中数据：2 个房间 + 3 条录制，全部命中 q=测试。
+    for (let i = 0; i < 2; i += 1) {
+      await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: `https://live.bilibili.com/${1000 + i}`, displayName: '测试主播' } });
+    }
+    const room = services.rooms.list()[0]!;
+    for (let i = 0; i < 3; i += 1) {
+      services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: `s${i}`, streamTitle: '测试录像' });
+    }
+    // type=all + pageSize=2：跨类型聚合后 items 不得超过 pageSize=2（此前返回 2+ 条）。
+    const all2 = (await inj({ method: 'GET', url: '/api/v1/search?q=%E6%B5%8B%E8%AF%95&pageSize=2' })).json();
+    expect(all2.pageSize).toBe(2);
+    expect(all2.items.length).toBeLessThanOrEqual(2);
+    expect(all2.total).toBeGreaterThanOrEqual(5);
+    // pageSize=9999 封顶 50，items 仍 ≤50。
+    const allBig = (await inj({ method: 'GET', url: '/api/v1/search?q=%E6%B5%8B%E8%AF%95&pageSize=9999' })).json();
+    expect(allBig.pageSize).toBe(50);
+    expect(allBig.items.length).toBeLessThanOrEqual(50);
+    // 单类型不受影响（房间命中 2 条 ≤ pageSize）。
+    const rooms = (await inj({ method: 'GET', url: '/api/v1/search?q=%E6%B5%8B%E8%AF%95&type=room&pageSize=50' })).json();
+    expect(rooms.items.length).toBe(2);
+    await app.close();
+  });
 });
 
 describe('V5 Phase 0 contract: stats aggregation', () => {
