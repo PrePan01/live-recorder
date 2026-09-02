@@ -1,4 +1,5 @@
 import { createReadStream, statSync } from 'node:fs';
+import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
 import type { OpenListConfig, UploadJob } from '../types/index.js';
@@ -6,27 +7,82 @@ import { UploadRepository } from '../db/repositories/upload.repo.js';
 import { OPENLIST_TOKEN_KEY } from '../security/keys.js';
 
 export interface WebDavClient {
-  put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void): Promise<void>;
+  put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void>;
 }
 
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
-  async put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void): Promise<void> {
+  private ensuredCollections = new Set<string>();
+
+  private async ensureParentCollections(remotePath: string, authorization: string, serverUrl?: string): Promise<void> {
+    const target = new URL(remotePath);
+    const parentParts = target.pathname.split('/').filter(Boolean).slice(0, -1);
+    const baseParts = serverUrl ? new URL(serverUrl).pathname.split('/').filter(Boolean) : [];
+    const parts = parentParts.slice(baseParts.length);
+    let pathname = baseParts.length > 0 ? `/${baseParts.join('/')}` : '';
+    for (const part of parts) {
+      pathname += `/${part}`;
+      const collection = new URL(target.origin);
+      collection.pathname = pathname;
+      const url = collection.toString().replace(/\/$/, '');
+      if (this.ensuredCollections.has(url)) continue;
+      const res = await fetch(url, {
+        method: 'MKCOL',
+        headers: { Authorization: authorization },
+        signal: AbortSignal.timeout(15_000),
+      });
+      // 405 是 WebDAV 对“目录已存在”的标准响应；2xx 表示创建成功。
+      if (!res.ok && res.status !== 405) throw new Error(`WebDAV MKCOL ${res.status}`);
+      this.ensuredCollections.add(url);
+    }
+  }
+
+  async put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void> {
     const size = statSync(localPath).size;
-    const res = await fetch(remotePath, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`,
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': String(size),
+    const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
+    await this.ensureParentCollections(remotePath, authorization, serverUrl);
+    let uploaded = 0;
+    let lastPct = -1;
+    const controller = new AbortController();
+    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      // 总时长不设上限；只在连续 2 分钟没有上传数据/响应时中断，避免大文件慢速上传被固定 5 分钟误杀。
+      inactivityTimer = setTimeout(() => controller.abort(new Error('WebDAV 上传长时间无响应')), 120_000);
+    };
+    const progress = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        uploaded += chunk.length;
+        const pct = size <= 0 ? 99 : Math.min(99, Math.floor((uploaded / size) * 100));
+        if (pct !== lastPct) {
+          lastPct = pct;
+          onProgress(pct);
+        }
+        touch();
+        callback(null, chunk);
       },
-      body: createReadStream(localPath),
-      // Node >=18 undici fetch 发送流 body 必须带 duplex: 'half'，否则抛「duplex option is required when sending a body」。
-      duplex: 'half',
-      signal: AbortSignal.timeout(300_000),
     });
-    onProgress(100);
-    if (!res.ok) throw new Error(`WebDAV PUT ${res.status}`);
+    const body = createReadStream(localPath).pipe(progress);
+    touch();
+    try {
+      const res = await fetch(remotePath, {
+        method: 'PUT',
+        headers: {
+          Authorization: authorization,
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(size),
+        },
+        body,
+        // Node >=18 undici fetch 发送流 body 必须带 duplex: 'half'，否则抛「duplex option is required when sending a body」。
+        duplex: 'half',
+        signal: controller.signal,
+      });
+      touch();
+      if (!res.ok) throw new Error(`WebDAV PUT ${res.status}`);
+      onProgress(100);
+    } finally {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+    }
   }
 }
 
@@ -40,6 +96,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 export class UploadManager {
   private queue: string[] = [];
   private running = new Set<string>();
+  private pumping = false;
   private repo: UploadRepository;
   private client: WebDavClient;
 
@@ -61,10 +118,10 @@ export class UploadManager {
     for (const job of pending) {
       if (job.status === 'running') {
         this.repo.update(job.id, { status: 'queued', error: '上次上传中断，已重新排队' });
+        this.emit(job.id);
       }
-      this.queue.push(job.id);
+      this.enqueueJob(job.id);
     }
-    if (pending.length > 0) this.pump();
     return pending.length;
   }
 
@@ -79,29 +136,45 @@ export class UploadManager {
   /** 录制完成时入队上传（openlist.enabled 且令牌已配置时）。 */
   async enqueue(recordingId: string): Promise<UploadJob | null> {
     const config = await this.config();
-    if (!config?.enabled || !config.hasToken || !config.serverUrl) return null;
     const rec = this.services.recordings.get(recordingId);
     if (!rec || !rec.filePath) return null;
+    const room = this.services.rooms.get(rec.roomId);
+    const enabled = room?.uploadEnabled ?? config?.enabled ?? false;
+    if (!enabled || !config?.hasToken || !config.serverUrl) return null;
     const existing = this.repo.jobForRecording(recordingId);
     // 幂等：recording 已有上传任务（任何状态，含 ok/failed/cancelled）→ 直接返回既有 job，不新建。
-    if (existing) return existing;
+    if (existing) {
+      // queued 记录可能来自异常中断或早期泵失败；再次触发时应自愈入队，不能永久停在“排队”。
+      if (existing.status === 'queued') this.enqueueJob(existing.id);
+      return existing;
+    }
     // 原子幂等（QA #178）：INSERT OR IGNORE——并发窗口内对方已插入同 idempotency_key 时返回 null，
     // 回查既有 job，绝不抛 UNIQUE 500。
     const created = this.repo.create({ recordingId, idempotencyKey: `rec_${recordingId}` });
     if (!created) return this.repo.jobForRecording(recordingId);
-    this.queue.push(created.id);
     this.services.events.emit({ type: 'upload:updated', data: created });
-    void this.pump();
+    this.enqueueJob(created.id);
     return created;
   }
 
   async retry(jobId: string): Promise<UploadJob | null> {
     const job = this.repo.get(jobId);
     if (!job) return null;
-    if (job.status === 'queued' || job.status === 'running') return job;
+    if (job.status === 'queued') {
+      this.enqueueJob(jobId);
+      return this.repo.get(jobId);
+    }
+    if (job.status === 'running') {
+      if (!this.running.has(jobId)) {
+        this.repo.update(jobId, { status: 'queued', error: '上传任务已自动恢复' });
+        this.emit(jobId);
+        this.enqueueJob(jobId);
+      }
+      return this.repo.get(jobId);
+    }
     this.repo.update(jobId, { status: 'queued', error: null });
-    this.queue.push(jobId);
-    void this.pump();
+    this.emit(jobId);
+    this.enqueueJob(jobId);
     return this.repo.get(jobId);
   }
 
@@ -114,17 +187,35 @@ export class UploadManager {
     } else {
       this.repo.update(jobId, { status: 'cancelled' });
     }
+    this.emit(jobId);
     return this.repo.get(jobId);
   }
 
+  private enqueueJob(jobId: string): void {
+    if (!this.queue.includes(jobId) && !this.running.has(jobId)) this.queue.push(jobId);
+    void this.pump();
+  }
+
   private async pump(): Promise<void> {
-    if (this.running.size > 0) return; // 单并发，避免重入风暴
-    while (this.queue.length > 0) {
-      const jobId = this.queue.shift()!;
-      if (this.running.has(jobId)) continue;
-      this.running.add(jobId);
-      await this.run(jobId);
-      this.running.delete(jobId);
+    if (this.pumping) return; // 单泵串行，避免重入风暴
+    this.pumping = true;
+    try {
+      while (this.queue.length > 0) {
+        const jobId = this.queue.shift()!;
+        if (this.running.has(jobId)) continue;
+        this.running.add(jobId);
+        try {
+          await this.run(jobId);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : '上传任务异常';
+          this.repo.update(jobId, { status: 'failed', error: message });
+          this.emit(jobId);
+        } finally {
+          this.running.delete(jobId);
+        }
+      }
+    } finally {
+      this.pumping = false;
     }
   }
 
@@ -148,21 +239,39 @@ export class UploadManager {
     this.repo.update(jobId, { status: 'running', progress: 0, remotePath });
     this.emit(jobId);
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-      try {
-        await this.client.put(remotePath, rec.filePath, config.username, token, (pct) => this.repo.update(jobId, { progress: pct }));
-        this.repo.update(jobId, { status: 'ok', progress: 100, retryCount: attempt, error: null });
+    try {
+      let lastProgress = -1;
+      await this.client.put(remotePath, rec.filePath, config.username, token, (pct) => {
+        const current = this.repo.get(jobId);
+        if (current?.status !== 'running') return;
+        const normalized = Math.max(0, Math.min(100, Math.floor(pct)));
+        if (normalized === lastProgress) return;
+        lastProgress = normalized;
+        this.repo.update(jobId, { progress: normalized });
         this.emit(jobId);
-        return;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : '上传失败';
-        if (attempt < MAX_RETRIES) {
-          this.repo.update(jobId, { status: 'queued', retryCount: attempt + 1, error: message });
-          await this.delay(RETRY_DELAYS_MS[attempt] ?? 5_000);
-        } else {
-          this.repo.update(jobId, { status: 'failed', retryCount: attempt + 1, error: message });
-          this.emit(jobId);
-        }
+      }, config.serverUrl);
+      if (this.repo.get(jobId)?.status === 'cancelled') return;
+      this.repo.update(jobId, { status: 'ok', progress: 100, error: null });
+      this.emit(jobId);
+    } catch (err) {
+      if (this.repo.get(jobId)?.status === 'cancelled') return;
+      const message = err instanceof Error ? err.message : '上传失败';
+      const retryCount = job.retryCount + 1;
+      if (retryCount <= MAX_RETRIES) {
+        const delayMs = RETRY_DELAYS_MS[retryCount - 1] ?? 5_000;
+        this.repo.update(jobId, {
+          status: 'queued',
+          retryCount,
+          error: `${message}；${Math.round(delayMs / 1000)} 秒后自动重试`,
+        });
+        this.emit(jobId);
+        // 退避不占住串行泵，后续文件可继续上传，避免一条失败任务让整列长期卡住。
+        this.services.clock.setTimeout(() => {
+          if (this.repo.get(jobId)?.status === 'queued') this.enqueueJob(jobId);
+        }, delayMs);
+      } else {
+        this.repo.update(jobId, { status: 'failed', retryCount, error: message });
+        this.emit(jobId);
       }
     }
   }
@@ -182,9 +291,5 @@ export class UploadManager {
   private emit(jobId: string): void {
     const job = this.repo.get(jobId);
     if (job) this.services.events.emit({ type: 'upload:updated', data: job });
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => this.services.clock.setTimeout(() => resolve(), ms));
   }
 }

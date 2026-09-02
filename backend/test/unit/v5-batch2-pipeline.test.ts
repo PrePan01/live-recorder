@@ -448,27 +448,91 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(repo.create({ recordingId: rec.id, idempotencyKey: `rec_${rec.id}` })).toBeNull();
   });
 
+  it('emits live byte progress and does not leave history at 0% until completion', async () => {
+    const services = newServices();
+    const progressEvents: number[] = [];
+    services.uploader = new UploadManager(services, {
+      async put(_remote, _local, _username, _token, onProgress) {
+        onProgress(7);
+        onProgress(42);
+        onProgress(88);
+      },
+    });
+    services.events.on((event) => {
+      if (event.type === 'upload:updated' && event.data.status === 'running') progressEvents.push(event.data.progress);
+    });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-progress-'));
+    const file = path.join(dir, 'progress.flv');
+    await writeFile(file, 'progress-data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/70', displayName: 'progress' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'progress', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    services.settings.save({ ...(services.settings.load() ?? structuredClone(DEFAULT_SETTINGS) as never), openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    expect(progressEvents).toEqual(expect.arrayContaining([7, 42, 88]));
+    expect(services.uploader.uploadRepo.get(job!.id)?.progress).toBe(100);
+  });
+
+  it('releases the queue during retry backoff so one failed upload cannot block later jobs', async () => {
+    const services = newServices();
+    let firstAttempts = 0;
+    services.uploader = new UploadManager(services, {
+      async put(remote) {
+        if (remote.endsWith('/first.flv') && firstAttempts++ === 0) throw new Error('temporary');
+      },
+    });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-upload-fair-'));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/71', displayName: 'fair' });
+    const first = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'first', streamTitle: 'first' });
+    const second = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'second', streamTitle: 'second' });
+    const firstFile = path.join(dir, 'first.flv');
+    const secondFile = path.join(dir, 'second.flv');
+    await writeFile(firstFile, 'first');
+    await writeFile(secondFile, 'second');
+    services.recordings.update(first.id, { state: 'completed', filePath: firstFile });
+    services.recordings.update(second.id, { state: 'completed', filePath: secondFile });
+    services.settings.save({ ...(services.settings.load() ?? structuredClone(DEFAULT_SETTINGS) as never), openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const firstJob = await services.uploader.enqueue(first.id);
+    const secondJob = await services.uploader.enqueue(second.id);
+    await waitFor(() => services.uploader.uploadRepo.get(secondJob!.id)?.status === 'ok');
+    expect(services.uploader.uploadRepo.get(firstJob!.id)?.status).toBe('queued');
+    expect(services.uploader.uploadRepo.get(firstJob!.id)?.error).toContain('5 秒后自动重试');
+
+    (services.clock as FakeClock).advance(5_000);
+    await waitFor(() => services.uploader.uploadRepo.get(firstJob!.id)?.status === 'ok');
+  });
+
   it('RealWebDavClient sends stream body with duplex:half (Node undici fetch 必需，否则上传必失败)', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-'));
     const file = path.join(dir, 'u.flv');
     await writeFile(file, 'flvdata');
     let seenInit: Record<string, unknown> | undefined;
     let seenBodyIsStream = false;
+    const progress: number[] = [];
     const client = new RealWebDavClient();
     // 注入 mock fetch 捕获 init
     const orig = globalThis.fetch;
     globalThis.fetch = (async (_url, init) => {
       seenInit = init as Record<string, unknown>;
       seenBodyIsStream = typeof init?.body === 'object' && init.body !== null && typeof (init.body as { pipe?: unknown }).pipe === 'function';
+      if (init?.body) {
+        for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume upload stream */ }
+      }
       return new Response('', { status: 201 }) as unknown as Response;
     }) as typeof fetch;
     try {
-      await client.put('https://dav.example.com/dav/x.flv', file, 'u', 'tok', () => undefined);
+      await client.put('https://dav.example.com/dav/x.flv', file, 'u', 'tok', (pct) => progress.push(pct));
     } finally {
       globalThis.fetch = orig;
     }
     expect(seenInit?.duplex).toBe('half');
     expect(seenBodyIsStream).toBe(true);
+    expect(progress).toEqual(expect.arrayContaining([99, 100]));
   });
 });
 

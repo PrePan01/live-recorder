@@ -82,7 +82,12 @@ export default function PreviewModal({
     >
       <div>
         <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
-          <VideoPlayer roomId={room.id} platform={room.platform} />
+          <VideoPlayer
+            // preview-only → recording 会切换到全新 FLV 时间线；强制重建播放器，不能复用旧 MSE。
+            key={`${room.id}:${recording ? 'recording' : 'preview'}`}
+            roomId={room.id}
+            platform={room.platform}
+          />
           <div
             onMouseDown={onHandleDown}
             title="拖动调整大小"

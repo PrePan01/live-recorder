@@ -151,11 +151,13 @@ export class Scheduler {
       return;
     }
     if (status.status === 'offline') {
-      // 下播主动停录：若该房间仍在录制，先停止收口（避免录空），再置 idle。
-      if (this.manager.isRoomActive(room.id)) {
+      // 下播主动停录：若该房间仍在录制，等待记录完整收口并保留 completed；
+      // 只有原本未录制的房间才回到 idle。
+      const wasRecording = this.manager.isRoomActive(room.id);
+      if (wasRecording) {
         await this.manager.stopRecording(room.id);
       }
-      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+      this.services.rooms.setState(room.id, wasRecording ? 'completed' : 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.emitRoom(room.id);
       return;
     }

@@ -148,6 +148,26 @@ describe('RecorderManager', () => {
     expect(preview.resets).toContain(room.id);
   });
 
+  it('hands preview-only stream off before recording so FLV streams never interleave', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-handoff-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/81', displayName: 'Handoff' });
+    services.rooms.setLiveStatus(room.id, 'live');
+
+    await services.manager.ensurePreviewStream(room.id);
+    await waitFor(() => services.manager.isPreviewStreaming(room.id));
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'handoff-1' }, { manual: true });
+
+    expect(services.manager.isPreviewStreaming(room.id)).toBe(false);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(preview.closed).toContainEqual({ roomId: room.id, code: 1012, reason: undefined });
+    expect(preview.resets).toContain(room.id);
+  });
+
   it('marks a 0-byte recording as failed and removes the empty file, not completed (#165 空文件)', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-empty-'));

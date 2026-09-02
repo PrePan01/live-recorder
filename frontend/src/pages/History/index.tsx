@@ -207,7 +207,7 @@ export default function History() {
         width: 130,
         render: (u: Recording['upload']) => {
           if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
-          const detail = u.status === 'failed' || u.status === 'cancelled' ? u.error : u.remotePath;
+          const detail = u.error ?? u.remotePath;
           const node =
             u.status === 'running' ? (
               <Space size={4}>
@@ -220,7 +220,7 @@ export default function History() {
                   u.status === 'ok' ? 'green' : u.status === 'failed' ? 'red' : u.status === 'cancelled' ? 'default' : 'default'
                 }
               >
-                {u.status === 'ok' ? '成功' : u.status === 'failed' ? '失败' : u.status === 'cancelled' ? '已取消' : '排队'}
+                {u.status === 'ok' ? '成功' : u.status === 'failed' ? '失败' : u.status === 'cancelled' ? '已取消' : u.error ? '等待重试' : '排队'}
               </Tag>
             );
           return detail ? (

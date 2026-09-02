@@ -55,6 +55,16 @@ class FlvInitExtractor {
     return this.done;
   }
 
+  /** 初始化尚未判定完成时，供晚加入客户端取得目前已收到的连续 FLV 前缀。 */
+  snapshot(): Buffer | null {
+    const value = this.pending.length === 0
+      ? this.captured
+      : this.captured.length === 0
+        ? this.pending
+        : Buffer.concat([this.captured, this.pending]);
+    return value.length > 0 ? value.subarray(0, PREVIEW_HEADER_MAX) : null;
+  }
+
   /** 喂入流块；初始化段捕获完成时返回该段（非空），否则返回 null。 */
   push(chunk: Buffer): Buffer | null {
     if (this.done) return null;
@@ -144,8 +154,9 @@ export class PreviewManager {
   constructor(private services: Services, private maxSessions = PREVIEW_MAX_SESSIONS) {}
 
   /** 会话=房间：每个被预览的房间算一个会话（同一房间多个 socket 共享一个会话）。 */
-  canAccept(): boolean {
-    return this.rooms.size < this.maxSessions;
+  canAccept(roomId?: string): boolean {
+    // 同一房间重连不新增会话，即使已达总上限也必须允许，否则重开预览会永久收到 4003。
+    return (roomId !== undefined && this.rooms.has(roomId)) || this.rooms.size < this.maxSessions;
   }
 
   addClient(roomId: string, ws: WebSocket): void {
@@ -156,10 +167,11 @@ export class PreviewManager {
     }
     room.sockets.add(ws);
     // 中途加入：先补发 FLV 初始化段 + 近期尾部（接近实时位置），mpegts.js 才能初始化并从实时附近起播。
-    if (room.header && ws.readyState === WebSocket.OPEN) {
+    const bootstrap = room.header ?? room.extractor.snapshot();
+    if (bootstrap && ws.readyState === WebSocket.OPEN) {
       try {
-        ws.send(room.header);
-        if (room.tail.length > 0) ws.send(Buffer.concat(room.tail));
+        ws.send(bootstrap);
+        if (room.header && room.tail.length > 0) ws.send(Buffer.concat(room.tail));
       } catch {
         // 写失败由 close 事件回收
       }
@@ -301,7 +313,7 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.NOT_RECORDING));
       return;
     }
-    if (!preview.canAccept()) {
+    if (!preview.canAccept(roomId)) {
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.LIMIT));
       return;
     }
@@ -318,5 +330,4 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   server.on('upgrade', onUpgrade);
   return { wss, dispose: () => server.off('upgrade', onUpgrade) };
 }
-
 

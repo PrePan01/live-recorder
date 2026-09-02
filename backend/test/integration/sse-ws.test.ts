@@ -207,6 +207,39 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
+  it('reconnects onto a clean FLV stream when recording starts from preview modal', async () => {
+    const step = <T>(name: string, promise: Promise<T>) => Promise.race<T>([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`handoff step timed out: ${name}`)), 2_000)),
+    ]);
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/151', displayName: 'handoff' });
+    server.services.rooms.setLiveStatus(room.id, 'live');
+
+    const before = connect(server.url, room.id);
+    await step('before open', before.opened);
+    for (let i = 0; i < 20 && !server.services.manager.isPreviewStreaming(room.id); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+    await step('start recording', server.services.manager.maybeStartRecording(room, { streamSessionId: 's151', streamTitle: 'handoff' }, { manual: true }));
+
+    // 旧 preview-only 时间线必须明确关闭；前端据此销毁旧 MSE，而非把新 FLV header 接到旧流后面。
+    expect(await step('before close', before.closed)).toBe(1012);
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(false);
+    expect(server.services.manager.isRoomActive(room.id)).toBe(true);
+
+    const after = connect(server.url, room.id);
+    const firstPromise = new Promise<Buffer>((resolve) => after.ws.once('message', (data: Buffer) => resolve(Buffer.from(data))));
+    await step('after open', after.opened);
+    const first = await step('after bootstrap', firstPromise);
+    expect(first.subarray(0, 3).toString()).toBe('FLV');
+    after.ws.close();
+    await step('after close', after.closed);
+    await step('stop recording', server.services.manager.stopRecording(room.id));
+    await step('server close', server.close());
+  });
+
   it('accepts when recording, broadcasts frames, enforces 4-session limit, closes with stream_end', async () => {
     const server = await listen();
     const rooms = [

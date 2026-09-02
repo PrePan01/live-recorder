@@ -77,7 +77,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       const idx = s.items.findIndex((r) => r.id === rec.id);
       if (idx === -1) return {};
       const next = [...s.items];
-      next[idx] = rec;
+      // recording:updated 不携带上传快照；保留 SSE upload:updated 已写入的实时进度。
+      next[idx] = { ...rec, upload: rec.upload ?? next[idx]!.upload ?? null };
       return { items: next };
     });
   },
@@ -85,7 +86,13 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set((s) => {
       const previous = s.items.find((item) => item.id === rec.id);
       const idx = s.items.findIndex((item) => item.id === rec.id);
-      const items = idx === -1 ? s.items : s.items.map((item, index) => (index === idx ? normalizeRecording(rec) : item));
+      const items = idx === -1
+        ? s.items
+        : s.items.map((item, index) => (
+            index === idx
+              ? { ...normalizeRecording(rec), upload: rec.upload ?? item.upload ?? null }
+              : item
+          ));
       const justCompleted = rec.state === 'completed' && previous?.state !== 'completed';
       return { items, completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice };
     });

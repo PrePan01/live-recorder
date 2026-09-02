@@ -18,11 +18,13 @@ export interface FakeEngineScript {
  */
 export class FakeRecordingEngine implements RecordingEngine {
   private stopped = false;
+  private stopWaiters = new Set<() => void>();
 
   constructor(private clock: Clock, private script: FakeEngineScript = {}) {}
 
   stop(): Promise<void> {
     this.stopped = true;
+    for (const wake of [...this.stopWaiters]) wake();
     return Promise.resolve();
   }
 
@@ -50,8 +52,23 @@ export class FakeRecordingEngine implements RecordingEngine {
         yield { type: 'error', error: this.script.failError };
         return;
       }
+      // stop() 可能恰好发生在 data yield 暂停期间；恢复后先检查，不能再登记一个无人唤醒的定时器。
+      if (this.stopped) break;
       await new Promise<void>((resolve) => {
-        this.clock.setTimeout(() => resolve(), interval);
+        let settled = false;
+        let stop!: () => void;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          this.stopWaiters.delete(stop);
+          resolve();
+        };
+        const handle = this.clock.setTimeout(finish, interval);
+        stop = () => {
+          this.clock.clearTimeout(handle);
+          finish();
+        };
+        this.stopWaiters.add(stop);
       });
     }
     if (!this.stopped) yield { type: 'completed', fileSize: written };

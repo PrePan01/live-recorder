@@ -12,7 +12,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "package:release": "bash scripts/package-release.sh",
-    "bundle:resources": "node scripts/bundle-resources.mjs"
+    "bundle:resources": "npm --prefix ../backend run build && node scripts/bundle-resources.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
