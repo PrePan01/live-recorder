@@ -48,7 +48,11 @@ function RoomCard({
       title={
         <Space style={{ minWidth: 0 }}>
           <PlatformLogoTag platform={room.platform} />
-          <span>{room.displayName}</span>
+          <Tooltip title={room.displayName}>
+            <Typography.Text strong style={{ fontSize: 14, maxWidth: '100%' }} ellipsis>
+              {room.displayName}
+            </Typography.Text>
+          </Tooltip>
           {room.titleFallbackUsed ? (
             <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
