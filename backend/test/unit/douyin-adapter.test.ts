@@ -68,6 +68,26 @@ describe('DouyinAdapter', () => {
     expect(result.titleFallbackUsed).toBe(false);
   });
 
+  it('resolves anchor nickname from the room page when enter API lacks user.nickname (验收 #2a)', async () => {
+    // 抖音接口结构变更：enter 不再返回 user.nickname → 从直播间页面 data-anchor-info 解析主播昵称。
+    const fetcher = (async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/webcast/room/web/enter')) {
+        return new Response(JSON.stringify(livePayload({ user: {} })), { status: 200 });
+      }
+      return new Response(
+        `<html><body><div data-anchor-info="{&quot;nickname&quot;:&quot;青泠&quot;,&quot;avatar&quot;:&quot;x&quot;}">x</div></body></html>`,
+        { status: 200, headers: { 'content-type': 'text/html' } },
+      );
+    }) as typeof fetch;
+    const a = new DouyinAdapter(fetcher);
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.displayName).toBe('青泠');
+    expect(result.streamTitle).toBe('抖音直播间');
+    expect(result.titleSource).toBe('adapter');
+  });
+
   it('reports offline when status is not 2', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ status: 4 })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456');
