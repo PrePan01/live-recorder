@@ -195,6 +195,57 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     await app.close();
   });
 
+  it('test endpoint: PROPFIND 校验凭证，仅 2xx 成功；401/403/404 区分报错（QA #186）', async () => {
+    const services = newServices();
+    services.settings.save({ ...(services.settings.load() ?? structuredClone(DEFAULT_SETTINGS) as never), openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    const orig = globalThis.fetch;
+    let seenMethod = '';
+    let seenDepth = '';
+    for (const [status, expectOk, expectMsg] of [
+      [207, true, null],
+      [200, true, null],
+      [401, false, '认证失败'],
+      [403, false, '认证失败'],
+      [404, false, '地址路径无效'],
+      [500, false, 'HTTP 500'],
+    ] as const) {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        seenMethod = String(init?.method);
+        seenDepth = String((init?.headers as Record<string, string> | undefined)?.Depth);
+        return new Response('', { status });
+      }) as typeof fetch;
+      const res = await inj({ method: 'POST', url: '/api/v1/settings/openlist/test' });
+      if (expectOk) {
+        expect(res.statusCode, `status ${status} 应为成功`).toBe(200);
+        expect(res.json().ok).toBe(true);
+      } else {
+        expect(res.statusCode, `status ${status} 应判失败`).toBe(500);
+        const err = res.json().error;
+        expect(err.code).toBe('CONFIG_LOAD_FAILED');
+        expect(String(err.message)).toContain(expectMsg!);
+      }
+    }
+    expect(seenMethod).toBe('PROPFIND');
+    expect(seenDepth).toBe('0');
+    globalThis.fetch = orig;
+    await app.close();
+  });
+
+  it('test endpoint: 未配置地址/令牌不发起请求（PrePan 复验空表单误报前置）', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: '/api/v1/settings/openlist/test' });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.code).toBe('CONFIG_LOAD_FAILED');
+    expect(res.json().error.message).toContain('地址未配置');
+    await app.close();
+  });
+
   it('upload endpoints: list/retry/cancel + manual upload validation', async () => {
     const services = newServices();
     const { app } = buildApp(services);
