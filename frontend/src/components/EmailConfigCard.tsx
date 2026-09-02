@@ -74,17 +74,17 @@ export default function EmailConfigCard() {
         />
       </Form.Item>
       <Row gutter={12}>
-        <Col span={14}>
+        <Col xs={24} sm={14}>
           <Form.Item label="服务器" name="host">
             <Input placeholder="smtp.example.com" />
           </Form.Item>
         </Col>
-        <Col span={5}>
+        <Col xs={12} sm={5}>
           <Form.Item label="端口" name="port">
             <InputNumber min={1} max={65535} style={{ width: '100%' }} />
           </Form.Item>
         </Col>
-        <Col span={5}>
+        <Col xs={12} sm={5}>
           <Form.Item label="TLS" name="secure" valuePropName="checked">
             <Switch />
           </Form.Item>

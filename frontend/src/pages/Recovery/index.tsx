@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   App,
-  Badge,
   Button,
   Drawer,
   List,
@@ -149,17 +148,17 @@ export default function Recovery() {
   };
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="lr-page">
+      <Space className="lr-page-header" wrap>
         <Space size={16}>
           <Typography.Title level={4} style={{ margin: 0 }}>
             自愈工作台
           </Typography.Title>
-          <Badge count={openCount} color="red" showZero>
-            <Tag>未解决 {openCount}</Tag>
-          </Badge>
+          <Tag color={openCount > 0 ? 'red' : 'default'} style={{ marginInlineEnd: 0 }}>
+            未解决 {openCount}
+          </Tag>
         </Space>
-        <Space wrap>
+        <Space className="lr-page-actions" wrap>
           <Select
             allowClear
             placeholder="状态"
@@ -213,6 +212,7 @@ export default function Recovery() {
         components={resizableComponents}
         dataSource={items}
         loading={loading}
+        sticky={{ offsetScroll: 8 }}
         scroll={{ x: 800 }}
         locale={{ emptyText: '暂无诊断项' }}
         pagination={{

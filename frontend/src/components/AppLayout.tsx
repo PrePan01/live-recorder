@@ -28,12 +28,13 @@ export default function AppLayout() {
   const { pathname } = useLocation();
   const { mode } = useAppTheme();
   return (
-    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      <Header style={{ padding: 0, background: 'var(--lr-surface)', lineHeight: 'normal', flexShrink: 0 }}>
+    <Layout className="lr-app-shell" style={{ height: '100vh', overflow: 'hidden' }}>
+      <Header className="lr-app-header" style={{ padding: 0, background: 'var(--lr-surface)', lineHeight: 'normal', flexShrink: 0 }}>
         <StatusBar />
       </Header>
       <Layout>
         <Sider
+          className="lr-app-sider"
           theme={mode === 'dark' ? 'dark' : 'light'}
           width={180}
           collapsible
@@ -41,7 +42,7 @@ export default function AppLayout() {
           collapsedWidth={48}
           style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}
         >
-          <div style={{ fontWeight: 700, fontSize: 16, padding: '16px 24px', whiteSpace: 'nowrap', overflow: 'hidden' }}>直播录制台</div>
+          <div className="lr-app-brand">直播录制台</div>
           <Menu
             mode="inline"
             selectedKeys={[ITEMS.find((i) => pathname.startsWith(i.key))?.key ?? '']}
@@ -50,6 +51,7 @@ export default function AppLayout() {
           />
         </Sider>
         <Content
+          className="lr-app-content"
           style={{
             padding: 'clamp(12px, 2vw, 24px)',
             overflow: 'auto',

@@ -348,6 +348,7 @@ export default function Monitor() {
           columns={listColumns}
           dataSource={monitorRooms}
           loading={loading}
+          sticky={{ offsetScroll: 8 }}
           scroll={{ x: 1100 }}
           pagination={false}
           size="middle"

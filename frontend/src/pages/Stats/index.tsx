@@ -55,12 +55,12 @@ export default function Stats() {
   const maxDayCount = useMemo(() => Math.max(...stats?.byDay.map((d) => d.recordings) ?? [0], 1), [stats]);
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="lr-page">
+      <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           统计看板
         </Typography.Title>
-        <Space wrap>
+        <Space className="lr-page-actions" wrap>
           <DatePicker.RangePicker
             value={range}
             onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)}
@@ -95,7 +95,7 @@ export default function Stats() {
         </Space>
       </Space>
       {stats ? (
-        <Row gutter={[16, 16]}>
+        <Row className="lr-stats-grid" gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
             <Card loading={loading}>
               <Statistic title="录制场次" value={stats.totals.recordings} suffix={stats.totals.failed > 0 ? `（失败 ${stats.totals.failed}）` : undefined} />
@@ -121,7 +121,7 @@ export default function Stats() {
               {stats.byDay.length === 0 ? (
                 <Empty description="该区间暂无录制数据" />
               ) : (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 160 }}>
+                <div className="lr-trend-chart">
                   {stats.byDay.map((d) => (
                     <div key={d.date} style={{ flex: 1, textAlign: 'center' }}>
                       <div

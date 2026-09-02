@@ -12,7 +12,7 @@ export default function StartupDiagnostics() {
   }, [refreshDiagnostics]);
 
   return (
-    <div style={{ height: '100vh', overflow: 'auto', padding: 24 }}>
+    <div className="lr-diagnostics-page">
       <Card
         title="启动诊断"
         extra={

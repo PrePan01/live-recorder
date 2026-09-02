@@ -195,7 +195,12 @@ export default function SettingsPage() {
   const diskDanger = diskFree < 20_000_000_000 || diskRatio < 0.1;
 
   return (
-    <div>
+    <div className="lr-page lr-settings-page">
+      <div className="lr-page-header">
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          设置与告警
+        </Typography.Title>
+      </div>
       {diskDanger ? (
         <Alert
           type="warning"
@@ -205,7 +210,7 @@ export default function SettingsPage() {
           message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），低于阈值可能拒绝新录制`}
         />
       ) : null}
-      <Row gutter={16}>
+      <Row className="lr-settings-grid" gutter={[16, 16]}>
       <Col xs={24} lg={14}>
         <Card
           title="服务设置"
@@ -516,6 +521,7 @@ export default function SettingsPage() {
           )}
         </Card>
         <Card
+          className="lr-alerts-card"
           title="告警"
           extra={
             <Button size="small" onClick={() => void markAllRead()}>

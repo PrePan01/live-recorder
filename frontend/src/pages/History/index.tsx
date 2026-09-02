@@ -358,7 +358,7 @@ export default function History() {
                 </Typography.Text>
               </Space>
             ),
-            children: <Table rowKey="id" size="small" columns={resizedColumns} components={resizableComponents} dataSource={recs} pagination={false} scroll={{ x: 1400 }} />,
+            children: <Table rowKey="id" size="small" columns={resizedColumns} components={resizableComponents} dataSource={recs} pagination={false} sticky={{ offsetScroll: 8 }} scroll={{ x: 1400 }} />,
           }))}
         />
       ) : (
@@ -368,6 +368,7 @@ export default function History() {
           components={resizableComponents}
           dataSource={items}
           loading={loading}
+          sticky={{ offsetScroll: 8 }}
           onRow={(r) => ({ 'data-rec-id': r.id } as React.HTMLAttributes<HTMLElement>)}
           rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
           scroll={{ x: 1400 }}

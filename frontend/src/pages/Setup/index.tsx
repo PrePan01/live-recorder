@@ -78,7 +78,7 @@ export default function Setup() {
   const canNext = step === 0 ? dirState.valid === true : step === 1 ? concurrency >= 1 : true;
 
   return (
-    <Card title="首次设置" style={{ maxWidth: 720, margin: '48px auto' }}>
+    <Card className="lr-setup-card" title="首次设置">
       <Steps
         current={step}
         items={[{ title: '保存目录' }, { title: '并发数' }, { title: '邮件通知' }, { title: '完成' }]}

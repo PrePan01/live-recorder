@@ -339,12 +339,12 @@ export default function Rooms() {
   const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Room>(columns);
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="lr-page">
+      <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
         </Typography.Title>
-        <Space wrap>
+        <Space className="lr-page-actions" wrap>
           <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
             批量添加
           </Button>
@@ -353,7 +353,7 @@ export default function Rooms() {
           </Button>
         </Space>
       </Space>
-      <Space style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+      <Space className="lr-filter-bar" wrap>
         <Input.Search
           allowClear
           placeholder="搜索显示名 / 链接"
@@ -429,6 +429,7 @@ export default function Rooms() {
         components={resizableComponents}
         dataSource={paginated}
         loading={loading}
+        sticky={{ offsetScroll: 8 }}
         scroll={{ x: 1420 }}
         onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}

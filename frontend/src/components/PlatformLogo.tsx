@@ -1,4 +1,4 @@
-import { Space, Tag } from 'antd';
+import { Tag } from 'antd';
 import type { Platform } from '../types/room';
 
 const PLATFORM_STYLE: Record<Platform, { color: string; bg: string; label: string; icon: string }> = {
@@ -11,14 +11,17 @@ export function PlatformIcon({ platform, size = 14 }: { platform: Platform; size
   return <img className="lr-platform-icon" src={style.icon} alt={`${style.label}图标`} width={size} height={size} />;
 }
 
-export function PlatformLogoTag({ platform }: { platform: Platform }) {
+export function PlatformLogoTag({ platform, }: { platform: Platform }) {
   const style = PLATFORM_STYLE[platform];
   return (
-    <Tag style={{ background: style.bg, borderColor: 'transparent', borderRadius: 4 }}>
-      <Space size={4}>
-        <PlatformIcon platform={platform} size={14} />
-        <span style={{ color: style.color, fontWeight: 600 }}>{style.label}</span>
-      </Space>
+    <Tag
+      className="lr-platform-logo-tag"
+      style={{ background: style.bg, borderColor: 'transparent', borderRadius: 4 }}
+    >
+      <PlatformIcon platform={platform} size={14} />
+      <span className="lr-platform-logo-tag__label" style={{ color: style.color, fontWeight: 600 }}>
+        {style.label}
+      </span>
     </Tag>
   );
 }

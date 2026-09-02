@@ -28,7 +28,7 @@ export default function Startup() {
 
   if (state === 'degraded') {
     return (
-      <div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>
+      <div className="lr-startup-page lr-startup-page--centered">
         <Result
           status="warning"
           title="服务未就绪"
@@ -48,7 +48,7 @@ export default function Startup() {
 
   if (state === 'existing-instance') {
     return (
-      <div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>
+      <div className="lr-startup-page lr-startup-page--centered">
         <Result
           status="info"
           title="已有实例在运行"
@@ -60,16 +60,7 @@ export default function Startup() {
   }
 
   return (
-    <div
-      style={{
-        height: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 24,
-      }}
-    >
+    <div className="lr-startup-page lr-startup-page--loading">
       <Typography.Title level={3} style={{ margin: 0 }}>
         Live Recorder
       </Typography.Title>

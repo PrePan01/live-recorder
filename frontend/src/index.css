@@ -54,6 +54,341 @@ body {
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     sans-serif;
   background: var(--lr-bg);
+  color: var(--lr-text);
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  color: #fff;
+  background: color-mix(in srgb, var(--lr-primary) 82%, transparent);
+}
+
+/* ===== 应用骨架与通用页面布局 ===== */
+.lr-app-shell {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--lr-primary) 5%, transparent), transparent 34rem),
+    var(--lr-bg);
+}
+
+.lr-app-header {
+  position: relative;
+  z-index: 10;
+  border-bottom: 1px solid var(--lr-border);
+  box-shadow: 0 1px 8px rgba(15, 23, 42, 0.04);
+}
+
+.lr-app-sider {
+  z-index: 5;
+  box-shadow: 1px 0 0 var(--lr-border);
+}
+
+.lr-app-brand {
+  height: 56px;
+  padding: 16px 24px;
+  overflow: hidden;
+  color: var(--lr-text);
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.ant-layout-sider-collapsed .lr-app-brand {
+  display: grid;
+  padding-inline: 0;
+  place-items: center;
+  color: transparent;
+  font-size: 0;
+}
+
+.ant-layout-sider-collapsed .lr-app-brand::before {
+  width: 18px;
+  height: 18px;
+  border: 4px solid color-mix(in srgb, var(--lr-primary) 22%, transparent);
+  border-radius: 50%;
+  background: var(--lr-primary);
+  box-shadow: inset 0 0 0 3px var(--lr-surface);
+  content: '';
+}
+
+.lr-app-content {
+  scrollbar-gutter: stable;
+}
+
+.lr-page {
+  width: 100%;
+  max-width: 1760px;
+  min-width: 0;
+  margin: 0 auto;
+  animation: lr-fade-in var(--lr-motion-mid) ease-out;
+}
+
+.lr-page-header {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  margin-bottom: 18px;
+  gap: 12px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lr-page-header > .ant-space-item,
+.lr-page-actions > .ant-space-item,
+.lr-filter-bar > .ant-space-item {
+  min-width: 0;
+}
+
+.lr-page-header .ant-typography {
+  letter-spacing: -0.01em;
+}
+
+.lr-page-actions {
+  display: flex;
+  max-width: 100%;
+  justify-content: flex-end;
+}
+
+.lr-filter-bar {
+  display: flex;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 12px;
+  gap: 8px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: color-mix(in srgb, var(--lr-surface) 92%, transparent);
+}
+
+/* 通用容器层级：表格和功能卡片在浅色、深色下保持一致边界。 */
+.lr-page > .ant-table-wrapper,
+.lr-page > .ant-collapse,
+.lr-page .ant-card {
+  border-radius: var(--lr-radius);
+}
+
+.lr-page > .ant-table-wrapper,
+.lr-page > .ant-collapse {
+  border: 1px solid var(--lr-border);
+  background: var(--lr-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+/* table wrapper 不能设置 overflow:hidden：它会成为 sticky 的滚动祖先，
+   令吸底横向滚动条退化为只显示在表格末尾。表格自身由内部容器负责横向裁切。 */
+.lr-page > .ant-table-wrapper {
+  overflow: visible;
+}
+
+.lr-page > .ant-collapse {
+  overflow: hidden;
+}
+
+.lr-page > .ant-table-wrapper .ant-table-pagination {
+  margin-inline: 16px;
+}
+
+.lr-page .ant-card {
+  border-color: var(--lr-border);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035);
+}
+
+.lr-page .ant-card-head {
+  border-bottom-color: var(--lr-border);
+}
+
+.lr-page .ant-empty-normal,
+.lr-page > .ant-empty {
+  margin-block: 32px;
+}
+
+.lr-page > .ant-empty {
+  padding: 52px 20px;
+  border: 1px dashed color-mix(in srgb, var(--lr-text-tertiary) 65%, transparent);
+  border-radius: var(--lr-radius);
+  background: color-mix(in srgb, var(--lr-surface) 78%, transparent);
+}
+
+.ant-form-item-label > label {
+  font-weight: 600;
+}
+
+.ant-btn,
+.ant-select-selector,
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-picker,
+.ant-segmented {
+  transition: border-color var(--lr-motion-fast), box-shadow var(--lr-motion-fast), background var(--lr-motion-fast);
+}
+
+.ant-modal-content,
+.ant-drawer-content {
+  border: 1px solid var(--lr-border);
+}
+
+/* ===== 页面专项布局 ===== */
+.lr-settings-grid > .ant-col > .ant-card + .ant-card {
+  margin-top: 16px;
+}
+
+.lr-settings-page .ant-card-head-wrapper,
+.lr-wall-card .ant-card-head-wrapper {
+  gap: 12px;
+}
+
+.lr-stats-grid > .ant-col {
+  display: flex;
+}
+
+.lr-stats-grid > .ant-col > .ant-card {
+  width: 100%;
+}
+
+.lr-stats-grid .ant-statistic-content {
+  font-variant-numeric: tabular-nums;
+}
+
+.lr-trend-chart {
+  display: flex;
+  height: 160px;
+  min-width: 320px;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.lr-stats-grid .ant-card-body:has(.lr-trend-chart) {
+  overflow-x: auto;
+}
+
+.lr-wall-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.lr-wall-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lr-wall-card .ant-card-head-title {
+  min-width: 0;
+}
+
+.lr-wall-card video {
+  aspect-ratio: 16 / 9;
+}
+
+.lr-alerts-card .ant-card-body {
+  max-height: min(680px, 72vh);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.lr-settings-page .ant-list-item-meta-title {
+  overflow-wrap: anywhere;
+}
+
+.lr-setup-card {
+  width: calc(100% - 32px);
+  max-width: 760px;
+  margin: clamp(16px, 6vh, 56px) auto;
+  border-color: var(--lr-border);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+}
+
+.lr-startup-page {
+  min-height: 100dvh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 15%, color-mix(in srgb, var(--lr-primary) 10%, transparent), transparent 30rem),
+    var(--lr-bg);
+}
+
+.lr-startup-page--centered {
+  display: grid;
+  place-items: center;
+}
+
+.lr-startup-page--loading {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.lr-diagnostics-page {
+  min-height: 100dvh;
+  padding: clamp(12px, 3vw, 32px);
+  overflow: auto;
+  background: var(--lr-bg);
+}
+
+.lr-diagnostics-page > .ant-card {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  border-color: var(--lr-border);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+/* 表格密度：普通表格保持舒适的 40px 左右基准行高，small 表格更紧凑；
+   单元格内容垂直居中，长文本仅在显式允许换行时自然增高。 */
+.ant-table-wrapper .ant-table-thead > tr > th,
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  height: 40px;
+  padding-block: 8px;
+  line-height: 22px;
+  vertical-align: middle;
+}
+
+.ant-table-wrapper .ant-table-small .ant-table-thead > tr > th,
+.ant-table-wrapper .ant-table-small .ant-table-tbody > tr > td {
+  height: 36px;
+  padding-block: 6px;
+  line-height: 20px;
+}
+
+.ant-table-wrapper .ant-table-cell {
+  overflow-wrap: break-word;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  transition: background var(--lr-motion-fast);
+}
+
+/* 启用 sticky 的表格会在当前可视区底部显示同步横向滚动条，
+   无需滚动到整张表末尾才能左右拖动。 */
+.ant-table-wrapper .ant-table-sticky-scroll {
+  z-index: 4;
+  height: 10px !important;
+  padding: 2px 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lr-surface) 94%, transparent);
+  box-shadow: 0 -1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll-bar {
+  min-height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lr-text-secondary) 62%, transparent);
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll-bar:hover,
+.ant-table-wrapper .ant-table-sticky-scroll-bar-active {
+  background: var(--lr-primary);
+}
+
+.ant-collapse-header-text,
+.ant-list-item-meta,
+.ant-list-item-meta-content {
+  min-width: 0;
 }
 
 /* 键盘焦点统一 */
@@ -146,6 +481,20 @@ body {
   overflow: hidden;
 }
 
+/* 平台标签只允许“logo + 文字”和“仅 logo”两种完整形态，避免标题收缩时标签被裁成半截。 */
+.lr-room-card .ant-card-head-title .ant-space-item:has(.lr-platform-logo-tag) {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.lr-platform-logo-tag {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline-end: 0;
+  white-space: nowrap;
+}
+
 .lr-room-card .ant-card-head-title .ant-space-item .ant-typography-ellipsis {
   display: inline-block;
   max-width: 100%;
@@ -215,6 +564,14 @@ body {
 }
 
 @container (max-width: 350px) {
+  .lr-room-card .lr-platform-logo-tag__label {
+    display: none;
+  }
+
+  .lr-room-card .lr-platform-logo-tag {
+    padding-inline: 2px;
+  }
+
   .lr-room-card__actions .ant-btn-icon {
     display: none;
   }
@@ -361,6 +718,7 @@ body {
   display: block;
   border-radius: 3px;
   object-fit: contain;
+  padding: 2px 0;
 }
 
 /* 固定列表格单元格：补不透明背景，避免滚动时未固定列表头文字透过固定列显示（QA #164 根因） */
@@ -413,7 +771,214 @@ body {
 
 /* 很窄窗口：隐藏版本 Tag，服务文本截断 */
 @media (max-width: 720px) {
+  .lr-app-content {
+    padding: 12px !important;
+  }
+
+  .lr-page-header {
+    align-items: stretch;
+  }
+
+  .lr-page-header > .ant-space-item:last-child,
+  .lr-page-actions {
+    width: 100%;
+  }
+
+  .lr-page-actions {
+    justify-content: flex-start;
+  }
+
+  .lr-page-actions > .ant-space-item:has(.ant-select),
+  .lr-page-actions > .ant-space-item:has(.ant-picker),
+  .lr-page-actions > .ant-space-item:has(.ant-input-group-wrapper),
+  .lr-filter-bar > .ant-space-item:has(.ant-select),
+  .lr-filter-bar > .ant-space-item:has(.ant-input-group-wrapper) {
+    flex: 1 1 150px;
+  }
+
+  .lr-page-actions .ant-select,
+  .lr-page-actions .ant-picker,
+  .lr-page-actions .ant-input-group-wrapper,
+  .lr-filter-bar .ant-select,
+  .lr-filter-bar .ant-input-group-wrapper {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .lr-page-actions .ant-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .lr-page > .ant-table-wrapper .ant-table-pagination {
+    margin: 12px;
+  }
+
+  .lr-settings-page .ant-card-head-wrapper,
+  .lr-wall-card .ant-card-head-wrapper,
+  .lr-diagnostics-page .ant-card-head-wrapper {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .lr-settings-page .ant-card-extra,
+  .lr-wall-card .ant-card-extra,
+  .lr-diagnostics-page .ant-card-extra {
+    width: 100%;
+    margin-inline-start: 0;
+  }
+
+  .lr-wall-card .ant-card-extra > .ant-space {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .lr-setup-card .ant-steps {
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .lr-setup-card .ant-steps-item-title {
+    white-space: nowrap;
+  }
+
+  .lr-setup-card form > .ant-space {
+    width: 100%;
+  }
+
+  .lr-setup-card form > .ant-space > .ant-space-item {
+    flex: 1 1 190px;
+  }
+
+  .lr-setup-card form > .ant-space .ant-form-item,
+  .lr-setup-card form > .ant-space .ant-input,
+  .lr-setup-card form > .ant-space .ant-input-number {
+    width: 100%;
+  }
+
   .lr-statusbar > .ant-space:first-child .ant-tag {
     display: none;
+  }
+
+  .lr-statusbar {
+    gap: 10px !important;
+  }
+
+  .lr-globalsearch {
+    width: min(42vw, 220px) !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .lr-app-content {
+    padding: 10px !important;
+  }
+
+  .lr-page-header {
+    margin-bottom: 14px;
+  }
+
+  .lr-page-header h4.ant-typography {
+    font-size: 18px;
+  }
+
+  .lr-page-actions,
+  .lr-filter-bar {
+    gap: 8px !important;
+  }
+
+  .lr-page-actions > .ant-space-item,
+  .lr-filter-bar > .ant-space-item {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .lr-page-actions > .ant-space-item:has(.ant-segmented),
+  .lr-page-actions > .ant-space-item:has(.ant-picker-range),
+  .lr-filter-bar > .ant-space-item:has(.ant-input-group-wrapper) {
+    flex-basis: 100%;
+  }
+
+  .lr-page-actions .ant-btn,
+  .lr-filter-bar .ant-btn {
+    width: 100%;
+  }
+
+  .lr-page-actions .ant-segmented,
+  .lr-page-actions .ant-picker-range {
+    width: 100%;
+  }
+
+  .lr-monitor-page .lr-page-actions > .ant-space-item:first-child {
+    flex: 1 1 100%;
+  }
+
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(2) {
+    flex: 2 1 150px;
+  }
+
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(3) {
+    flex: 1 1 108px;
+  }
+
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(4) {
+    flex: 0 1 76px;
+  }
+
+  .lr-filter-bar {
+    padding: 10px;
+  }
+
+  .lr-page .ant-card-body {
+    padding: 14px;
+  }
+
+  .lr-page .ant-card-head {
+    padding-inline: 14px;
+  }
+
+  .lr-settings-page .ant-list-item {
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .lr-settings-page .ant-list-item-action {
+    margin-inline-start: 0;
+  }
+
+  .lr-page > .ant-empty {
+    padding-block: 36px;
+  }
+
+  .lr-setup-card {
+    width: calc(100% - 20px);
+    margin: 10px auto;
+  }
+
+  .lr-setup-card .ant-card-body {
+    padding: 16px;
+  }
+
+  .lr-startup-page {
+    padding: 16px;
+  }
+
+  .lr-diagnostics-page {
+    padding: 10px;
+  }
+
+  .lr-statusbar > .ant-space:first-child .ant-typography {
+    display: none;
+  }
+
+  .lr-globalsearch {
+    width: min(56vw, 210px) !important;
+  }
+
+  .ant-modal {
+    max-width: calc(100vw - 16px);
+  }
+
+  .ant-popover-inner {
+    max-width: calc(100vw - 24px);
   }
 }
