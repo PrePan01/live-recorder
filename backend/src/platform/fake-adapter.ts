@@ -6,10 +6,14 @@ import type { Quality } from '../types/index.js';
  * 阶段 B 全 fake 交付用，FE 可直接连预览链路。
  */
 export class FakePlatformAdapter implements PlatformAdapter {
-  readonly platform: 'bilibili' | 'douyin' = 'bilibili';
+  readonly platform: 'bilibili' | 'douyin';
   private callCount = 0;
   /** 可编程结果队列；耗尽后回落到 live。 */
   public script: LiveStatusResult[] = [{ status: 'offline' }, { status: 'live', streamSessionId: 'sess_fake_1', streamTitle: 'Fake 直播', availableQualities: ['original', '1080p', '720p'] }];
+
+  constructor(platform: 'bilibili' | 'douyin' = 'bilibili') {
+    this.platform = platform;
+  }
 
   setScript(results: LiveStatusResult[]): void {
     this.script = results;
@@ -31,7 +35,11 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   validateUrl(raw: string): boolean {
-    return /^https?:\/\/(live\.bilibili\.com|live\.douyin\.com)\/\S+/.test(raw.trim());
+    const url = raw.trim();
+    // 与真实适配器口径一致，便于 fake 模式下按 URL 自动识别平台。
+    return this.platform === 'bilibili'
+      ? /^https?:\/\/(live\.bilibili\.com|m\.live\.bilibili\.com|bilibili\.com)\/\d+/.test(url)
+      : /^https?:\/\/(live\.douyin\.com)\/\d+/.test(url);
   }
 }
 

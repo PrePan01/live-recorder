@@ -47,6 +47,8 @@ describe('Scheduler', () => {
     const douyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/91', displayName: '', autoRecord: false });
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'b91', displayName: 'B站主播' },
+    ]);
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'd91', displayName: '抖音主播' },
     ]);
     const updates: Array<{ id: string; displayName: string }> = [];
