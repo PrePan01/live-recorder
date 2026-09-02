@@ -52,6 +52,22 @@ export class UploadManager {
     return this.repo;
   }
 
+  /**
+   * 启动恢复（#195）：DB 中 queued/running 的上传任务重新入队续传——上传队列为内存态，重启后不恢复会永远停在排队。
+   * running=上次进程中断于上传中（PUT 被中止），改为 queued 重传（WebDAV PUT 覆盖幂等）；随后 pump 串行执行。
+   */
+  resumePending(): number {
+    const pending = this.repo.list({ limit: 1000 }).filter((j) => j.status === 'queued' || j.status === 'running');
+    for (const job of pending) {
+      if (job.status === 'running') {
+        this.repo.update(job.id, { status: 'queued', error: '上次上传中断，已重新排队' });
+      }
+      this.queue.push(job.id);
+    }
+    if (pending.length > 0) this.pump();
+    return pending.length;
+  }
+
   async config(): Promise<OpenListConfig | null> {
     const settings = this.services.settings.load();
     const stored = settings?.openlist as Partial<OpenListConfig> | undefined;

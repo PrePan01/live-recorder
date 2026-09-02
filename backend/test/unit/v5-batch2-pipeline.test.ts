@@ -297,6 +297,41 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     await app.close();
   });
 
+  it('resumePending re-enqueues queued/running upload jobs on restart (#195)', async () => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-resume-'));
+    const file = path.join(dir, 'r.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/88', displayName: 'u' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'r88', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    let puts = 0;
+    // 上次会话：入队即完成（put ok），随后把任务状态改回 queued，模拟重启前排队中/中断。
+    const um1 = new UploadManager(services, { async put() { puts += 1; } });
+    const job = await um1.enqueue(rec.id);
+    expect(job).not.toBeNull();
+    await waitFor(() => um1.uploadRepo.get(job!.id)?.status === 'ok');
+    um1.uploadRepo.update(job!.id, { status: 'queued' });
+
+    // 重启：新 UploadManager（内存队列空），resumePending 应从 DB 恢复并续传完成。
+    const um2 = new UploadManager(services, { async put() { puts += 1; } });
+    expect(um2.resumePending()).toBe(1);
+    await waitFor(() => um2.uploadRepo.get(job!.id)?.status === 'ok');
+    expect(puts).toBeGreaterThanOrEqual(2);
+
+    // running（进程中断于上传中）也应被恢复为 queued 续传。
+    const job2 = await um2.enqueue(rec.id);
+    um2.uploadRepo.update(job2!.id, { status: 'running' });
+    const um3 = new UploadManager(services, { async put() { puts += 1; } });
+    expect(um3.resumePending()).toBe(1);
+    expect(um3.uploadRepo.get(job2!.id)?.status).toBe('queued');
+    await waitFor(() => um3.uploadRepo.get(job2!.id)?.status === 'ok');
+  });
+
   it('GET /recordings attaches latest upload snapshot (#190)', async () => {
     const services = newServices();
     services.uploader = new UploadManager(services, {
