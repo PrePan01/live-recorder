@@ -72,6 +72,10 @@ export function searchAll(services: Services, opts: { q: string; type?: SearchTy
     totals.push(['alert', total]);
   }
 
+  // M5（QA 指派）：type=all 聚合多类型分页后 items 可能超出 pageSize（各类型各自 LIMIT pageSize），
+  // 契约分页上限要求 items 严格 ≤ pageSize；total 仍为跨类型总命中数，不随截断变化。
+  if (items.length > pageSize) items.length = pageSize;
+
   return { items, total: sumTotals(totals), page, pageSize, timeout: false };
 }
 
