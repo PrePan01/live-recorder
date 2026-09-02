@@ -18,7 +18,7 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   CONFIG_LOAD_FAILED: '配置加载失败',
   // RESOURCE_NOT_FOUND 不设固定文案：v1.2 口径 FE 直接渲染服务端 message
   STREAM_FORMAT_CHANGED: '流格式变更，已自动切换续录',
-  PREVIEW_LIMIT_REACHED: '预览数已达上限（2 路）',
+  PREVIEW_LIMIT_REACHED: '预览数已达上限（4 路）',
   PREVIEW_NOT_RECORDING: '当前未在录制，无法预览',
   QUALITY_DOWNGRADED: '清晰度已自动降级',
 };
