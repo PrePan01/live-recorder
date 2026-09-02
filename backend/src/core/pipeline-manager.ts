@@ -41,8 +41,9 @@ export class PipelineManager {
   enqueue(recordingId: string, attempt = 0): void {
     const config = this.pipelineConfig();
     if (!config.enabled) {
-      // 未启用管线：录制保持 completed，pipelineStatus=not_required。
+      // 未启用管线：录制保持 completed，pipelineStatus=not_required；仍触发 OpenList 自动上传（uploader 自身校验 enabled/token）。
       this.services.recordings.update(recordingId, { pipelineStatus: 'not_required' });
+      void this.services.uploader.enqueue(recordingId).catch(() => undefined);
       return;
     }
     // 同录制单飞：已排队/运行中则忽略。
