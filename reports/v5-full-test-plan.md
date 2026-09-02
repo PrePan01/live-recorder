@@ -119,6 +119,65 @@
 
 **L4 完成门槛**：以上用例覆盖核心页面全部交互细节与边界；关键缺陷（白屏/状态错误/敏感泄漏/操作无效）任一出现即 Blocker。
 
+### L1–L3 后端详细测试（细节与边界）
+
+> 原则：后端测试必须深入状态机、调度、并发、持久化、协议与安全细节，不能只测「接口通不通」。以下按领域给出用例组，覆盖 L1 单元 / L2 集成 / L3 契约，全部走可注入替身。
+
+#### L1-BK 状态机与调度
+
+| 用例 | 覆盖点/边界 |
+| --- | --- |
+| BE-01 | 房间状态机：idle→checking→recording→completed/failed/disabled/reconnecting 合法迁移；非法迁移（如 completed→recording 无触发）被拒绝 |
+| BE-02 | 录制状态机：pending/recording→completed/failed；processing 不改变录制状态（pipelineStatus 独立） |
+| BE-03 | 轮询调度：间隔可配置、启用房间首次探测不晚于启动后 60s；停用/删除后不再调度 |
+| BE-04 | 断流重连：按 5/15/45s 退避，最多 3 次；恢复续录；耗尽置 failed 并通知；无无限循环 |
+| BE-05 | 并发上限 2：第 3 个开播不建录制、记录容量满并告警；空闲后恢复 |
+| BE-06 | 手动录制边界：autoRecord=off 强开；已录制 409；未开播 409；manual 标志跳过去重允许同场重录（#33） |
+| BE-07 | 启动恢复遗留会话：recoverStaleRecordings 在调度前执行；文件存在→completed、否则→failed；不重复占并发槽 |
+| BE-08 | 定时计划：时间窗到点检测、仅确认开播且允许才启动、跨天/时区 `computeNextRunAt`、重启恢复、重复计划不并发重复录制 |
+
+#### L1-BK 录制与文件
+
+| 用例 | 覆盖点/边界 |
+| --- | --- |
+| BE-09 | 录制生命周期：检测→取流→直写→结束→落盘 `平台/主播/开播时间` 命名；0 字节标记 failed |
+| BE-10 | 时长计算：FLV onMetaData duration 修正为实际时长（首末时间戳/remux），非直播累计时长；跨录制重置 |
+| BE-11 | 磁盘守卫：低于阈值（20GB 或 10%）或目录不可写不建新录制、写原因、一次告警；恢复空间可重录 |
+| BE-12 | 文件命名：非法字符过滤、保留扩展名、长度截断、同名追加序号；空值回退；防目录穿越 |
+| BE-13 | 数据一致性：房间态/activeRecording/录制记录三处一致；self-check 三方校验 |
+
+#### L2-BK 管线/上传/导出队列
+
+| 用例 | 覆盖点/边界 |
+| --- | --- |
+| BE-14 | 管线：ffprobe→sidecar→封面→切片/合并→压缩→归档→DB；顺序固定、并发 N=2、FIFO、主录制优先 |
+| BE-15 | 管线失败保留：单步失败保留成功产物标 partial/failed；原文件始终可用；定向重试不重跑成功步骤 |
+| BE-16 | 上传：OpenList 队列/进度/重试/取消；恢复不重复写同一远端对象；未配置不建任务有引导；本地文件不变 |
+| BE-17 | 导出：单场/批量打包含原视频+sidecar+封面+manifest(SHA-256)；部分成功；取消不损坏源文件；包名去重 |
+
+#### L2-BK 持久化与迁移
+
+| 用例 | 覆盖点/边界 |
+| --- | --- |
+| BE-18 | 幂等迁移：PRAGMA 判列存在再 ALTER；全新库连续升级、缺列库补列、重复执行 0 新增；schema_version 正确 |
+| BE-19 | 迁移审计：rooms title_*/favorited/auto_record/last_live_status/upload_enabled、recordings integrity/room_name/pipeline_status/metadata/cover_path、alerts room_id/error_code 全表补齐 |
+| BE-20 | DB 并发：多进程/多请求下读写安全；SQL 异常不导致卡死（如 runCheckRoom 容错置 failed+lastError） |
+
+#### L3-BK 契约 / 协议 / 安全
+
+| 用例 | 覆盖点/边界 |
+| --- | --- |
+| BE-21 | 错误码全集：契约 v2.4 定稿 27 码全量断言（成功/4xx/5xx）；`RESOURCE_NOT_FOUND`(404)、`PREVIEW_NOT_RECORDING`(WS 4002)、`SEARCH_QUERY_INVALID`(422)、`DISK_SPACE_INSUFFICIENT` 等分类正确、retryable 语义正确 |
+| BE-22 | 校验：URL 无效/重复/不支持平台、quality 越界、并发 0/负数/小数、空 body JSON、超长 q、分页≤50、非法日期→422 CONFIG_INVALID |
+| BE-23 | 幂等：诊断 `recordingId+code` 单飞、上传/导出单飞、批量部分成功 `appliedXxx` 明细、PATCH 重名同步文件 |
+| BE-24 | SSE/WS：`room:updated`/`service:status`/`diagnostic:updated`/`recording:updated`/`upload:updated` 事件负载与 enrich 正确；reply.hijack 保 ACAO；CORS/OPTIONS 204；重连语义；高频推送不崩 |
+| BE-25 | 安全：Cookie/SMTP 密码/OpenList 令牌不落盘/不回显（仅 hasXxx）；导出/日志/告警无密钥；绝对路径归一化防穿越；Host/Origin 白名单随动态端口放行 |
+| BE-26 | 健康/握手：`GET /api/v1/health` serviceStatus 信封（ready/instanceId/apiVersion/port/baseUrl/startedAt）；实例锁原子写/校验 PID/过期清理 |
+| BE-27 | 单实例/端口：锁拒绝第二实例并聚焦；43120→备用→OS 分配回落；退出顺序固定；残留经 PID/health 校验后清理 |
+| BE-28 | 搜索/统计：索引命中、LIKE 转义、tagId 过滤、聚合缓存命中、时区边界、空区间 |
+
+**L1–L3 完成门槛**：状态机、调度、录制、队列、迁移、契约、协议、安全全用例可注入替身并自动化；任一 Blocker（§9.1）出现即阻止提测。
+
 ## 3. 测试环境与前提
 
 ### 3.1 测试替身契约（BE 必须可注入）
