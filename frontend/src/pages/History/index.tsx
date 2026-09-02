@@ -202,6 +202,37 @@ export default function History() {
       { title: '状态', dataIndex: 'state', width: 95, render: (s) => <RecordingStateTag state={s} /> },
       { title: '大小', dataIndex: 'fileSizeBytes', width: 95, render: (v: number) => formatBytes(v) },
       {
+        title: '上传状态',
+        dataIndex: 'upload',
+        width: 130,
+        render: (u: Recording['upload']) => {
+          if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
+          const detail = u.remotePath || u.error;
+          const node =
+            u.status === 'running' ? (
+              <Space size={4}>
+                <Tag color="processing">上传中</Tag>
+                <Progress percent={u.progress} size="small" style={{ width: 56 }} />
+              </Space>
+            ) : (
+              <Tag
+                color={
+                  u.status === 'ok' ? 'green' : u.status === 'failed' ? 'red' : u.status === 'cancelled' ? 'default' : 'default'
+                }
+              >
+                {u.status === 'ok' ? '成功' : u.status === 'failed' ? '失败' : u.status === 'cancelled' ? '已取消' : '排队'}
+              </Tag>
+            );
+          return detail ? (
+            <Tooltip title={detail}>
+              <span style={{ cursor: 'help' }}>{node}</span>
+            </Tooltip>
+          ) : (
+            node
+          );
+        },
+      },
+      {
         title: '失败原因',
         dataIndex: 'failureReason',
         width: 160,
@@ -276,12 +307,12 @@ export default function History() {
   const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Recording>(columns);
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="lr-page">
+      <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           录制历史
         </Typography.Title>
-        <Space wrap>
+        <Space className="lr-page-actions" wrap>
           <Select
             allowClear
             placeholder="按房间筛选"

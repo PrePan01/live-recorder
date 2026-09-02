@@ -43,6 +43,13 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case 'upload:updated':
       useUploadStore.getState().upsert(e.upload);
+      // #191：历史表「上传状态」列实时刷新——按 recordingId 更新对应录制的快照。
+      useRecordingStore.getState().patchRecordingUpload(e.upload.recordingId, {
+        status: e.upload.status,
+        progress: e.upload.progress,
+        remotePath: e.upload.remotePath,
+        error: e.upload.error,
+      });
       break;
   }
 }

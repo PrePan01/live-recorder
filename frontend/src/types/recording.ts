@@ -8,6 +8,15 @@ export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
 
 export type PipelineStatus = 'not_required' | 'queued' | 'running' | 'ok' | 'partial' | 'failed';
 
+export type UploadSnapshotStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
+
+export interface UploadSnapshot {
+  status: UploadSnapshotStatus;
+  progress: number;
+  remotePath: string | null;
+  error: string | null;
+}
+
 export interface PipelineMetadata {
   durationMs: number;
   segmentCount: number;
@@ -26,6 +35,7 @@ export interface Recording {
   integrity: RecordingIntegrity | null;
   state: RecordingState;
   pipelineStatus: PipelineStatus | null;
+  upload: UploadSnapshot | null;
   metadata: PipelineMetadata | null;
   coverPath: string | null;
   startedAt: string;
