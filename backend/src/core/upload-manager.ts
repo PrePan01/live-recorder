@@ -67,7 +67,9 @@ export class UploadManager {
     const rec = this.services.recordings.get(recordingId);
     if (!rec || !rec.filePath) return null;
     const existing = this.repo.jobForRecording(recordingId);
-    if (existing && (existing.status === 'queued' || existing.status === 'running')) return existing;
+    // 幂等：recording 已有上传任务（任何状态，含 ok/failed/cancelled）→ 直接返回既有 job，不新建。
+    // upload_jobs.idempotency_key 有 UNIQUE 约束，新建会违反约束抛 SQL 异常 → 500（QA M7 发现）。
+    if (existing) return existing;
     const job = this.repo.create({ recordingId, idempotencyKey: `rec_${recordingId}` });
     this.queue.push(job.id);
     this.services.events.emit({ type: 'upload:updated', data: job });

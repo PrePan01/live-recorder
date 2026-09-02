@@ -153,18 +153,24 @@ export class PipelineManager {
         }
       }
 
-      // ⑤ compress：压缩/remux（crf=null 仅 remux copy）。
+      // ⑤ compress：压缩/remux（crf=null 仅 remux copy）。mp4 输入且 crf=null 时无需处理 → skipped，不改 finalStatus。
       {
         const compArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'compress' });
-        this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
-        const comp = await compressOrRemux(recording.filePath, config.crf);
-        if (comp) {
-          // 成功产物不删除源文件；更新 filePath 指向新产物（源仍在）。
-          this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
-          this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
+        const ext = path.extname(recording.filePath).toLowerCase();
+        const transformNeeded = config.crf !== null || ext === '.flv' || ext === '.ts';
+        if (!transformNeeded) {
+          this.pipelineRepo.setArtifact(compArt.id, { status: 'skipped', endedAt: this.services.clock.iso() });
         } else {
-          this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩/转封装失败，保留源文件', endedAt: this.services.clock.iso() });
-          finalStatus = 'partial';
+          this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
+          const comp = await compressOrRemux(recording.filePath, config.crf);
+          if (comp) {
+            // 成功产物不删除源文件；更新 filePath 指向新产物（源仍在）。
+            this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
+            this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
+          } else {
+            this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩/转封装失败，保留源文件', endedAt: this.services.clock.iso() });
+            finalStatus = 'partial';
+          }
         }
       }
 

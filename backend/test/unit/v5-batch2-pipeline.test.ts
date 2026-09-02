@@ -5,9 +5,18 @@ import { buildApp } from '../../src/api/server.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
 import { UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
+
+async function waitFor(fn: () => boolean, timeoutMs = 8000): Promise<void> {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 function enablePipeline(services: Services): void {
   const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
@@ -84,6 +93,34 @@ describe('V5 Batch2 pipeline: repo + config', () => {
     expect(res.json().run).not.toBeNull();
     // 异步管线可能已推进到 running/failed（dummy 文件），只断言已脱离 not_required。
     expect(services.recordings.get(rec.id)!.pipelineStatus).not.toBe('not_required');
+    await app.close();
+  });
+
+  it('pipeline compress is skipped for mp4 with crf=null instead of failed→partial (M7 QA)', async () => {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/8', displayName: 'p' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's8', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-pipe-mp4-'));
+    const file = path.join(dir, 'x.mp4');
+    // 生成可被 ffprobe 认可的极小 mp4；ffmpeg 缺失时写 dummy（ffprobe 同样缺失 → verify 走 pending 继续）。
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    if (gen.status !== 0) await writeFile(file, 'dummy');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    enablePipeline(services);
+
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/pipeline/retry` });
+    expect(res.statusCode).toBe(200);
+    await waitFor(() => {
+      const r = services.recordings.get(rec.id)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+    // mp4 + crf=null：compress 应为 skipped，run 应为 ok，而非 failed→partial。
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+    const run = services.pipeline.repo.runForRecording(rec.id);
+    const compress = run?.artifacts.find((a) => a.step === 'compress');
+    expect(compress?.status).toBe('skipped');
     await app.close();
   });
 });
@@ -200,6 +237,12 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().upload.recordingId).toBe(rec.id);
     expect(res.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
+    // 幂等（M7 QA）：已上传录制的再次触发应返回既有 job，不新建、不 500（idempotency_key UNIQUE）。
+    const again = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().upload.id).toBe(res.json().upload.id);
+    const jobs = services.uploader.uploadRepo.list();
+    expect(jobs.filter((j) => j.recordingId === rec.id)).toHaveLength(1);
     await app.close();
   });
 
