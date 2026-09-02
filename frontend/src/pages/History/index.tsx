@@ -357,7 +357,7 @@ export default function History() {
         destroyOnHidden
         onCancel={() => setPlaying(null)}
       >
-        {playing ? <FilePlayer url={recordingFileUrl(playing.id)} /> : null}
+        {playing ? <FilePlayer url={recordingFileUrl(playing.id)} filePath={playing.filePath} /> : null}
       </Modal>
       <Drawer
         title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ''}`}

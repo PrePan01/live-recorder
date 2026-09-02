@@ -4,12 +4,15 @@ import mpegts from 'mpegts.js';
 
 const EVENTS = mpegts.Events as unknown as Record<'ERROR', Parameters<mpegts.Player['on']>[0]>;
 
-export default function FilePlayer({ url }: { url: string }) {
+export default function FilePlayer({ url, filePath }: { url: string; filePath?: string | null }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<'loading' | 'playing' | 'ended' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const isMp4 = typeof filePath === 'string' && /\.mp4$/i.test(filePath);
+
   useEffect(() => {
+    if (isMp4) return;
     if (!mpegts.isSupported()) {
       setState('error');
       setErrorMsg('当前浏览器不支持 MSE，请使用 Chrome/Firefox 播放');
@@ -45,7 +48,7 @@ export default function FilePlayer({ url }: { url: string }) {
       disposed = true;
       player?.destroy();
     };
-  }, [url]);
+  }, [url, isMp4]);
 
   return (
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
@@ -62,8 +65,15 @@ export default function FilePlayer({ url }: { url: string }) {
       <video
         ref={videoRef}
         controls
+        src={isMp4 ? url : undefined}
         onCanPlay={() => setState((current) => (current === 'loading' ? 'playing' : current))}
         onPlaying={() => setState('playing')}
+        onError={() => {
+          if (isMp4) {
+            setState('error');
+            setErrorMsg('视频加载失败或格式不受支持');
+          }
+        }}
         style={{
           width: '100%',
           aspectRatio: '16 / 9',
