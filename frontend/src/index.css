@@ -135,6 +135,23 @@ body {
   padding: 12px 0;
 }
 
+/* 卡片标题：平台图标+房间名+回退标记。标题项可收缩，房间名 ellipsis 截断，
+   保证标题在卡片内水平布局正确、长名不撑破居中（PrePan #182）。 */
+.lr-room-card .ant-card-head-title .ant-space {
+  max-width: 100%;
+}
+
+.lr-room-card .ant-card-head-title .ant-space-item {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lr-room-card .ant-card-head-title .ant-space-item .ant-typography-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
 .lr-room-card .ant-card-body {
   padding: 12px 14px 14px;
 }

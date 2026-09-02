@@ -46,10 +46,10 @@ function RoomCard({
       className={`lr-room-card ${layout === 'list' ? 'lr-room-card--list' : ''}`}
       styles={{ body: { padding: 14 } }}
       title={
-        <Space style={{ minWidth: 0 }}>
+        <Space style={{ minWidth: 0, maxWidth: '100%' }}>
           <PlatformLogoTag platform={room.platform} />
-          <Tooltip title={room.displayName}>
-            <Typography.Text strong style={{ fontSize: 14, maxWidth: '100%' }} ellipsis>
+          <Tooltip title={room.displayName} className="lr-room-card__title">
+            <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
               {room.displayName}
             </Typography.Text>
           </Tooltip>
