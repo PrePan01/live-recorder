@@ -207,11 +207,15 @@ export default function History() {
         width: 130,
         render: (u: Recording['upload']) => {
           if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
-          const detail = u.error ?? u.remotePath;
+          const detail =
+            u.error ??
+            (u.status === 'running' && u.progress >= 99
+              ? '正在写入云端存储…（OpenList 云端驱动收尾中，请稍候）'
+              : u.remotePath);
           const node =
             u.status === 'running' ? (
               <Space size={4}>
-                <Tag color="processing">上传中</Tag>
+                <Tag color="processing">{u.progress >= 99 ? '写入云端' : '上传中'}</Tag>
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
             ) : (
