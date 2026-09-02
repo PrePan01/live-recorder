@@ -430,7 +430,7 @@ export default function Rooms() {
         dataSource={paginated}
         loading={loading}
         sticky={{ offsetScroll: 8 }}
-        scroll={{ x: 1420 }}
+        scroll={{ x: 1500 }}
         onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
         rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         pagination={{

@@ -99,9 +99,23 @@ export default function Wall() {
                 </Space>
               }
             >
-              <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
-                <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
-              </Suspense>
+              {room.lastLiveStatus === 'live' ? (
+                <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
+                  <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
+                </Suspense>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    placeItems: 'center',
+                    aspectRatio: '16 / 9',
+                    background: 'var(--lr-bg-secondary, rgba(0,0,0,0.04))',
+                    borderRadius: 8,
+                  }}
+                >
+                  <Typography.Text type="secondary">未开播</Typography.Text>
+                </div>
+              )}
             </Card>
           ))}
         </div>
