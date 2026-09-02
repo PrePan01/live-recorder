@@ -6,3 +6,5 @@ dist/
 # dev 测试录制产物（recordingDirectory 指向 backend/ 时残留，勿入库）
 backend/bilibili/
 backend/douyin/
+# 生产构建产物（安装包/应用，勿入库）
+release/
