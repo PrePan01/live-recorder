@@ -70,12 +70,12 @@ function RoomCard({
         </Space>
       }
     >
-      <div className="lr-room-card__status" style={{ marginBottom: 8 }}>
+      <div className="lr-room-card__status" style={{ marginBottom: 10 }}>
         <LiveStatusTag status={room.lastLiveStatus} />
         <LivePredictionBadge roomId={room.id} />
       </div>
       {room.tags.length > 0 ? (
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 10 }}>
           <Space size={[4, 4]} wrap>
             {room.tags.map((t) => (
               <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
