@@ -10,9 +10,245 @@ export interface WebDavClient {
   put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void>;
 }
 
+interface WebDavClientOptions {
+  /** 请求体仍在发送时，连续无数据的最大时间。 */
+  uploadIdleTimeoutMs: number;
+  /** 请求体发送完毕后，等待 OpenList/存储端确认的最大时间。 */
+  responseTimeoutMs: number;
+  /** PUT 结果不确定时，远端文件核验的退避间隔。首个 0 表示立即核验。 */
+  verifyDelaysMs: number[];
+  verifyTimeoutMs: number;
+  /** 优先使用 OpenList 官方后台任务上传，以获得服务端落盘进度。 */
+  taskApiEnabled: boolean;
+  taskPollIntervalMs: number;
+  taskPollTimeoutMs: number;
+}
+
+const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
+  uploadIdleTimeoutMs: 120_000,
+  // OpenList 挂载网盘时，PUT body 收完后还需要服务端完成远端落盘；这不是上传停滞。
+  responseTimeoutMs: 10 * 60_000,
+  verifyDelaysMs: [0, 2_000, 5_000, 10_000],
+  verifyTimeoutMs: 20_000,
+  taskApiEnabled: true,
+  taskPollIntervalMs: 1_000,
+  taskPollTimeoutMs: 6 * 60 * 60_000,
+};
+
+interface OpenListTaskInfo {
+  id: string;
+  state: string;
+  status?: string;
+  progress: number;
+  total_bytes?: number;
+  error?: string;
+}
+
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
   private ensuredCollections = new Set<string>();
+  private apiTokens = new Map<string, string | null>();
+
+  private options: WebDavClientOptions;
+
+  constructor(options: Partial<WebDavClientOptions> = {}) {
+    this.options = { ...DEFAULT_WEBDAV_OPTIONS, ...options };
+  }
+
+  private async delay(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  private apiTarget(serverUrl: string, remotePath: string): { root: string; filePath: string } | null {
+    try {
+      const configured = new URL(serverUrl);
+      const remote = new URL(remotePath);
+      if (configured.origin !== remote.origin) return null;
+      const davIndex = configured.pathname.indexOf('/dav');
+      if (davIndex < 0) return null;
+      const davPrefix = configured.pathname.slice(0, davIndex + 4);
+      if (remote.pathname !== davPrefix && !remote.pathname.startsWith(`${davPrefix}/`)) return null;
+      return {
+        root: `${configured.origin}${configured.pathname.slice(0, davIndex)}`.replace(/\/+$/, ''),
+        filePath: decodeURIComponent(remote.pathname.slice(davPrefix.length)) || '/',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** WebDAV 密码也是 OpenList 账号密码；无 2FA 时可换取短期 API JWT，仅缓存在内存。 */
+  private async apiToken(root: string, username: string, password: string): Promise<string | null> {
+    if (this.apiTokens.has(root)) return this.apiTokens.get(root) ?? null;
+    try {
+      const res = await fetch(`${root}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const payload = await res.json() as { code?: number; data?: { token?: string } };
+      const token = res.ok && payload.code === 200 && typeof payload.data?.token === 'string'
+        ? payload.data.token
+        : null;
+      this.apiTokens.set(root, token);
+      return token;
+    } catch {
+      // 旧版 OpenList、2FA 或 API 被代理禁用时继续使用标准 WebDAV，不影响原功能。
+      this.apiTokens.set(root, null);
+      return null;
+    }
+  }
+
+  /**
+   * OpenList /api/fs/put + As-Task：请求体收完后立即返回任务 ID，云盘落盘在后台执行。
+   * 总进度映射为 0~49%（客户端→OpenList）+ 50~99%（OpenList→云盘）。
+   */
+  private async putAsOpenListTask(
+    remotePath: string,
+    localPath: string,
+    username: string,
+    password: string,
+    onProgress: (pct: number) => void,
+    serverUrl?: string,
+  ): Promise<boolean> {
+    if (!this.options.taskApiEnabled || !serverUrl) return false;
+    const target = this.apiTarget(serverUrl, remotePath);
+    if (!target) return false;
+    const token = await this.apiToken(target.root, username, password);
+    if (!token) return false;
+
+    const size = statSync(localPath).size;
+    let uploaded = 0;
+    let lastPct = -1;
+    let phaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const clearTimer = () => {
+      if (phaseTimer) clearTimeout(phaseTimer);
+      phaseTimer = undefined;
+    };
+    const armTimer = (timeoutMs: number, message: string) => {
+      clearTimer();
+      phaseTimer = setTimeout(() => controller.abort(new Error(message)), timeoutMs);
+    };
+    const progress = new Transform({
+      transform: (chunk: Buffer, _encoding, callback) => {
+        uploaded += chunk.length;
+        const localPct = size <= 0 ? 49 : Math.min(49, Math.floor((uploaded / size) * 50));
+        if (localPct !== lastPct) {
+          lastPct = localPct;
+          onProgress(localPct);
+        }
+        armTimer(this.options.uploadIdleTimeoutMs, 'OpenList 接收上传数据长时间停滞');
+        callback(null, chunk);
+      },
+      flush: (callback) => {
+        armTimer(this.options.responseTimeoutMs, 'OpenList 创建后台上传任务超时');
+        callback();
+      },
+    });
+
+    let task: OpenListTaskInfo;
+    try {
+      armTimer(this.options.uploadIdleTimeoutMs, 'OpenList 接收上传数据长时间停滞');
+      const res = await fetch(`${target.root}/api/fs/put`, {
+        method: 'PUT',
+        headers: {
+          Authorization: token,
+          'File-Path': encodeURIComponent(target.filePath),
+          'As-Task': 'true',
+          Overwrite: 'true',
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(size),
+          'Last-Modified': String(statSync(localPath).mtimeMs),
+        },
+        body: createReadStream(localPath).pipe(progress),
+        duplex: 'half',
+        signal: controller.signal,
+      });
+      const payload = await res.json() as { code?: number; message?: string; data?: { task?: OpenListTaskInfo } };
+      if (res.status === 401) this.apiTokens.delete(target.root);
+      if (!res.ok || payload.code !== 200 || !payload.data?.task?.id) {
+        throw new Error(`OpenList 创建上传任务失败${payload.message ? `：${payload.message}` : `（HTTP ${res.status}）`}`);
+      }
+      task = payload.data.task;
+    } finally {
+      clearTimer();
+    }
+
+    onProgress(50);
+    const startedAt = Date.now();
+    let consecutivePollFailures = 0;
+    while (Date.now() - startedAt < this.options.taskPollTimeoutMs) {
+      await this.delay(this.options.taskPollIntervalMs);
+      try {
+        const res = await fetch(`${target.root}/api/task/upload/info?tid=${encodeURIComponent(task.id)}`, {
+          method: 'POST',
+          headers: { Authorization: token },
+          signal: AbortSignal.timeout(20_000),
+        });
+        const payload = await res.json() as { code?: number; message?: string; data?: OpenListTaskInfo };
+        if (!res.ok || payload.code !== 200 || !payload.data) {
+          if (res.status === 401) this.apiTokens.delete(target.root);
+          throw new Error(payload.message || `HTTP ${res.status}`);
+        }
+        consecutivePollFailures = 0;
+        task = payload.data;
+        const serverPct = Math.max(0, Math.min(100, Number(task.progress) || 0));
+        onProgress(Math.min(99, 50 + Math.floor(serverPct * 0.49)));
+        if (task.state === 'succeeded') {
+          onProgress(100);
+          return true;
+        }
+        if (task.state === 'failed' || task.state === 'canceled') {
+          throw new Error(`OpenList 后台上传${task.state === 'canceled' ? '已取消' : '失败'}${task.error ? `：${task.error}` : ''}`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith('OpenList 后台上传')) throw err;
+        consecutivePollFailures += 1;
+        // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
+        if (consecutivePollFailures >= 10) {
+          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+            onProgress(100);
+            return true;
+          }
+          throw new Error(`无法读取 OpenList 后台上传进度：${message}`);
+        }
+      }
+    }
+    throw new Error('OpenList 后台上传任务等待超时');
+  }
+
+  /**
+   * 504/连接中断并不代表 OpenList 写入失败：反向代理可能先超时，而存储端稍后完成。
+   * 用 PROPFIND 的 Content-Length 做最终确认，大小完全一致才视为成功。
+   */
+  private async remoteFileMatches(remotePath: string, expectedSize: number, authorization: string): Promise<boolean> {
+    for (const delayMs of this.options.verifyDelaysMs) {
+      await this.delay(delayMs);
+      try {
+        const res = await fetch(remotePath, {
+          method: 'PROPFIND',
+          headers: {
+            Authorization: authorization,
+            Depth: '0',
+            'Content-Type': 'application/xml',
+          },
+          body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/></d:prop></d:propfind>',
+          signal: AbortSignal.timeout(this.options.verifyTimeoutMs),
+        });
+        if (!res.ok) continue;
+        const xml = await res.text();
+        const match = xml.match(/<(?:[A-Za-z][\w.-]*:)?getcontentlength\b[^>]*>\s*(\d+)\s*</i);
+        if (match && Number(match[1]) === expectedSize) return true;
+      } catch {
+        // OpenList 可能仍在提交文件；按退避间隔继续核验。
+      }
+    }
+    return false;
+  }
 
   private async ensureParentCollections(remotePath: string, authorization: string, serverUrl?: string): Promise<void> {
     const target = new URL(remotePath);
@@ -41,14 +277,29 @@ export class RealWebDavClient implements WebDavClient {
     const size = statSync(localPath).size;
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
     await this.ensureParentCollections(remotePath, authorization, serverUrl);
+    if (await this.putAsOpenListTask(remotePath, localPath, username, token, onProgress, serverUrl)) return;
     let uploaded = 0;
     let lastPct = -1;
+    let bodyFinished = false;
     const controller = new AbortController();
-    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
-    const touch = () => {
-      if (inactivityTimer) clearTimeout(inactivityTimer);
-      // 总时长不设上限；只在连续 2 分钟没有上传数据/响应时中断，避免大文件慢速上传被固定 5 分钟误杀。
-      inactivityTimer = setTimeout(() => controller.abort(new Error('WebDAV 上传长时间无响应')), 120_000);
+    let phaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearPhaseTimer = () => {
+      if (phaseTimer) clearTimeout(phaseTimer);
+      phaseTimer = undefined;
+    };
+    const armUploadIdleTimer = () => {
+      clearPhaseTimer();
+      phaseTimer = setTimeout(
+        () => controller.abort(new Error('WebDAV 上传数据长时间停滞')),
+        this.options.uploadIdleTimeoutMs,
+      );
+    };
+    const armResponseTimer = () => {
+      clearPhaseTimer();
+      phaseTimer = setTimeout(
+        () => controller.abort(new Error('WebDAV 服务端确认超时')),
+        this.options.responseTimeoutMs,
+      );
     };
     const progress = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -58,12 +309,18 @@ export class RealWebDavClient implements WebDavClient {
           lastPct = pct;
           onProgress(pct);
         }
-        touch();
+        armUploadIdleTimer();
         callback(null, chunk);
+      },
+      flush(callback) {
+        bodyFinished = true;
+        // body 已完整交给 HTTP 客户端，后续静默通常是 OpenList/云盘正在落盘，不能继续套用 2 分钟上传停滞阈值。
+        armResponseTimer();
+        callback();
       },
     });
     const body = createReadStream(localPath).pipe(progress);
-    touch();
+    armUploadIdleTimer();
     try {
       const res = await fetch(remotePath, {
         method: 'PUT',
@@ -77,11 +334,24 @@ export class RealWebDavClient implements WebDavClient {
         duplex: 'half',
         signal: controller.signal,
       });
-      touch();
       if (!res.ok) throw new Error(`WebDAV PUT ${res.status}`);
       onProgress(100);
+    } catch (err) {
+      clearPhaseTimer();
+      const message = err instanceof Error ? err.message : String(err);
+      const resultIsAmbiguous = bodyFinished && (
+        /WebDAV PUT (408|425|429|500|502|503|504)\b/.test(message)
+        || message.includes('服务端确认超时')
+        || message.includes('fetch failed')
+        || message.includes('ECONNRESET')
+      );
+      if (resultIsAmbiguous && await this.remoteFileMatches(remotePath, size, authorization)) {
+        onProgress(100);
+        return;
+      }
+      throw err;
     } finally {
-      if (inactivityTimer) clearTimeout(inactivityTimer);
+      clearPhaseTimer();
     }
   }
 }
@@ -236,7 +506,7 @@ export class UploadManager {
       return;
     }
     const remotePath = this.resolveRemotePath(config, rec.filePath, rec);
-    this.repo.update(jobId, { status: 'running', progress: 0, remotePath });
+    this.repo.update(jobId, { status: 'running', progress: 0, remotePath, error: null });
     this.emit(jobId);
 
     try {
