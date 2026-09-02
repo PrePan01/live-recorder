@@ -262,7 +262,7 @@ describe('WebSocket preview', () => {
     server.services.rooms.setState(room.id, 'recording');
 
     // 录制开始、尚无预览客户端时也需累积流头缓冲（中途加入可初始化 FLV）。
-    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01]), Buffer.alloc(256)]);
+    const header = buildFlvInit();
     server.preview.broadcastFrame(room.id, header);
     server.preview.broadcastFrame(room.id, Buffer.alloc(128));
 
@@ -280,4 +280,96 @@ describe('WebSocket preview', () => {
     await c2.closed;
     await server.close();
   });
+
+  it('keeps preview header across client disconnects during active stream (#193 重开预览卡连接视频流)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2', displayName: 'persist' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    const init = buildFlvInit();
+    server.preview.broadcastFrame(room.id, init);
+
+    const c1 = connect(server.url, room.id);
+    const first1 = await new Promise<Buffer>((resolve) => c1.ws.once('message', (d) => resolve(Buffer.from(d))));
+    expect(first1.subarray(0, 3).toString()).toBe('FLV');
+    c1.ws.close();
+    await c1.closed;
+
+    // 录制仍在继续：广播近期媒体数据（非 FLV 头）。
+    server.preview.broadcastFrame(room.id, Buffer.from([0xaa, 0xbb, 0xcc]));
+
+    // 客户端断开后再重开预览：新客户端先收到流头（FLV 签名），再收到近期尾部（接近实时位置的媒体）。
+    const c2 = connect(server.url, room.id);
+    const c2msgs: Buffer[] = [];
+    c2.ws.on('message', (d: Buffer) => c2msgs.push(Buffer.from(d)));
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (c2msgs.length >= 2) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 10);
+    });
+    const first2 = c2msgs[0]!;
+    expect(first2.subarray(0, 3).toString()).toBe('FLV');
+    const tail2 = c2msgs[1]!;
+    expect([...tail2]).toEqual([0xaa, 0xbb, 0xcc]);
+    c2.ws.close();
+    await c2.closed;
+    await server.close();
+  });
+it('init extractor completes at first media when audio seq missing (#193 QA 边角)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/3', displayName: 'noaudio' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    const h = Buffer.alloc(13);
+    h.write('FLV', 0);
+    h[3] = 1;
+    h[4] = 0x05;
+    h.writeUInt32BE(9, 5);
+    h.writeUInt32BE(0, 9);
+    const meta = flvTag(18, Buffer.alloc(4));
+    const vseq = flvTag(9, Buffer.from([0x17, 0x00, 0x01, 0x02]));
+    const media = flvTag(9, Buffer.from([0x17, 0x01, 0xde, 0xad]));
+    server.preview.broadcastFrame(room.id, h);
+    server.preview.broadcastFrame(room.id, meta);
+    server.preview.broadcastFrame(room.id, vseq);
+    server.preview.broadcastFrame(room.id, media);
+
+    const c = connect(server.url, room.id);
+    const first = await new Promise<Buffer>((resolve) => c.ws.once('message', (d) => resolve(Buffer.from(d))));
+    expect(first.subarray(0, 3).toString()).toBe('FLV');
+    // init = 13(FLV头) + 19(onMetaData) + 19(AVC seq)，不含首个媒体帧。
+    expect(first.length).toBe(51);
+    c.ws.close();
+    await c.closed;
+    await server.close();
+  });
 });
+
+/** 构造最小合法 FLV 初始化段（头 + onMetaData + AVC/AAC sequence headers）。 */
+function buildFlvInit(): Buffer {
+  const h = Buffer.alloc(13);
+  h.write('FLV', 0);
+  h[3] = 1;
+  h[4] = 0x05;
+  h.writeUInt32BE(9, 5);
+  h.writeUInt32BE(0, 9);
+  const meta = flvTag(18, Buffer.alloc(4));
+  const vseq = flvTag(9, Buffer.from([0x17, 0x00, 0x01, 0x02]));
+  const aseq = flvTag(8, Buffer.from([0xaf, 0x00, 0x01, 0x02]));
+  return Buffer.concat([h, meta, vseq, aseq]);
+}
+
+function flvTag(type: number, data: Buffer): Buffer {
+  const header = Buffer.alloc(11);
+  header[0] = type;
+  const size = data.length;
+  header[1] = (size >> 16) & 0xff;
+  header[2] = (size >> 8) & 0xff;
+  header[3] = size & 0xff;
+  const prev = Buffer.alloc(4);
+  prev.writeUInt32BE(11 + size, 0);
+  return Buffer.concat([header, data, prev]);
+}
