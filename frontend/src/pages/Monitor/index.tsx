@@ -1,9 +1,10 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
-import { App, Button, Card, Col, Empty, Input, Modal, Popconfirm, Row, Segmented, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
+import { useEffect, useState } from 'react';
+import { App, Button, Card, Col, Empty, Input, Popconfirm, Row, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { formatRelative } from '../../utils/format';
@@ -11,7 +12,7 @@ import RoomStats from '../../components/RoomStats';
 import RoomHealth from '../../components/RoomHealth';
 import LiveStatusTag from '../../components/LiveStatusTag';
 import LivePredictionBadge from '../../components/LivePredictionBadge';
-const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
+import PreviewModal from '../../components/PreviewModal';
 import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import type { Room } from '../../types/room';
@@ -27,6 +28,7 @@ function RoomCard({
   actingAction,
   acting,
   recentlyStopped,
+  autoRecordEnabled,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -38,6 +40,7 @@ function RoomCard({
   actingAction?: 'check' | 'record' | 'stop';
   acting?: boolean;
   recentlyStopped?: boolean;
+  autoRecordEnabled: boolean;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
@@ -47,7 +50,9 @@ function RoomCard({
       styles={{ body: { padding: 14 } }}
       title={
         <Space style={{ minWidth: 0, maxWidth: '100%' }}>
-          <PlatformLogoTag platform={room.platform} />
+          <div style={{ marginTop: '3px' }}>
+            <PlatformLogoTag platform={room.platform}/>
+          </div>
           <Tooltip title={room.displayName} className="lr-room-card__title">
             <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
               {room.displayName}
@@ -74,21 +79,22 @@ function RoomCard({
         </Space>
       }
     >
-      <div className="lr-room-card__status" style={{ marginBottom: 10 }}>
+      <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
         <LiveStatusTag status={room.lastLiveStatus} />
+        <Tag color={autoRecordEnabled ? 'blue' : 'orange'} style={{ marginInlineEnd: 0 }}>
+          {autoRecordEnabled ? '自动录' : '未自动录'}
+        </Tag>
         <LivePredictionBadge roomId={room.id} />
-      </div>
-      {room.tags.length > 0 ? (
-        <div style={{ marginBottom: 10 }}>
+        {room.tags.length > 0 ? (
           <Space size={[4, 4]} wrap>
             {room.tags.map((t) => (
-              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-                {t.name}
-              </Tag>
+                <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
+                  {t.name}
+                </Tag>
             ))}
           </Space>
-        </div>
-      ) : null}
+        ) : null}
+      </Space>
       <div className="lr-room-card__stats" style={{ marginBottom: 10, width: '100%' }}>
         <RoomStats
           lastCheckedAt={room.lastCheckedAt}
@@ -102,11 +108,6 @@ function RoomCard({
       {room.lastError ? (
         <Typography.Paragraph className="lr-room-card__error" type="danger" style={{ marginBottom: 10, marginTop: 0 }}>
           {room.lastError.message}
-        </Typography.Paragraph>
-      ) : null}
-      {onAir && !recording && room.autoRecord === false ? (
-        <Typography.Paragraph type="warning" style={{ marginBottom: 10, marginTop: 0 }}>
-          该房间已关闭自动录制，开播未自动录，可手动「录制」
         </Typography.Paragraph>
       ) : null}
       <div className="lr-room-card__actions">
@@ -164,9 +165,11 @@ export default function Monitor() {
   const { rooms, loading, actingRoomId, actingAction, fetchRooms, checkRoomNow, startRoomRecording, stopRoomRecording, favoriteRoom } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
+  const settings = useSettingsStore((s) => s.settings);
+  const loadSettings = useSettingsStore((s) => s.load);
   const [watching, setWatching] = useState<Room | null>(null);
   const [view, setView] = useState<'卡片' | '列表'>('卡片');
-  const [filter, setFilter] = useState<'全部' | '录制中' | '收藏'>('全部');
+  const [filter, setFilter] = useState<'全部' | '开播中' | '录制中' | '收藏'>('全部');
   const [keyword, setKeyword] = useState('');
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
@@ -196,9 +199,14 @@ export default function Monitor() {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
 
+  useEffect(() => {
+    if (!settings) void loadSettings();
+  }, [settings, loadSettings]);
+
   const monitorRooms = rooms
     .filter((r) => r.enabled)
     .filter((r) => {
+      if (filter === '开播中') return r.lastLiveStatus === 'live';
       if (filter === '录制中') return r.monitorState === 'recording' || r.monitorState === 'reconnecting';
       if (filter === '收藏') return r.favorited;
       return true;
@@ -303,26 +311,21 @@ export default function Monitor() {
   ];
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Space size={16} wrap>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            监控总览
-          </Typography.Title>
-          <Space size={8} wrap>
-            <Button size="small" icon={<EyeOutlined />}>
-              开播中 {liveCount}
-            </Button>
-            <Button size="small" icon={<VideoCameraAddOutlined />}>
-              录制中 {recordingCount}
-            </Button>
-          </Space>
-        </Space>
-        <Space>
+    <div className="lr-page lr-monitor-page">
+      <Space className="lr-page-header" wrap>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          监控总览
+        </Typography.Title>
+        <Space className="lr-page-actions" wrap>
           <Segmented
-            options={['全部', '录制中', '收藏']}
+            options={[
+              { label: '全部', value: '全部' },
+              { label: `开播中 ${liveCount}`, value: '开播中' },
+              { label: `录制中 ${recordingCount}`, value: '录制中' },
+              { label: '收藏', value: '收藏' },
+            ]}
             value={filter}
-            onChange={(v) => setFilter(v as '全部' | '录制中' | '收藏')}
+            onChange={(v) => setFilter(v as '全部' | '开播中' | '录制中' | '收藏')}
           />
           <Input.Search
             allowClear
@@ -365,6 +368,7 @@ export default function Monitor() {
                 }
                 onStop={onStopRoom}
                 recentlyStopped={recentStop[room.id] !== undefined}
+                autoRecordEnabled={room.autoRecord ?? settings?.autoRecord ?? true}
                 onRecord={(r) =>
                   void startRoomRecording(r.id).catch((e) =>
                     message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制请求失败'),
@@ -381,23 +385,15 @@ export default function Monitor() {
           ))}
         </Row>
       )}
-      <Modal
-        open={watching !== null}
-        title={`观看：${watching?.displayName ?? ''}`}
-        footer={null}
-        width={720}
-        destroyOnHidden
-        onCancel={() => {
-          if (watching) closePreview(watching.id);
-          setWatching(null);
-        }}
-      >
-        {watching ? (
-          <Suspense fallback={<Spin style={{ display: 'block', margin: '80px auto' }} />}>
-            <VideoPlayer roomId={watching.id} platform={watching.platform} />
-          </Suspense>
-        ) : null}
-      </Modal>
+      {watching ? (
+        <PreviewModal
+          room={watching}
+          onClose={() => {
+            closePreview(watching.id);
+            setWatching(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

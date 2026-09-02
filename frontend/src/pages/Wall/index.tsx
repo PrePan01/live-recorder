@@ -5,6 +5,7 @@ import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import LiveStatusTag from '../../components/LiveStatusTag';
+import PreviewModal from '../../components/PreviewModal';
 import type { Room } from '../../types/room';
 
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
@@ -50,12 +51,12 @@ export default function Wall() {
   };
 
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="lr-page">
+      <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           多路直播墙
         </Typography.Title>
-        <Space wrap>
+        <Space className="lr-page-actions" wrap>
           <Segmented options={['2x2', '3x3']} value={grid} onChange={(v) => setGrid(v as '2x2' | '3x3')} />
           <Button icon={<PlusOutlined />} onClick={() => setAddOpen(true)} disabled={available.length === 0}>
             添加房间
@@ -65,9 +66,10 @@ export default function Wall() {
       {wallRooms.length === 0 ? (
         <Empty description="从右侧「添加房间」选择直播，默认静音，最多 4 路" style={{ marginTop: 60 }} />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(min(${grid === '2x2' ? 320 : 260}px, 100%), 1fr))`, gap: 12 }}>
+        <div className="lr-wall-grid" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(${grid === '2x2' ? 320 : 260}px, 100%), 1fr))` }}>
           {wallRooms.map((room) => (
             <Card
+              className="lr-wall-card"
               key={room.id}
               size="small"
               title={
@@ -128,16 +130,14 @@ export default function Wall() {
           />
         </Space>
       </Modal>
-      <Modal
-        title={`全屏：${fullscreen?.displayName ?? ''}`}
-        open={fullscreen !== null}
-        footer={null}
-        width={960}
-        destroyOnHidden
-        onCancel={() => setFullscreen(null)}
-      >
-        {fullscreen ? <VideoPlayer roomId={fullscreen.id} platform={fullscreen.platform} /> : null}
-      </Modal>
+      {fullscreen ? (
+        <PreviewModal
+          room={fullscreen}
+          titlePrefix="全屏"
+          defaultWidth={880}
+          onClose={() => setFullscreen(null)}
+        />
+      ) : null}
     </div>
   );
 }
