@@ -2,6 +2,8 @@ import { mkdtemp, readFile, writeFile, unlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pickPort, BACKUP_PORTS, osFreePort } from '../../src/sidecar/ports.ts';
 import { InstanceLock } from '../../src/sidecar/instance-lock.ts';
@@ -149,5 +151,40 @@ describe('sidecar start (integration)', () => {
     const first = await startSidecar({ host: '127.0.0.1', stateDir: dir, preferredPort: 43991, instanceId: 'inst_one' });
     await expect(startSidecar({ host: '127.0.0.1', stateDir: dir, preferredPort: 43992, instanceId: 'inst_two' })).rejects.toThrow(/another live-recorder instance/);
     await first.close();
+  });
+
+  it('watchParentExit exits when its parent process dies (宿主强退兜底 #199)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-ppid-'));
+    const marker = path.join(dir, 'done');
+    const distStart = pathToFileURL(path.resolve(process.cwd(), 'dist/sidecar/start.js')).href;
+    const childScript = `
+      import { watchParentExit } from '${distStart}';
+      import { writeFile } from 'node:fs/promises';
+      watchParentExit(async () => { await writeFile('${marker}', 'x'); process.exit(0); });
+      console.log('child-ready');
+      setInterval(() => {}, 1000);
+    `;
+    // 中间父进程：spawn 侧车子进程（child），待 child-ready 后退出 → child 被 reparent → ppid 变化 → 自检退出。
+    const middleScript = `
+      import { spawn } from 'node:child_process';
+      const c = spawn(${JSON.stringify(process.execPath)}, ['--input-type=module', '-e', ${JSON.stringify(childScript)}], { stdio: ['ignore', 'pipe', 'inherit'] });
+      c.stdout.on('data', (d) => { if (String(d).includes('child-ready')) setTimeout(() => process.exit(0), 50); });
+      setTimeout(() => process.exit(0), 8000);
+    `;
+    const middle = spawn(process.execPath, ['--input-type=module', '-e', middleScript], { stdio: 'inherit' });
+    try {
+      const start = Date.now();
+      while (Date.now() - start < 10_000) {
+        try {
+          await stat(marker);
+          return; // 自检触发成功
+        } catch {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+      throw new Error('watchParentExit 未在父进程退出后自检退出');
+    } finally {
+      middle.kill('SIGKILL');
+    }
   });
 });

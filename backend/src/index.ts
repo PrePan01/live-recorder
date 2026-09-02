@@ -1,4 +1,4 @@
-import { startSidecar, installShutdownSignals } from './sidecar/start.js';
+import { startSidecar, installShutdownSignals, watchParentExit } from './sidecar/start.js';
 import { DEFAULT_HOST } from './sidecar/types.js';
 import { DEFAULT_PORT } from './sidecar/ports.js';
 import path from 'node:path';
@@ -29,6 +29,8 @@ async function main(): Promise<void> {
   const run = await startSidecar(options);
   console.log(`live-recorder backend (${run.instance.baseUrl}) ready: instance=${run.instance.instanceId} pid=${run.instance.pid}`);
   installShutdownSignals(run);
+  // 宿主（Tauri 进程）强退/崩溃兜底：父进程消失即自检退出，避免孤儿后端常驻。
+  watchParentExit(run.close);
 }
 
 main().catch((err) => {
