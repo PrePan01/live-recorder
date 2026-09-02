@@ -68,7 +68,9 @@ export interface CompressResult {
 
 /** 压缩转封装：crf 为 null 时仅 remux（copy）；否则重编码 H.264。 */
 export async function compressOrRemux(inputPath: string, crf: number | null): Promise<CompressResult | null> {
-  const outPath = inputPath.replace(/\.(flv|ts)$/i, crf === null ? '_remux.mp4' : '_c.mp4');
+  // mp4 且无需压缩：已是目标格式，无需处理（调用方标 skipped，不影响管线 finalStatus）。
+  if (/\.mp4$/i.test(inputPath) && crf === null) return null;
+  const outPath = inputPath.replace(/\.(flv|ts|mp4)$/i, crf === null ? '_remux.mp4' : '_c.mp4');
   if (outPath === inputPath) return null;
   const args = crf === null
     ? ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outPath]
