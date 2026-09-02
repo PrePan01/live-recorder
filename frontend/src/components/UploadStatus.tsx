@@ -73,6 +73,15 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
           <Space size={8} wrap>
             <Tag color={STATUS_COLOR[j.status]}>{j.status}</Tag>
             {j.status === 'running' ? <Progress percent={j.progress} size="small" style={{ width: 140 }} /> : null}
+            {j.status === 'running' ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {j.progress >= 99
+                  ? '正在写入云端存储…（OpenList 云端驱动收尾中）'
+                  : j.progress < 50
+                    ? '正在上传至 OpenList…'
+                    : '正在写入云端存储…'}
+              </Typography.Text>
+            ) : null}
             {j.status === 'ok' && j.remotePath ? (
               <Typography.Link href={j.remotePath} target="_blank" ellipsis>
                 {j.remotePath}
