@@ -189,6 +189,24 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 卡片模式下按钮过窄（2-4 列布局时仅 49-62px），图标+文字放不下会触发 ellipsis 截断。
+   卡片宽度 < 350px 时隐藏图标只留文字（「直播间」13px 文字≈39px 可完整容纳），
+   卡片较宽时保留图标+文字。保证 400-1440px 全区间不换行不截断。 */
+.lr-room-card {
+  container-type: inline-size;
+}
+
+@container (max-width: 350px) {
+  .lr-room-card__actions .ant-btn-icon {
+    display: none;
+  }
+
+  .lr-room-card__actions .ant-btn {
+    padding-inline: 2px;
+    font-size: 12px;
+  }
+}
+
 @media (max-width: 720px) {
   .lr-room-card__actions .ant-btn {
     font-size: 12px;
