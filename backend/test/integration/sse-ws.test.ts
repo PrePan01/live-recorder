@@ -346,9 +346,57 @@ it('init extractor completes at first media when audio seq missing (#193 QA 边�
     await c.closed;
     await server.close();
   });
+it('tail replay starts at a video keyframe for mid-join clients (FE 定位 P 帧开头卡第一秒)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4', displayName: 'keyframe' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    server.preview.broadcastFrame(room.id, buildFlvInit());
+    // 大量非关键帧（每个 ~200KB）撑破 1MB 尾部，随后一个关键帧，再若干非关键帧。
+    for (let i = 0; i < 7; i += 1) server.preview.broadcastFrame(room.id, buildVideoTag(2, 200_000));
+    server.preview.broadcastFrame(room.id, buildVideoTag(1, 50_000));
+    for (let i = 0; i < 3; i += 1) server.preview.broadcastFrame(room.id, buildVideoTag(2, 50_000));
+
+    // 晚加入客户端：收到 [init] + [tail]，tail 首个视频标签必须是关键帧（frameType==1）。
+    const c = connect(server.url, room.id);
+    const msgs: Buffer[] = [];
+    c.ws.on('message', (d: Buffer) => msgs.push(Buffer.from(d)));
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (msgs.length >= 2) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 10);
+    });
+    const init = msgs[0]!;
+    const tail = msgs[1]!;
+    expect(init.subarray(0, 3).toString()).toBe('FLV');
+    let off = 0;
+    let firstVideoFrameType: number | null = null;
+    while (off + 15 <= tail.length) {
+      const type = tail[off]!;
+      const ds = (tail[off + 1]! << 16) | (tail[off + 2]! << 8) | tail[off + 3]!;
+      if (off + 11 + ds + 4 > tail.length) break;
+      if (type === 9) {
+        firstVideoFrameType = tail[off + 11]! >> 4;
+        break;
+      }
+      off += 11 + ds + 4;
+    }
+    expect(firstVideoFrameType).toBe(1);
+    c.ws.close();
+    await c.closed;
+    await server.close();
+  });
 });
 
-/** 构造最小合法 FLV 初始化段（头 + onMetaData + AVC/AAC sequence headers）。 */
+function buildVideoTag(frameType: number, payloadSize: number): Buffer {
+  const data = Buffer.alloc(payloadSize);
+  data[0] = (frameType << 4) | 7;
+  data[1] = 1;
+  return flvTag(9, data);
+}
 function buildFlvInit(): Buffer {
   const h = Buffer.alloc(13);
   h.write('FLV', 0);

@@ -33,6 +33,11 @@ const PREVIEW_HEADER_MAX = 64 * 1024;
 /** 近期尾部滚动缓冲上限：接近实时位置的最近媒体（含近期关键帧），让重开预览可从实时附近起播且时间戳连续。 */
 const PREVIEW_TAIL_MAX = 1024 * 1024;
 
+/** 是否为视频关键帧 FLV 标签：type=9（视频）且 data[0] 高 4 位 FrameType==1。 */
+function isKeyframeTag(tag: Buffer): boolean {
+  return tag.length >= 12 && tag[0] === 9 && (tag[11]! & 0xf0) === 0x10;
+}
+
 /**
  * FLV 初始化段提取器：只缓存流头 + onMetaData + AVC/AAC sequence headers，
  * 不缓存媒体帧——避免中途加入重放带时间戳的旧媒体导致 MSE 时间断点卡播（#193「卡在第一秒」）。
@@ -180,10 +185,17 @@ export class PreviewManager {
       const header = room.extractor.push(chunk);
       if (header) room.header = header;
     } else {
-      // 初始化段之后：追加到近期尾部（每个 chunk 为完整 FLV 标签，按标签边界滚动裁剪，保持时间戳连续）。
+      // 初始化段之后：追加到近期尾部（每个 chunk 为完整 FLV 标签）。
       room.tail.push(chunk);
       room.tailBytes += chunk.length;
+      // ① 按字节上限裁剪。
       while (room.tailBytes > PREVIEW_TAIL_MAX && room.tail.length > 1) {
+        const dropped = room.tail.shift()!;
+        room.tailBytes -= dropped.length;
+      }
+      // ② 保证队首为视频关键帧：裁剪/追加后队首若落在非关键帧上，继续裁掉直到关键帧（或仅剩 1 chunk）。
+      // 晚加入/重开预览回放 [init]+[tail] 从关键帧起播，解码立即启动（FE 定位：P 帧开头卡第一秒）。
+      while (room.tail.length > 1 && !isKeyframeTag(room.tail[0]!)) {
         const dropped = room.tail.shift()!;
         room.tailBytes -= dropped.length;
       }
