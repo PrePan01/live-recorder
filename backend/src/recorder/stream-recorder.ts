@@ -74,19 +74,21 @@ class FlvTimestampNormalizer {
     return out;
   }
 
-  /** 收尾：返回未凑成完整标签的尾部字节；已到达的媒体标签头同样按模式归一化。 */
+  /** 收尾：只返回完整 FLV 标签；丢弃不完整的尾部标签，保证落盘文件结构完整（#181：截断尾标签致 ffprobe duration=0 → 误判损坏）。 */
   remaining(): Buffer {
     if (this.buffer.length === 0) return this.buffer;
     let offset = 0;
+    let lastComplete = 0;
     while (offset + 11 <= this.buffer.length) {
       const tagType = this.buffer[offset]!;
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
-      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
       const tagLen = 11 + dataSize + 4;
-      if (offset + tagLen > this.buffer.length) break; // 标签数据不完整，停在标签头之后
+      if (offset + tagLen > this.buffer.length) break; // 尾部不完整标签：不写入文件
+      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
       offset += tagLen;
+      lastComplete = offset;
     }
-    const b = Buffer.from(this.buffer);
+    const b = Buffer.from(this.buffer.subarray(0, lastComplete));
     this.buffer = Buffer.alloc(0);
     return b;
   }

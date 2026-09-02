@@ -31,7 +31,29 @@ describe('StreamRecordingEngine (HTTP)', () => {
   it('writes the stream to disk and yields data/completed', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
     const out = path.join(dir, 'a.flv');
-    const chunks = [Buffer.from('FLVheader123'), Buffer.from('000000000000'), Buffer.from('morebytes')];
+    // 合法 FLV：头 + onMetaData + 一个视频 tag（#181：截断/非法尾部不再写入）。
+    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
+      const head = Buffer.alloc(11);
+      head[0] = type;
+      head.writeUIntBE(data.length, 1, 3);
+      head[4] = (ts >> 16) & 0xff;
+      head[5] = (ts >> 8) & 0xff;
+      head[6] = ts & 0xff;
+      head[7] = (ts >> 24) & 0xff;
+      return Buffer.concat([head, data]);
+    };
+    const prevSize = (t: Buffer): Buffer => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32BE(t.length);
+      return b;
+    };
+    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
+    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const full = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1)]);
+    // 拆块喂入，模拟网络分片。
+    const chunks: Buffer[] = [];
+    for (let i = 0; i < full.length; i += 5) chunks.push(full.subarray(i, i + 5));
     const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(chunks)));
     const events: string[] = [];
     let bytes = 0;
@@ -41,14 +63,14 @@ describe('StreamRecordingEngine (HTTP)', () => {
       if (ev.type === 'data') bytes += ev.chunk.length;
       if (ev.type === 'completed') fileSize = ev.fileSize;
     }
-    // 归一化按完整标签分批输出，data 事件数量不再等于输入 chunk 数；校验字节级不变量。
+    // 归一化按完整标签分批输出；完整 FLV 全部落盘。
     expect(events[0]).toBe('file_created');
     expect(events[events.length - 1]).toBe('completed');
     expect(events.filter((e) => e === 'data').length).toBeGreaterThan(0);
-    expect(bytes).toBe(Buffer.concat(chunks).length);
+    expect(bytes).toBe(full.length);
     expect(fileSize).toBe(bytes);
     const onDisk = await readFile(out);
-    expect(onDisk.subarray(0, 12).toString()).toBe('FLVheader123');
+    expect(onDisk.subarray(0, 3).toString()).toBe('FLV');
     expect(onDisk.length).toBe(bytes);
   });
 
@@ -191,6 +213,58 @@ describe('StreamRecordingEngine (HTTP)', () => {
     }
     // 首媒体时间戳 40ms ≤ 60s：不扣减，原样保留。
     expect(vts).toEqual([40, 80]);
+  });
+
+  it('drops the truncated tail tag so the file ends cleanly (偶现损坏 #181 根因)', async () => {
+    // 构造合法 FLV + 一个完整视频 tag + 一个被截断的尾部视频 tag（录制中途停止的典型形态）。
+    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
+      const head = Buffer.alloc(11);
+      head[0] = type;
+      head.writeUIntBE(data.length, 1, 3);
+      head[4] = (ts >> 16) & 0xff;
+      head[5] = (ts >> 8) & 0xff;
+      head[6] = ts & 0xff;
+      head[7] = (ts >> 24) & 0xff;
+      return Buffer.concat([head, data]);
+    };
+    const prevSize = (t: Buffer): Buffer => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32BE(t.length);
+      return b;
+    };
+    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
+    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    // 截断尾部：声明 size=100 但只给 30 字节 body（不完整）。
+    const v2Head = Buffer.alloc(11);
+    v2Head[0] = 0x09;
+    v2Head.writeUIntBE(100, 1, 3);
+    v2Head[4] = (80 >> 16) & 0xff;
+    v2Head[5] = (80 >> 8) & 0xff;
+    v2Head[6] = 80 & 0xff;
+    const v2Partial = Buffer.concat([v2Head, Buffer.alloc(30)]);
+    const stream = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1), v2Partial]);
+
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
+    const out = path.join(dir, 'tail.flv');
+    // 一次性喂入（不拆小块，让引擎在收尾时才遇到截断尾）。
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody([stream])));
+    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+      void ev;
+    }
+    const outBuf = await readFile(out);
+    // 输出文件应只含完整标签：完整 video tag 结束即止，不包含截断尾。
+    let off = 13;
+    let tags = 0;
+    while (off + 11 <= outBuf.length) {
+      const ds = outBuf.readUIntBE(off + 1, 3);
+      const len = 11 + ds + 4;
+      if (off + len > outBuf.length) break;
+      tags += 1;
+      off += len;
+    }
+    expect(tags).toBe(2); // meta + v1（截断的 v2 被丢弃）
+    expect(off).toBe(outBuf.length); // 文件在完整标签边界结束，无残余
   });
 });
 
