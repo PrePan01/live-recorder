@@ -25,8 +25,7 @@ export default function PipelineConfigCard() {
   };
 
   return (
-    <Card size="small">
-      <Form form={form} layout="vertical" size="small" onValuesChange={(_, all) => save(all)}>
+    <Form form={form} layout="vertical" size="small" onValuesChange={(_, all) => save(all)}>
         <Form.Item label="启用后处理管线" name="enabled" valuePropName="checked" extra="录制完成后执行校验/切片/压缩/归档">
           <Switch />
         </Form.Item>
@@ -66,6 +65,5 @@ export default function PipelineConfigCard() {
           配置修改只影响新录制的管线任务，已有任务保留快照。
         </Typography.Paragraph>
       </Form>
-    </Card>
   );
 }

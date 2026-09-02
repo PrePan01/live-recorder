@@ -159,7 +159,7 @@ export default function History() {
   const columns: ColumnsType<Recording> = useMemo(
     () => [
       { title: '房间', dataIndex: 'roomId', width: 140, ellipsis: true, render: (_id: string, r) => roomLabel(r) },
-      { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformLogoTag platform={p} /> },
+      { title: '平台', dataIndex: 'platform', width: 80, render: (p) => <PlatformLogoTag platform={p} /> },
       {
         title: '标题',
         dataIndex: 'streamTitle',

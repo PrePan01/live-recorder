@@ -29,7 +29,7 @@ export default function AppLayout() {
   const { mode } = useAppTheme();
   return (
     <Layout className="lr-app-shell" style={{ height: '100vh', overflow: 'hidden' }}>
-      <Header className="lr-app-header" style={{ padding: 0, background: 'var(--lr-surface)', lineHeight: 'normal', flexShrink: 0 }}>
+      <Header className="lr-app-header" style={{ padding: 0, background: 'var(--lr-surface)', lineHeight: 'normal', flexShrink: 0, height: 48 }}>
         <StatusBar />
       </Header>
       <Layout>
