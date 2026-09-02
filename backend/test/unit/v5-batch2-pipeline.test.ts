@@ -144,15 +144,21 @@ describe('V5 Batch2 pipeline: cover serving', () => {
   });
 });
 describe('V5 Batch2 naming rule (#115)', () => {
-  it('resolves template with sanitization and truncation', () => {
-    // 默认模板 → 时间戳
-    expect(resolveBaseName('主播', '2026-08-29T18:30:00.000Z', 'bilibili', undefined, undefined, null)).toMatch(/^20260829_183000$/);
+  it('resolves template with sanitization and truncation (本地日期命名)', () => {
+    const iso = '2026-08-29T18:30:00.000Z';
+    const d = new Date(iso);
+    const p2 = (n: number) => String(n).padStart(2, '0');
+    const localSlug = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const localDate = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    const localTime = `${p2(d.getHours())}_${p2(d.getMinutes())}_${p2(d.getSeconds())}`;
+    // 默认模板 → 时间戳（本地时间）
+    expect(resolveBaseName('主播', iso, 'bilibili', undefined, undefined, null)).toBe(localSlug);
     // 变量模板
-    expect(resolveBaseName('主播A', '2026-08-29T18:30:00.000Z', 'bilibili', '1080p', 'room_x', '{room}_{date}_{time}')).toBe('主播A_2026-08-29_18_30_00');
+    expect(resolveBaseName('主播A', iso, 'bilibili', '1080p', 'room_x', '{room}_{date}_{time}')).toBe(`主播A_${localDate}_${localTime}`);
     // 非法字符过滤
-    expect(resolveBaseName('a/b:c', '2026-08-29T18:30:00.000Z', 'douyin', undefined, undefined, '{room}')).toBe('a_b_c');
+    expect(resolveBaseName('a/b:c', iso, 'douyin', undefined, undefined, '{room}')).toBe('a_b_c');
     // 空模板回退时间戳
-    expect(resolveBaseName('', '2026-08-29T18:30:00.000Z', 'bilibili', undefined, undefined, '')).toMatch(/^20260829_183000$/);
+    expect(resolveBaseName('', iso, 'bilibili', undefined, undefined, '')).toBe(localSlug);
   });
 
   it('naming-rule endpoints read/write/preview', async () => {
@@ -265,8 +271,10 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     const job = await services.uploader.enqueue(rec.id);
     expect(job).not.toBeNull();
     await waitFor(() => captured.length > 0);
-    // {date}=2026-09-02（完整日期，非文件名前 10 字符 20260902_1）；scheme http:// 不被折叠成 http:/
-    expect(captured[0]).toBe('https://dav.example.com/dav/u/2026-09-02/20260902_122631.flv');
+    // {date}=录制 startedAt 的本地日期（非文件名前 10 字符 20260902_1）；scheme http:// 不被折叠成 http:/
+    const sd = new Date('2026-09-02T12:26:31.000Z');
+    const localDate = `${sd.getFullYear()}-${String(sd.getMonth() + 1).padStart(2, '0')}-${String(sd.getDate()).padStart(2, '0')}`;
+    expect(captured[0]).toBe(`https://dav.example.com/dav/u/${localDate}/20260902_122631.flv`);
   });
 
   it('auto-upload fires on completion even when pipeline disabled (PrePan 客户端自动上传不生效)', async () => {
