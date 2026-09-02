@@ -42,10 +42,10 @@
 | --- | --- |
 | FE-01 | 状态色语义映射：每种状态（idle/checking/recording/reconnecting/completed/failed/disabled/processing）唯一映射，且必配文字/图标；未知状态落到默认态不抛错 |
 | FE-02 | 组合态渲染：`开播+未自动录制`、`live-idle 可预览`、`录制中+重连中`、`failed+pipelineStatus` 等组合均不冲突、不空白 |
-| FE-03 | 加载态：首次加载 spinner/skeleton；`SSE` 断线重连 3 次失败后的兜底提示；局部操作 loading 不影响其他行 |
+| FE-03 | 加载态：首次加载 spinner/skeleton；`SSE` 断开时 StatusBar 瞬时「已断开」提示并无限重连（退避序列 5/15/45s 循环取模，useSSE 实现），恢复后自动续推；局部操作 loading 不影响其他行 |
 | FE-04 | 空态：列表空/搜索无结果/筛选空区间/无历史数据/无诊断/无上传任务均有引导文案，无「永远转圈」 |
 | FE-05 | 错误态：接口 4xx/5xx/网络错误/超时分别渲染对应文案；`TYPE` 未知错误码有兜底文案不白屏 |
-| FE-06 | 弱网/离线：WebSocket/SSE 断开时 UI 有「已断开」指示并可重连；恢复后数据自愈，不出现陈旧状态 |
+| FE-06 | 弱网/离线：WebSocket/SSE 断开时 StatusBar 有「已断开」瞬时提示并无限重连（5/15/45s 循环，不停止）；恢复后数据自愈、不出现陈旧状态、不重复 setState 风暴 |
 | FE-07 | 主题三态：light/dark/system 切换即时生效、刷新保持、首屏无闪烁；两主题对比度均达标；system 切换实时响应 |
 | FE-08 | 可访问性：键盘可全操作（Tab 顺序、Enter/Space 触发、Esc 关闭）；焦点可见；`aria-label` 齐全；禁用/loading 态语义正确 |
 | FE-09 | 响应式断点：桌面/窄屏/手机断点下无横向溢出；关键操作按钮不截断；窄屏侧栏可展开 |
@@ -170,11 +170,14 @@
 | BE-21 | 错误码全集：契约 v2.4 定稿 27 码全量断言（成功/4xx/5xx）；`RESOURCE_NOT_FOUND`(404)、`PREVIEW_NOT_RECORDING`(WS 4002)、`SEARCH_QUERY_INVALID`(422)、`DISK_SPACE_INSUFFICIENT` 等分类正确、retryable 语义正确 |
 | BE-22 | 校验：URL 无效/重复/不支持平台、quality 越界、并发 0/负数/小数、空 body JSON、超长 q、分页≤50、非法日期→422 CONFIG_INVALID |
 | BE-23 | 幂等：诊断 `recordingId+code` 单飞、上传/导出单飞、批量部分成功 `appliedXxx` 明细、PATCH 重名同步文件 |
-| BE-24 | SSE/WS：`room:updated`/`service:status`/`diagnostic:updated`/`recording:updated`/`upload:updated` 事件负载与 enrich 正确；reply.hijack 保 ACAO；CORS/OPTIONS 204；重连语义；高频推送不崩 |
-| BE-25 | 安全：Cookie/SMTP 密码/OpenList 令牌不落盘/不回显（仅 hasXxx）；导出/日志/告警无密钥；绝对路径归一化防穿越；Host/Origin 白名单随动态端口放行 |
+| BE-24 | SSE/WS：事件负载与 enrich 正确；reply.hijack 保 ACAO；CORS/OPTIONS 204；**WS 关闭码映射**：1000 正常结束(reason=ended)/4002 PREVIEW_NOT_RECORDING/4003 PREVIEW_LIMIT_REACHED/4004 STREAM_DISCONNECTED_RECONNECT_EXHAUSTED/1011 内部错误，FE 以 reason 为准、关闭码兜底；**预览 4 路会话**：同房间共享预览不重复占额、超限 4003 释放后可重连；SSE 无限重连（5/15/45s 循环）；高频推送不崩、forceClose 收束正确 |
+| BE-25 | 安全：Cookie/SMTP 密码/OpenList 令牌不落盘/不回显（仅 hasXxx）；导出/日志/告警无密钥；**CSV 注入**（导出以 `=`/`+`/`-`/`@` 开头字段防公式注入）；绝对路径归一化防穿越；错误信封 details 不含密钥；Host/Origin 白名单随动态端口放行 |
 | BE-26 | 健康/握手：`GET /api/v1/health` serviceStatus 信封（ready/instanceId/apiVersion/port/baseUrl/startedAt）；实例锁原子写/校验 PID/过期清理 |
 | BE-27 | 单实例/端口：锁拒绝第二实例并聚焦；43120→备用→OS 分配回落；退出顺序固定；残留经 PID/health 校验后清理 |
-| BE-28 | 搜索/统计：索引命中、LIKE 转义、tagId 过滤、聚合缓存命中、时区边界、空区间 |
+| BE-28 | 搜索/统计：索引命中、LIKE 转义、tagId 过滤、聚合缓存命中（5s）、时区边界、空区间；搜索 3s 超时兜底 |
+| BE-29 | 平台分类：抖音/B 站 Cookie 失效→ACCESS_RESTRICTED、接口结构变化→PLATFORM_CHANGED 不误报；标题回退主源→回退→占位，全部失败仍可录制、UI 不空白 |
+| BE-30 | 迁移安全：旧库缺列幂等补列、运行库升级不丢数据、迁移版本只追加不改写；缺列 DB 能自愈（v16 补列后抖音 check 恢复 idle/offline） |
+| BE-31 | 拉流背压：高码率/慢消费者下写入零阻塞、不丢帧、不 OOM；录制吞吐不因 UI/调度降级 |
 
 **L1–L3 完成门槛**：状态机、调度、录制、队列、迁移、契约、协议、安全全用例可注入替身并自动化；任一 Blocker（§9.1）出现即阻止提测。
 
