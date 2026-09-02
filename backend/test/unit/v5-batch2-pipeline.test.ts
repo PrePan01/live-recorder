@@ -269,6 +269,43 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(captured[0]).toBe('https://dav.example.com/dav/u/2026-09-02/20260902_122631.flv');
   });
 
+  it('GET /recordings attaches latest upload snapshot (#190)', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, {
+      async put() { /* fake upload ok */ },
+    });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-ul5-'));
+    const file = path.join(dir, 'x.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9', displayName: 'u' });
+    // 有上传任务的录制
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u9', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    // 无上传任务的录制
+    const rec2 = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u9b', streamTitle: 't2' });
+    services.recordings.update(rec2.id, { state: 'completed', filePath: file });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const job = await services.uploader.enqueue(rec.id);
+    expect(job).not.toBeNull();
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+
+    const res = await inj({ method: 'GET', url: '/api/v1/recordings?pageSize=50' });
+    expect(res.statusCode).toBe(200);
+    const items = res.json().items as Array<{ id: string; upload?: { status: string; progress: number; remotePath: string | null } }>;
+    const withUpload = items.find((r) => r.id === rec.id)!;
+    expect(withUpload.upload?.status).toBe('ok');
+    expect(withUpload.upload?.progress).toBe(100);
+    expect(withUpload.upload?.remotePath).toContain('/dav/u/');
+    const noUpload = items.find((r) => r.id === rec2.id)!;
+    expect(noUpload.upload).toBeUndefined();
+    await app.close();
+  });
+
   it('upload endpoints: list/retry/cancel + manual upload validation', async () => {
     const services = newServices();
     const { app } = buildApp(services);

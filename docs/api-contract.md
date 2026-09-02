@@ -1,4 +1,6 @@
-# localhost 录制服务 API 契约（v2.5 · 2026-08-29）
+# localhost 录制服务 API 契约（v2.6 · 2026-09-02）
+
+相对 v2.5 的变更（#190）：`GET /recordings` 列表每条录制附最近上传任务快照 `upload: { status, progress, remotePath, error }`（取 upload_jobs 每录制最新一条，批量窗口函数防 N+1）；`Recording.upload` 无任务时缺省；SSE `upload:updated` 复用实时刷新。
 
 相对 v2.4 的变更（V5 Batch3，#124-#128）：预览会话上限 2→4（会话按房间计数，同房间多 socket 共享）；新增定时录制计划（/rooms/:id/schedules CRUD + 调度集成 + SSE schedule:updated）、录制备份与导出（/exports + ExportJob + manifest + SSE export:updated）、抖音标题回退（LiveStatusResult.titleSource/titleFallbackUsed + Room.titleSource 元数据写入）。统计看板沿用 #93 已交付 GET /stats/recordings。迁移 v14 recording_schedules、v15 export_jobs。
 
@@ -88,6 +90,8 @@ Base URL：`http://127.0.0.1:43120/api/v1`。所有响应均为 JSON；失败响
 `state`：`pending | recording | reconnecting | processing | completed | failed`。`processing`（v2.2，#93）：录制文件生成完成后进入后处理管线（校验/切片/压缩/归档）的中间态，处理完成回到 `completed`；源录制失败才 `failed`，后处理失败保留源文件并回到 `completed + pipelineStatus=failed|partial`。`streamSessionId` 为同一场直播去重依据。`quality`（v1.6）：实际录制清晰度 `original | 1080p | 720p | 360p`，未记录时字段省略（历史页清晰度列）。`integrity`（v1.7）：录制文件完整性 `verified | failed | pending`（ffprobe 异步校验，缺 ffprobe/超时→pending，损坏/截断→failed 并发告警），未记录时字段省略。`roomName`（v2.1，#92）：创建录播时快照的房间显示名（录制开始时写入 `room.displayName`），删房间后历史页据此展示房间名而非 roomId；存量记录回填为空字符串。
 
 `pipelineStatus`（v2.2，#93）：后处理管线状态 `not_required | queued | running | ok | partial | failed`，未参与管线时省略。`metadata`（v2.2，#93）：管线 sidecar 元数据 `{ durationMs, segmentCount, quality, size }`（真实时长/断流次数+1/清晰度/大小）。`coverPath`（v2.2，#93）：封面帧路径（可选，媒体封面占位 404）。
+
+`upload`（v2.6，#190）：最近上传任务快照 `{ status, progress, remotePath, error }`——`status` 为 `queued | running | ok | failed | cancelled`，`progress` 0-100，`remotePath` 远端路径，`error` 失败原因；仅 `GET /recordings` 列表输出（单条 `GET /recordings/:id` 不附），无上传任务时字段缺省。
 
 字段命名统一 camelCase。
 
