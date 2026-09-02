@@ -41,7 +41,7 @@ export default function NamingRuleCard() {
   };
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size={12}>
+    <Space orientation="vertical" style={{ width: '100%' }} size={12}>
       <Space wrap>
         <span>预设：</span>
         <Select
@@ -52,7 +52,7 @@ export default function NamingRuleCard() {
           onChange={save}
         />
       </Space>
-      <Input.Group compact style={{ width: '100%' }}>
+      <Space.Compact style={{ width: '100%' }}>
         <Input
           style={{ width: 'calc(100% - 100px)' }}
           value={rule ?? ''}
@@ -70,7 +70,7 @@ export default function NamingRuleCard() {
         <Button loading={busy} onClick={() => rule && save(rule)}>
           保存
         </Button>
-      </Input.Group>
+      </Space.Compact>
       <Space wrap size={[4, 4]}>
         <Typography.Text type="secondary">可用变量：</Typography.Text>
         {NAMING_VARS.map((v) => (

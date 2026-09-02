@@ -386,7 +386,7 @@ export default function SettingsPage() {
             </Button>
           }
         >
-          <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
             <Row gutter={[12, 8]}>
               <Col xs={24} md={12}>
                 <Space>
@@ -561,7 +561,7 @@ export default function SettingsPage() {
                     </Space>
                   }
                   description={
-                    <Space direction="vertical" size={0}>
+                    <Space orientation="vertical" size={0}>
                       <Typography.Text type="secondary">
                         {a.source} · {formatTime(a.occurredAt)}
                       </Typography.Text>

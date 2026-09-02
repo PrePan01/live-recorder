@@ -25,7 +25,7 @@ export default function StartupDiagnostics() {
         }
       >
         <Spin spinning={loading}>
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space orientation="vertical" style={{ width: '100%' }} size="middle">
             {diagnostics.length === 0 && <Typography.Text type="secondary">正在检查…</Typography.Text>}
             {diagnostics.map((item) => (
               <Alert

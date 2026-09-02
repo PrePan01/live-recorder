@@ -76,7 +76,7 @@ export default function Startup() {
       <Spin size="large" />
       <Steps
         current={step}
-        direction="vertical"
+        orientation="vertical"
         size="small"
         style={{ maxWidth: 320, marginTop: 8 }}
         items={STEPS.map((title) => ({ title }))}

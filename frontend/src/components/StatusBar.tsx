@@ -123,7 +123,7 @@ export default function StatusBar() {
                   <List.Item.Meta
                     title={a.message}
                     description={
-                      <Space direction="vertical" size={0}>
+                      <Space orientation="vertical" size={0}>
                         <span>
                           {a.source} · {formatRelative(a.occurredAt)}
                         </span>

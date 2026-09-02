@@ -61,7 +61,7 @@ export default function FilePlayer({ url, filePath }: { url: string; filePath?: 
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
       {state === 'loading' && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
-          <Spin tip="加载视频…" />
+          <Spin description="加载视频…" />
         </div>
       )}
       {state === 'error' && (

@@ -110,7 +110,7 @@ export default function Wall() {
         footer={null}
         onCancel={() => setAddOpen(false)}
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">
             最多 4 路；添加第 5 路会替换最后一路。默认静音。
           </Typography.Text>

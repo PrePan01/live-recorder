@@ -82,7 +82,7 @@ export default function VideoPlayer({ roomId, muted = true, platform }: VideoPla
     <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
       {state === 'loading' && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
-          <Spin tip="连接预览流…" />
+          <Spin description="连接预览流…" />
         </div>
       )}
       {state === 'error' && (
