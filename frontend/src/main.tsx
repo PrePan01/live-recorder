@@ -12,14 +12,25 @@ import './index.css';
 dayjs.locale('zh-cn');
 
 // 全局错误捕获：打包 WebView 白屏诊断用——错误显示在页面覆盖层并写 localStorage。
+// AbortError 为媒体播放/请求中止的正常生命周期信号（如视频播完/组件卸载），
+// 不应触发致命覆盖层（否则表现为「播放完视频应用卡死」）。仅记录不阻断。
+function isBenignError(reason: unknown): boolean {
+  if (reason instanceof DOMException) return reason.name === 'AbortError';
+  if (reason instanceof Error) return reason.name === 'AbortError';
+  const s = String(reason);
+  return s.includes('AbortError') || s.includes('The operation was aborted');
+}
+
 window.addEventListener('error', (e) => {
   const msg = `[error] ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`;
   console.error('[live-recorder]', msg);
+  if (isBenignError(e.error)) return;
   showFatalError(msg);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const msg = `[unhandledrejection] ${String(e.reason)}`;
   console.error('[live-recorder]', msg);
+  if (isBenignError(e.reason)) return;
   showFatalError(msg);
 });
 function showFatalError(msg: string) {
