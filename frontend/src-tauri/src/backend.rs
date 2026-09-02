@@ -65,14 +65,24 @@ impl BackendManager {
 
     /// Spawn the backend sidecar as a child and poll until
     /// `GET /api/v1/health` reports ready, returning the AppInstance.
-    /// 反复启动兜底：先探测既有健康实例（ready 文件/端口），存在则直接复用，
-    /// 不再 spawn 新后端，避免多实例/端口冲突/资源占用。
+    /// 反复启动兜底：先探测既有健康实例（ready 文件/端口），
+    /// 版本一致则直接复用（快速重启不重复 spawn）；版本不一致（升级）则停掉旧后端重启新后端。
     pub fn start(&self) -> Result<AppInstance, String> {
         if self.is_running() {
             return self.wait_ready();
         }
         if let Some(existing) = fetch_ready() {
-            return Ok(existing);
+            let replace = match (bundled_backend_version(), fetch_health(existing.port).and_then(|h| h.version)) {
+                // 两侧版本都可判定且不一致 → 升级：停旧后端换新（PrePan：升级后后端不更新）。
+                (Some(bundled), Some(running)) => bundled.trim() != running.trim(),
+                // 任一侧无法判定时保守复用，保持原行为，避免误杀。
+                _ => false,
+            };
+            if !replace {
+                return Ok(existing);
+            }
+            stop_existing_backend(&existing);
+            wait_port_free(existing.port);
         }
         let cwd = Self::backend_cwd().ok_or_else(|| "未找到后端运行目录".to_string())?;
         let ready_file = ready_file_path().ok_or_else(|| "无法确定状态目录".to_string())?;
@@ -121,6 +131,46 @@ impl BackendManager {
         if let Some(child) = self.child.lock().ok().and_then(|mut c| c.take()) {
             let _ = stop_child(child);
         }
+    }
+}
+
+/// 读取打包内置后端的 package.json 版本，用于与运行中后端比对（升级替换判断）。
+fn bundled_backend_version() -> Option<String> {
+    let cwd = BackendManager::backend_cwd()?;
+    let pkg = std::fs::read_to_string(cwd.join("package.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&pkg).ok()?;
+    json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+/// 停止一个非本进程启动的旧后端：按 ready 文件记录的 pid 发送 SIGTERM（后端有优雅收束）。
+/// 该 pid 来自 fetch_ready 已确认健康的后端实例，不会误杀无关进程。
+fn stop_existing_backend(existing: &AppInstance) {
+    if existing.pid == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(existing.pid as i32, libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command as OsCommand;
+        let _ = OsCommand::new("taskkill")
+            .args(["/PID", &existing.pid.to_string(), "/T"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+}
+
+/// 等待指定端口上的后端健康检查消失（旧后端退出释放端口）。
+fn wait_port_free(port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if fetch_health(port).is_none() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
 }
 
