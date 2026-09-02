@@ -534,6 +534,122 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(seenBodyIsStream).toBe(true);
     expect(progress).toEqual(expect.arrayContaining([99, 100]));
   });
+
+  it('uses a separate response timeout after the PUT body is fully consumed', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-response-'));
+    const file = path.join(dir, 'slow-ack.flv');
+    await writeFile(file, 'flvdata');
+    let signalWasAbortedWhileWaiting = false;
+    const client = new RealWebDavClient({ uploadIdleTimeoutMs: 5, responseTimeoutMs: 200 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url, init) => {
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (init?.body) {
+        for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume upload stream */ }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      signalWasAbortedWhileWaiting = init?.signal?.aborted ?? false;
+      return new Response('', { status: 201 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/slow-ack.flv', file, 'u', 'tok', () => undefined);
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(signalWasAbortedWhileWaiting).toBe(false);
+  });
+
+  it('treats an ambiguous PUT 504 as success when PROPFIND confirms the complete remote file', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-verify-'));
+    const file = path.join(dir, 'verified.flv');
+    await writeFile(file, 'flvdata');
+    const progress: number[] = [];
+    let putCalls = 0;
+    let verifyCalls = 0;
+    const client = new RealWebDavClient({ verifyDelaysMs: [0], verifyTimeoutMs: 100 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url, init) => {
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (init?.method === 'PROPFIND') {
+        verifyCalls += 1;
+        return new Response(
+          '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:getcontentlength>7</d:getcontentlength></d:prop></d:propstat></d:response></d:multistatus>',
+          { status: 207 },
+        );
+      }
+      putCalls += 1;
+      if (init?.body) {
+        for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume upload stream */ }
+      }
+      return new Response('', { status: 504 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/verified.flv', file, 'u', 'tok', (pct) => progress.push(pct));
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(putCalls).toBe(1);
+    expect(verifyCalls).toBe(1);
+    expect(progress.at(-1)).toBe(100);
+  });
+
+  it('uses the OpenList background task API and reports its server-side progress', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-openlist-task-'));
+    const file = path.join(dir, 'task.flv');
+    await writeFile(file, 'flvdata');
+    const progress: number[] = [];
+    let infoCalls = 0;
+    let webDavPutCalls = 0;
+    let taskUploadHeaders: Headers | undefined;
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) {
+        return new Response(JSON.stringify({ code: 200, data: { token: 'jwt-token' } }), { status: 200 });
+      }
+      if (url.endsWith('/api/fs/put')) {
+        taskUploadHeaders = new Headers(init?.headers);
+        if (init?.body) {
+          for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume upload stream */ }
+        }
+        return new Response(JSON.stringify({
+          code: 200,
+          data: { task: { id: 'task-1', state: 'pending', progress: 0, total_bytes: 7 } },
+        }), { status: 200 });
+      }
+      if (url.includes('/api/task/upload/info')) {
+        infoCalls += 1;
+        const snapshots = [
+          { id: 'task-1', state: 'running', progress: 20, total_bytes: 7 },
+          { id: 'task-1', state: 'running', progress: 75, total_bytes: 7 },
+          { id: 'task-1', state: 'succeeded', progress: 100, total_bytes: 7 },
+        ];
+        return new Response(JSON.stringify({ code: 200, data: snapshots[Math.min(infoCalls - 1, 2)] }), { status: 200 });
+      }
+      if (init?.method === 'PUT') webDavPutCalls += 1;
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put(
+        'https://dav.example.com/dav/archive/task.flv',
+        file,
+        'u',
+        'password',
+        (pct) => progress.push(pct),
+        'https://dav.example.com/dav/archive',
+      );
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(taskUploadHeaders?.get('Authorization')).toBe('jwt-token');
+    expect(taskUploadHeaders?.get('As-Task')).toBe('true');
+    expect(decodeURIComponent(taskUploadHeaders?.get('File-Path') ?? '')).toBe('/archive/task.flv');
+    expect(infoCalls).toBe(3);
+    expect(webDavPutCalls).toBe(0);
+    expect(progress).toEqual(expect.arrayContaining([50, 59, 86, 99, 100]));
+  });
 });
 
 describe('V5 Batch2 email simplification (#117)', () => {
