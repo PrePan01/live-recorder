@@ -39,6 +39,20 @@ interface DouyinEnterResponse {
   data?: DouyinEnterData;
 }
 
+/** HTML 实体解码（主播昵称等字段）。 */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
+/** 主播昵称 TTL 缓存：昵称基本不变，避免每次检测都拉直播间页面。 */
+const NICK_TTL_MS = 10 * 60_000;
+
 /**
  * 区分抖音非 0 status_code 的根因：#56 第二部分——
  * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查 Cookie；
@@ -62,10 +76,52 @@ function isNetworkError(err: unknown): boolean {
 export class DouyinAdapter implements PlatformAdapter {
   readonly platform = 'douyin' as const;
 
+  private nickCache = new Map<string, { name: string; at: number }>();
+
   constructor(
     private fetcher: typeof fetch = fetch,
     private apiBase = 'https://live.douyin.com/webcast/room/web/enter',
   ) {}
+
+  /**
+   * 主播昵称解析：抖音 enter 接口结构变更后不再返回 user.nickname（QA 验收 #2a 定位），
+   * 改为从直播间页面（live.douyin.com/<roomId>）解析 data-anchor-info/SSR 中的主播昵称。
+   * 带 TTL 缓存避免每次检测都拉大页面。
+   */
+  async fetchAnchorNickname(roomId: string): Promise<string | null> {
+    const cached = this.nickCache.get(roomId);
+    if (cached && Date.now() - cached.at < NICK_TTL_MS) return cached.name;
+    try {
+      const res = await this.fetcher(`https://live.douyin.com/${roomId}`, {
+        signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
+        headers: { 'User-Agent': UA, Referer: 'https://live.douyin.com/' },
+      });
+      if (!res.ok) return null;
+      const html = await res.text();
+      let name = '';
+      // ① data-anchor-info 属性：HTML 实体编码的 JSON（{nickname, avatar, ...}）。
+      const attr = html.match(/data-anchor-info="([^"]*)"/);
+      if (attr) {
+        try {
+          const info = JSON.parse(decodeEntities(attr[1]!)) as { nickname?: unknown };
+          const n = typeof info.nickname === 'string' ? info.nickname.trim() : '';
+          if (n) name = n;
+        } catch {
+          // 尝试其他来源
+        }
+      }
+      // ② SSR JSON："nickname":"X" 或 \"nickname\":\"X\"。
+      if (!name) {
+        const m = html.match(/(?:\\?"nickname\\?"\s*:\s*\\?"|"nickname"\s*:\s*")([^"\\]{1,80})/);
+        if (m) name = m[1]!.trim();
+      }
+      if (!name) return null;
+      this.nickCache.set(roomId, { name, at: Date.now() });
+      return name;
+    } catch {
+      return null;
+    }
+  }
 
   normalizeUrl(raw: string): string {
     return raw.trim().replace(/[?#].*$/, '').replace(/\/+$/, '');
@@ -140,11 +196,12 @@ export class DouyinAdapter implements PlatformAdapter {
     if (!entry) {
       return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
     }
-    const nickname = entry.user?.nickname;
+    const nickname = entry.user?.nickname?.trim() || (await this.fetchAnchorNickname(roomId)) || '';
     const streamTitle = entry.title;
     // #128 标题回退加固：主源（enter 接口）取到昵称/标题 → adapter；
     // 主源缺标题/昵称 → 尝试回退源（无 Cookie 重拉或复用受限时的安全占位）。
-    // 昵称缺失但标题存在时用标题兜底作显示名（否则添加抖音房间显示名检测失败）。
+    // 抖音 enter 结构变更后 user.nickname 缺失 → 从直播间页面解析主播昵称（QA 验收 #2a）；
+    // 昵称仍缺失但标题存在时用标题兜底作显示名（否则添加抖音房间显示名检测失败）。
     const hasTitle = Boolean(nickname || streamTitle);
     const base = hasTitle
       ? {
