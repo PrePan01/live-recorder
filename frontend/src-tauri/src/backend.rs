@@ -65,24 +65,32 @@ impl BackendManager {
 
     /// Spawn the backend sidecar as a child and poll until
     /// `GET /api/v1/health` reports ready, returning the AppInstance.
-    /// 反复启动兜底：先探测既有健康实例（ready 文件/端口），
-    /// 版本一致则直接复用（快速重启不重复 spawn）；版本不一致（升级）则停掉旧后端重启新后端。
+    /// 复用既有后端需「同版本 且 父进程存活」（PM #199 决策）：
+    /// 版本不一致或既有后端为孤儿（父 app 已退出，单实例保障下任何外来后端即孤儿）→ 停旧换新。
+    /// 同版本快速重启走 self.is_running 复用本进程子进程。
     pub fn start(&self) -> Result<AppInstance, String> {
         if self.is_running() {
             return self.wait_ready();
         }
         if let Some(existing) = fetch_ready() {
-            let replace = match (bundled_backend_version(), fetch_health(existing.port).and_then(|h| h.version)) {
-                // 两侧版本都可判定且不一致 → 升级：停旧后端换新（PrePan：升级后后端不更新）。
-                (Some(bundled), Some(running)) => bundled.trim() != running.trim(),
-                // 任一侧无法判定时保守复用，保持原行为，避免误杀。
-                _ => false,
+            let same_version = match (bundled_backend_version(), fetch_health(existing.port).and_then(|h| h.version)) {
+                // 两侧版本都可判定且一致 → 可复用候选；无法判定时保守视为可复用。
+                (Some(bundled), Some(running)) => bundled.trim() == running.trim(),
+                _ => true,
             };
+            let replace = !same_version || existing.pid > 0;
             if !replace {
                 return Ok(existing);
             }
-            stop_existing_backend(&existing);
-            wait_port_free(existing.port);
+            // 停掉旧/孤儿后端（SIGTERM/taskkill），等待其退出释放端口与实例锁。
+            let _ = stop_pid(existing.pid as u32);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if !pid_alive(existing.pid as u32) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
         let cwd = Self::backend_cwd().ok_or_else(|| "未找到后端运行目录".to_string())?;
         let ready_file = ready_file_path().ok_or_else(|| "无法确定状态目录".to_string())?;
@@ -142,36 +150,38 @@ fn bundled_backend_version() -> Option<String> {
     json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
-/// 停止一个非本进程启动的旧后端：按 ready 文件记录的 pid 发送 SIGTERM（后端有优雅收束）。
-/// 该 pid 来自 fetch_ready 已确认健康的后端实例，不会误杀无关进程。
-fn stop_existing_backend(existing: &AppInstance) {
-    if existing.pid == 0 {
-        return;
+/// 停止一个非本进程启动的旧/孤儿后端：SIGTERM（Unix，后端有优雅收束）或 taskkill（Windows）。
+/// pid 来自 fetch_ready 已确认健康的后端实例，不会误杀无关进程。
+#[cfg(unix)]
+fn stop_pid(pid: u32) -> Result<(), String> {
+    let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if ret != 0 {
+        return Err("发送 SIGTERM 失败".to_string());
     }
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(existing.pid as i32, libc::SIGTERM);
-    }
-    #[cfg(windows)]
-    {
-        use std::process::Command as OsCommand;
-        let _ = OsCommand::new("taskkill")
-            .args(["/PID", &existing.pid.to_string(), "/T"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-    }
+    Ok(())
 }
 
-/// 等待指定端口上的后端健康检查消失（旧后端退出释放端口）。
-fn wait_port_free(port: u16) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if fetch_health(port).is_none() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    let ret = unsafe { libc::kill(pid as i32, 0) };
+    ret == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn stop_pid(pid: u32) -> Result<(), String> {
+    use std::process::Command as OsCommand;
+    let _ = OsCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    Ok(())
+}
+
+#[cfg(windows)]
+fn pid_alive(_pid: u32) -> bool {
+    // Windows 侧简化：taskkill /T 为异步，直接返回 true 让调用方按 5s 上限等待。
+    true
 }
 
 /// 定位可用的 node 运行时。优先使用打包进 bundle 的 node（Resources/node），
