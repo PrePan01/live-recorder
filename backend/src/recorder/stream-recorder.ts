@@ -9,8 +9,9 @@ import type { RecordingEngine, RecordingEvent, StreamInput } from './engine.js';
  * 直播开播以来的绝对 PTS（首帧即可达数千秒）。若直接落盘，播放器按最后一个标签
  * 时间戳计算时长（录 6 分钟显示 1 小时+），且只播得到实际帧。
  *
- * 策略：音频/视频各自独立扣减首条时间戳（音频首帧、视频首帧分别归 0），
+ * 策略：音频/视频各自独立以【首个媒体标签】（排除 AVC/HEVC/AAC 序列头）扣减归零，
  * 使两条流都从 0 开始、容器时长 = 各自真实跨度（录制时长）。首帧≈0 的正常流（bilibili）透传。
+ * 序列头 ts≈0 而媒体为绝对 PTS（抖音）时，基准取首个媒体标签，避免时长虚高（PrePan 复验）。
  * 时间戳严格按 FLV 规范读写：3 字节大端（byte4 为高位），byte7 为扩展高字节（>0xFFFFFF 时置 0xFFFFFF+高位）。
  * 兼容任意 chunk 边界（标签可能跨块），可流式处理。
  */
@@ -38,7 +39,25 @@ class FlvTimestampNormalizer {
     }
   }
 
+  /** 是否为 AVC/HEVC/AAC 序列头（编码器配置标签）：不计入时间戳 base——抖音等流序列头 ts≈0 而媒体帧为绝对 PTS。 */
+  private isSequenceHeader(tagType: number, offset: number): boolean {
+    const ds = this.buffer.readUIntBE(offset + 1, 3);
+    if (ds < 2) return false;
+    const d0 = this.buffer[offset + 11]!;
+    const d1 = this.buffer[offset + 12]!;
+    if (tagType === 9) {
+      const codec = d0 & 0x0f;
+      return (codec === 7 || codec === 12) && d1 === 0;
+    }
+    if (tagType === 8) {
+      return (d0 >> 4) === 10 && d1 === 0;
+    }
+    return false;
+  }
+
   private mediaTag(tagType: number, offset: number): void {
+    // 序列头不参与 base 选择：避免把 ts≈0 的编码器配置当基准，导致绝对 PTS 媒体帧未被扣减（时长虚高）。
+    if (this.isSequenceHeader(tagType, offset)) return;
     const rawTs = FlvTimestampNormalizer.readTs(this.buffer, offset);
     const baseRef = tagType === 8 ? this.baseA : this.baseV;
     const key: 'baseA' | 'baseV' = tagType === 8 ? 'baseA' : 'baseV';

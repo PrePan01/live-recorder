@@ -117,8 +117,8 @@ describe('StreamRecordingEngine (HTTP)', () => {
     expect(seenHeaders).toEqual({ Cookie: 'a=b', 'User-Agent': 'ua' });
   });
 
-  it('rewrites absolute PTS to relative so duration is correct (抖音录几分钟显示 1 小时+ 根因)', async () => {
-    // 构造合法 FLV：头部 + onMetaData + 音频(3602000) + 两个视频(3609000/3609500)，绝对 PTS，大端编码。
+  it('rewrites absolute PTS to relative so duration is correct (抖音: 序列头 ts≈0 + 媒体绝对 PTS)', async () => {
+    // 抖音真实结构：AVC/AAC 序列头 ts≈0，媒体帧为绝对 PTS（2822850 起）。
     const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
     const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
       const head = Buffer.alloc(11);
@@ -136,10 +136,12 @@ describe('StreamRecordingEngine (HTTP)', () => {
       return b;
     };
     const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
-    const a1 = makeTag(0x08, 3_602_000, Buffer.from([0xaf, 0x00, 0x01]));
-    const v1 = makeTag(0x09, 3_609_000, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-    const v2 = makeTag(0x09, 3_609_500, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-    const stream = Buffer.concat([header, meta, prevSize(meta), a1, prevSize(a1), v1, prevSize(v1), v2, prevSize(v2)]);
+    const aSeq = makeTag(0x08, 0, Buffer.from([0xaf, 0x00, 0x01])); // AAC 序列头 ts=0
+    const vSeq = makeTag(0x09, 0, Buffer.from([0x17, 0x00, 0x01, 0x02])); // AVC 序列头 ts=0
+    const a1 = makeTag(0x08, 2_822_850, Buffer.from([0xaf, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AAC 媒体
+    const v1 = makeTag(0x09, 2_822_866, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AVC 关键帧媒体
+    const v2 = makeTag(0x09, 2_822_900, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AVC 媒体
+    const stream = Buffer.concat([header, meta, prevSize(meta), aSeq, prevSize(aSeq), vSeq, prevSize(vSeq), a1, prevSize(a1), v1, prevSize(v1), v2, prevSize(v2)]);
 
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
     const out = path.join(dir, 'norm.flv');
@@ -153,7 +155,7 @@ describe('StreamRecordingEngine (HTTP)', () => {
     const outBuf = await readFile(out);
     expect(outBuf.length).toBe(stream.length);
 
-    // 解析输出文件：音频按音频 base（→0），视频按视频 base（→0/500），各自独立归零。
+    // 解析输出：序列头不参与 base；音频/视频各自以首个媒体标签归零 → 时长=真实跨度（音频 0、视频 0→34）。
     const tsByType: Record<string, number[]> = { '8': [], '9': [] };
     let off = 13;
     while (off + 11 <= outBuf.length) {
@@ -166,8 +168,10 @@ describe('StreamRecordingEngine (HTTP)', () => {
       }
       off += len;
     }
-    expect(tsByType['8']).toEqual([0]);
-    expect(tsByType['9']).toEqual([0, 500]);
+    // 音频：序列头 0（保留）+ 首个媒体归零 → [0, 0]
+    expect(tsByType['8']).toEqual([0, 0]);
+    // 视频：序列头 0（保留）+ 关键帧 0 + 34 → [0, 0, 34]
+    expect(tsByType['9']).toEqual([0, 0, 34]);
   });
 
   it('keeps normal (near-zero) FLV timestamps untouched (bilibili 首帧≈0 透传)', async () => {
