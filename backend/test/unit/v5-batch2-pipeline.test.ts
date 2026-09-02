@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
@@ -244,6 +244,40 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     const jobs = services.uploader.uploadRepo.list();
     expect(jobs.filter((j) => j.recordingId === rec.id)).toHaveLength(1);
     await app.close();
+  });
+
+  it('enqueue never surfaces idempotency_key UNIQUE as an error (PrePan 实测兜底)', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, {
+      async put() { /* fake upload ok */ },
+    });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-ul3-'));
+    const file = path.join(dir, 'y.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/69', displayName: 'u' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u69', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const repo = services.uploader.uploadRepo;
+    const first = await services.uploader.enqueue(rec.id);
+    expect(first).not.toBeNull();
+    // 模拟并发/重复插入：检查阶段查不到既有 job（fast path 失效），create 撞 idempotency_key UNIQUE。
+    const spyJob = vi.spyOn(repo, 'jobForRecording').mockReturnValue(null);
+    const spyCreate = vi.spyOn(repo, 'create').mockImplementation(() => {
+      throw new Error('UNIQUE constraint failed: upload_jobs.idempotency_key');
+    });
+    let threw = false;
+    try {
+      await services.uploader.enqueue(rec.id);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false); // 兜底吞掉 UNIQUE，绝不抛 500
+    spyJob.mockRestore();
+    spyCreate.mockRestore();
   });
 
   it('RealWebDavClient sends stream body with duplex:half (Node undici fetch 必需，否则上传必失败)', async () => {
