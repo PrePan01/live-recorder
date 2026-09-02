@@ -269,6 +269,34 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(captured[0]).toBe('https://dav.example.com/dav/u/2026-09-02/20260902_122631.flv');
   });
 
+  it('auto-upload fires on completion even when pipeline disabled (PrePan 客户端自动上传不生效)', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, {
+      async put() { /* fake upload ok */ },
+    });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/77', displayName: 'u' });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    // 模拟录制完成（pipeline 默认 disabled）：completeRecording → pipeline.enqueue
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'au', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    services.pipeline.enqueue(rec.id);
+
+    await waitFor(() => services.uploader.uploadRepo.jobForRecording(rec.id)?.status === 'ok');
+    const res = await inj({ method: 'GET', url: '/api/v1/recordings' });
+    const item = (res.json().items as Array<{ id: string; upload?: { status: string; progress: number } }>).find((r) => r.id === rec.id)!;
+    expect(item.upload?.status).toBe('ok');
+    expect(item.upload?.progress).toBe(100);
+    await app.close();
+  });
+
   it('GET /recordings attaches latest upload snapshot (#190)', async () => {
     const services = newServices();
     services.uploader = new UploadManager(services, {
