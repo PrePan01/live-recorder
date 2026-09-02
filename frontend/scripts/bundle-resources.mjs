@@ -36,3 +36,44 @@ if (!src) {
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);
 console.log(`[bundle-resources] node -> ${dest}`);
+
+// 清理 Tauri DMG 打包的残留状态（bundle_dmg.sh 偶发失败主因）：
+// 1) 上一次中断/失败遗留的 rw.* 临时镜像（hdiutil create 的 UDRW 中间文件）
+// 2) 残留的挂载点（/Volumes/Live Recorder*）与磁盘（hdiutil attach 后未 detach）
+// 在每次 beforeBundle 前执行，保证每次 tauri build 的 dmg 步骤从干净状态开始。
+import { readdirSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+
+const dmgDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'dmg');
+try {
+  if (existsSync(dmgDir)) {
+    const stale = readdirSync(dmgDir).filter((f) => /^rw\./.test(f));
+    for (const f of stale) {
+      try {
+        rmSync(join(dmgDir, f), { force: true });
+        console.log(`[bundle-resources] 清理残留 dmg 临时文件 ${f}`);
+      } catch {
+        /* 忽略单文件删除失败 */
+      }
+    }
+  }
+} catch {
+  /* dmg 目录不存在则无需清理 */
+}
+
+try {
+  const { stdout } = spawnSync('hdiutil', ['info'], { encoding: 'utf8' });
+  if (stdout) {
+    // 卸载残留的 Live Recorder 挂载点（幂等：已挂载才卸载，未挂载静默跳过）
+    const mounts = stdout.split('\n').filter((l) => l.includes('/Volumes/Live Recorder'));
+    for (const m of mounts) {
+      const mountPoint = m.trim().split(/\s+/).pop();
+      if (mountPoint) {
+        spawnSync('hdiutil', ['detach', mountPoint, '-force'], { encoding: 'utf8' });
+        console.log(`[bundle-resources] 卸载残留挂载 ${mountPoint}`);
+      }
+    }
+  }
+} catch {
+  /* hdiutil 不可用时忽略 */
+}
