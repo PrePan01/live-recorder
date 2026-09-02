@@ -427,6 +427,13 @@ describe('REST contract v1.1 (fake stack)', () => {
     const byDate = await app.inject({ method: 'GET', url: '/api/v1/recordings?dateFrom=2026-08-28T10:30:00.000Z', headers: { host: '127.0.0.1:43120' } });
     expect(byDate.json().items.map((r: { id: string }) => r.id)).toEqual([rec2.id]);
 
+    // 非法日期参数 → 422 CONFIG_INVALID（QA #171 低优先观察）
+    for (const url of ['/api/v1/recordings?dateFrom=notadate', '/api/v1/recordings?dateTo=2026-13-99', '/api/v1/recordings/export?dateFrom=notadate']) {
+      const bad = await app.inject({ method: 'GET', url, headers: { host: '127.0.0.1:43120' } });
+      expect(bad.statusCode).toBe(422);
+      expect(bad.json().error.code).toBe('CONFIG_INVALID');
+    }
+
     // 重命名同步文件
     const ren = await app.inject({
       method: 'PATCH', url: `/api/v1/recordings/${rec1.id}`, headers: { host: '127.0.0.1:43120' },

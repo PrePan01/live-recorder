@@ -25,6 +25,13 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
         error: { code: 'CONFIG_INVALID', message: 'state 过滤值非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
+    for (const [k, v] of [['dateFrom', q.dateFrom], ['dateTo', q.dateTo]] as const) {
+      if (v !== undefined && Number.isNaN(Date.parse(v))) {
+        return reply.status(422).send({
+          error: { code: 'CONFIG_INVALID', message: `${k} 必须为合法日期格式`, roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        });
+      }
+    }
     const result = services.recordings.list({
       page,
       pageSize,
@@ -150,6 +157,13 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
   // CSV 导出（#69）：按现筛选条件导出清单+时长统计，UTF-8 BOM。
   app.get('/api/v1/recordings/export', async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
+    for (const [k, v] of [['dateFrom', q.dateFrom], ['dateTo', q.dateTo]] as const) {
+      if (v !== undefined && Number.isNaN(Date.parse(v))) {
+        return reply.status(422).send({
+          error: { code: 'CONFIG_INVALID', message: `${k} 必须为合法日期格式`, roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+        });
+      }
+    }
     const result = services.recordings.list({
       page: 1,
       pageSize: 100,
