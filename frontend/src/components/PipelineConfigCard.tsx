@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { App, Card, Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
+import { App, Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { fetchPipelineConfig, updatePipelineConfig } from '../api/pipeline';
 import { describeError } from '../utils/errorMap';
 import { ApiError } from '../types/error';

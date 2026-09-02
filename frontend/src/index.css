@@ -983,3 +983,45 @@ body {
     max-width: calc(100vw - 24px);
   }
 }
+
+/* 录制历史：紧凑行高，减少纵向占位（PrePan 整体验收反馈） */
+.lr-history-page .ant-table-cell {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+.lr-history-page .ant-table-thead > tr > th {
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+}
+
+/* ===== 设置页层级优化（PrePan 整体验收反馈） ===== */
+.lr-settings-grid > .ant-col > .ant-card + .ant-card {
+  margin-top: 20px;
+}
+.lr-settings-page .ant-card + .ant-card {
+  margin-top: 20px;
+}
+.lr-settings-page .ant-card .ant-card-head-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.lr-settings-page .ant-card-body {
+  padding: 20px;
+}
+.lr-settings-page .ant-form-item {
+  margin-bottom: 18px;
+}
+.lr-settings-page .ant-form-item-label > label {
+  font-weight: 500;
+}
+.lr-settings-page .ant-typography {
+  line-height: 1.7;
+}
+.lr-settings-page .ant-card-body h5.ant-typography {
+  margin-top: 18px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.lr-settings-page .ant-card-body h5.ant-typography:first-child {
+  margin-top: 0;
+}

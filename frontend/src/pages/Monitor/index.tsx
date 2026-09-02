@@ -129,27 +129,24 @@ function RoomCard({
             </Button>
           </Tooltip>
         )}
-        {room.monitorState === 'recording' ? (
+        {room.monitorState === 'recording' || room.monitorState === 'reconnecting' ? (
           <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
             <Button size="middle" danger loading={acting && actingAction === 'stop'} icon={<StopOutlined />}>
               停止
             </Button>
           </Popconfirm>
         ) : (
-          <Button size="middle" icon={<StopOutlined />} disabled>
-            停止
+          <Button
+            size="middle"
+            type="primary"
+            icon={<VideoCameraAddOutlined />}
+            loading={acting && actingAction === 'record'}
+            disabled={acting || recentlyStopped || !onAir}
+            onClick={() => onRecord(room)}
+          >
+            录制
           </Button>
         )}
-        <Button
-          size="middle"
-          type={recording ? 'default' : 'primary'}
-          icon={<VideoCameraAddOutlined />}
-          loading={acting && actingAction === 'record'}
-          disabled={acting || recentlyStopped || !onAir || recording}
-          onClick={() => onRecord(room)}
-        >
-          {recording ? '录制中' : '录制'}
-        </Button>
         <Button size="middle" icon={<LinkOutlined />} href={room.url} target="_blank" rel="noopener noreferrer">
           直播间
         </Button>
@@ -333,7 +330,15 @@ export default function Monitor() {
             onChange={(e) => setKeyword(e.target.value)}
           />
           <Segmented options={['卡片', '列表']} value={view} onChange={(v) => setView(v as '卡片' | '列表')} />
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void fetchRooms()}>
+          <Button
+            icon={<ReloadOutlined />}
+            loading={loading}
+            onClick={() =>
+              void fetchRooms()
+                .then(() => message.success('已刷新'))
+                .catch(() => message.error('刷新失败，请稍后重试'))
+            }
+          >
             刷新
           </Button>
         </Space>

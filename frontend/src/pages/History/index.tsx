@@ -16,6 +16,7 @@ import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
+import { fetchUploads, retryUpload } from '../../api/openlist';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
@@ -137,6 +138,24 @@ export default function History() {
     }
   };
 
+  const retryUploadFor = useCallback(
+    async (recordingId: string) => {
+      try {
+        const jobs = await fetchUploads(50);
+        const job = jobs.find((j) => j.recordingId === recordingId);
+        if (!job) {
+          message.warning('未找到该录制的上传任务');
+          return;
+        }
+        await retryUpload(job.id);
+        message.success('已触发重试');
+      } catch (e) {
+        message.error(e instanceof ApiError ? describeError(e.code, e.message) : '重试失败');
+      }
+    },
+    [message],
+  );
+
   const handleExportCsv = async () => {
     setExporting(true);
     try {
@@ -204,8 +223,8 @@ export default function History() {
       {
         title: '上传状态',
         dataIndex: 'upload',
-        width: 130,
-        render: (u: Recording['upload']) => {
+        width: 150,
+        render: (u: Recording['upload'], r: Recording) => {
           if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
           const detail =
             u.error ??
@@ -218,13 +237,18 @@ export default function History() {
                 <Tag color="processing">{u.progress >= 99 ? '写入云端' : '上传中'}</Tag>
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
+            ) : u.status === 'failed' ? (
+              <Space size={4}>
+                <Tag color="red">失败</Tag>
+                <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
+                  重试
+                </Button>
+              </Space>
             ) : (
               <Tag
-                color={
-                  u.status === 'ok' ? 'green' : u.status === 'failed' ? 'red' : u.status === 'cancelled' ? 'default' : 'default'
-                }
+                color={u.status === 'ok' ? 'green' : u.status === 'cancelled' ? 'default' : 'default'}
               >
-                {u.status === 'ok' ? '成功' : u.status === 'failed' ? '失败' : u.status === 'cancelled' ? '已取消' : u.error ? '等待重试' : '排队'}
+                {u.status === 'ok' ? '成功' : u.status === 'cancelled' ? '已取消' : u.error ? '等待重试' : '排队'}
               </Tag>
             );
           return detail ? (
@@ -311,7 +335,7 @@ export default function History() {
   const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Recording>(columns);
 
   return (
-    <div className="lr-page">
+    <div className="lr-page lr-history-page">
       <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           录制历史
