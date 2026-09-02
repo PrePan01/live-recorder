@@ -50,9 +50,7 @@ function RoomCard({
       styles={{ body: { padding: 14 } }}
       title={
         <Space style={{ minWidth: 0, maxWidth: '100%' }}>
-          <div style={{ marginTop: '3px' }}>
-            <PlatformLogoTag platform={room.platform}/>
-          </div>
+          <PlatformLogoTag platform={room.platform}/>
           <Tooltip title={room.displayName} className="lr-room-card__title">
             <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
               {room.displayName}

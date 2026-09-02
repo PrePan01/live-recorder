@@ -461,13 +461,13 @@ body {
 }
 
 .lr-room-card .ant-card-head {
-  min-height: 54px;
+  min-height: 50px;
   padding: 0 14px;
 }
 
 .lr-room-card .ant-card-head-title,
 .lr-room-card .ant-card-extra {
-  padding: 12px 0;
+  padding: 8px 0;
 }
 
 /* 卡片标题：平台图标+房间名+回退标记。标题项可收缩，房间名 ellipsis 截断，
@@ -493,6 +493,7 @@ body {
   align-items: center;
   margin-inline-end: 0;
   white-space: nowrap;
+  margin-top: 6px;
 }
 
 .lr-room-card .ant-card-head-title .ant-space-item .ant-typography-ellipsis {
