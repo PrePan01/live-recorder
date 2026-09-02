@@ -362,11 +362,11 @@ export default function History() {
       <Drawer
         title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ''}`}
         open={pipelineRec !== null}
-        width={520}
+        size={520}
         onClose={() => setPipelineRec(null)}
       >
         {pipelineRec ? (
-          <Space direction="vertical" style={{ width: '100%' }} size={20}>
+          <Space orientation="vertical" style={{ width: '100%' }} size={20}>
             <PipelineTimeline recordingId={pipelineRec.id} />
             <Typography.Title level={5} style={{ marginBottom: 0 }}>
               上传
@@ -395,7 +395,7 @@ export default function History() {
         confirmLoading={renameBusy}
         destroyOnHidden
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">重命名会同步修改录制文件名。</Typography.Text>
           <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} placeholder="新标题" />
         </Space>
@@ -409,7 +409,7 @@ export default function History() {
         okText="开始导出"
         destroyOnHidden
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">
             打包为目录（源文件+封面+manifest.json，不含密钥）；缺失附件标部分成功，不损坏源文件。
           </Typography.Text>
@@ -423,10 +423,10 @@ export default function History() {
       <Drawer
         title="导出任务"
         open={exportDrawer}
-        width={460}
+        size={460}
         onClose={() => setExportDrawer(false)}
       >
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
           <Button size="small" onClick={() => void refreshExports()}>
             刷新
           </Button>

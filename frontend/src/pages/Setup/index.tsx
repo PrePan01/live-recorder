@@ -85,7 +85,7 @@ export default function Setup() {
         style={{ marginBottom: 32 }}
       />
       {step === 0 && (
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text>选择录像保存目录：</Typography.Text>
           <Space.Compact style={{ width: '100%' }}>
             <Input
@@ -103,13 +103,13 @@ export default function Setup() {
         </Space>
       )}
       {step === 1 && (
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <Typography.Text>最大并发录制数（默认 2）：</Typography.Text>
           <InputNumber min={1} max={8} value={concurrency} onChange={(v) => setConcurrency(v ?? 2)} />
         </Space>
       )}
       {step === 2 && (
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Checkbox checked={mailOn} onChange={(e) => setMailOn(e.target.checked)}>
             启用 SMTP 邮件告警（可跳过）
           </Checkbox>
@@ -155,7 +155,7 @@ export default function Setup() {
         </Space>
       )}
       {step === 3 && (
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <Typography.Text>配置确认：</Typography.Text>
           <Typography.Paragraph>
             保存目录：<Typography.Text code>{dir}</Typography.Text>

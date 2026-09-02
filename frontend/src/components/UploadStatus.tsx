@@ -45,7 +45,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
 
   if (!loading && jobs.length === 0) {
     return (
-      <Space direction="vertical" size={8}>
+      <Space orientation="vertical" size={8}>
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           该录制暂无上传任务。
         </Typography.Paragraph>
@@ -67,7 +67,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   }
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size={10}>
+    <Space orientation="vertical" style={{ width: '100%' }} size={10}>
       {jobs.map((j) => (
         <div key={j.id}>
           <Space size={8} wrap>

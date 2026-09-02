@@ -231,12 +231,12 @@ export default function Recovery() {
       <Drawer
         title="诊断详情"
         open={detailId !== null}
-        width={440}
+        size={440}
         loading={detailLoading}
         onClose={() => setDetailId(null)}
       >
         {detail ? (
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
+          <Space orientation="vertical" style={{ width: '100%' }} size={16}>
             <List size="small" bordered>
               <List.Item>
                 <List.Item.Meta title="代码" description={detail.diagnostic.code} />

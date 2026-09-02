@@ -113,7 +113,7 @@ export default function Stats() {
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card loading={loading}>
-              <Statistic title="成功率" value={stats.totals.successRate} suffix="%" valueStyle={{ color: stats.totals.successRate >= 80 ? undefined : '#cf1322' }} />
+              <Statistic title="成功率" value={stats.totals.successRate} suffix="%" styles={{ content: { color: stats.totals.successRate >= 80 ? undefined : '#cf1322' } }} />
             </Card>
           </Col>
           <Col xs={24} lg={14}>
@@ -147,7 +147,7 @@ export default function Stats() {
               {stats.byPlatform.length === 0 ? (
                 <Empty description="暂无平台数据" />
               ) : (
-                <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                <Space orientation="vertical" style={{ width: '100%' }} size={12}>
                   {stats.byPlatform.map((p) => (
                     <div key={p.platform}>
                       <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>

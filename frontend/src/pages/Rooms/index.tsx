@@ -531,7 +531,7 @@ export default function Rooms() {
     <Drawer
         title={`定时计划：${scheduleRoom?.displayName ?? ''}`}
         open={scheduleRoom !== null}
-        width={720}
+        size={720}
         onClose={() => setScheduleRoom(null)}
       >
         {scheduleRoom ? <SchedulePanel roomId={scheduleRoom.id} /> : null}

@@ -74,7 +74,7 @@ export default function PipelineTimeline({ recordingId }: { recordingId: string 
   const canRetry = run.run.status === 'failed' || run.run.status === 'partial';
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size={12}>
+    <Space orientation="vertical" style={{ width: '100%' }} size={12}>
       <Space>
         <Tag color={meta.color}>{meta.text}</Tag>
         {run.run.startedAt ? (
