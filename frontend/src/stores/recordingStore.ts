@@ -7,7 +7,7 @@ import {
   batchDeleteRecordings,
   exportRecordingsCsv,
 } from '../api/recordings';
-import type { Recording, RecordingQuery } from '../types/recording';
+import type { Recording, RecordingQuery, UploadSnapshot } from '../types/recording';
 
 function normalizeRecording(rec: Recording): Recording {
   return { ...rec, integrity: rec.integrity ?? null };
@@ -29,6 +29,8 @@ interface RecordingState {
   upsertRecording: (rec: Recording) => void;
   /** 仅由 SSE 写入，用于避免打开历史页时把旧记录误报成刚完成。 */
   upsertRecordingFromEvent: (rec: Recording) => void;
+  /** SSE upload:updated 按 recordingId 更新对应录制的上传快照（#191）。 */
+  patchRecordingUpload: (recordingId: string, upload: UploadSnapshot | null) => void;
   completionNotice: Recording | null;
 }
 
@@ -86,6 +88,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       const items = idx === -1 ? s.items : s.items.map((item, index) => (index === idx ? normalizeRecording(rec) : item));
       const justCompleted = rec.state === 'completed' && previous?.state !== 'completed';
       return { items, completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice };
+    });
+  },
+  patchRecordingUpload(recordingId, upload) {
+    set((s) => {
+      const idx = s.items.findIndex((item) => item.id === recordingId);
+      if (idx === -1) return {};
+      const next = [...s.items];
+      next[idx] = { ...next[idx], upload };
+      return { items: next };
     });
   },
 }));
