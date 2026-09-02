@@ -20,15 +20,16 @@ export default function FilePlayer({ url, filePath }: { url: string; filePath?: 
     }
     let player: mpegts.Player | null = null;
     let disposed = false;
+    const videoEl = videoRef.current;
 
     const create = () => {
-      if (disposed || !videoRef.current) return;
+      if (disposed || !videoEl) return;
       const instance = mpegts.createPlayer(
         { type: 'flv', url, isLive: false },
         { enableStashBuffer: false },
       );
       player = instance;
-      instance.attachMediaElement(videoRef.current);
+      instance.attachMediaElement(videoEl);
       instance.on(EVENTS.ERROR, (_t, _d) => {
         if (player === instance) {
           instance.destroy();
@@ -46,6 +47,12 @@ export default function FilePlayer({ url, filePath }: { url: string; filePath?: 
     create();
     return () => {
       disposed = true;
+      // 卸载时先停止播放再销毁，避免 mpegts 内部 fetch/请求在销毁中途被中止产生未捕获 AbortError。
+      try {
+        videoEl?.pause();
+      } catch {
+        /* 忽略 */
+      }
       player?.destroy();
     };
   }, [url, isMp4]);
@@ -68,6 +75,7 @@ export default function FilePlayer({ url, filePath }: { url: string; filePath?: 
         src={isMp4 ? url : undefined}
         onCanPlay={() => setState((current) => (current === 'loading' ? 'playing' : current))}
         onPlaying={() => setState('playing')}
+        onEnded={() => setState('ended')}
         onError={() => {
           if (isMp4) {
             setState('error');
