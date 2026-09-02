@@ -24,15 +24,15 @@ export interface OpenListConfig {
 }
 
 export async function fetchOpenListConfig(): Promise<OpenListConfig> {
-  const { data } = await http.get<OpenListConfig>('/settings/openlist');
-  return data;
+  const { data } = await http.get<{ openlist: OpenListConfig }>('/settings/openlist');
+  return data.openlist;
 }
 
 export async function updateOpenListConfig(
   input: Partial<Omit<OpenListConfig, 'hasToken'>> & { token?: string },
 ): Promise<OpenListConfig> {
-  const { data } = await http.put<OpenListConfig>('/settings/openlist', input);
-  return data;
+  const { data } = await http.put<{ openlist: OpenListConfig }>('/settings/openlist', input);
+  return data.openlist;
 }
 
 export async function testOpenList(): Promise<{ ok: boolean }> {
