@@ -35,7 +35,7 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     return reply.send({ openlist: await openListView(services) });
   });
 
-  // 连接测试：WebDAV 可达性（不泄露令牌）。
+  // 连接测试：WebDAV 可达性+凭证校验（不泄露令牌）。PROPFIND Depth:0——OPTIONS 多数 WebDAV 一律 200，无法校验凭证（QA #186）。
   app.post('/api/v1/settings/openlist/test', async (_req, reply) => {
     const config = await openListView(services);
     if (!config.serverUrl) throw new AppError('CONFIG_LOAD_FAILED', 'OpenList 地址未配置');
@@ -43,13 +43,26 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     try {
       const token = await services.secretStore.get(OPENLIST_TOKEN_KEY);
       const res = await fetch(config.serverUrl, {
-        method: 'OPTIONS',
-        headers: { Authorization: `Basic ${Buffer.from(`${config.username}:${token}`).toString('base64')}` },
+        method: 'PROPFIND',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.username}:${token}`).toString('base64')}`,
+          Depth: '0',
+          'Content-Type': 'application/xml',
+        },
+        body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok && res.status >= 500) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const message = res.status === 401 || res.status === 403
+          ? 'OpenList 认证失败，请检查用户名与令牌'
+          : res.status === 404
+            ? 'OpenList 地址路径无效，请检查服务器地址'
+            : `OpenList 连接失败（HTTP ${res.status}）`;
+        throw new AppError('CONFIG_LOAD_FAILED', message, { retryable: res.status >= 500 });
+      }
       return reply.send({ ok: true });
-    } catch {
+    } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError('CONFIG_LOAD_FAILED', 'OpenList 连接失败，请检查地址与令牌', { retryable: true });
     }
   });
