@@ -44,6 +44,7 @@ class FlvInitExtractor {
   private seenMeta = false;
   private seenVideoSeq = false;
   private seenAudioSeq = false;
+  private firstMediaSeen = false;
 
   get complete(): boolean {
     return this.done;
@@ -80,18 +81,29 @@ class FlvInitExtractor {
       const dataSize = (this.pending[cursor + 1]! << 16) | (this.pending[cursor + 2]! << 8) | this.pending[cursor + 3]!;
       const tagTotal = 11 + dataSize + 4;
       if (this.pending.length - cursor < tagTotal) break;
+      const videoSeq = type === 9 && dataSize >= 2 && (this.pending[cursor + 11]! & 0x0f) === 7 && this.pending[cursor + 12] === 0;
+      const audioSeq = type === 8 && dataSize >= 2 && (this.pending[cursor + 11]! >> 4) === 10 && this.pending[cursor + 12] === 0;
+      const mediaTag = (type === 8 || type === 9) && !videoSeq && !audioSeq;
       if (type === 18) this.seenMeta = true;
-      else if (type === 9 && dataSize >= 2 && (this.pending[cursor + 11]! & 0x0f) === 7 && this.pending[cursor + 12] === 0) this.seenVideoSeq = true;
-      else if (type === 8 && dataSize >= 2 && (this.pending[cursor + 11]! >> 4) === 10 && this.pending[cursor + 12] === 0) this.seenAudioSeq = true;
+      if (videoSeq) this.seenVideoSeq = true;
+      if (audioSeq) this.seenAudioSeq = true;
+      // 完成条件：已见视频编码器序列头，且（音频序列头已见 或 即将进入首个媒体帧）。
+      // 不强制依赖 AAC audioSeq（部分流段音频码率/码型不同，缺失时首媒体帧即终止，init 不含媒体帧）。
+      const complete = this.seenVideoSeq && (this.seenAudioSeq || mediaTag);
+      if (complete) {
+        // 首个媒体帧不计入 init（避免 init 含旧时间戳媒体）；audioSeq 计入。
+        if (mediaTag) this.firstMediaSeen = true;
+        if (!mediaTag) cursor += tagTotal;
+        break;
+      }
       cursor += tagTotal;
-      if (this.seenMeta && this.seenVideoSeq && this.seenAudioSeq) break;
     }
 
     if (cursor > 0) {
       this.captured = this.captured.length === 0 ? this.pending.subarray(0, cursor) : Buffer.concat([this.captured, this.pending.subarray(0, cursor)]);
       this.pending = this.pending.subarray(cursor);
     }
-    if (this.seenMeta && this.seenVideoSeq && this.seenAudioSeq) {
+    if (this.seenVideoSeq && (this.seenAudioSeq || this.firstMediaSeen)) {
       this.done = true;
       this.pending = Buffer.alloc(0);
       return this.captured;
@@ -112,6 +124,7 @@ class FlvInitExtractor {
     this.seenMeta = false;
     this.seenVideoSeq = false;
     this.seenAudioSeq = false;
+    this.firstMediaSeen = false;
   }
 }
 

@@ -318,6 +318,34 @@ describe('WebSocket preview', () => {
     await c2.closed;
     await server.close();
   });
+it('init extractor completes at first media when audio seq missing (#193 QA 边角)', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/3', displayName: 'noaudio' });
+    server.services.rooms.setState(room.id, 'recording');
+
+    const h = Buffer.alloc(13);
+    h.write('FLV', 0);
+    h[3] = 1;
+    h[4] = 0x05;
+    h.writeUInt32BE(9, 5);
+    h.writeUInt32BE(0, 9);
+    const meta = flvTag(18, Buffer.alloc(4));
+    const vseq = flvTag(9, Buffer.from([0x17, 0x00, 0x01, 0x02]));
+    const media = flvTag(9, Buffer.from([0x17, 0x01, 0xde, 0xad]));
+    server.preview.broadcastFrame(room.id, h);
+    server.preview.broadcastFrame(room.id, meta);
+    server.preview.broadcastFrame(room.id, vseq);
+    server.preview.broadcastFrame(room.id, media);
+
+    const c = connect(server.url, room.id);
+    const first = await new Promise<Buffer>((resolve) => c.ws.once('message', (d) => resolve(Buffer.from(d))));
+    expect(first.subarray(0, 3).toString()).toBe('FLV');
+    // init = 13(FLV头) + 19(onMetaData) + 19(AVC seq)，不含首个媒体帧。
+    expect(first.length).toBe(51);
+    c.ws.close();
+    await c.closed;
+    await server.close();
+  });
 });
 
 /** 构造最小合法 FLV 初始化段（头 + onMetaData + AVC/AAC sequence headers）。 */
