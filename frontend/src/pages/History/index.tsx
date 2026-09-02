@@ -207,7 +207,7 @@ export default function History() {
         width: 130,
         render: (u: Recording['upload']) => {
           if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
-          const detail = u.remotePath || u.error;
+          const detail = u.status === 'failed' || u.status === 'cancelled' ? u.error : u.remotePath;
           const node =
             u.status === 'running' ? (
               <Space size={4}>
