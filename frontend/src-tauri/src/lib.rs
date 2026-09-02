@@ -194,8 +194,15 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
 
-    let _ = app;
+    app.run(|app_handle, event| {
+        // Cmd+Q / Dock 退出不会经过托盘 quit_app 命令，后端子进程会成孤儿残留
+        // 占用 43120，导致升级新版时后端不更新。这里在进程退出时兜底停掉后端。
+        if let tauri::RunEvent::Exit = event {
+            let state = app_handle.state::<ShellState>();
+            state.backend.stop();
+        }
+    });
 }
