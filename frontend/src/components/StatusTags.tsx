@@ -29,17 +29,17 @@ const INTEGRITY_META: Record<RecordingIntegrity, { color: string; text: string }
 };
 
 export function MonitorStateTag({ state }: { state: MonitorState }) {
-  const meta = MONITOR_META[state];
+  const meta = MONITOR_META[state] ?? { color: 'default', text: state };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 
 export function RecordingStateTag({ state }: { state: RecordingState }) {
-  const meta = RECORDING_META[state];
+  const meta = RECORDING_META[state] ?? { color: 'default', text: state };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 
 export function IntegrityTag({ integrity }: { integrity: RecordingIntegrity | null }) {
   if (!integrity) return <Tag>待校验</Tag>;
-  const meta = INTEGRITY_META[integrity];
+  const meta = INTEGRITY_META[integrity] ?? { color: 'default', text: integrity };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
