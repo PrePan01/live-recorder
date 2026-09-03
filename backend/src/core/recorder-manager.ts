@@ -497,16 +497,24 @@ export class RecorderManager {
     this.services.pipeline.enqueue(recordingId);
   }
 
-  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。返回更新后的记录。 */
+  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。返回更新后的记录。
+   *  #225：失败自动重试（最多 3 次），仍失败则告警，让用户知道上传的将是 FLV，不静默。 */
   private async remuxToMp4(rec: import('../types/index.js').Recording): Promise<import('../types/index.js').Recording | null> {
-    try {
-      const mp4 = await remuxFlvToMp4(rec.filePath!);
-      if (!mp4) return null;
-      return this.services.recordings.update(rec.id, { filePath: mp4 });
-    } catch {
-      // 转封装失败/应用关闭：保留 FLV，不阻断。
-      return null;
+    const MAX_REMUX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_REMUX_ATTEMPTS; attempt += 1) {
+      try {
+        const mp4 = await remuxFlvToMp4(rec.filePath!);
+        if (mp4) return this.services.recordings.update(rec.id, { filePath: mp4 });
+      } catch {
+        // 尝试下一次
+      }
+      if (attempt < MAX_REMUX_ATTEMPTS) {
+        await new Promise<void>((resolve) => this.services.clock.setTimeout(resolve, 1_000));
+      }
     }
+    // 持久失败：告警 + 记录标记，用户能知道上传的是 FLV（不静默）。
+    this.raiseAlert('warning', 'recorder', new AppError('RECORDING_REMUX_FAILED', '转 MP4 失败（已重试），将保留并上传源 FLV', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
+    return null;
   }
 
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */

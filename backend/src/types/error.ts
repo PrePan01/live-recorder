@@ -27,7 +27,8 @@ export type ErrorCode =
   | 'PIPELINE_CONFIG_INVALID'
   | 'CHECK_FAILED'
   | 'CONFIG_INVALID'
-  | 'RECORDING_EMPTY';
+  | 'RECORDING_EMPTY'
+  | 'RECORDING_REMUX_FAILED';
 
 export interface ErrorObject {
   code: ErrorCode;
