@@ -56,6 +56,12 @@ npm run dev:real
 
 ## 开发
 
+### 三步开始开发
+
+1. 安装依赖：`npm run setup`
+2. 启动项目：`npm run dev:real`
+3. 开始开发
+
 ### 目录结构
 
 - `backend/`：本地常驻服务（Fastify + SQLite，端口 43120；REST / SSE / WS 预览）
