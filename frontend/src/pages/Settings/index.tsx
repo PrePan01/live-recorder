@@ -39,6 +39,7 @@ export default function SettingsPage() {
   const status = useServiceStore((s) => s.status);
   const fetchStatus = useServiceStore((s) => s.fetchStatus);
   const [form] = Form.useForm();
+  const recordingFormat = Form.useWatch('recordingFormat', form);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [clearCookie, setClearCookie] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -47,6 +48,8 @@ export default function SettingsPage() {
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const ffmpegCheck = checks?.find((c) => c.key === 'ffmpeg');
+  const showFfmpegWarning = recordingFormat === 'mp4_after' && !!ffmpegCheck && ffmpegCheck.status !== 'ok';
 
   useEffect(() => {
     void load();
@@ -283,6 +286,21 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
+            {showFfmpegWarning ? (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="未检测到 ffmpeg，录制完成后转 MP4 不可用"
+                description={
+                  <Typography.Text>
+                    需安装 Homebrew 视频工具后重试：请在终端执行{' '}
+                    <Typography.Text code>brew install ffmpeg</Typography.Text>
+                    ，安装完成后点击「一键自检」重新检测。
+                  </Typography.Text>
+                }
+              />
+            ) : null}
             <Form.Item
               label="检测到开播时自动录制"
               name="autoRecord"
