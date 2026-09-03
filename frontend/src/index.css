@@ -1033,3 +1033,27 @@ body {
 .lr-room-card .ant-card-head-title .ant-typography {
   line-height: 1.4;
 }
+
+/* 「直播中」绿点波纹动效（PrePan 指示，纯前端动画） */
+.lr-live-dot {
+  position: relative;
+}
+.lr-live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--lr-success);
+  animation: lr-live-ripple 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes lr-live-ripple {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}

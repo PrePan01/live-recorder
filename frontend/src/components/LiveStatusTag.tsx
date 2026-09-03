@@ -19,6 +19,7 @@ export default function LiveStatusTag({ status }: { status: LiveStatus | null })
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span
+        className={status === 'live' ? 'lr-live-dot' : undefined}
         style={{
           width: 8,
           height: 8,
