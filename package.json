@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "0.5.63",
+  "version": "0.5.64",
   "private": true,
   "description": "直播录制助手（localhost 常驻服务 + Web 管理控制台）",
   "scripts": {
