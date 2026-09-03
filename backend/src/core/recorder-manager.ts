@@ -483,26 +483,30 @@ export class RecorderManager {
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
     if (rec.filePath) this.verifyIntegrity(rec);
-    // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）。
-    this.services.pipeline.enqueue(recordingId);
-    // mp4_after：完成后异步转封装 MP4（管线启用时由 compress 步骤覆盖，跳过此处以免重复）。
+    // mp4_after（且管线未启用）：先完成 FLV→MP4 转封装再入队管线/上传——
+    // 避免上传抢在转封装前按旧 filePath 把 FLV 传走（PrePan：偶现转 mp4 失败上传的却是 flv）。
     if (this.settings().recordingFormat === 'mp4_after' && rec.filePath && !(this.services.pipeline.pipelineConfig().enabled)) {
-      this.remuxToMp4(rec);
+      void (async () => {
+        const updated = await this.remuxToMp4(rec);
+        this.services.events.emit({ type: 'recording:updated', data: updated ?? this.services.recordings.get(recordingId)! });
+        this.services.pipeline.enqueue(recordingId);
+      })();
+      return;
     }
+    // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）；未启用时触发上传。
+    this.services.pipeline.enqueue(recordingId);
   }
 
-  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。 */
-  private remuxToMp4(rec: import('../types/index.js').Recording): void {
-    void (async () => {
-      try {
-        const mp4 = await remuxFlvToMp4(rec.filePath!);
-        if (!mp4) return;
-        const updated = this.services.recordings.update(rec.id, { filePath: mp4 });
-        this.services.events.emit({ type: 'recording:updated', data: updated });
-      } catch {
-        // 转封装失败/应用关闭：保留 FLV，不阻断。
-      }
-    })();
+  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。返回更新后的记录。 */
+  private async remuxToMp4(rec: import('../types/index.js').Recording): Promise<import('../types/index.js').Recording | null> {
+    try {
+      const mp4 = await remuxFlvToMp4(rec.filePath!);
+      if (!mp4) return null;
+      return this.services.recordings.update(rec.id, { filePath: mp4 });
+    } catch {
+      // 转封装失败/应用关闭：保留 FLV，不阻断。
+      return null;
+    }
   }
 
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
