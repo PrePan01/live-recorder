@@ -22,6 +22,8 @@ interface WebDavClientOptions {
   taskApiEnabled: boolean;
   taskPollIntervalMs: number;
   taskPollTimeoutMs: number;
+  /** #228：后台上传任务进度长时间无变化的卡滞判定窗口；超过则用远端文件核验兜底判定。 */
+  taskStallTimeoutMs: number;
 }
 
 const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
@@ -32,7 +34,9 @@ const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
   verifyTimeoutMs: 20_000,
   taskApiEnabled: true,
   taskPollIntervalMs: 1_000,
-  taskPollTimeoutMs: 6 * 60 * 60_000,
+  // #228：后台上传任务等待上限 6h 过长 → 30min；配合 taskStallTimeoutMs 卡滞判定，避免 99% 无限挂起。
+  taskPollTimeoutMs: 30 * 60_000,
+  taskStallTimeoutMs: 10 * 60_000,
 };
 
 interface OpenListTaskInfo {
@@ -180,6 +184,8 @@ export class RealWebDavClient implements WebDavClient {
     onProgress(50);
     const startedAt = Date.now();
     let consecutivePollFailures = 0;
+    let lastServerPct = -1;
+    let lastProgressChangeAt = Date.now();
     while (Date.now() - startedAt < this.options.taskPollTimeoutMs) {
       await this.delay(this.options.taskPollIntervalMs);
       try {
@@ -204,9 +210,21 @@ export class RealWebDavClient implements WebDavClient {
         if (task.state === 'failed' || task.state === 'canceled') {
           throw new Error(`OpenList 后台上传${task.state === 'canceled' ? '已取消' : '失败'}${task.error ? `：${task.error}` : ''}`);
         }
+        // #228：进度卡滞判定——服务端任务仍在 running 但进度长时间无变化时，
+        // 用远端文件核验兜底：文件已完整落盘则判定成功，否则给出明确失败原因。
+        if (serverPct !== lastServerPct) {
+          lastServerPct = serverPct;
+          lastProgressChangeAt = Date.now();
+        } else if (Date.now() - lastProgressChangeAt >= this.options.taskStallTimeoutMs) {
+          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+            onProgress(100);
+            return true;
+          }
+          throw new Error('OpenList 上传进度长时间无变化，请检查云端存储是否正常（文件可能未完整落盘）');
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('OpenList 后台上传')) throw err;
+        if (message.startsWith('OpenList 后台上传') || message.startsWith('OpenList 上传进度')) throw err;
         consecutivePollFailures += 1;
         // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutivePollFailures >= 10) {
