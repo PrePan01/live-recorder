@@ -49,10 +49,10 @@ function RoomCard({
       className={`lr-room-card ${layout === 'list' ? 'lr-room-card--list' : ''}`}
       styles={{ body: { padding: 14 } }}
       title={
-        <Space style={{ minWidth: 0, maxWidth: '100%' }}>
-          <PlatformLogoTag platform={room.platform}/>
+        <Space style={{ minWidth: 0, maxWidth: '100%' }} align="center">
+          <PlatformLogoTag platform={room.platform} />
           <Tooltip title={room.displayName} className="lr-room-card__title">
-            <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
+            <Typography.Text strong style={{ fontSize: 14, lineHeight: 1 }} ellipsis>
               {room.displayName}
             </Typography.Text>
           </Tooltip>
@@ -163,7 +163,7 @@ export default function Monitor() {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
   const [watching, setWatching] = useState<Room | null>(null);
-  const [view, setView] = useState<'卡片' | '列表'>('卡片');
+  const [view, setView] = useState<'卡片' | '列表'>(() => (localStorage.getItem('lr-monitor-view') === '列表' ? '列表' : '卡片'));
   const [filter, setFilter] = useState<'全部' | '开播中' | '录制中' | '收藏'>('全部');
   const [keyword, setKeyword] = useState('');
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
@@ -271,7 +271,7 @@ export default function Monitor() {
     { title: '最近检测', dataIndex: 'lastCheckedAt', width: 110, render: (t) => formatRelative(t) },
     {
       title: '操作',
-      width: 220,
+      width: 300,
       fixed: 'right' as const,
       render: (_, room) => {
         const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
@@ -329,7 +329,14 @@ export default function Monitor() {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
           />
-          <Segmented options={['卡片', '列表']} value={view} onChange={(v) => setView(v as '卡片' | '列表')} />
+          <Segmented
+            options={['卡片', '列表']}
+            value={view}
+            onChange={(v) => {
+              setView(v as '卡片' | '列表');
+              localStorage.setItem('lr-monitor-view', v);
+            }}
+          />
           <Button
             icon={<ReloadOutlined />}
             loading={loading}
