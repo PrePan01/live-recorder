@@ -2,11 +2,13 @@
   "name": "live-recorder",
   "version": "0.5.77",
   "private": true,
-  "description": "直播录制助手（localhost 常驻服务 + Web 管理控制台）",
+  "description": "直播录制助手",
   "scripts": {
     "dev": "node scripts/dev.mjs fake",
     "dev:real": "node scripts/dev.mjs real",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "install:ci": "npm --prefix backend ci && npm --prefix frontend ci"
   },
   "engines": {
     "node": ">=20"
