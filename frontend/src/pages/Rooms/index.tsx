@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Alert, Button, Drawer, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined } from '@ant-design/icons';
+import {PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined, DeleteOutlined} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useRoomStore } from '../../stores/roomStore';
 import { useTagStore } from '../../stores/tagStore';
@@ -313,7 +313,7 @@ export default function Rooms() {
     },
     {
       title: '操作',
-      width: 170,
+      width: 220,
       fixed: 'right' as const,
       render: (_, room) => (
         <Space>
@@ -327,7 +327,7 @@ export default function Rooms() {
             title="删除后不可恢复，确定？"
             onConfirm={() => void removeRoom(room.id).catch(() => message.error('删除失败'))}
           >
-            <Button size="small" type="link" danger>
+            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
               删除
             </Button>
           </Popconfirm>
