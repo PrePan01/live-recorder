@@ -22,7 +22,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '0.5.66',
+        version: '0.5.67',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored && stored.recordingDirectory.length > 0),
         disk,

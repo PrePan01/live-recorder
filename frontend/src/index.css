@@ -1024,3 +1024,12 @@ body {
 .lr-settings-page .ant-card-body h5.ant-typography:first-child {
   margin-top: 0;
 }
+
+/* 监控卡片标题：文本与平台标签垂直居中对齐（PrePan 复验：ant-typography 底部对齐） */
+.lr-room-card .ant-card-head-title .ant-space-item {
+  display: inline-flex;
+  align-items: center;
+}
+.lr-room-card .ant-card-head-title .ant-typography {
+  line-height: 1.4;
+}

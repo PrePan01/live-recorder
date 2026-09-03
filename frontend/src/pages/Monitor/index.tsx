@@ -52,7 +52,7 @@ function RoomCard({
         <Space style={{ minWidth: 0, maxWidth: '100%' }} align="center">
           <PlatformLogoTag platform={room.platform} />
           <Tooltip title={room.displayName} className="lr-room-card__title">
-            <Typography.Text strong style={{ fontSize: 14, lineHeight: 1 }} ellipsis>
+            <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
               {room.displayName}
             </Typography.Text>
           </Tooltip>
