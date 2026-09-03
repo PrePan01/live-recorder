@@ -28,8 +28,15 @@ const run = (cmd, args, cwd) => {
 console.log('[package] 1/4 构建后端 dist…');
 run('npm', ['run', 'build'], path.join(root, 'backend'));
 
-// 2) tauri build（含前端 vite build + bundle-resources）
+// 1.5) 打包前把后端 node_modules 精简为仅生产依赖（dev 依赖 typescript/vitest 等占 ~90MB，运行不需要）
+//      打包完成后再恢复完整依赖，避免影响开发环境。
+const backendDir = path.join(root, 'backend');
+console.log('[package] 精简后端 node_modules 为生产依赖…');
+run('npm', ['prune', '--omit=dev'], backendDir);
+
+// 2) tauri build（含前端 vite build + bundle-resources；后端已在步骤 1 构建并精简，跳过 bundle-resources 内重建）
 console.log('[package] 2/4 tauri build…');
+process.env.LR_SKIP_BACKEND_BUILD = '1';
 run(isWin ? 'npx.cmd' : 'npx', ['tauri', 'build'], path.join(root, 'frontend'));
 
 // 3) macOS dmg
@@ -84,5 +91,13 @@ if (!isWin) {
 
 // 5) 清理 tauri target bundle 中间产物（只保留 release/）
 rmSync(bundle, { recursive: true, force: true });
+
+// 6) 恢复后端完整依赖（含 dev 依赖），避免影响开发/测试环境。
+console.log('[package] 恢复后端完整依赖（npm ci）…');
+try {
+  run('npm', ['ci'], backendDir);
+} catch {
+  console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
+}
 
 console.log(`[package] 完成 ✅ 产物已输出到 release/: ${products.join(', ')}`);
