@@ -91,7 +91,6 @@ npm run tauri:build
 
 - macOS：`cd frontend && npm run tauri:build`，产物在 `release/`（.app + .dmg）
 - Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物 `.msi` / `.exe`（或使用 CI 的 `windows-latest` runner）
-- 自动发布：版本号递增后推送到 `release` 分支，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 MSI，并创建 `v<版本号>` Release；同版本不会重复发布
 
 ### 分支与协作约定
 
@@ -99,6 +98,12 @@ npm run tauri:build
 - 完成 → lint / typecheck + 全量测试 → QA 分支回归 → `--no-ff` 合入 `main` → main 复测
 - 数据库迁移合入 `main` 后不可改写，新变更只追加新版本迁移
 - 提交使用约定式前缀、原子提交
+
+### 发布
+ `release` 分支更新将触发发布流程，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 MSI，并创建 `v<版本号>` Release；同版本不会重复发布
+
+**禁止直接推送至 `release` 分支**，仅可通过PR向 `release` 提交合并请求
+
 
 ## 贡献
 
