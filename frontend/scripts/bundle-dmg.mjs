@@ -3,13 +3,14 @@
 // 幂等：每次重建 rw 临时镜像→attach 放入 .app + Applications 快捷方式→detach→convert 为 UDZO→清理。
 // 失败自动清理临时文件，下次可重跑。
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, cpSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, cpSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const productName = 'Live Recorder';
-const version = '0.5.78';
+const tauriConfig = JSON.parse(readFileSync(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+const productName = tauriConfig.productName;
+const version = tauriConfig.version;
 const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
 const dmgName = `${productName}_${version}_${arch}.dmg`;
 const appPath = join(root, 'src-tauri', 'target', 'release', 'bundle', 'macos', `${productName}.app`);

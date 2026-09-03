@@ -7,7 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RELEASE="$ROOT/release"
 BUNDLE="$ROOT/frontend/src-tauri/target/release/bundle"
 APP_SRC="$BUNDLE/macos/Live Recorder.app"
-DMG_SRC="$BUNDLE/dmg/Live Recorder_0.5.78_aarch64.dmg"
+VERSION="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$ROOT/frontend/src-tauri/tauri.conf.json")"
+DMG_NAME="Live Recorder_${VERSION}_aarch64.dmg"
+DMG_SRC="$BUNDLE/dmg/$DMG_NAME"
 
 # 校验源 .app 完整（关键资源 node 二进制存在），避免打包未完成/损坏时拷贝出残件。
 if [ -d "$APP_SRC" ] && [ ! -f "$APP_SRC/Contents/Resources/node" ]; then
@@ -25,9 +27,9 @@ if [ -n "$APP_SRC" ]; then
 fi
 
 if [ -f "$DMG_SRC" ]; then
-  rm -f "$RELEASE/Live Recorder_0.5.78_aarch64.dmg"
+  rm -f "$RELEASE/$DMG_NAME"
   cp "$DMG_SRC" "$RELEASE/"
-  echo "[sync-release] .dmg -> $RELEASE/Live Recorder_0.5.78_aarch64.dmg"
+  echo "[sync-release] .dmg -> $RELEASE/$DMG_NAME"
 fi
 
 echo "[sync-release] release/ 已同步：" && ls -lah "$RELEASE" | tail -3
