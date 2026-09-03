@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.mjs fake",
     "dev:real": "node scripts/dev.mjs real",
     "package": "node scripts/package.mjs",
+    "setup": "npm install && npm --prefix backend install && npm --prefix frontend install",
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
     "install:ci": "npm --prefix backend ci && npm --prefix frontend ci"
   },
