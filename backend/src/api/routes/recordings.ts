@@ -155,6 +155,28 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     return reply.status(204).send();
   });
 
+  // #220 统一决策接口（FE 契约）：keep=true 保留（恢复管线+上传）；keep=false 不保留（删文件+删记录）。
+  app.post('/api/v1/recordings/:id/confirm', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { keep?: unknown };
+    if (typeof body.keep !== 'boolean') {
+      throw new AppError('CONFIG_INVALID', 'keep 必须为布尔值', { recordingId: id });
+    }
+    const rec = services.recordings.get(id);
+    if (!rec) {
+      throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
+    }
+    if (rec.state !== 'awaiting_confirmation') {
+      throw new AppError('CONFIG_INVALID', '仅待确认保留的录制可执行决策', { recordingId: id });
+    }
+    if (body.keep) {
+      services.manager.resumeAfterConfirmation(id);
+      return reply.send({ recording: services.recordings.get(id)! });
+    }
+    services.manager.discardAfterConfirmation(id);
+    return reply.status(204).send();
+  });
+
   // 批量删除录制（#67）：部分成功语义——每项独立删除（连带删文件、缺失容错），返回 deleted/failed。
   app.post('/api/v1/recordings/batch-delete', async (req, reply) => {
     const body = (req.body ?? {}) as { ids?: unknown };

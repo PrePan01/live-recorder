@@ -410,7 +410,7 @@ export class RecorderManager {
    * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
    */
   private finishOrConfirm(recordingId: string): void {
-    if (this.settings().confirmKeepAfterComplete) {
+    if (this.settings().confirmAfterComplete) {
       this.enterPendingConfirmation(recordingId);
     } else {
       this.finishSegmentProcessing(recordingId);
@@ -563,7 +563,7 @@ function defaultsLite(): AppSettings {
     mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
     dedupeWindowMinutes: 30,
     theme: 'system',
-    confirmKeepAfterComplete: false,
+    confirmAfterComplete: false,
   };
 }
 

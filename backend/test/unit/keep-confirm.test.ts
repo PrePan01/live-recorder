@@ -18,24 +18,24 @@ async function sleep(ms: number): Promise<void> {
 }
 
 describe('#220 录制完成「询问是否保留」', () => {
-  it('settings 默认 confirmKeepAfterComplete=false；PUT 接受布尔、拒绝非布尔', async () => {
+  it('settings 默认 confirmAfterComplete=false；PUT 接受布尔、拒绝非布尔', async () => {
     const { app } = buildApp(newServices());
     const before = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: HOST });
-    expect(before.json().settings.confirmKeepAfterComplete).toBe(false);
+    expect(before.json().settings.confirmAfterComplete).toBe(false);
 
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-keep-'));
     const bad = await app.inject({
       method: 'PUT', url: '/api/v1/settings', headers: HOST,
-      payload: { recordingDirectory: dir, confirmKeepAfterComplete: 'yes' },
+      payload: { recordingDirectory: dir, confirmAfterComplete: 'yes' },
     });
     expect(bad.statusCode).toBe(422);
 
     const ok = await app.inject({
       method: 'PUT', url: '/api/v1/settings', headers: HOST,
-      payload: { recordingDirectory: dir, confirmKeepAfterComplete: true },
+      payload: { recordingDirectory: dir, confirmAfterComplete: true },
     });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().settings.confirmKeepAfterComplete).toBe(true);
+    expect(ok.json().settings.confirmAfterComplete).toBe(true);
     await app.close();
   });
 
@@ -85,7 +85,7 @@ describe('#220 录制完成「询问是否保留」', () => {
 
     const set = await app.inject({
       method: 'PUT', url: '/api/v1/settings', headers: HOST,
-      payload: { recordingDirectory: dir, confirmKeepAfterComplete: true, retry: { maxAttempts: 0, delaysSeconds: [5, 15, 45] } },
+      payload: { recordingDirectory: dir, confirmAfterComplete: true, retry: { maxAttempts: 0, delaysSeconds: [5, 15, 45] } },
     });
     expect(set.statusCode).toBe(200);
 
@@ -109,6 +109,35 @@ describe('#220 录制完成「询问是否保留」', () => {
     await sleep(20);
     const rec = services.recordings.get(pending[0].id)!;
     expect(rec.state).toBe('completed');
+    await app.close();
+  });
+
+  it('统一决策接口 confirm：keep=true 保留、keep=false 删除；keep 非布尔/非待确认态 422', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-keep-'));
+    const file = path.join(dir, 'seg.flv');
+    await writeFile(file, 'FLV');
+    const rec = services.recordings.create({ roomId: 'room_1', roomName: '保留', platform: 'bilibili', streamSessionId: 's5', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'awaiting_confirmation', filePath: file, fileSizeBytes: 4 });
+
+    const bad = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec.id}/confirm`, headers: HOST, payload: { keep: 'yes' } });
+    expect(bad.statusCode).toBe(422);
+
+    const kept = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec.id}/confirm`, headers: HOST, payload: { keep: true } });
+    expect(kept.statusCode).toBe(200);
+    expect(kept.json().recording.state).toBe('completed');
+    await expect(access(file)).resolves.toBeUndefined();
+
+    const file2 = path.join(dir, 'seg2.flv');
+    await writeFile(file2, 'FLV2');
+    const rec2 = services.recordings.create({ roomId: 'room_1', roomName: '丢弃', platform: 'bilibili', streamSessionId: 's6', streamTitle: 't' });
+    services.recordings.update(rec2.id, { state: 'awaiting_confirmation', filePath: file2, fileSizeBytes: 4 });
+    const del = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec2.id}/confirm`, headers: HOST, payload: { keep: false } });
+    expect(del.statusCode).toBe(204);
+    expect(services.recordings.get(rec2.id)).toBeNull();
+    await sleep(20);
+    await expect(access(file2)).rejects.toBeTruthy();
     await app.close();
   });
 

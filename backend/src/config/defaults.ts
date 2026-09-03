@@ -44,5 +44,5 @@ export const DEFAULT_SETTINGS = {
   notifications: DEFAULT_NOTIFICATION_PREFERENCE,
   pipeline: DEFAULT_PIPELINE_CONFIG,
   namingRule: '{room}_{date}_{time}',
-  confirmKeepAfterComplete: false,
+  confirmAfterComplete: false,
 };
