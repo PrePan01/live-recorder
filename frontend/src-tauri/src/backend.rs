@@ -392,6 +392,13 @@ fn ready_file_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("LR_STATE_DIR") {
         return Some(PathBuf::from(dir).join("ready.json"));
     }
+    // 开发/运行环境数据目录覆盖：与后端 defaultDataDir 的 LIVE_RECORDER_DATA_DIR 保持一致
+    // （开发隔离时 dev 后端与 Tauri 宿主都落在同一独立数据目录）。
+    if let Ok(dir) = std::env::var("LIVE_RECORDER_DATA_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join("state").join("ready.json"));
+        }
+    }
     let home = std::env::var("HOME").ok()?;
     let base = if cfg!(target_os = "macos") {
         PathBuf::from(&home)

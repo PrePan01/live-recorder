@@ -132,16 +132,25 @@ class BrowserBridge implements NativeBridge {
     return (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:43120/api/v1';
   }
 
-  async getAppInstance(): Promise<AppInstance | null> {
+  /** 浏览器开发模式：端口随 VITE_API_BASE（dev.mjs 传 dev 端口 43130，默认 43120）。 */
+  private devInstance(): AppInstance {
+    const base = this.apiBase();
+    const match = /https?:\/\/127\.0\.0\.1:(\d+)/.exec(base);
+    const port = match ? Number(match[1]) : 43120;
+    const baseUrl = `http://127.0.0.1:${port}`;
     return {
       instanceId: 'browser-dev',
       pid: 0,
       host: '127.0.0.1',
-      port: 43120,
-      baseUrl: 'http://127.0.0.1:43120',
+      port,
+      baseUrl,
       apiVersion: 'v1',
       startedAt: new Date().toISOString(),
     };
+  }
+
+  async getAppInstance(): Promise<AppInstance | null> {
+    return this.devInstance();
   }
 
   async getHealth(): Promise<Health | null> {

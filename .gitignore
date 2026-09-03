@@ -10,3 +10,5 @@ backend/douyin/
 release/
 .idea/
 *.tsbuildinfo
+# 开发环境隔离数据目录（dev 后端 DB/state，勿入库）
+.dev-data/

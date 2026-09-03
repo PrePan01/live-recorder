@@ -74,6 +74,10 @@ export interface BuildOptions {
 }
 
 export function defaultDataDir(): string {
+  // 显式隔离覆盖（开发环境与本地安装客户端数据隔离，PrePan #219）：优先使用 LIVE_RECORDER_DATA_DIR，
+  // 否则退回系统默认应用数据目录。
+  const override = process.env.LIVE_RECORDER_DATA_DIR;
+  if (override && override.length > 0) return override;
   const home = os.homedir();
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'live-recorder');
   if (process.platform === 'win32') return path.join(process.env.APPDATA ?? home, 'live-recorder');
