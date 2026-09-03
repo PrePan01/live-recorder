@@ -17,8 +17,8 @@ export interface PreviewSink {
   resetRoom(roomId: string): void;
 }
 
-/** 录制完成「询问是否保留」待确认超时（#220）：超时未决策默认保留。 */
-export const KEEP_CONFIRM_TIMEOUT_MS = 30 * 60 * 1000;
+/** 录制完成「询问是否保留」待确认超时（#220）：超时未决策默认保留（PM 方案 10 分钟）。 */
+export const KEEP_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface ActiveSession {
   recordingId: string;
