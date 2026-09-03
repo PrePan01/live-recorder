@@ -219,7 +219,8 @@ export class StreamRecordingEngine implements RecordingEngine {
       }
       if (this.stopped) return;
       if (ended || !progressed) break;
-      await new Promise((r) => setTimeout(r, 3000));
+      // #226：轮询间隔自适应分片目标时长（默认 3s），HLS 短分片（如 2s）不再每 3s 才一波数据致周期性卡顿。
+      await new Promise((r) => setTimeout(r, hlsPollIntervalMs(parsed.targetDuration)));
     }
     await new Promise<void>((resolve) => ws.end(() => resolve()));
     if (this.stopped) return;
@@ -255,15 +256,26 @@ function toNetworkError(err: unknown): AppError {
   return new AppError('NETWORK_UNAVAILABLE', '拉流失败', { retryable: true });
 }
 
-function parseM3u8(text: string, baseUrl: string): { segments: string[]; ended: boolean } {
+export function parseM3u8(text: string, baseUrl: string): { segments: string[]; ended: boolean; targetDuration: number | null } {
   const segments: string[] = [];
   let ended = false;
+  let targetDuration: number | null = null;
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!.trim();
     if (line === '#EXT-X-ENDLIST') ended = true;
+    if (line.startsWith('#EXT-X-TARGETDURATION:')) {
+      const d = Number(line.split(':')[1]);
+      if (Number.isFinite(d) && d > 0) targetDuration = d;
+    }
     if (line.startsWith('#') || line === '') continue;
     segments.push(new URL(line, baseUrl).toString());
   }
-  return { segments, ended };
+  return { segments, ended, targetDuration };
+}
+
+/** #226：HLS 轮询间隔 = min(目标分片时长 × 0.8, 3000ms) 且 ≥1000ms；未知时长回退 3000ms。 */
+export function hlsPollIntervalMs(targetDuration: number | null): number {
+  if (!targetDuration) return 3000;
+  return Math.min(Math.max(Math.round(targetDuration * 800), 1000), 3000);
 }
