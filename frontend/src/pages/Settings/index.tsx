@@ -50,6 +50,10 @@ export default function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegCheck = checks?.find((c) => c.key === 'ffmpeg');
   const showFfmpegWarning = recordingFormat === 'mp4_after' && !!ffmpegCheck && ffmpegCheck.status !== 'ok';
+  const windowWindows =
+    typeof navigator !== 'undefined' &&
+    (navigator.platform.toLowerCase().includes('win') || /Windows/i.test(navigator.userAgent));
+  const ffmpegInstallCmd = windowWindows ? 'winget install Gyan.FFmpeg' : 'brew install ffmpeg';
 
   useEffect(() => {
     void load();
@@ -294,8 +298,8 @@ export default function SettingsPage() {
                 message="未检测到 ffmpeg，录制完成后转 MP4 不可用"
                 description={
                   <Typography.Text>
-                    需安装 Homebrew 视频工具后重试：请在终端执行{' '}
-                    <Typography.Text code>brew install ffmpeg</Typography.Text>
+                    请安装视频工具 ffmpeg 后重试（{windowWindows ? 'Windows 在 PowerShell 执行' : 'macOS 在终端执行'}）：{' '}
+                    <Typography.Text code>{ffmpegInstallCmd}</Typography.Text>
                     ，安装完成后点击「一键自检」重新检测。
                   </Typography.Text>
                 }

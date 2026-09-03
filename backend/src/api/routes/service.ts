@@ -98,7 +98,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
         label: '视频工具 ffmpeg',
         status: has ? 'ok' : 'warn',
         detail: has ? `ffmpeg 可用（${resolveBin('ffmpeg')}）` : '未找到 ffmpeg，录制完成后转 MP4 与后处理不可用',
-        fixHint: has ? '' : '安装 Homebrew 后执行：brew install ffmpeg',
+        fixHint: has ? '' : process.platform === 'win32' ? '安装 ffmpeg：winget install Gyan.FFmpeg' : '安装 Homebrew 后执行：brew install ffmpeg',
       };
     }));
 
