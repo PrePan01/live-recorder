@@ -172,6 +172,13 @@ export class PipelineManager {
           } else {
             this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩/转封装失败，保留源文件', endedAt: this.services.clock.iso() });
             finalStatus = 'partial';
+            // #229 ①压缩失败告警降级：明确告知上传的将是源文件（不缩容），不静默。
+            this.services.alerts.create({
+              level: 'warning',
+              source: 'pipeline',
+              message: `压缩/转封装失败，将上传源文件（${recording.id}）`,
+              occurredAt: this.services.clock.iso(),
+            });
           }
         }
       }

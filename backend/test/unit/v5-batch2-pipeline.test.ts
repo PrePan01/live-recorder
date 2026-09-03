@@ -656,7 +656,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(decodeURIComponent(taskUploadHeaders?.get('File-Path') ?? '')).toBe('/archive/task.flv');
     expect(infoCalls).toBe(3);
     expect(webDavPutCalls).toBe(0);
-    expect(progress).toEqual(expect.arrayContaining([50, 59, 86, 99, 100]));
+    expect(progress).toEqual(expect.arrayContaining([50, 59, 86, 100]));
   });
 });
 

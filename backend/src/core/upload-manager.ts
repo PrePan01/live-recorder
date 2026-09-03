@@ -202,7 +202,9 @@ export class RealWebDavClient implements WebDavClient {
         consecutivePollFailures = 0;
         task = payload.data;
         const serverPct = Math.max(0, Math.min(100, Number(task.progress) || 0));
-        onProgress(Math.min(99, 50 + Math.floor(serverPct * 0.49)));
+        // #229 ⑤真实进度透传：云盘写入完成（serverPct=100）但任务未翻 succeeded 时，
+        // 透传为收尾确认态（进度 100），不再封顶 99 形成「死区」；FE 据此显示「最终确认 + 已等待时长」。
+        onProgress(serverPct >= 100 ? 100 : Math.min(99, 50 + Math.floor(serverPct * 0.49)));
         if (task.state === 'succeeded') {
           onProgress(100);
           return true;
