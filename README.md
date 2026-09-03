@@ -50,11 +50,9 @@
 环境要求：Node.js ≥ 20。
 
 ```bash
-npm install
-npm run dev
+npm run setup
 npm run dev:real 
 ```
-
 
 ## 开发
 
