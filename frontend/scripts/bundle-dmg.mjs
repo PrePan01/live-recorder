@@ -44,11 +44,31 @@ function cleanup() {
   } catch { /* ignore */ }
 }
 
+function ensureValidAppSignature() {
+  const verifyArgs = ['--verify', '--deep', '--strict', appPath];
+  if (sh('codesign', verifyArgs).status === 0) {
+    console.log('[bundle:dmg] .app 签名校验通过');
+    return;
+  }
+
+  console.log('[bundle:dmg] .app 未完整签名，应用 ad-hoc 签名以封印所有资源');
+  const sign = sh('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', appPath]);
+  if (sign.status !== 0) {
+    throw new Error(`codesign 失败：${sign.stderr || sign.stdout}`);
+  }
+
+  const verify = sh('codesign', verifyArgs);
+  if (verify.status !== 0) {
+    throw new Error(`codesign 校验失败：${verify.stderr || verify.stdout}`);
+  }
+}
+
 function run() {
   if (!existsSync(appPath)) {
     console.error(`[bundle:dmg] 未找到 ${appPath}，请先 tauri build 产出 .app`);
     process.exit(1);
   }
+  ensureValidAppSignature();
   console.log(`[bundle:dmg] 生成 ${dmgName}`);
   mkdirSync(tmpDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
