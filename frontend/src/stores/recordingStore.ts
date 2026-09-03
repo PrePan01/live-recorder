@@ -32,6 +32,10 @@ interface RecordingState {
   /** SSE upload:updated 按 recordingId 更新对应录制的上传快照（#191）。 */
   patchRecordingUpload: (recordingId: string, upload: UploadSnapshot | null) => void;
   completionNotice: Recording | null;
+  /** #220/#221：录制完成进入「待确认保留」态的录制（SSE recording:updated 到 awaiting_confirmation 时设置）。 */
+  pendingConfirm: Recording | null;
+  /** #221：清空待确认保留提示（决策后或弹窗关闭）。 */
+  clearPendingConfirm: () => void;
 }
 
 export const useRecordingStore = create<RecordingState>((set, get) => ({
@@ -41,6 +45,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   pageSize: 20,
   loading: false,
   completionNotice: null,
+  pendingConfirm: null,
   query: {},
   async fetchHistory(q) {
     const query = { ...get().query, ...q };
@@ -94,8 +99,17 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
               : item
           ));
       const justCompleted = rec.state === 'completed' && previous?.state !== 'completed';
-      return { items, completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice };
+      // #220/#221：进入「待确认保留」态时提示用户（挂起管线/上传，等用户决策保留/删除）。
+      const justAwaiting = rec.state === 'awaiting_confirmation' && previous?.state !== 'awaiting_confirmation';
+      return {
+        items,
+        completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice,
+        pendingConfirm: justAwaiting ? normalizeRecording(rec) : s.pendingConfirm,
+      };
     });
+  },
+  clearPendingConfirm() {
+    set({ pendingConfirm: null });
   },
   patchRecordingUpload(recordingId, upload) {
     set((s) => {

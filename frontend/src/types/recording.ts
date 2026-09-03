@@ -2,7 +2,7 @@ import type { Platform } from './room';
 import type { ApiErrorEnvelope } from './error';
 
 
-export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'processing' | 'completed' | 'failed';
+export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'awaiting_confirmation' | 'processing' | 'completed' | 'failed';
 
 export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
 

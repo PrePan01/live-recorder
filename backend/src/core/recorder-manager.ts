@@ -17,6 +17,9 @@ export interface PreviewSink {
   resetRoom(roomId: string): void;
 }
 
+/** 录制完成「询问是否保留」待确认超时（#220）：超时未决策默认保留（PM 方案 10 分钟）。 */
+export const KEEP_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+
 interface ActiveSession {
   recordingId: string;
   roomId: string;
@@ -40,6 +43,9 @@ interface PreviewSession {
 export class RecorderManager {
   private active = new Map<string, ActiveSession>();
   preview: PreviewSink | null = null;
+
+  /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
+  private confirmTimers = new Map<string, unknown>();
 
   constructor(private services: Services, private notifier: Notifier) {}
 
@@ -303,8 +309,8 @@ export class RecorderManager {
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
-      // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装）。
-      this.finishSegmentProcessing(recordingId);
+      // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装；#220 询问保留时进入待确认）。
+      this.finishOrConfirm(recordingId);
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
@@ -336,7 +342,7 @@ export class RecorderManager {
     this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
     this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
     // 分段完成（续录）：同样执行分段级收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传。
-    this.finishSegmentProcessing(recordingId);
+    this.finishOrConfirm(recordingId);
 
     const rapid = settings.retry.delaysSeconds[attempt] ?? settings.retry.maxAttempts;
     if (attempt >= settings.retry.maxAttempts) {
@@ -395,8 +401,75 @@ export class RecorderManager {
     this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
-    // 异步校验文件完整性，不阻塞录制完成响应。
+    // 异步校验文件完整性，不阻塞录制完成响应（#220 询问保留时进入待确认态挂起管线/上传）。
+    this.finishOrConfirm(recordingId);
+  }
+
+  /**
+   * 分段完成收尾入口（#220）：设置「完成后询问是否保留」开启时，录制完成进入待确认态并挂起
+   * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
+   */
+  private finishOrConfirm(recordingId: string): void {
+    if (this.settings().confirmAfterComplete) {
+      this.enterPendingConfirmation(recordingId);
+    } else {
+      this.finishSegmentProcessing(recordingId);
+    }
+  }
+
+  /** 录制完成进入待确认态：state=awaiting_confirmation，挂起管线/上传，并安排超时自动保留。 */
+  private enterPendingConfirmation(recordingId: string): void {
+    const rec = this.services.recordings.get(recordingId);
+    if (!rec) return;
+    this.clearConfirmTimer(recordingId);
+    const updated = this.services.recordings.update(recordingId, { state: 'awaiting_confirmation' });
+    this.services.events.emit({ type: 'recording:updated', data: updated });
+    const handle = this.services.clock.setTimeout(() => this.resumeAfterConfirmation(recordingId), KEEP_CONFIRM_TIMEOUT_MS);
+    this.confirmTimers.set(recordingId, handle);
+  }
+
+  /**
+   * 保留决策（#220）：恢复管线+上传（等价于原分段级收尾）。清除超时定时器；
+   * 文件存在 → completed + 收尾；文件缺失 → failed（无法保留）。
+   */
+  resumeAfterConfirmation(recordingId: string): void {
+    this.clearConfirmTimer(recordingId);
+    const rec = this.services.recordings.get(recordingId);
+    if (!rec) return;
+    if (!rec.filePath) {
+      const err = new AppError('RECORDING_FILE_CORRUPTED', '待确认录制文件缺失，无法保留', { recordingId, roomId: rec.roomId, retryable: false });
+      const failed = this.services.recordings.update(recordingId, { state: 'failed', failureReason: err.toObject() });
+      this.services.events.emit({ type: 'recording:updated', data: failed });
+      return;
+    }
+    const updated = this.services.recordings.update(recordingId, { state: 'completed' });
+    this.services.events.emit({ type: 'recording:updated', data: updated });
     this.finishSegmentProcessing(recordingId);
+  }
+
+  /** 不保留决策（#220）：删除文件 + 删除录制记录，并清除超时定时器。 */
+  discardAfterConfirmation(recordingId: string): void {
+    this.clearConfirmTimer(recordingId);
+    const rec = this.services.recordings.get(recordingId);
+    if (!rec) return;
+    if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
+    this.services.recordings.remove(recordingId);
+  }
+
+  /** 启动恢复（#220）：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
+  resumePendingConfirmations(): void {
+    const pending = this.services.recordings.list({ pageSize: 100 }).items.filter((r) => r.state === 'awaiting_confirmation');
+    for (const rec of pending) {
+      this.resumeAfterConfirmation(rec.id);
+    }
+  }
+
+  private clearConfirmTimer(recordingId: string): void {
+    const handle = this.confirmTimers.get(recordingId);
+    if (handle !== undefined) {
+      this.services.clock.clearTimeout(handle);
+      this.confirmTimers.delete(recordingId);
+    }
   }
 
   /**
@@ -490,6 +563,7 @@ function defaultsLite(): AppSettings {
     mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
     dedupeWindowMinutes: 30,
     theme: 'system',
+    confirmAfterComplete: false,
   };
 }
 
