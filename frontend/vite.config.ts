@@ -15,7 +15,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // dev 后端端口可通过 LIVE_RECORDER_PORT 覆盖（开发隔离默认 43130，正式默认 43120）。
+      // dev 后端端口可通过 LIVE_RECORDER_PORT 覆盖（开发隔离默认 43140，正式默认 43120）。
       '/api': { target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, changeOrigin: true },
       '/ws': { target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, ws: true, changeOrigin: true },
     },
