@@ -33,10 +33,11 @@ function start(name, cmd, args, cwd, extraEnv = {}) {
 }
 
 // 开发环境数据隔离（PrePan #219）：dev 后端使用仓库本地 .dev-data 作为独立数据目录
-// （DB/state/实例锁/ready 全部隔离），并改用独立端口 43130，避免与本地安装的正式客户端
-// 共享数据或端口冲突。dev 后端改写的房间/设置/录制记录等不会影响正式客户端。
+// （DB/state/实例锁/ready 全部隔离），并改用独立端口 43140（避开正式客户端候选端口
+// 43120-43130 的探测范围——否则正式客户端可能误接管 dev 后端，P0 隔离缺陷），
+// 避免与本地安装的正式客户端共享数据或端口冲突。dev 后端改写的房间/设置/录制记录等不会影响正式客户端。
 const devDataDir = path.join(root, '.dev-data');
-const devPort = process.env.LIVE_RECORDER_PORT ?? '43130';
+const devPort = process.env.LIVE_RECORDER_PORT ?? '43140';
 const devApiBase = `http://127.0.0.1:${devPort}/api/v1`;
 
 console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，数据目录=${devDataDir}，端口=${devPort}，前端直连后端`);
