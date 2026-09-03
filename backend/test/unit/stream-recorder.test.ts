@@ -2,7 +2,7 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { StreamRecordingEngine } from '../../src/recorder/stream-recorder.js';
+import { StreamRecordingEngine, parseM3u8, hlsPollIntervalMs } from '../../src/recorder/stream-recorder.js';
 
 function chunksBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -296,5 +296,21 @@ describe('StreamRecordingEngine (HLS)', () => {
     const onDisk = await readFile(out);
     expect(onDisk.length).toBe(6);
     expect(onDisk.subarray(0, 1)[0]).toBe(0x47);
+  });
+});
+describe('#226 HLS 轮询间隔自适应', () => {
+  it('parseM3u8 解析目标分片时长', () => {
+    const m3u = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nhttps://x/seg1.ts\n#EXT-X-ENDLIST\n';
+    const parsed = parseM3u8(m3u, 'https://x/');
+    expect(parsed.targetDuration).toBe(2);
+    expect(parsed.ended).toBe(true);
+    expect(parsed.segments).toEqual(['https://x/seg1.ts']);
+  });
+
+  it('hlsPollIntervalMs 按目标时长自适应（2s→1.6s，4s→3s，未知→3s）', () => {
+    expect(hlsPollIntervalMs(2)).toBe(1600);
+    expect(hlsPollIntervalMs(1)).toBe(1000);
+    expect(hlsPollIntervalMs(4)).toBe(3000);
+    expect(hlsPollIntervalMs(null)).toBe(3000);
   });
 });
