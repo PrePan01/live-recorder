@@ -2,11 +2,11 @@ name: Release desktop apps
 
 on:
   push:
-    branches: [main]
+    branches: [release]
   workflow_dispatch:
 
 concurrency:
-  group: release-main
+  group: release-branch
   cancel-in-progress: false
 
 jobs:
