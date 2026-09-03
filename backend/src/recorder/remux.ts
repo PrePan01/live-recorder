@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveBin } from '../utils/ffmpeg.js';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -24,7 +25,7 @@ export async function remuxFlvToMp4(flvPath: string): Promise<string | null> {
 
 function runFfmpeg(args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn('ffmpeg', args);
+    const child = spawn(resolveBin('ffmpeg'), args);
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve(false);

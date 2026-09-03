@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveBin } from '../utils/ffmpeg.js';
 import { mkdir, stat, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -12,7 +13,7 @@ interface FfmpegResult {
 
 export function runFfmpeg(args: string[], timeoutMs = FFMPEG_TIMEOUT_MS): Promise<FfmpegResult> {
   return new Promise((resolve) => {
-    const child = spawn('ffmpeg', args);
+    const child = spawn(resolveBin('ffmpeg'), args);
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve({ ok: false, code: null, stderr: 'timeout' });

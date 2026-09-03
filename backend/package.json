@@ -1,6 +1,6 @@
 {
   "name": "@live-recorder/backend",
-  "version": "0.5.67",
+  "version": "0.5.68",
   "private": true,
   "type": "module",
   "description": "本地直播录制服务（localhost-only resident service）",
