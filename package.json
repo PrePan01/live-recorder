@@ -5,7 +5,8 @@
   "description": "直播录制助手（localhost 常驻服务 + Web 管理控制台）",
   "scripts": {
     "dev": "node scripts/dev.mjs fake",
-    "dev:real": "node scripts/dev.mjs real"
+    "dev:real": "node scripts/dev.mjs real",
+    "package": "node scripts/package.mjs"
   },
   "engines": {
     "node": ">=20"
