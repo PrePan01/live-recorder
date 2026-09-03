@@ -658,6 +658,67 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(webDavPutCalls).toBe(0);
     expect(progress).toEqual(expect.arrayContaining([50, 59, 86, 100]));
   });
+
+  it('#229 multipart 分片并发上传：分片→complete(As-Task)→任务轮询成功', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-multipart-'));
+    const file = path.join(dir, 'big.flv');
+    await writeFile(file, Buffer.alloc(40)); // 40B，配合小阈值/小 chunk 触发分片
+    const progress: number[] = [];
+    let chunkCalls: string[] = [];
+    let completeCalls = 0;
+    let taskCalls = 0;
+    const client = new RealWebDavClient({ multipartThresholdBytes: 1, multipartChunkSizeBytes: 16, multipartConcurrency: 2, taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.includes('/api/fs/multipart')) {
+        if (url.includes('action=complete')) {
+          completeCalls += 1;
+          return new Response(JSON.stringify({ code: 200, data: { task: { id: 'mt-task', state: 'running', progress: 100 } } }), { status: 200 });
+        }
+        chunkCalls.push((init?.headers as Record<string, string>)['X-Chunk-Index'] ?? '');
+        return new Response(JSON.stringify({ code: 200, data: { upload_id: 'sess-1' } }), { status: 200 });
+      }
+      if (url.includes('/api/task/upload/info')) {
+        taskCalls += 1;
+        return new Response(JSON.stringify({ code: 200, data: { id: 'mt-task', state: 'succeeded', progress: 100 } }), { status: 200 });
+      }
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/archive/big.flv', file, 'u', 'password', (pct) => progress.push(pct), 'https://dav.example.com/dav/archive');
+    } finally {
+      globalThis.fetch = orig;
+    }
+    // 40B / 16B chunk = 3 片（0/1/2），分片 0 建立会话，其余并发。
+    expect(chunkCalls).toEqual(expect.arrayContaining(['0', '1', '2']));
+    expect(completeCalls).toBe(1);
+    expect(taskCalls).toBeGreaterThan(0);
+    expect(progress[progress.length - 1]).toBe(100);
+  });
+
+  it('#229 multipart 不支持（404）→ 严格回退单 PUT，上传仍成功', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-multipart-fb-'));
+    const file = path.join(dir, 'big2.flv');
+    await writeFile(file, Buffer.alloc(40));
+    const client = new RealWebDavClient({ multipartThresholdBytes: 1, multipartChunkSizeBytes: 16, taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    let singlePut = 0;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.includes('/api/fs/multipart')) return new Response('', { status: 404 });
+      if (init?.method === 'PUT') { singlePut += 1; return new Response('', { status: 200 }); }
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/archive/big2.flv', file, 'u', 'password', () => undefined, 'https://dav.example.com/dav/archive');
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(singlePut).toBeGreaterThan(0);
+  });
 });
 
 describe('V5 Batch2 email simplification (#117)', () => {

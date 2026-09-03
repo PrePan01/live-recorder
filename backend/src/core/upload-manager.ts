@@ -1,4 +1,4 @@
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -24,6 +24,11 @@ interface WebDavClientOptions {
   taskPollTimeoutMs: number;
   /** #228：后台上传任务进度长时间无变化的卡滞判定窗口；超过则用远端文件核验兜底判定。 */
   taskStallTimeoutMs: number;
+  /** #229 分片并发上传：启用开关与参数（大小单位字节）。 */
+  multipartEnabled: boolean;
+  multipartThresholdBytes: number;
+  multipartChunkSizeBytes: number;
+  multipartConcurrency: number;
 }
 
 const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
@@ -37,6 +42,11 @@ const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
   // #228：后台上传任务等待上限 6h 过长 → 30min；配合 taskStallTimeoutMs 卡滞判定，避免 99% 无限挂起。
   taskPollTimeoutMs: 30 * 60_000,
   taskStallTimeoutMs: 10 * 60_000,
+  // #229 分片并发上传：≥50MB 走 multipart（8MB×4 并发），能力探测失败自动回退单 PUT。
+  multipartEnabled: true,
+  multipartThresholdBytes: 50 * 1024 * 1024,
+  multipartChunkSizeBytes: 8 * 1024 * 1024,
+  multipartConcurrency: 4,
 };
 
 interface OpenListTaskInfo {
@@ -293,10 +303,159 @@ export class RealWebDavClient implements WebDavClient {
     }
   }
 
+  /**
+   * #229 分片并发上传：OpenList PUT /api/fs/multipart?action=upload|complete（PR #1877）。
+   * 能力探测 + 严格回退：分片端点不支持（404/405）或响应 schema 未知 → 返回 false 走既有单 PUT/As-Task，
+   * 绝不影响既有上传路径。大文件按 chunk 分片并发上传（分片幂等=断点续传只传缺失片），complete 走 As-Task 轮询。
+   */
+  private async putAsMultipart(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<boolean> {
+    if (!this.options.multipartEnabled || !serverUrl) return false;
+    const size = statSync(localPath).size;
+    if (size < this.options.multipartThresholdBytes) return false;
+    const target = this.apiTarget(serverUrl, remotePath);
+    if (!target) return false;
+    const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
+    const chunkSize = this.options.multipartChunkSizeBytes;
+    const totalChunks = Math.max(1, Math.ceil(size / chunkSize));
+    const concurrency = Math.max(1, Math.min(this.options.multipartConcurrency, totalChunks));
+
+    let uploadId: string | null = null;
+    let unsupported = false;
+    const failUnsupported = () => { unsupported = true; throw new Error('multipart-unsupported'); };
+
+    const chunkHeaders = (index: number): Record<string, string> => {
+      const headers: Record<string, string> = {
+        Authorization: authorization,
+        'File-Path': encodeURIComponent(target.filePath),
+        'X-Chunk-Index': String(index),
+        Overwrite: 'true',
+        'As-Task': 'false',
+      };
+      if (index === 0) {
+        headers['X-File-Size'] = String(size);
+        headers['X-Chunk-Size'] = String(chunkSize);
+      } else if (uploadId) {
+        headers['X-Upload-Id'] = uploadId;
+      }
+      return headers;
+    };
+
+    const uploadChunk = async (index: number): Promise<void> => {
+      const start = index * chunkSize;
+      const end = Math.min(start + chunkSize, size);
+      const chunk = readRange(localPath, start, end);
+      const res = await fetch(`${target.root}/api/fs/multipart?action=upload`, {
+        method: 'PUT',
+        headers: chunkHeaders(index),
+        body: chunk,
+        duplex: 'half',
+        signal: AbortSignal.timeout(this.options.uploadIdleTimeoutMs + 30_000),
+      });
+      if (!res.ok) return failUnsupported();
+      if (index === 0) {
+        try {
+          const payload = await res.json() as { data?: Record<string, unknown> };
+          const d = payload.data ?? {};
+          uploadId = (d.upload_id as string | undefined) ?? (d.uploadId as string | undefined) ?? (d.id as string | undefined) ?? null;
+        } catch {
+          return failUnsupported();
+        }
+        if (!uploadId) return failUnsupported();
+      }
+      // 进度：已传分片累计到本地阶段（0~49% 上限映射沿用约定）。
+      onProgress(Math.min(49, Math.floor(((index + 1) / totalChunks) * 49)));
+    };
+
+    try {
+      // ①分片 0 先传：探测端点 + 建立会话（拿到 upload_id）。
+      await uploadChunk(0);
+      // ②其余分片并发上传（幂等重传安全；上传失败的重试只重传缺失分片=断点续传）。
+      const remaining = Array.from({ length: totalChunks - 1 }, (_, i) => i + 1);
+      for (let i = 0; i < remaining.length; i += concurrency) {
+        await Promise.all(remaining.slice(i, i + concurrency).map((idx) => uploadChunk(idx).catch((err) => {
+          if (unsupported) throw err;
+          // 网络类单分片失败：重试一次（幂等，安全）。
+          return uploadChunk(idx);
+        })));
+      }
+      // ③complete：合并分片；As-Task=true 让云端落盘走既有任务轮询+校验兜底。
+      const completeRes = await fetch(`${target.root}/api/fs/multipart?action=complete`, {
+        method: 'PUT',
+        headers: {
+          Authorization: authorization,
+          'File-Path': encodeURIComponent(target.filePath),
+          'X-Upload-Id': uploadId!,
+          'X-File-Size': String(size),
+          'As-Task': 'true',
+          Overwrite: 'true',
+        },
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!completeRes.ok) return failUnsupported();
+      const completePayload = await completeRes.json() as { code?: number; data?: { task?: { id?: string } } };
+      const taskId = completePayload.data?.task?.id;
+      if (!taskId) return failUnsupported();
+      await this.pollTaskUntilDone(remotePath, size, username, token, taskId, onProgress, serverUrl);
+      onProgress(100);
+      return true;
+    } catch (err) {
+      if (unsupported) return false;
+      throw err;
+    }
+  }
+
+  /** 复用既有任务轮询语义：轮询 OpenList 后台上传任务至 succeeded/failed/超时，卡滞用远端文件核验兜底。 */
+  private async pollTaskUntilDone(remotePath: string, size: number, username: string, token: string, taskId: string, onProgress: (pct: number) => void, serverUrl: string): Promise<void> {
+    const target = this.apiTarget(serverUrl, remotePath);
+    const base = target ? target.root : '';
+    const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
+    const startedAt = Date.now();
+    let lastServerPct = -1;
+    let lastProgressChangeAt = Date.now();
+    let consecutiveFailures = 0;
+    while (Date.now() - startedAt < this.options.taskPollTimeoutMs) {
+      await this.delay(this.options.taskPollIntervalMs);
+      try {
+        const res = await fetch(`${base}/api/task/upload/info?tid=${encodeURIComponent(taskId)}`, {
+          method: 'POST',
+          headers: { Authorization: authorization },
+          signal: AbortSignal.timeout(20_000),
+        });
+        const payload = await res.json() as { data?: OpenListTaskInfo };
+        if (!res.ok || !payload.data) throw new Error('task poll failed');
+        consecutiveFailures = 0;
+        const serverPct = Math.max(0, Math.min(100, Number(payload.data.progress) || 0));
+        onProgress(Math.min(99, 50 + Math.floor(serverPct * 0.49)));
+        if (payload.data.state === 'succeeded') return;
+        if (payload.data.state === 'failed' || payload.data.state === 'canceled') {
+          throw new Error(`OpenList 分片合并/落盘${payload.data.state === 'canceled' ? '已取消' : '失败'}${payload.data.error ? `：${payload.data.error}` : ''}`);
+        }
+        if (serverPct !== lastServerPct) {
+          lastServerPct = serverPct;
+          lastProgressChangeAt = Date.now();
+        } else if (Date.now() - lastProgressChangeAt >= this.options.taskStallTimeoutMs) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) return;
+          throw new Error('OpenList 分片合并/落盘进度长时间无变化，请检查云端存储');
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith('OpenList 分片')) throw err;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 10) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) return;
+          throw new Error(`无法读取 OpenList 分片任务进度：${message}`);
+        }
+      }
+    }
+    throw new Error('OpenList 分片合并/落盘等待超时');
+  }
+
   async put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void> {
     const size = statSync(localPath).size;
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
     await this.ensureParentCollections(remotePath, authorization, serverUrl);
+    // #229 分片并发：大文件优先走 OpenList multipart 分片上传（能力探测+严格回退，失败自动退回单 PUT）。
+    if (await this.putAsMultipart(remotePath, localPath, username, token, onProgress, serverUrl)) return;
     if (await this.putAsOpenListTask(remotePath, localPath, username, token, onProgress, serverUrl)) return;
     let uploaded = 0;
     let lastPct = -1;
@@ -584,5 +743,23 @@ export class UploadManager {
   private emit(jobId: string): void {
     const job = this.repo.get(jobId);
     if (job) this.services.events.emit({ type: 'upload:updated', data: job });
+  }
+}
+
+/** #229 分片上传：同步读取文件 [start,end) 区间字节。 */
+function readRange(filePath: string, start: number, end: number): Buffer {
+  const length = end - start;
+  const fd = openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    let offset = 0;
+    while (offset < length) {
+      const n = readSync(fd, buf, offset, length - offset, start + offset);
+      if (n <= 0) break;
+      offset += n;
+    }
+    return buf.subarray(0, offset);
+  } finally {
+    closeSync(fd);
   }
 }
