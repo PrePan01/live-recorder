@@ -31,9 +31,23 @@ function start(name, cmd, args, cwd, extraEnv = {}) {
   children.push(child);
 }
 
-console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，前端直连后端`);
-start('backend', 'npm', ['run', 'dev'], 'backend');
-start('frontend', 'npm', ['run', 'dev'], 'frontend', { VITE_USE_MOCK: '0' });
+// 开发环境数据隔离（PrePan #219）：dev 后端使用仓库本地 .dev-data 作为独立数据目录
+// （DB/state/实例锁/ready 全部隔离），并改用独立端口 43130，避免与本地安装的正式客户端
+// 共享数据或端口冲突。dev 后端改写的房间/设置/录制记录等不会影响正式客户端。
+const devDataDir = path.join(root, '.dev-data');
+const devPort = process.env.LIVE_RECORDER_PORT ?? '43130';
+const devApiBase = `http://127.0.0.1:${devPort}/api/v1`;
+
+console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，数据目录=${devDataDir}，端口=${devPort}，前端直连后端`);
+start('backend', 'npm', ['run', 'dev'], 'backend', {
+  LIVE_RECORDER_DATA_DIR: devDataDir,
+  LIVE_RECORDER_PORT: devPort,
+});
+start('frontend', 'npm', ['run', 'dev'], 'frontend', {
+  VITE_USE_MOCK: '0',
+  VITE_API_BASE: devApiBase,
+  LIVE_RECORDER_PORT: devPort,
+});
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

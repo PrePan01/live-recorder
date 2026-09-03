@@ -1,7 +1,8 @@
 import type { AppInstance } from '../types/desktop';
 import { apiBaseUrl } from '../types/desktop';
 
-const DEFAULT_BASE = 'http://127.0.0.1:43120/api/v1';
+const DEFAULT_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:43120/api/v1';
 
 let current: AppInstance | null = null;
 const listeners = new Set<(base: string) => void>();
