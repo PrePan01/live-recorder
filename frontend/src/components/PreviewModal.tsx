@@ -78,7 +78,6 @@ export default function PreviewModal({
       width={Math.min(width + 48, 1280)}
       destroyOnHidden
       onCancel={onClose}
-      styles={{ body: { padding: 12 } }}
     >
       <div>
         <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
