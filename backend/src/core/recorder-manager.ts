@@ -303,6 +303,8 @@ export class RecorderManager {
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+      // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装）。
+      this.finishSegmentProcessing(recordingId);
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
@@ -333,6 +335,8 @@ export class RecorderManager {
     const settings = this.settings();
     this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
     this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+    // 分段完成（续录）：同样执行分段级收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传。
+    this.finishSegmentProcessing(recordingId);
 
     const rapid = settings.retry.delaysSeconds[attempt] ?? settings.retry.maxAttempts;
     if (attempt >= settings.retry.maxAttempts) {
@@ -392,6 +396,16 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
     // 异步校验文件完整性，不阻塞录制完成响应。
+    this.finishSegmentProcessing(recordingId);
+  }
+
+  /**
+   * 分段级收尾（分段完成/录制完成共用）：异步完整性校验 + 管线入队（未启用时触发上传）+ mp4_after 转封装。
+   * 断流续录的中间分段也必须走这里，否则中间分段永远停在 .flv、也不会上传（PrePan：完成后转 MP4 不可用）。
+   */
+  private finishSegmentProcessing(recordingId: string): void {
+    const rec = this.services.recordings.get(recordingId);
+    if (!rec) return;
     if (rec.filePath) this.verifyIntegrity(rec);
     // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）。
     this.services.pipeline.enqueue(recordingId);

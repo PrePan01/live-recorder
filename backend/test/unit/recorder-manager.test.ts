@@ -419,4 +419,40 @@ describe('RecorderManager', () => {
     }
     await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
   });
+
+  it('finishes intermediate segment processing on natural-end continue (mp4_after/上传 分段收尾)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mp4-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save({
+      ...baseSettings(dir),
+      recordingFormat: 'mp4_after',
+      openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' },
+    } as AppSettings);
+    await services.secretStore.set('openlist.token', 'tok');
+    services.manager.preview = new FakePreview();
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1' },
+      { status: 'live', streamSessionId: 's1' },
+    ]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/21', displayName: 'P' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const first = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
+    // 自然结束仍开播 → 开新段续录；旧段 completed 后必须走分段收尾（pipeline.enqueue → uploader.enqueue 建上传任务）。
+    for (let i = 0; i < 20 && services.recordings.list({ roomId: room.id }).items.length < 2; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length >= 2);
+    await waitFor(() => services.uploader.uploadRepo.jobForRecording(first.id) !== null);
+    expect(services.uploader.uploadRepo.jobForRecording(first.id)).not.toBeNull();
+
+    const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 20 && services.recordings.get(activeRec.id)!.state !== 'completed'; i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+  });
 });
