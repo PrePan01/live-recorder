@@ -4,6 +4,7 @@ import type { Services } from './services.js';
 import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
+import { resolveBin } from '../utils/ffmpeg.js';
 import { extractCoverFrame, segmentFile, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
 import type { Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
@@ -218,7 +219,7 @@ async function probeDurationMs(filePath: string): Promise<number | null> {
   try {
     const { spawn } = await import('node:child_process');
     return await new Promise<number | null>((resolve) => {
-      const child = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath]);
+      const child = spawn(resolveBin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath]);
       let out = '';
       const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(null); }, 15_000);
       child.stdout.on('data', (d: Buffer) => { out += d.toString(); });
