@@ -105,6 +105,6 @@ npm run tauri:build
 4. 合入前请确保：lint / typecheck / 全量测试通过，并由 QA 完成回归
 
 ## 截图
-![](http://qn.bspartner.top/images/PixPin_2026-09-03_15-20-20-2026-09-03-704Er2S1.png)
+![](docs/images/overview.png)
 
-![](http://qn.bspartner.top/images/PixPin_2026-09-03_15-20-32-2026-09-03-xMWCZMnv.png)
+![](docs/images/upload.png)
