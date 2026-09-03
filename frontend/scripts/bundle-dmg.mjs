@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const productName = 'Live Recorder';
-const version = '0.5.73';
+const version = '0.5.74';
 const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
 const dmgName = `${productName}_${version}_${arch}.dmg`;
 const appPath = join(root, 'src-tauri', 'target', 'release', 'bundle', 'macos', `${productName}.app`);
