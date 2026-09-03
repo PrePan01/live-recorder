@@ -95,6 +95,12 @@ describe('#220 录制完成「询问是否保留」', () => {
     });
     const room = created.json().room;
 
+    // #222：confirmAfterComplete 开启时不得发出中间 completed 的 recording:updated（避免「已保存+确认框」双弹）。
+    const emittedStates: Array<{ id: string; state: string }> = [];
+    const unsub = services.events.on((e) => {
+      if (e.type === 'recording:updated') emittedStates.push({ id: e.data.id, state: e.data.state });
+    });
+
     await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 's99' });
     // 驱动假引擎写满 frames 并 natural end（fake engine：6 帧 × 500ms，逐拍推进以触发各帧定时器）。
     for (let i = 0; i < 10; i += 1) {
@@ -104,10 +110,16 @@ describe('#220 录制完成「询问是否保留」', () => {
     const pending = services.recordings.list({ pageSize: 100 }).items;
     expect(pending.some((r) => r.state === 'awaiting_confirmation')).toBe(true);
 
+    const recId = pending.find((r) => r.state === 'awaiting_confirmation')!.id;
+    const forThis = emittedStates.filter((e) => e.id === recId);
+    expect(forThis.some((e) => e.state === 'completed')).toBe(false);
+    expect(forThis.filter((e) => e.state === 'awaiting_confirmation').length).toBeGreaterThan(0);
+    unsub();
+
     // 超时默认保留：推进超过 KEEP_CONFIRM_TIMEOUT_MS。
     clock.advance(KEEP_CONFIRM_TIMEOUT_MS + 1000);
     await sleep(20);
-    const rec = services.recordings.get(pending[0].id)!;
+    const rec = services.recordings.get(recId)!;
     expect(rec.state).toBe('completed');
     await app.close();
   });

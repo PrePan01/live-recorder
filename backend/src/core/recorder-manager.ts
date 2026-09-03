@@ -308,7 +308,8 @@ export class RecorderManager {
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
-      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+      // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
+      if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
       // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装；#220 询问保留时进入待确认）。
       this.finishOrConfirm(recordingId);
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
@@ -340,7 +341,8 @@ export class RecorderManager {
     }
     const settings = this.settings();
     this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
-    this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+    // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
+    if (!settings.confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
     // 分段完成（续录）：同样执行分段级收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传。
     this.finishOrConfirm(recordingId);
 
@@ -398,7 +400,8 @@ export class RecorderManager {
     this.active.delete(room.id);
     this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
-    this.services.events.emit({ type: 'recording:updated', data: rec });
+    // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
+    if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
     // 异步校验文件完整性，不阻塞录制完成响应（#220 询问保留时进入待确认态挂起管线/上传）。
