@@ -107,6 +107,19 @@ export default function SettingsPage() {
     }
   };
 
+  // 选择「完成后转 MP4」时自动检测 ffmpeg：缺失则自动切回「源 FLV 直写」并提示（PrePan 反馈）。
+  useEffect(() => {
+    if (recordingFormat !== 'mp4_after') return;
+    if (!checks) {
+      void runSelfCheck();
+      return;
+    }
+    if (ffmpegCheck && ffmpegCheck.status !== 'ok') {
+      message.warning('未检测到 ffmpeg，录制格式已自动切回「源 FLV 直写」');
+      form.setFieldValue('recordingFormat', 'source_flv');
+    }
+  }, [recordingFormat, checks, ffmpegCheck]);
+
   const sendTest = async () => {
     try {
       const res = await testNotification();
