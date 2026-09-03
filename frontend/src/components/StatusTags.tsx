@@ -16,6 +16,7 @@ const RECORDING_META: Record<RecordingState, { color: string; text: string }> = 
   pending: { color: 'default', text: '待启动' },
   recording: { color: 'red', text: '录制中' },
   reconnecting: { color: 'orange', text: '重连中' },
+  awaiting_confirmation: { color: 'gold', text: '待确认' },
   processing: { color: 'geekblue', text: '处理中' },
   completed: { color: 'green', text: '已完成' },
   failed: { color: 'error', text: '失败' },
