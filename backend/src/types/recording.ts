@@ -9,6 +9,7 @@ export type RecordingState =
   | 'recording'
   | 'reconnecting'
   | 'processing'
+  | 'awaiting_confirmation'
   | 'completed'
   | 'failed';
 
