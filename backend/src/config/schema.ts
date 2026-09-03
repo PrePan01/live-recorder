@@ -22,6 +22,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.autoRecord !== undefined && typeof s.autoRecord !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'autoRecord 必须为布尔值');
   }
+  if (s.confirmKeepAfterComplete !== undefined && typeof s.confirmKeepAfterComplete !== 'boolean') {
+    throw new AppError('CONFIG_INVALID', 'confirmKeepAfterComplete 必须为布尔值');
+  }
   if (s.theme !== undefined && s.theme !== 'light' && s.theme !== 'dark' && s.theme !== 'system') {
     throw new AppError('CONFIG_INVALID', 'theme 仅支持 light/dark/system');
   }

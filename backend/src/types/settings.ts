@@ -61,6 +61,8 @@ export interface AppSettings {
   pipeline?: PipelineConfig;
   /** V5 录制文件命名模板（Batch2 #115）；修改只影响新录制。 */
   namingRule?: string;
+  /** 录制完成后是否询问保留（#220）：默认关；开启后完成进入待确认态并挂起管线/上传，保留则恢复、不保留则删除。 */
+  confirmKeepAfterComplete?: boolean;
   /** V5 OpenList 上传配置（Batch2 #116；令牌经 SecretStore 不落盘）。 */
   openlist?: OpenListConfig;
 }
@@ -146,4 +148,6 @@ export interface SettingsView {
   pipeline?: PipelineConfig;
   /** V5 录制文件命名模板（Batch2 #115）。 */
   namingRule: string;
+  /** 录制完成后是否询问保留（#220）。 */
+  confirmKeepAfterComplete: boolean;
 }

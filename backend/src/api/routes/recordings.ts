@@ -8,7 +8,7 @@ import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import type { RecordingState } from '../../types/index.js';
 
-const STATES: RecordingState[] = ['pending', 'recording', 'reconnecting', 'completed', 'failed'];
+const STATES: RecordingState[] = ['pending', 'recording', 'reconnecting', 'awaiting_confirmation', 'completed', 'failed'];
 
 export function registerRecordingRoutes(app: FastifyInstance, services: Services): void {
   app.get('/api/v1/recordings', async (req, reply) => {
@@ -124,6 +124,34 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
       await unlink(rec.filePath).catch(() => undefined);
     }
     services.recordings.remove(id);
+    return reply.status(204).send();
+  });
+
+  // #220 录制完成「询问是否保留」：保留决策——恢复管线+上传（等价原分段级收尾）。
+  app.post('/api/v1/recordings/:id/keep', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) {
+      throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
+    }
+    if (rec.state !== 'awaiting_confirmation') {
+      throw new AppError('CONFIG_INVALID', '仅待确认保留的录制可执行保留', { recordingId: id });
+    }
+    services.manager.resumeAfterConfirmation(id);
+    return reply.send({ recording: services.recordings.get(id)! });
+  });
+
+  // #220 录制完成「询问是否保留」：不保留决策——删除文件 + 删除录制记录。
+  app.post('/api/v1/recordings/:id/discard', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) {
+      throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
+    }
+    if (rec.state !== 'awaiting_confirmation') {
+      throw new AppError('CONFIG_INVALID', '仅待确认保留的录制可执行不保留', { recordingId: id });
+    }
+    services.manager.discardAfterConfirmation(id);
     return reply.status(204).send();
   });
 

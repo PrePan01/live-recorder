@@ -63,6 +63,8 @@ export async function startSidecar(opts: SidecarOptions): Promise<SidecarResult>
   const services = buildServices(buildOptions);
   const recovered = await recoverStaleRecordings(services);
   if (recovered > 0) console.log(`recovered ${recovered} stale recording session(s)`);
+  // #220：重启时遗留的「待确认保留」录制按默认保留恢复管线/上传。
+  services.manager.resumePendingConfirmations();
   // 恢复重启前排队中的上传任务（#195：上传队列为内存态，DB 中 queued/running 需启动续传）。
   const resumedUploads = services.uploader.resumePending();
   if (resumedUploads > 0) console.log(`resumed ${resumedUploads} pending upload job(s)`);
