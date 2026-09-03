@@ -193,9 +193,9 @@ fn backend_cmd() -> String {
             return explicit;
         }
     }
-    // 1) Packaged node: <bundle Resources>/node
+    // 1) Packaged node: <bundle Resources>/node（Windows 为 node.exe）
     if let Some(res) = bundled_resources_dir() {
-        let bundled = res.join("node");
+        let bundled = if cfg!(windows) { res.join("node.exe") } else { res.join("node") };
         if bundled.exists() {
             return bundled.to_string_lossy().to_string();
         }

@@ -7,11 +7,20 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const destDir = join(root, 'src-tauri', '.bundle');
-const dest = join(destDir, 'node');
+const isWin = process.platform === 'win32';
+const dest = join(destDir, isWin ? 'node.exe' : 'node');
 
 const candidates = [
   process.env.LR_NODE_PATH,
   process.execPath,
+  // Windows 常见安装路径
+  ...(isWin
+    ? [
+        join(process.env.PROGRAMFILES ?? 'C:\\Program Files', 'nodejs', 'node.exe'),
+        join(process.env.LOCALAPPDATA ?? '', 'Programs', 'nodejs', 'node.exe'),
+        join(process.env.ProgramW6432 ?? '', 'nodejs', 'node.exe'),
+      ]
+    : []),
   '/usr/local/bin/node',
   '/opt/homebrew/bin/node',
   join(process.env.HOME ?? '', '.local', 'bin', 'node'),
@@ -36,6 +45,12 @@ if (!src) {
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);
 console.log(`[bundle-resources] node -> ${dest}`);
+
+// Windows 打包不需要 dmg/hdiutil 清理。
+if (isWin) {
+  console.log('[bundle-resources] Windows 平台跳过 dmg 残留清理');
+  process.exit(0);
+}
 
 // 清理 Tauri DMG 打包的残留状态（bundle_dmg.sh 偶发失败主因）：
 // 1) 上一次中断/失败遗留的 rw.* 临时镜像（hdiutil create 的 UDRW 中间文件）
