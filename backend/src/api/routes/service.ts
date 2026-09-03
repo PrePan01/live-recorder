@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { access, constants } from 'node:fs/promises';
 import type { Services } from '../../core/services.js';
 import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { resolveBin } from '../../utils/ffmpeg.js';
 
 const CHECK_TIMEOUT_MS = 3_000;
 
@@ -22,7 +23,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '0.5.68',
+        version: '0.5.69',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored && stored.recordingDirectory.length > 0),
         disk,
@@ -85,6 +86,20 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
       } catch {
         return { key: 'writable', label: '录像目录', status: 'fail', detail: '目录不可写', fixHint: '检查目录权限或重新选择' };
       }
+    }));
+
+    // ⑥ ffmpeg：转 MP4 / 后处理管线依赖（桌面 GUI PATH 精简可能找不到）。
+    items.push(await withTimeout(async () => {
+      const hasFfmpeg = resolveBin('ffmpeg') !== 'ffmpeg';
+      const hasFfprobe = resolveBin('ffprobe') !== 'ffprobe';
+      const has = hasFfmpeg && hasFfprobe;
+      return {
+        key: 'ffmpeg',
+        label: '视频工具 ffmpeg',
+        status: has ? 'ok' : 'warn',
+        detail: has ? `ffmpeg 可用（${resolveBin('ffmpeg')}）` : '未找到 ffmpeg，录制完成后转 MP4 与后处理不可用',
+        fixHint: has ? '' : '安装 Homebrew 后执行：brew install ffmpeg',
+      };
     }));
 
     return reply.send({ items });
