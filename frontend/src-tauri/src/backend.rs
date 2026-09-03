@@ -326,31 +326,12 @@ pub fn read_ready_file() -> Option<AppInstance> {
     }
 }
 
-/// 探测就绪实例：优先读 ready 文件（权威端口，覆盖 OS 分配），
-/// 失败再退回默认/备用候选端口轮询（兼容无 ready 文件的旧后端）。
-/// 探测就绪实例（P0 隔离硬化）：优先读本应用数据目录的 ready 文件（权威，后端确实由本应用数据目录产生）；
-/// 无 ready 文件时仅探测本应用默认端口（43120）兼容「旧后端无 ready 文件」场景。
-/// 绝不探测候选端口范围盲接管任意健康后端——否则正式客户端可能误接管 dev 后端（曾因 dev 端口 43130
-/// 落在 43120-43130 探测范围导致正式客户端连到 dev 数据，PrePan P0）。
+/// 探测就绪实例（P0 隔离硬化，#224）：仅复用本应用数据目录 ready 文件确认的后端实例
+/// （ready 文件由后端写入其自身数据目录，即该后端必然属于本应用数据域）。
+/// 不做任何端口轮询盲接管——否则正式客户端可能误接管 dev 后端（曾因 dev 端口 43130
+/// 落在 43120-43130 探测范围致正式客户端连到 dev 数据）。ready 缺失时返回 None，由调用方拉起本包后端。
 pub fn fetch_ready() -> Option<AppInstance> {
-    if let Some(instance) = read_ready_file() {
-        return Some(instance);
-    }
-    let port = candidate_port();
-    if let Some(health) = fetch_health(port) {
-        if health.ready {
-            return Some(AppInstance {
-                instance_id: health.instance_id,
-                pid: 0,
-                host: HOST.to_string(),
-                port: health.port,
-                base_url: format!("http://{HOST}:{}", health.port),
-                api_version: health.api_version,
-                started_at: String::new(),
-            });
-        }
-    }
-    None
+    read_ready_file()
 }
 
 pub fn fetch_health(port: u16) -> Option<Health> {
@@ -371,15 +352,6 @@ pub fn fetch_health(port: u16) -> Option<Health> {
         service_status: Health,
     }
     resp.json::<Envelope>().ok().map(|e| e.service_status)
-}
-
-/// 本应用默认探测端口（P0 隔离硬化）：仅默认端口 43120，不再探测 43121-43130 备份范围，
-/// 防止盲接管 dev（43140）或其他健康后端。
-pub fn candidate_port() -> u16 {
-    std::env::var("LR_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_PORT)
 }
 
 fn ready_file_path() -> Option<PathBuf> {

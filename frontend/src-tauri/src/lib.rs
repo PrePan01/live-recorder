@@ -107,8 +107,8 @@ fn quit_app(app: AppHandle, state: State<'_, ShellState>) {
 }
 
 fn backend_candidates() -> Vec<u16> {
-    // P0 隔离硬化：仅探测本应用默认端口，避免误探测到 dev 后端（43140）。
-    vec![backend::candidate_port()]
+    // P0 隔离硬化（#224）：仅本应用默认端口；健康检查不再探测候选范围，避免误连 dev（43140）。
+    vec![backend::DEFAULT_PORT]
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
