@@ -50,6 +50,8 @@ export interface Settings {
   theme?: ThemePreference;
   /** V5：通知偏好 */
   notifications?: NotificationPreference;
+  /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
+  confirmAfterComplete?: boolean;
 }
 
 export interface MailInput {
@@ -76,5 +78,7 @@ export interface SettingsInput {
   douyinCookie?: string;
   /** V5：主题偏好 */
   theme?: ThemePreference;
+  /** #220/#221：录制完成后询问是否保留 */
+  confirmAfterComplete?: boolean;
 }
 

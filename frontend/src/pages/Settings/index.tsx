@@ -77,6 +77,7 @@ export default function SettingsPage() {
         quality: settings.quality,
         recordingFormat: settings.recordingFormat ?? 'source_flv',
         autoRecord: settings.autoRecord ?? true,
+        confirmAfterComplete: settings.confirmAfterComplete ?? false,
         theme: settings.theme ?? preference,
         douyinCookie: '',
         mail: { ...settings.mail, recipients: settings.mail.recipients.join(', '), password: '' },
@@ -323,6 +324,14 @@ export default function SettingsPage() {
               name="autoRecord"
               valuePropName="checked"
               extra="开启后检测到直播自动开始录制；关闭后仅检测、不自动录（手动「立即检测」仍可触发录制）"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              label="录制完成后询问是否保留"
+              name="confirmAfterComplete"
+              valuePropName="checked"
+              extra="开启后录制完成先询问「保留/删除」，确认保留才继续保存、上传等流程；关闭则沿用现有自动保存行为"
             >
               <Switch />
             </Form.Item>
