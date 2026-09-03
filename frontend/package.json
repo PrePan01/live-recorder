@@ -12,7 +12,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build && node scripts/bundle-dmg.mjs && bash scripts/sync-release.sh",
     "package:release": "bash scripts/package-release.sh",
-    "bundle:resources": "npm --prefix ../backend run build && node scripts/bundle-resources.mjs",
+    "bundle:resources": "node scripts/bundle-resources.mjs",
     "bundle:dmg": "node scripts/bundle-dmg.mjs"
   },
   "dependencies": {

@@ -4,10 +4,18 @@
 import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+// 打包前确保 backend/dist 为最新（统一打包流程已在 package.mjs 构建+精简 node_modules，
+// 此时设 LR_SKIP_BACKEND_BUILD=1 跳过重建，避免精简后缺 @types/node 导致 tsc 失败）。
+const isWin = process.platform === 'win32';
+if (process.env.LR_SKIP_BACKEND_BUILD !== '1') {
+  const r = spawnSync('npm', ['--prefix', '../backend', 'run', 'build'], { stdio: 'inherit', shell: isWin });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+}
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const destDir = join(root, 'src-tauri', '.bundle');
-const isWin = process.platform === 'win32';
 const dest = join(destDir, isWin ? 'node.exe' : 'node');
 
 const candidates = [
@@ -57,7 +65,6 @@ if (isWin) {
 // 2) 残留的挂载点（/Volumes/Live Recorder*）与磁盘（hdiutil attach 后未 detach）
 // 在每次 beforeBundle 前执行，保证每次 tauri build 的 dmg 步骤从干净状态开始。
 import { readdirSync, rmSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 
 const dmgDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'dmg');
 try {
