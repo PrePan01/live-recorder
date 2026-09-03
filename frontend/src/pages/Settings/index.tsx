@@ -230,7 +230,6 @@ export default function SettingsPage() {
             <Form.Item
               label="主题"
               name="theme"
-              extra="深色/浅色即时预览；「跟随系统」随系统外观自动切换"
             >
               <Radio.Group
                 options={THEME_OPTIONS}
@@ -315,39 +314,33 @@ export default function SettingsPage() {
             <Typography.Title level={5}>抖音 Cookie</Typography.Title>
             <Typography.Paragraph type="secondary">
               部分抖音直播间需登录 Cookie 才能取流。需要 douyin.com 的完整 Cookie 字符串（分号分隔，含
-              sessionid/ttwid/__ac_signature 等全部字段）。获取方式（已登录抖音时）：F12 打开开发者工具 →
+              sessionid/ttwid/__ac_signature 等全部字段）。
+              <br/>
+              获取方式（已登录抖音时）：F12 打开开发者工具 →
               Console 控制台 → 输入 <Typography.Text code>copy(document.cookie)</Typography.Text> 回车 → 已自动复制到剪贴板
               → 粘贴到下方输入框。也可在 Network 面板任意 douyin.com 请求的 Request Headers 中复制 Cookie
-              整段。Cookie 仅存本机钥匙串，不会显示或上传。
+              整段。
+              <br/>
+              Cookie 仅存本机钥匙串，不会显示或上传。
             </Typography.Paragraph>
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form.Item
-                  label="抖音 Cookie"
-                  name="douyinCookie"
-                  extra={settings?.douyinCookie.hasCookie ? '已保存，留空则不修改' : undefined}
-                >
-                  <Input.Password
-                    placeholder={settings?.douyinCookie.hasCookie ? '••••••' : '输入抖音 Cookie（可选）'}
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 24 }}>
-                <Button
-                  disabled={!settings?.douyinCookie.hasCookie}
-                  onClick={() => {
-                    form.setFieldValue('douyinCookie', '');
-                    setClearCookie(true);
-                  }}
-                >
-                  清除已存 Cookie
-                </Button>
-              </Col>
-            </Row>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              设置改动自动保存（500ms 防抖），无需手动保存。
-            </Typography.Paragraph>
+            <Form.Item
+                name="douyinCookie"
+                extra={settings?.douyinCookie.hasCookie ? '已保存，留空则不修改' : undefined}
+            >
+              <Input.Password
+                  placeholder={settings?.douyinCookie.hasCookie ? '••••••' : '输入抖音 Cookie（可选）'}
+                  autoComplete="new-password"
+              />
+            </Form.Item>
+            <Button
+                disabled={!settings?.douyinCookie.hasCookie}
+                onClick={() => {
+                  form.setFieldValue('douyinCookie', '');
+                  setClearCookie(true);
+                }}
+            >
+              清除已存 Cookie
+            </Button>
           </Form>
           <DirectoryPicker
             open={pickerOpen}

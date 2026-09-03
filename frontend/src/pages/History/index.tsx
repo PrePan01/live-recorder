@@ -353,10 +353,10 @@ export default function History() {
             value={dateRange}
             onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
           />
-          <Button size="small" loading={exporting} onClick={() => void handleExportCsv()}>
+          <Button loading={exporting} onClick={() => void handleExportCsv()}>
             导出 CSV
           </Button>
-          <Button size="small" icon={<ExportOutlined />} onClick={() => setExportModalOpen(true)}>
+          <Button icon={<ExportOutlined />} disabled={batchBusy || selectedKeys.length === 0} onClick={() => setExportModalOpen(true)}>
             备份导出{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
           </Button>
           <Popconfirm
@@ -364,7 +364,7 @@ export default function History() {
             onConfirm={() => void handleBatchDelete()}
             disabled={selectedKeys.length === 0}
           >
-            <Button size="small" danger disabled={batchBusy || selectedKeys.length === 0}>
+            <Button danger disabled={batchBusy || selectedKeys.length === 0}>
               批量删除{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
             </Button>
           </Popconfirm>
