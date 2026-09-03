@@ -51,7 +51,7 @@
 
 ```bash
 npm run setup
-npm run dev:real 
+npm run dev
 ```
 
 ## 开发
@@ -59,7 +59,7 @@ npm run dev:real
 ### 三步开始开发
 
 1. 安装依赖：`npm run setup`
-2. 启动项目：`npm run dev:real`
+2. 启动项目：`npm run dev`（默认真实模式，行为与正式环境一致，仅数据隔离；fake 冒烟用 `npm run dev:fake`）
 3. 开始开发
 
 ### 目录结构
@@ -87,9 +87,10 @@ npm run typecheck  # 类型检查
 npm run tauri:build
 ```
 
-> 开发环境数据隔离（#219）：根目录 `npm run dev` / `npm run dev:real`（scripts/dev.mjs）会自动让 dev 后端使用
-> 独立数据目录 `<仓库>/.dev-data` 与独立端口 `43130`，与本地安装客户端（数据目录 + 端口 43120）完全隔离，
-> 开发中改动不会影响已安装客户端的房间/录制/设置。若改用 `npm run tauri:dev`（后端由 Rust 壳拉起），
+> 开发环境数据隔离（#219）+ 默认真实模式（#223）：根目录 `npm run dev`（scripts/dev.mjs）默认 `RECORDING_ADAPTER=real`
+> （真实适配器，行为与正式环境一致），并让 dev 后端使用独立数据目录 `<仓库>/.dev-data` 与独立端口 `43130`，
+> 与本地安装客户端（数据目录 + 端口 43120）完全隔离，开发中改动不会影响已安装客户端的房间/录制/设置。
+> fake 模式仅限显式 `npm run dev:fake`（快速冒烟/CI）。若改用 `npm run tauri:dev`（后端由 Rust 壳拉起），
 > 不会自动携带隔离变量，需自行 `export LIVE_RECORDER_DATA_DIR=... LIVE_RECORDER_PORT=43130` 后再启动。
 
 ### 打包

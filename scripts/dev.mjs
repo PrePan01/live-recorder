@@ -1,13 +1,14 @@
 // 一键启动脚本：单一 LIVE_RECORDER_MODE=fake|real 控制前后端。
-// fake（默认）= 后端 fake 适配器 + 前端直连；real = 真实平台适配器 + 前端直连。
+// real（默认）= 真实平台适配器 + 前端直连（行为与正式环境一致，仅数据隔离，PrePan #223）；
+// fake = 后端 fake 适配器（仅显式 `npm run dev:fake` / `npm run dev fake` 时启用，用于快速冒烟）。
 // 前端已无自建 mock（v1.3 收口清理），两端统一直连后端。
-// 用法：npm run dev（fake）/ npm run dev:real（real）。
+// 用法：npm run dev（real 默认）/ npm run dev:fake（fake 显式）。
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const mode = process.argv[2] ?? process.env.LIVE_RECORDER_MODE ?? 'fake';
+const mode = process.argv[2] ?? process.env.LIVE_RECORDER_MODE ?? 'real';
 const real = mode === 'real';
 
 if (!['fake', 'real'].includes(mode)) {
