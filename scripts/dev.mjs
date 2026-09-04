@@ -40,7 +40,24 @@ const devDataDir = path.join(root, '.dev-data');
 const devPort = process.env.LIVE_RECORDER_PORT ?? '43140';
 const devApiBase = `http://127.0.0.1:${devPort}/api/v1`;
 
+// 预检：dev 端口若已被一个健康 live-recorder 后端占用（多为残留/并发的 dev 会话），
+// 显性报错并给出处置，而不是半启动（后端起不来 + vite 漂移）造成「服务未就绪」困惑。
+async function preflightPort() {
+  try {
+    const res = await fetch(`${devApiBase}/health`, { signal: AbortSignal.timeout(1500) });
+    if (res.ok) {
+      console.error(`\n[错误] dev 端口 ${devPort} 已被一个正在运行的 live-recorder dev 实例占用。`);
+      console.error(`处置：①若这就是你要用的会话，直接访问 http://localhost:5173；`);
+      console.error(`②若要干净重启，先执行 npm run dev:stop 停掉旧会话，再 npm run dev。\n`);
+      process.exit(1);
+    }
+  } catch {
+    // 无健康后端在监听：可正常启动。
+  }
+}
+
 console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，数据目录=${devDataDir}，端口=${devPort}，前端直连后端`);
+await preflightPort();
 start('backend', 'npm', ['run', 'dev'], 'backend', {
   LIVE_RECORDER_DATA_DIR: devDataDir,
   LIVE_RECORDER_PORT: devPort,
