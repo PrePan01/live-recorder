@@ -174,6 +174,31 @@ describe('BilibiliAdapter', () => {
     expect(result.actualQuality).toBe('360p');
   });
 
+  it('getStreamUrl 选非原画档位：目标档不可用时回退到最低可用而非原画（PrePan 缺陷）', async () => {
+    const payload = livePayload();
+    // 房间不提供 360p（accept_qn 无 80），且首个 codec 为原画档（current=10000）。
+    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { accept_qn: number[] }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].accept_qn = [10000, 400, 150];
+    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { current_qn: number }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].current_qn = 10000;
+    const a = new BilibiliAdapter(mockFetcher(() => payload));
+    // 请求 360p：回退到最低可用 150（720p），而不是原画 10000。
+    const result = await a.getStreamUrl('https://live.bilibili.com/123456', '360p');
+    expect(result.actualQuality).toBe('720p');
+  });
+
+  it('getStreamUrl 多 codec 时选择最接近目标档位的流（而非首个原画 codec）', async () => {
+    const payload = livePayload();
+    const p = payload as { data: { playurl_info: { playurl: { stream: { format: { codec: Array<Record<string, unknown>> }[] }[] }[] } } };
+    // 构造两个 codec：第一个仅原画（accept=[10000]），第二个含 720p（accept=[10000,150] current=150）。
+    p.data.playurl_info.playurl.stream[0].format[0].codec = [
+      { codec_name: 'avc', current_qn: 10000, accept_qn: [10000], base_url: '/live/avc_orig.flv', url_info: [{ host: 'https://b1.example.com', extra: '' }] },
+      { codec_name: 'hevc', current_qn: 150, accept_qn: [10000, 150], base_url: '/live/hevc_720.flv', url_info: [{ host: 'https://b2.example.com', extra: '' }] },
+    ];
+    const a = new BilibiliAdapter(mockFetcher(() => payload));
+    const result = await a.getStreamUrl('https://live.bilibili.com/123456', '720p');
+    expect(result.actualQuality).toBe('720p');
+    expect(result.url).toContain('b2.example.com');
+  });
+
   it('getStreamUrl throws PLATFORM_ACCESS_RESTRICTED when no stream url is available', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => livePayload({ playurl_info: { playurl: { stream: [] } } })));
     await expect(a.getStreamUrl('https://live.bilibili.com/123456', 'original')).rejects.toThrowError(AppError);
