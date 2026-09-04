@@ -48,6 +48,20 @@ if (!isWin) {
     for (const f of readdirSync(dmgDir)) if (/\.dmg$/i.test(f)) rmSync(path.join(dmgDir, f), { force: true });
   }
   run('node', ['scripts/bundle-dmg.mjs'], path.join(root, 'frontend'));
+  // #232 显式防护：bundle-dmg 后必须产出 .dmg（短轮询容忍文件系统可见性延迟，仍缺失则报错，不再静默丢 dmg）。
+  const produced = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (existsSync(dmgDir)) {
+      for (const f of readdirSync(dmgDir)) if (/\.dmg$/i.test(f)) produced.push(f);
+    }
+    if (produced.length > 0) break;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (produced.length === 0) {
+    console.error(`[package] bundle-dmg 未产出 .dmg（${dmgDir} 为空）——请检查 hdiutil/codesign 输出`);
+    process.exit(1);
+  }
+  console.log(`[package] 已生成 dmg: ${produced.join(', ')}`);
 }
 
 // 4) 拷贝产物到 release/
@@ -66,6 +80,7 @@ if (!isWin) {
       if (f === '.DS_Store') continue;
       cpSync(path.join(macosDir, f), path.join(release, f), { recursive: true });
       products.push(f);
+      console.log(`[package] 拷贝 -> release/${f}`);
     }
   }
   const dmgDir = path.join(bundle, 'dmg');
@@ -74,8 +89,15 @@ if (!isWin) {
       if (/\.dmg$/i.test(f)) {
         copyFileSync(path.join(dmgDir, f), path.join(release, f));
         products.push(f);
+        console.log(`[package] 拷贝 -> release/${f}`);
       }
     }
+  }
+  // #232 防护：macOS 产物须含 .app 与 .dmg；任一缺失即报错（拷贝段失效不再静默）。
+  const missing = ['app', 'dmg'].filter((kind) => !products.some((p) => (kind === 'app' ? p.endsWith('.app') : p.endsWith('.dmg'))));
+  if (missing.length > 0) {
+    console.error(`[package] macOS 产物缺失: ${missing.join('/')}（release/ 现含: ${products.join(', ') || '无'}）`);
+    process.exit(1);
   }
 } else {
   for (const sub of ['msi', 'nsis']) {
