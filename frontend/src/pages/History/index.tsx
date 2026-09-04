@@ -22,7 +22,7 @@ import { describeUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
-const QUALITY_LABEL: Record<string, string> = { original: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
+const QUALITY_LABEL: Record<string, string> = { original: '原画', '1080p': '1080p', '720p': '720p', '360p': '360p' };
 function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
   if (progress >= 99) return 'verifying';
   if (progress < 50) return 'sending';
