@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "0.5.79",
+  "version": "0.5.80",
   "private": true,
   "description": "直播录制助手",
   "scripts": {
