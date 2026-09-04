@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "0.5.79",
+  "version": "0.5.81",
   "private": true,
   "description": "直播录制助手",
   "scripts": {
@@ -11,7 +11,8 @@
     "package": "node scripts/package.mjs",
     "setup": "npm install && npm --prefix backend install && npm --prefix frontend install",
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
-    "install:ci": "npm --prefix backend ci && npm --prefix frontend ci"
+    "install:ci": "npm --prefix backend ci && npm --prefix frontend ci",
+    "version:set": "node scripts/version-set.mjs"
   },
   "engines": {
     "node": ">=20"
