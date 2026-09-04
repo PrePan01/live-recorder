@@ -58,7 +58,12 @@ function setBackendRuntimeVersion(version) {
     const text = readFileSync(file, 'utf8');
     const next = text.replace(pattern, replacement);
     if (next === text) {
-      console.warn(`  ! ${rel} 未匹配到版本位，跳过`);
+      // 幂等运行（目标版本=当前值）：replace 无变化，非错误，明确提示已是最新。
+      if (text.includes(`'${version}'`)) {
+        console.log(`  = ${rel} 已是最新版本（${version}）`);
+      } else {
+        console.warn(`  ! ${rel} 未匹配到版本位，跳过`);
+      }
       continue;
     }
     writeFileSync(file, next);
