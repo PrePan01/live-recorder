@@ -66,7 +66,7 @@ export default function Wall() {
       {wallRooms.length === 0 ? (
         <Empty description="从右侧「添加房间」选择直播，默认静音，最多 4 路" style={{ marginTop: 60 }} />
       ) : (
-        <div className="lr-wall-grid" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(${grid === '2x2' ? 320 : 260}px, 100%), 1fr))` }}>
+        <div className="lr-wall-grid" style={{ gridTemplateColumns: `repeat(${grid === '2x2' ? 2 : 3}, minmax(0, 1fr))` }}>
           {wallRooms.map((room) => (
             <Card
               className="lr-wall-card"
