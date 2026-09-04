@@ -14,6 +14,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // 5173 被占用时显性报错而非静默漂移到 5174——避免「服务未就绪/找不到端口」困惑（PM 建议，多 dev 实例不能并存）。
+    strictPort: true,
     proxy: {
       // dev 后端端口可通过 LIVE_RECORDER_PORT 覆盖（开发隔离默认 43140，正式默认 43120）。
       '/api': { target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, changeOrigin: true },
