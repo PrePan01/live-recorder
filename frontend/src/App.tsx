@@ -11,6 +11,7 @@ import { useSSE } from './hooks/useSSE';
 import { useServiceStore } from './stores/serviceStore';
 import { useBootStore, subscribeBridgeEvents } from './stores/bootStore';
 import RecordingCompleteNotice from './components/RecordingCompleteNotice';
+import LazyRouteErrorBoundary from './components/LazyRouteErrorBoundary';
 
 // 路由级懒加载：重页面按需拆分，首屏 bundle 显著变小（QA 性能建议）。
 const Rooms = lazy(() => import('./pages/Rooms'));
@@ -64,37 +65,39 @@ export default function App() {
     <>
       <RecordingCompleteNotice />
       <BootGate>
-        <Suspense fallback={<div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>加载中…</div>}>
-          <Routes>
-          <Route path="/startup" element={<Startup />} />
-          <Route path="/startup-diagnostics" element={<StartupDiagnostics />} />
-          <Route
-            path="/setup"
-            element={
-              <SetupGuard>
-                <Setup />
-              </SetupGuard>
-            }
-          />
-          <Route
-            element={
-              <SetupGuard>
-                <AppLayout />
-              </SetupGuard>
-            }
-          >
-            <Route path="/rooms" element={<Rooms />} />
-            <Route path="/monitor" element={<Monitor />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/recovery" element={<Recovery />} />
-            <Route path="/stats" element={<Stats />} />
-            <Route path="/wall" element={<Wall />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-          <Route path="/" element={<Navigate to="/monitor" replace />} />
-          <Route path="*" element={<Navigate to="/monitor" replace />} />
-        </Routes>
-        </Suspense>
+        <LazyRouteErrorBoundary>
+          <Suspense fallback={<div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>加载中…</div>}>
+            <Routes>
+              <Route path="/startup" element={<Startup />} />
+              <Route path="/startup-diagnostics" element={<StartupDiagnostics />} />
+              <Route
+                path="/setup"
+                element={
+                  <SetupGuard>
+                    <Setup />
+                  </SetupGuard>
+                }
+              />
+              <Route
+                element={
+                  <SetupGuard>
+                    <AppLayout />
+                  </SetupGuard>
+                }
+              >
+                <Route path="/rooms" element={<Rooms />} />
+                <Route path="/monitor" element={<Monitor />} />
+                <Route path="/history" element={<History />} />
+                <Route path="/recovery" element={<Recovery />} />
+                <Route path="/stats" element={<Stats />} />
+                <Route path="/wall" element={<Wall />} />
+                <Route path="/settings" element={<SettingsPage />} />
+              </Route>
+              <Route path="/" element={<Navigate to="/monitor" replace />} />
+              <Route path="*" element={<Navigate to="/monitor" replace />} />
+            </Routes>
+          </Suspense>
+        </LazyRouteErrorBoundary>
       </BootGate>
     </>
   );
