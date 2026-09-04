@@ -6,6 +6,8 @@ import { describeError } from '../utils/errorMap';
 import { ApiError } from '../types/error';
 import { formatRelative } from '../utils/format';
 import { useUploadStore } from '../stores/uploadStore';
+import { describeUploadError } from '../utils/uploadError';
+import { uploadPhaseLabel, uploadPhaseText } from '../utils/uploadProgress';
 
 const STATUS_COLOR: Record<string, string> = {
   queued: 'default',
@@ -43,6 +45,13 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
     if (liveJobs.length > 0) setJobs(liveJobs);
   }, [liveJobs]);
 
+  // 99%（云端收尾）阶段实时刷新等待时长，避免进度停在 99 看起来卡死（PrePan：上传卡 99 无状态）。
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   if (!loading && jobs.length === 0) {
     return (
       <Space orientation="vertical" size={8}>
@@ -75,11 +84,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
             {j.status === 'running' ? <Progress percent={j.progress} size="small" style={{ width: 140 }} /> : null}
             {j.status === 'running' ? (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {j.progress >= 99
-                  ? '正在写入云端存储…（OpenList 云端驱动收尾中）'
-                  : j.progress < 50
-                    ? '正在上传至 OpenList…'
-                    : '正在写入云端存储…'}
+                {uploadPhaseLabel(phaseOf(j.progress), j.progress)} · {uploadPhaseText(phaseOf(j.progress), j.progress, j.updatedAt)}
               </Typography.Text>
             ) : null}
             {j.status === 'ok' && j.remotePath ? (
@@ -105,11 +110,17 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
           </Space>
           {j.error ? (
             <Typography.Text type="danger" style={{ display: 'block', fontSize: 12 }}>
-              {j.error}
+              {describeUploadError(j.error) ?? j.error}
             </Typography.Text>
           ) : null}
         </div>
       ))}
     </Space>
   );
+}
+
+function phaseOf(progress: number): 'sending' | 'cloud' | 'verifying' {
+  if (progress >= 99) return 'verifying';
+  if (progress < 50) return 'sending';
+  return 'cloud';
 }

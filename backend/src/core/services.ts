@@ -73,15 +73,32 @@ export interface BuildOptions {
   clock?: Clock;
 }
 
-export function defaultDataDir(): string {
-  // 显式隔离覆盖（开发环境与本地安装客户端数据隔离，PrePan #219）：优先使用 LIVE_RECORDER_DATA_DIR，
-  // 否则退回系统默认应用数据目录。
-  const override = process.env.LIVE_RECORDER_DATA_DIR;
-  if (override && override.length > 0) return override;
+export function productionDataDir(): string {
   const home = os.homedir();
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'live-recorder');
   if (process.platform === 'win32') return path.join(process.env.APPDATA ?? home, 'live-recorder');
   return path.join(process.env.XDG_DATA_HOME ?? path.join(home, '.local', 'share'), 'live-recorder');
+}
+
+/** #224 P0 深度防御：开发环境（mode=development）下数据/状态路径不得指向生产数据目录，否则启动即拒。 */
+export function assertDevelopmentPathIsIsolated(target: string, label: string, mode: 'development' | 'production'): void {
+  if (mode === 'production') return;
+  const targetAbs = path.resolve(target);
+  const prodAbs = path.resolve(productionDataDir());
+  if (targetAbs === prodAbs || targetAbs.startsWith(prodAbs + path.sep)) {
+    throw new Error(`${label}指向生产数据目录：${target}（开发环境必须使用独立数据目录）`);
+  }
+}
+
+export function defaultDataDir(): string {
+  // 显式隔离覆盖（开发环境与本地安装客户端数据隔离，PrePan #219）：优先使用 LIVE_RECORDER_DATA_DIR，
+  // 否则退回系统默认应用数据目录。dev 覆盖不得指向生产目录（#224 P0 防呆）。
+  const override = process.env.LIVE_RECORDER_DATA_DIR;
+  if (override && override.length > 0) {
+    assertDevelopmentPathIsIsolated(override, '开发环境数据目录', 'development');
+    return override;
+  }
+  return productionDataDir();
 }
 
 /**
