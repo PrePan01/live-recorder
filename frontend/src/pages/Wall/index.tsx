@@ -25,8 +25,9 @@ export default function Wall() {
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<string[]>([]);
-  const [reloadKey, setReloadKey] = useState(0);
   const [fullscreen, setFullscreen] = useState<Room | null>(null);
+  /** 单路重载计数：仅重挂该路播放器，不共享重载（PrePan：重载不应重挂全部）。 */
+  const [reloadTicks, setReloadTicks] = useState<Record<string, number>>({});
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间加载失败'));
@@ -63,6 +64,11 @@ export default function Wall() {
     closePreview(room.id);
     removeWallRoom(room.id);
     setPickedIds([]);
+  };
+
+  /** 单路重载：只递增该房间的计数，触发该路播放器重挂。 */
+  const reloadRoom = (roomId: string) => {
+    setReloadTicks((prev) => ({ ...prev, [roomId]: (prev[roomId] ?? 0) + 1 }));
   };
 
   return (
@@ -105,7 +111,7 @@ export default function Wall() {
                     {muted[room.id] ? '静音' : '有声'}
                   </Button>
                   <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFullscreen(room)} />
-                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => setReloadKey((k) => k + 1)} />
+                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => reloadRoom(room.id)} />
                   <Popconfirm title="移除该路？录制不受影响" onConfirm={() => handleRemove(room)}>
                     <Button type="text" size="small" danger>
                       移除
@@ -116,7 +122,7 @@ export default function Wall() {
             >
               {room.lastLiveStatus === 'live' ? (
                 <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
-                  <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
+                  <VideoPlayer key={`${room.id}-${reloadTicks[room.id] ?? 0}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
                 </Suspense>
               ) : (
                 <div
