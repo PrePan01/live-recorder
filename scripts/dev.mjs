@@ -1,13 +1,14 @@
 // 一键启动脚本：单一 LIVE_RECORDER_MODE=fake|real 控制前后端。
-// fake（默认）= 后端 fake 适配器 + 前端直连；real = 真实平台适配器 + 前端直连。
+// real（默认）= 真实平台适配器 + 前端直连（行为与正式环境一致，仅数据隔离，PrePan #223）；
+// fake = 后端 fake 适配器（仅显式 `npm run dev:fake` / `npm run dev fake` 时启用，用于快速冒烟）。
 // 前端已无自建 mock（v1.3 收口清理），两端统一直连后端。
-// 用法：npm run dev（fake）/ npm run dev:real（real）。
+// 用法：npm run dev（real 默认）/ npm run dev:fake（fake 显式）。
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const mode = process.argv[2] ?? process.env.LIVE_RECORDER_MODE ?? 'fake';
+const mode = process.argv[2] ?? process.env.LIVE_RECORDER_MODE ?? 'real';
 const real = mode === 'real';
 
 if (!['fake', 'real'].includes(mode)) {
@@ -31,9 +32,41 @@ function start(name, cmd, args, cwd, extraEnv = {}) {
   children.push(child);
 }
 
-console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，前端直连后端`);
-start('backend', 'npm', ['run', 'dev'], 'backend');
-start('frontend', 'npm', ['run', 'dev'], 'frontend', { VITE_USE_MOCK: '0' });
+// 开发环境数据隔离（PrePan #219）：dev 后端使用仓库本地 .dev-data 作为独立数据目录
+// （DB/state/实例锁/ready 全部隔离），并改用独立端口 43140（避开正式客户端候选端口
+// 43120-43130 的探测范围——否则正式客户端可能误接管 dev 后端，P0 隔离缺陷），
+// 避免与本地安装的正式客户端共享数据或端口冲突。dev 后端改写的房间/设置/录制记录等不会影响正式客户端。
+const devDataDir = path.join(root, '.dev-data');
+const devPort = process.env.LIVE_RECORDER_PORT ?? '43140';
+const devApiBase = `http://127.0.0.1:${devPort}/api/v1`;
+
+// 预检：dev 端口若已被一个健康 live-recorder 后端占用（多为残留/并发的 dev 会话），
+// 显性报错并给出处置，而不是半启动（后端起不来 + vite 漂移）造成「服务未就绪」困惑。
+async function preflightPort() {
+  try {
+    const res = await fetch(`${devApiBase}/health`, { signal: AbortSignal.timeout(1500) });
+    if (res.ok) {
+      console.error(`\n[错误] dev 端口 ${devPort} 已被一个正在运行的 live-recorder dev 实例占用。`);
+      console.error(`处置：①若这就是你要用的会话，直接访问 http://localhost:5173；`);
+      console.error(`②若要干净重启，先执行 npm run dev:stop 停掉旧会话，再 npm run dev。\n`);
+      process.exit(1);
+    }
+  } catch {
+    // 无健康后端在监听：可正常启动。
+  }
+}
+
+console.log(`live-recorder dev（mode=${mode}）：后端 RECORDING_ADAPTER=${mode}，数据目录=${devDataDir}，端口=${devPort}，前端直连后端`);
+await preflightPort();
+start('backend', 'npm', ['run', 'dev'], 'backend', {
+  LIVE_RECORDER_DATA_DIR: devDataDir,
+  LIVE_RECORDER_PORT: devPort,
+});
+start('frontend', 'npm', ['run', 'dev'], 'frontend', {
+  VITE_USE_MOCK: '0',
+  VITE_API_BASE: devApiBase,
+  LIVE_RECORDER_PORT: devPort,
+});
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

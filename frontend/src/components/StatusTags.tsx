@@ -16,6 +16,7 @@ const RECORDING_META: Record<RecordingState, { color: string; text: string }> = 
   pending: { color: 'default', text: '待启动' },
   recording: { color: 'red', text: '录制中' },
   reconnecting: { color: 'orange', text: '重连中' },
+  awaiting_confirmation: { color: 'gold', text: '待确认' },
   processing: { color: 'geekblue', text: '处理中' },
   completed: { color: 'green', text: '已完成' },
   failed: { color: 'error', text: '失败' },
@@ -28,17 +29,17 @@ const INTEGRITY_META: Record<RecordingIntegrity, { color: string; text: string }
 };
 
 export function MonitorStateTag({ state }: { state: MonitorState }) {
-  const meta = MONITOR_META[state];
+  const meta = MONITOR_META[state] ?? { color: 'default', text: state };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 
 export function RecordingStateTag({ state }: { state: RecordingState }) {
-  const meta = RECORDING_META[state];
+  const meta = RECORDING_META[state] ?? { color: 'default', text: state };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }
 
 export function IntegrityTag({ integrity }: { integrity: RecordingIntegrity | null }) {
   if (!integrity) return <Tag>待校验</Tag>;
-  const meta = INTEGRITY_META[integrity];
+  const meta = INTEGRITY_META[integrity] ?? { color: 'default', text: integrity };
   return <Tag color={meta.color}>{meta.text}</Tag>;
 }

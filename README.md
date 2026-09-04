@@ -51,7 +51,7 @@
 
 ```bash
 npm run setup
-npm run dev:real 
+npm run dev
 ```
 
 ## 开发
@@ -59,7 +59,7 @@ npm run dev:real
 ### 三步开始开发
 
 1. 安装依赖：`npm run setup`
-2. 启动项目：`npm run dev:real`
+2. 启动项目：`npm run dev`（默认真实模式，行为与正式环境一致，仅数据隔离；fake 冒烟用 `npm run dev:fake`）
 3. 开始开发
 
 ### 目录结构
@@ -87,11 +87,16 @@ npm run typecheck  # 类型检查
 npm run tauri:build
 ```
 
+> 开发环境数据隔离（#219）+ 默认真实模式（#223）：根目录 `npm run dev`（scripts/dev.mjs）默认 `RECORDING_ADAPTER=real`
+> （真实适配器，行为与正式环境一致），并让 dev 后端使用独立数据目录 `<仓库>/.dev-data` 与独立端口 `43140`，
+> 与本地安装客户端（数据目录 + 端口 43120）完全隔离，开发中改动不会影响已安装客户端的房间/录制/设置。
+> fake 模式仅限显式 `npm run dev:fake`（快速冒烟/CI）。若改用 `npm run tauri:dev`（后端由 Rust 壳拉起），
+> 不会自动携带隔离变量，需自行 `export LIVE_RECORDER_DATA_DIR=... LIVE_RECORDER_PORT=43140` 后再启动。
+
 ### 打包
 
 - macOS：`cd frontend && npm run tauri:build`，产物在 `release/`（.app + .dmg）
 - Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物 `.msi` / `.exe`（或使用 CI 的 `windows-latest` runner）
-- 自动发布：版本号递增后推送到 `release` 分支，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 MSI，并创建 `v<版本号>` Release；同版本不会重复发布
 
 ### 分支与协作约定
 
@@ -99,6 +104,12 @@ npm run tauri:build
 - 完成 → lint / typecheck + 全量测试 → QA 分支回归 → `--no-ff` 合入 `main` → main 复测
 - 数据库迁移合入 `main` 后不可改写，新变更只追加新版本迁移
 - 提交使用约定式前缀、原子提交
+
+### 发布
+ `release` 分支更新将触发发布流程，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 MSI，并创建 `v<版本号>` Release；同版本不会重复发布
+
+**禁止直接推送至 `release` 分支**，仅可通过PR向 `release` 提交合并请求
+
 
 ## 贡献
 

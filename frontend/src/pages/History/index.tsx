@@ -17,10 +17,17 @@ import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
 import { fetchUploads, retryUpload } from '../../api/openlist';
+import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
+import { describeUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
+function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
+  if (progress >= 99) return 'verifying';
+  if (progress < 50) return 'sending';
+  return 'cloud';
+}
 const EXPORT_STATUS_COLOR: Record<string, string> = {
   queued: 'default',
   running: 'processing',
@@ -227,14 +234,14 @@ export default function History() {
         render: (u: Recording['upload'], r: Recording) => {
           if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
           const detail =
-            u.error ??
+            describeUploadError(u.error) ??
             (u.status === 'running' && u.progress >= 99
-              ? '正在写入云端存储…（OpenList 云端驱动收尾中，请稍候）'
+              ? uploadPhaseText('verifying', u.progress, r.endedAt ?? r.startedAt)
               : u.remotePath);
           const node =
             u.status === 'running' ? (
               <Space size={4}>
-                <Tag color="processing">{u.progress >= 99 ? '写入云端' : '上传中'}</Tag>
+                <Tag color="processing">{uploadPhaseLabel(phaseOfUpload(u.progress), u.progress)}</Tag>
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
             ) : u.status === 'failed' ? (

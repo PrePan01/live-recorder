@@ -326,28 +326,12 @@ pub fn read_ready_file() -> Option<AppInstance> {
     }
 }
 
-/// 探测就绪实例：优先读 ready 文件（权威端口，覆盖 OS 分配），
-/// 失败再退回默认/备用候选端口轮询（兼容无 ready 文件的旧后端）。
+/// 探测就绪实例（P0 隔离硬化，#224）：仅复用本应用数据目录 ready 文件确认的后端实例
+/// （ready 文件由后端写入其自身数据目录，即该后端必然属于本应用数据域）。
+/// 不做任何端口轮询盲接管——否则正式客户端可能误接管 dev 后端（曾因 dev 端口 43130
+/// 落在 43120-43130 探测范围致正式客户端连到 dev 数据）。ready 缺失时返回 None，由调用方拉起本包后端。
 pub fn fetch_ready() -> Option<AppInstance> {
-    if let Some(instance) = read_ready_file() {
-        return Some(instance);
-    }
-    for port in candidate_ports() {
-        if let Some(health) = fetch_health(port) {
-            if health.ready {
-                return Some(AppInstance {
-                    instance_id: health.instance_id,
-                    pid: 0,
-                    host: HOST.to_string(),
-                    port: health.port,
-                    base_url: format!("http://{HOST}:{}", health.port),
-                    api_version: health.api_version,
-                    started_at: String::new(),
-                });
-            }
-        }
-    }
-    None
+    read_ready_file()
 }
 
 pub fn fetch_health(port: u16) -> Option<Health> {
@@ -370,18 +354,6 @@ pub fn fetch_health(port: u16) -> Option<Health> {
     resp.json::<Envelope>().ok().map(|e| e.service_status)
 }
 
-pub fn candidate_ports() -> Vec<u16> {
-    let base = std::env::var("LR_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_PORT);
-    let mut ports = vec![base];
-    for delta in 1..=10 {
-        ports.push(base.saturating_add(delta));
-    }
-    ports
-}
-
 fn ready_file_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LIVE_RECORDER_READY_FILE") {
         return Some(PathBuf::from(path));
@@ -391,6 +363,13 @@ fn ready_file_path() -> Option<PathBuf> {
     }
     if let Ok(dir) = std::env::var("LR_STATE_DIR") {
         return Some(PathBuf::from(dir).join("ready.json"));
+    }
+    // 开发/运行环境数据目录覆盖：与后端 defaultDataDir 的 LIVE_RECORDER_DATA_DIR 保持一致
+    // （开发隔离时 dev 后端与 Tauri 宿主都落在同一独立数据目录）。
+    if let Ok(dir) = std::env::var("LIVE_RECORDER_DATA_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join("state").join("ready.json"));
+        }
     }
     let home = std::env::var("HOME").ok()?;
     let base = if cfg!(target_os = "macos") {

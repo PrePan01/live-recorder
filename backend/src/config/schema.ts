@@ -1,5 +1,6 @@
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
+import path from 'node:path';
 
 /** 配置校验（阶段 B 手写检查；阶段 B-E4 路由层补 JSON Schema）。 */
 export function validateSettings(input: unknown): AppSettings {
@@ -9,6 +10,10 @@ export function validateSettings(input: unknown): AppSettings {
   const s = input as Partial<AppSettings>;
   if (typeof s.recordingDirectory !== 'string' || s.recordingDirectory.length === 0) {
     throw new AppError('DIRECTORY_NOT_WRITABLE', '录像目录未配置');
+  }
+  // QA #7 观察项（纵深防御）：recordingDirectory 必须为绝对路径——防止绕过前端直接 API 保存相对/非法路径，仅靠录制时兜底。
+  if (!path.isAbsolute(s.recordingDirectory)) {
+    throw new AppError('DIRECTORY_NOT_WRITABLE', '录像目录必须为绝对路径');
   }
   if (typeof s.maxConcurrentRecordings !== 'number' || s.maxConcurrentRecordings < 1 || s.maxConcurrentRecordings > 8) {
     throw new AppError('CONFIG_INVALID', '最大并发数需在 1-8 之间');
@@ -21,6 +26,9 @@ export function validateSettings(input: unknown): AppSettings {
   }
   if (s.autoRecord !== undefined && typeof s.autoRecord !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'autoRecord 必须为布尔值');
+  }
+  if (s.confirmAfterComplete !== undefined && typeof s.confirmAfterComplete !== 'boolean') {
+    throw new AppError('CONFIG_INVALID', 'confirmAfterComplete 必须为布尔值');
   }
   if (s.theme !== undefined && s.theme !== 'light' && s.theme !== 'dark' && s.theme !== 'system') {
     throw new AppError('CONFIG_INVALID', 'theme 仅支持 light/dark/system');

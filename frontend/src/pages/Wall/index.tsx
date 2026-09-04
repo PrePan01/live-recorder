@@ -3,6 +3,7 @@ import { App, Button, Card, Empty, Modal, Popconfirm, Segmented, Select, Space, 
 import { FullscreenOutlined, ReloadOutlined, SoundOutlined, MutedOutlined, PlusOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
+import { MAX_WALL, useWallStore } from '../../stores/wallStore';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import LiveStatusTag from '../../components/LiveStatusTag';
 import PreviewModal from '../../components/PreviewModal';
@@ -10,44 +11,64 @@ import type { Room } from '../../types/room';
 
 const VideoPlayer = lazy(() => import('../../components/VideoPlayer'));
 
-const MAX_WALL = 4;
-
 export default function Wall() {
   const { message } = App.useApp();
   const { rooms, fetchRooms } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
-  const [grid, setGrid] = useState<'2x2' | '3x3'>('2x2');
-  const [wallRooms, setWallRooms] = useState<Room[]>([]);
+  const wallRoomIds = useWallStore((s) => s.roomIds);
+  const grid = useWallStore((s) => s.grid);
+  const setGrid = useWallStore((s) => s.setGrid);
+  const addRooms = useWallStore((s) => s.addRooms);
+  const removeWallRoom = useWallStore((s) => s.removeRoom);
+  const reconcile = useWallStore((s) => s.reconcile);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [addOpen, setAddOpen] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [fullscreen, setFullscreen] = useState<Room | null>(null);
+  /** 单路重载计数：仅重挂该路播放器，不共享重载（PrePan：重载不应重挂全部）。 */
+  const [reloadTicks, setReloadTicks] = useState<Record<string, number>>({});
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间加载失败'));
   }, [fetchRooms, message]);
 
-  const available = useMemo(
-    () => rooms.filter((r) => r.enabled && !wallRooms.some((w) => w.id === r.id)),
-    [rooms, wallRooms],
+  useEffect(() => {
+    reconcile(rooms);
+  }, [rooms, reconcile]);
+
+  const roomById = useMemo(() => new Map(rooms.map((r) => [r.id, r])), [rooms]);
+
+  const wallRooms = useMemo(
+    () => wallRoomIds.map((id) => roomById.get(id)).filter((r): r is Room => r !== undefined),
+    [wallRoomIds, roomById],
   );
 
-  const addRoom = (room: Room) => {
-    if (wallRooms.length >= MAX_WALL) {
-      const replace = wallRooms[wallRooms.length - 1];
-      closePreview(replace.id);
-      setWallRooms((prev) => [...prev.slice(0, -1), room]);
-      message.info(`已替换「${replace.displayName}」，最多 4 路`);
-    } else {
-      setWallRooms((prev) => [...prev, room]);
-    }
-    openPreview(room.id);
+  const available = useMemo(
+    () => rooms.filter((r) => r.enabled && !wallRoomIds.includes(r.id)),
+    [rooms, wallRoomIds],
+  );
+
+  const remainingSlots = MAX_WALL - wallRoomIds.length;
+
+  const handleAdd = () => {
+    if (pickedIds.length === 0) return;
+    const res = addRooms(pickedIds);
+    res.added.forEach((id) => openPreview(id));
+    setPickedIds([]);
+    setAddOpen(false);
+    message.info(`已添加 ${res.added.length} 路到直播墙`);
   };
 
-  const removeRoom = (room: Room) => {
+  const handleRemove = (room: Room) => {
     closePreview(room.id);
-    setWallRooms((prev) => prev.filter((r) => r.id !== room.id));
+    removeWallRoom(room.id);
+    setPickedIds([]);
+  };
+
+  /** 单路重载：只递增该房间的计数，触发该路播放器重挂。 */
+  const reloadRoom = (roomId: string) => {
+    setReloadTicks((prev) => ({ ...prev, [roomId]: (prev[roomId] ?? 0) + 1 }));
   };
 
   return (
@@ -64,9 +85,9 @@ export default function Wall() {
         </Space>
       </Space>
       {wallRooms.length === 0 ? (
-        <Empty description="从右侧「添加房间」选择直播，默认静音，最多 4 路" style={{ marginTop: 60 }} />
+        <Empty description="从「添加房间」选择直播，默认静音，最多 4 路" style={{ marginTop: 60 }} />
       ) : (
-        <div className="lr-wall-grid" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(${grid === '2x2' ? 320 : 260}px, 100%), 1fr))` }}>
+        <div className="lr-wall-grid" style={{ gridTemplateColumns: `repeat(${grid === '2x2' ? 2 : 3}, minmax(0, 1fr))` }}>
           {wallRooms.map((room) => (
             <Card
               className="lr-wall-card"
@@ -90,8 +111,8 @@ export default function Wall() {
                     {muted[room.id] ? '静音' : '有声'}
                   </Button>
                   <Button type="text" size="small" icon={<FullscreenOutlined />} onClick={() => setFullscreen(room)} />
-                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => setReloadKey((k) => k + 1)} />
-                  <Popconfirm title="移除该路？录制不受影响" onConfirm={() => removeRoom(room)}>
+                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => reloadRoom(room.id)} />
+                  <Popconfirm title="移除该路？录制不受影响" onConfirm={() => handleRemove(room)}>
                     <Button type="text" size="small" danger>
                       移除
                     </Button>
@@ -101,7 +122,7 @@ export default function Wall() {
             >
               {room.lastLiveStatus === 'live' ? (
                 <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
-                  <VideoPlayer key={`${room.id}-${reloadKey}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
+                  <VideoPlayer key={`${room.id}-${reloadTicks[room.id] ?? 0}`} roomId={room.id} platform={room.platform} muted={!muted[room.id]} />
                 </Suspense>
               ) : (
                 <div
@@ -123,24 +144,30 @@ export default function Wall() {
       <Modal
         title="添加房间到直播墙"
         open={addOpen}
-        footer={null}
-        onCancel={() => setAddOpen(false)}
+        onOk={handleAdd}
+        okText="添加"
+        okButtonProps={{ disabled: pickedIds.length === 0 }}
+        onCancel={() => {
+          setPickedIds([]);
+          setAddOpen(false);
+        }}
       >
         <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">
-            最多 4 路；添加第 5 路会替换最后一路。默认静音。
+            {remainingSlots > 0 ? `还可添加 ${remainingSlots} 路，上限 ${MAX_WALL} 路。默认静音。` : `直播墙已满（${MAX_WALL}/${MAX_WALL}），请先移除某一路再添加。`}
           </Typography.Text>
           <Select
+            mode="multiple"
             style={{ width: '100%' }}
-            placeholder="选择直播间"
+            placeholder="搜索并选择直播间"
+            showSearch
+            optionFilterProp="label"
+            value={pickedIds}
+            onChange={setPickedIds}
+            disabled={remainingSlots <= 0}
+            maxCount={remainingSlots > 0 ? remainingSlots : undefined}
             options={available.map((r) => ({ value: r.id, label: r.displayName }))}
-            onChange={(id) => {
-              const room = available.find((r) => r.id === id);
-              if (room) {
-                addRoom(room);
-                setAddOpen(false);
-              }
-            }}
+            maxTagCount="responsive"
           />
         </Space>
       </Modal>
