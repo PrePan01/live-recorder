@@ -32,6 +32,8 @@ export interface Recording {
   streamSessionId: string | null;
   streamTitle: string;
   quality: string | null;
+  /** 录制发起时的期望画质快照，历史页据此判断画质回退（不依赖当前设置）。 */
+  expectedQuality: string | null;
   integrity: RecordingIntegrity | null;
   state: RecordingState;
   pipelineStatus: PipelineStatus | null;

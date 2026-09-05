@@ -392,6 +392,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // 录制发起时设置的期望画质快照（settings.quality），历史页据此判断画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。
+    version: 18,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE recordings ADD COLUMN expected_quality TEXT;`);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

@@ -196,6 +196,7 @@ export class RecorderManager {
         streamSessionId: sessionId,
         streamTitle: status.streamTitle ?? room.displayName,
         quality: stream.actualQuality,
+        expectedQuality: settings.quality,
       });
       this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       let resolveDone!: () => void;
@@ -312,7 +313,7 @@ export class RecorderManager {
       if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
       // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装；#220 询问保留时进入待确认）。
       this.finishOrConfirm(recordingId);
-      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
+      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality, expectedQuality: settings.quality });
       const session = this.active.get(room.id);
       if (session) session.recordingId = next.id;
       void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt, engine: null }, attempt + 1).catch(() => undefined);
@@ -370,7 +371,7 @@ export class RecorderManager {
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       const recording = this.services.recordings.get(recordingId)!;
-      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality });
+      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality, expectedQuality: settings.quality });
       const cur = this.active.get(room.id);
       if (cur) cur.recordingId = next.id;
       void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt, engine: null }, attempt + 1).catch(() => undefined);
