@@ -264,7 +264,7 @@ body {
 
 .lr-wall-grid {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .lr-wall-card {
