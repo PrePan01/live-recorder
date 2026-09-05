@@ -6,7 +6,7 @@ import { describeError } from '../utils/errorMap';
 import { ApiError } from '../types/error';
 import { formatRelative } from '../utils/format';
 import { useUploadStore } from '../stores/uploadStore';
-import { describeUploadError } from '../utils/uploadError';
+import { describeUploadError, classifyUploadError } from '../utils/uploadError';
 import { uploadPhaseLabel, uploadPhaseText } from '../utils/uploadProgress';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -109,9 +109,17 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
             ) : null}
           </Space>
           {j.error ? (
-            <Typography.Text type="danger" style={{ display: 'block', fontSize: 12 }}>
-              {describeUploadError(j.error) ?? j.error}
-            </Typography.Text>
+            <div>
+              <Space size={6} style={{ marginBottom: 2 }}>
+                <Tag color="red">{classifyUploadError(j.error).code}</Tag>
+                <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                  {describeUploadError(j.error) ?? j.error}
+                </Typography.Text>
+              </Space>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
+                {j.error}
+              </Typography.Text>
+            </div>
           ) : null}
         </div>
       ))}
