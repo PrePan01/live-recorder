@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { existsSync } from 'node:fs';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import type { OpenListConfig } from '../../types/index.js';
@@ -109,7 +110,10 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
-    if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法上传', { recordingId: id });
+    // #18：源文件已从磁盘删除 → 明确提示，避免静默无响应。
+    if (!rec.filePath || !existsSync(rec.filePath)) {
+      throw new AppError('CONFIG_LOAD_FAILED', '源文件已删除，无法上传', { recordingId: id });
+    }
     const job = await services.uploader.enqueue(id);
     if (!job) throw new AppError('CONFIG_LOAD_FAILED', 'OpenList 未启用或令牌未配置', { recordingId: id });
     return reply.send({ upload: job });

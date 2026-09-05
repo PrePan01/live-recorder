@@ -918,4 +918,39 @@ describe('V5 OpenList 2FA (#13)', () => {
     expect(after.error).toContain('OpenList 需要 2FA 验证');
     expect(after.retryCount).toBe(1); // 不进入自动重试
   });
+
+  it('run(): 源文件已删除 → 明确标「源文件已删除」而非静默/误判（#18）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/del1', displayName: 'del' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sdel', streamTitle: 't' });
+    // DB 仍有 filePath，但磁盘文件已删除（如用户手动清理）→ 重试应明确报「源文件已删除」。
+    services.recordings.update(rec.id, { state: 'completed', filePath: path.join(tmpdir(), 'deleted_never_exists.flv') });
+
+    const jobs = services.uploader.uploadRepo;
+    services.uploader = new UploadManager(services, { async put() { throw new Error('should not be called'); } });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('源文件已删除');
+    expect(after.retryCount).toBe(0); // 不进入重试
+  });
+
+  it('POST /recordings/:id/upload：源文件已删除 → 明确报错「源文件已删除」（#18）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/up1', displayName: 'up' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sup', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: path.join(tmpdir(), 'gone_never_exists.flv') });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.json().error.message).toContain('源文件已删除');
+    await app.close();
+  });
 });
