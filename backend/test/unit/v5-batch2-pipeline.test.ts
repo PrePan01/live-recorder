@@ -953,4 +953,129 @@ describe('V5 OpenList 2FA (#13)', () => {
     expect(res.json().error.message).toContain('源文件已删除');
     await app.close();
   });
+
+  // #22（PrePan）：OpenList 服务端永久性错误（task.error 透传，如「资源不存在(00010010)」「配额不足」）
+  // 退避重试无意义——服务端任务已终态，重试必然再失败且徒增等待、累积 retryCount。应与 #13 2FA 同理直接 failed。
+  it('run(): 服务端永久性错误（OpenList 后台上传失败）→ 直接 failed 不重试（#22 fail-fast）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/perm1', displayName: 'perm' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sperm', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-perm-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 后台上传失败：资源不存在(00010010)');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 后台上传失败：资源不存在(00010010)');
+    expect(after.retryCount).toBe(1); // 直接 failed，不进入自动退避重试（#22 fail-fast）
+  });
+
+  it('run(): 服务端「任务等待超时」→ 直接 failed 不重试（#22）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/to1', displayName: 'to' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sto', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-to-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 后台上传任务等待超时');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 后台上传任务等待超时');
+    expect(after.retryCount).toBe(1); // fail-fast
+  });
+
+  // #22 边界：瞬时网络类错误（无法读取进度/卡滞核验）仍应保留退避重试，不应误伤 fail-fast。
+  it('run(): 瞬时网络错误（无法读取 OpenList 后台上传进度）→ 保留退避重试（非永久性）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/net1', displayName: 'net' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'snet', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-net-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('无法读取 OpenList 后台上传进度：ECONNRESET');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => (services.uploader.uploadRepo.get(job!.id)?.error ?? '').includes('无法读取 OpenList 后台上传进度'));
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('无法读取 OpenList 后台上传进度');
+    expect(after.retryCount).toBe(1); // 进入退避重试，非 fail-fast
+    expect(after.status).toBe('queued');
+  });
+
+  // #23 边界：入队后令牌被移除（如配置变更）→ run() 明确报「令牌未配置」，非误判其他错误。
+  it('run(): 入队后令牌被移除 → 明确标「OpenList 令牌未配置」（#23）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/tok1', displayName: 'tok' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'stok', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-tok-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    // 先以「有 token」入队并成功一次，再移除 token 触发重试 → run() 命中令牌未配置。
+    await services.secretStore.set('openlist.token', 'tok');
+    services.uploader = new UploadManager(services, {
+      async put() { /* 成功 */ },
+    });
+    const first = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(first!.id)?.status === 'ok');
+
+    await services.secretStore.delete('openlist.token');
+    // 直接对已 ok 的任务 retry → run() 里令牌已缺失。
+    const job = await services.uploader.retry(first!.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 令牌未配置');
+    expect(after.retryCount).toBe(0); // run() 令牌缺失直接 failed，不增加重试计数
+  });
+
+  // #23 边界：特殊字符房间名 → resolveRemotePath 净化非法字符，不产生非法远端路径。
+  it('resolveRemotePath: 特殊字符房间名被净化（\\/:*?"<>| → _）（#23）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/spec1', displayName: 'a/b:c*d?' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sspec', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-spec-'));
+    const file = path.join(dir, 'x.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    const remote = (services.uploader as unknown as { resolveRemotePath(c: never, p: string, r: never): string }).resolveRemotePath(
+      { serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } as never,
+      file,
+      rec as never,
+    );
+    expect(remote).not.toContain('a/b:c*d?');
+    expect(remote).toContain('a_b_c_d_');
+  });
 });
