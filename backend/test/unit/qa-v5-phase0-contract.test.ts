@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
 import { livePrediction } from '../../src/api/routes/notifications.js';
+import { UploadManager } from '../../src/core/upload-manager.js';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -211,7 +215,13 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     expect(badEnabled.statusCode).toBe(422);
     const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/97', displayName: 'up' } })).json().room;
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'up1', streamTitle: 't' });
-    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/up.flv' });
+    // 使用真实临时文件作为源文件（#18：磁盘文件缺失会明确报「源文件已删除」）。
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-up-'));
+    const file = path.join(dir, 'up.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    // 用 fake 上传器：入队/取消走纯内存链路，pump 立即完成不发起网络请求（避免异步写库竞态）。
+    services.uploader = new UploadManager(services, { async put() {} });
     // 未启用 → 手动上传 500
     const noConf = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
     expect(noConf.statusCode).toBe(500);
@@ -229,6 +239,21 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     // 不存在 404
     const missing = await inj({ method: 'POST', url: '/api/v1/uploads/up_none/retry' });
     expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('openlist: 源文件已从磁盘删除时手动上传/重试明确提示（#18）', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'tok' } });
+    const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/98', displayName: 'del' } })).json().room;
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'updel', streamTitle: 't' });
+    // DB 有 filePath 但磁盘文件不存在（如用户手动清理）。
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/never_exists_del.flv' });
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.json().error.message).toContain('源文件已删除');
     await app.close();
   });
 
