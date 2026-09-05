@@ -754,19 +754,21 @@ body {
   flex-wrap: nowrap;
 }
 
-.lr-statusbar > .lr-statusbar__disk {
+.lr-statusbar__disk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
+  margin: 0 10px 0 0;
 }
 
-/* 窄窗：隐藏磁盘详情，避免溢出 */
-@media (max-width: 1100px) {
-  .lr-statusbar__disk {
-    display: none !important;
-  }
-}
 
 /* 很窄窗口：隐藏版本 Tag，服务文本截断 */
 @media (max-width: 720px) {
+  .lr-statusbar__disk {
+    display: none !important;
+  }
+
   .lr-app-content {
     padding: 12px !important;
   }
@@ -850,10 +852,6 @@ body {
   .lr-setup-card form > .ant-space .ant-input,
   .lr-setup-card form > .ant-space .ant-input-number {
     width: 100%;
-  }
-
-  .lr-statusbar > .ant-space:first-child .ant-tag {
-    display: none;
   }
 
   .lr-statusbar {
