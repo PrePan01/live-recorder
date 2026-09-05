@@ -4,7 +4,6 @@ import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, W
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
@@ -44,7 +43,6 @@ export default function History() {
     useRecordingStore();
   const rooms = useRoomStore((s) => s.rooms);
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
-  const configuredQuality = useSettingsStore((s) => s.settings?.quality);
   const [grouped, setGrouped] = useState(false);
   const [roomId, setRoomId] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
@@ -212,11 +210,13 @@ export default function History() {
         title: '清晰度',
         dataIndex: 'quality',
         width: 80,
-        render: (q: string | null) => {
+        render: (q: string | null, r: Recording) => {
           if (!q) return '-';
           const label = QUALITY_LABEL[q] ?? q;
-          if (!configuredQuality || configuredQuality === q) return label;
-          const hint = `设置默认清晰度为 ${QUALITY_LABEL[configuredQuality] ?? configuredQuality}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
+          // 仅用录制发起时的期望画质快照判断回退；无快照（迁移前旧记录）不提示，避免用当前设置误判（PrePan）。
+          const expected = r.expectedQuality;
+          if (!expected || expected === q) return label;
+          const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
           return (
             <Tooltip title={hint}>
               <span style={{ cursor: 'help' }}>
@@ -346,7 +346,7 @@ export default function History() {
         ),
       },
     ],
-    [roomLabel, openDirectory, removeRecording, message, configuredQuality],
+    [roomLabel, openDirectory, removeRecording, message],
   );
 
   const groups = useMemo(() => {
