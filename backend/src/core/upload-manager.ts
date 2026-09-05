@@ -1,4 +1,4 @@
-import { createReadStream, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { createReadStream, statSync, openSync, readSync, closeSync, existsSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -775,8 +775,14 @@ export class UploadManager {
     if (!job) return;
     const rec = this.services.recordings.get(job.recordingId);
     const config = await this.config();
-    if (!rec || !rec.filePath || !config || !config.serverUrl) {
+    if (!rec || !config || !config.serverUrl) {
       this.repo.update(jobId, { status: 'failed', error: '配置或文件缺失' });
+      this.emit(jobId);
+      return;
+    }
+    // #18：源文件已从磁盘删除（非仅 DB 字段缺失）→ 明确标注「源文件已删除」，不再静默/误判重试。
+    if (!rec.filePath || !existsSync(rec.filePath)) {
+      this.repo.update(jobId, { status: 'failed', error: '源文件已删除，无法上传' });
       this.emit(jobId);
       return;
     }
