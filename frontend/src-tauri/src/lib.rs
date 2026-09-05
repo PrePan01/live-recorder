@@ -27,23 +27,31 @@ impl ShellState {
 const BOOT_EVENT: &str = "boot:state";
 
 #[tauri::command]
-fn get_app_instance(_state: State<'_, ShellState>) -> Option<contract::AppInstance> {
-    backend::fetch_ready()
+async fn get_app_instance() -> Option<contract::AppInstance> {
+    // #233：fetch_ready 含 reqwest::blocking，移出主线程避免阻塞 UI。
+    tauri::async_runtime::spawn_blocking(backend::fetch_ready).await.ok().flatten()
 }
 
 #[tauri::command]
-fn get_health() -> Option<contract::Health> {
-    for port in backend_candidates() {
-        if let Some(h) = backend::fetch_health(port) {
-            return Some(h);
+async fn get_health() -> Option<contract::Health> {
+    tauri::async_runtime::spawn_blocking(|| {
+        for port in backend_candidates() {
+            if let Some(h) = backend::fetch_health(port) {
+                return Some(h);
+            }
         }
-    }
-    None
+        None
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
-#[tauri::command]
-fn start_service(app: AppHandle, state: State<'_, ShellState>) -> Result<BootEvent, String> {
-    state.set_boot(&app, BootState::Booting);
+/// 同步执行服务启动（backend.start() 含 spawn + 最长 ~30s health 轮询，均为阻塞调用）。
+/// 必须在非主线程调用（#233：主线程跑会阻塞 UI → 整客户端卡死）。
+fn start_service_sync(app: &AppHandle) -> Result<BootEvent, String> {
+    let state = app.state::<ShellState>();
+    state.set_boot(app, BootState::Booting);
     match state.backend.start() {
         Ok(instance) => {
             let event = BootEvent {
@@ -51,7 +59,7 @@ fn start_service(app: AppHandle, state: State<'_, ShellState>) -> Result<BootEve
                 instance: Some(instance),
                 diagnostics: vec![],
             };
-            state.set_boot(&app, BootState::Ready);
+            state.set_boot(app, BootState::Ready);
             Ok(event)
         }
         Err(message) => {
@@ -64,39 +72,62 @@ fn start_service(app: AppHandle, state: State<'_, ShellState>) -> Result<BootEve
                     detail: Some(message),
                 }],
             };
-            state.set_boot(&app, BootState::Degraded);
+            state.set_boot(app, BootState::Degraded);
             Ok(event)
         }
     }
 }
 
 #[tauri::command]
-fn stop_service(state: State<'_, ShellState>) {
-    state.backend.stop();
+async fn start_service(app: AppHandle) -> Result<BootEvent, String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_service_sync(&handle))
+        .await
+        .map_err(|e| format!("启动服务任务异常: {e}"))?
 }
 
 #[tauri::command]
-fn restart_service(app: AppHandle, state: State<'_, ShellState>) -> Result<BootEvent, String> {
-    state.backend.stop();
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    start_service(app, state)
+async fn stop_service(app: AppHandle) {
+    let handle = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<ShellState>();
+        state.backend.stop();
+    })
+    .await;
 }
 
 #[tauri::command]
-fn get_diagnostics() -> Vec<DiagnosticItem> {
-    let mut items = vec![];
-    match backend::fetch_ready() {
-        Some(instance) => items.push(DiagnosticItem::Ok {
-            key: "service".to_string(),
-            message: format!("本地服务运行中（{}）", instance.port),
-        }),
-        None => items.push(DiagnosticItem::Error {
-            key: "service".to_string(),
-            message: "本地服务未就绪".to_string(),
-            detail: Some("端口不可用或服务启动失败".to_string()),
-        }),
-    }
-    items
+async fn restart_service(app: AppHandle) -> Result<BootEvent, String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<ShellState>();
+        state.backend.stop();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        start_service_sync(&handle)
+    })
+    .await
+    .map_err(|e| format!("重启服务任务异常: {e}"))?
+}
+
+#[tauri::command]
+async fn get_diagnostics() -> Vec<DiagnosticItem> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut items = vec![];
+        match backend::fetch_ready() {
+            Some(instance) => items.push(DiagnosticItem::Ok {
+                key: "service".to_string(),
+                message: format!("本地服务运行中（{}）", instance.port),
+            }),
+            None => items.push(DiagnosticItem::Error {
+                key: "service".to_string(),
+                message: "本地服务未就绪".to_string(),
+                detail: Some("端口不可用或服务启动失败".to_string()),
+            }),
+        }
+        items
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -188,10 +219,10 @@ pub fn run() {
         ])
         .setup(|app| {
             setup_tray(app)?;
-            // Kick off the boot sequence on launch.
+            // Kick off the boot sequence on launch（已在独立线程跑，不阻塞主线程）。
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let _ = start_service(handle.clone(), handle.state::<ShellState>());
+                let _ = start_service_sync(&handle);
             });
             Ok(())
         })

@@ -43,6 +43,8 @@ export interface Recording {
   retryCount: number;
   createdAt: string;
   quality?: Quality;
+  /** 录制发起时设置的期望画质（settings.quality 快照），用于历史页判断是否发生画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。 */
+  expectedQuality?: Quality;
   integrity?: RecordingIntegrity;
   /** V5 后处理管线状态（未参与管线时缺省）。 */
   pipelineStatus?: PipelineStatus;

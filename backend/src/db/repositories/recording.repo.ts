@@ -17,6 +17,7 @@ interface RecordingRow {
   failure_reason: string | null;
   retry_count: number | null;
   quality: string | null;
+  expected_quality: string | null;
   integrity: string | null;
   pipeline_status: string | null;
   metadata: string | null;
@@ -62,6 +63,7 @@ export function rowToRecording(row: RecordingRow): Recording {
     createdAt: row.created_at,
   };
   if (row.quality) rec.quality = row.quality as Quality;
+  if (row.expected_quality) rec.expectedQuality = row.expected_quality as Quality;
   if (row.integrity) rec.integrity = row.integrity as RecordingIntegrity;
   if (row.pipeline_status) rec.pipelineStatus = row.pipeline_status as PipelineStatus;
   const metadata = parseMetadata(row.metadata);
@@ -92,6 +94,7 @@ export class RecordingRepository {
     streamSessionId: string | null;
     streamTitle: string;
     quality?: string;
+    expectedQuality?: string;
   }): Recording {
     const now = nowIso();
     const rec: Recording = {
@@ -112,10 +115,10 @@ export class RecordingRepository {
     };
     this.db
       .prepare(
-        `INSERT INTO recordings (id, room_id, room_name, platform, stream_session_id, stream_title, state, started_at, created_at, quality)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        `INSERT INTO recordings (id, room_id, room_name, platform, stream_session_id, stream_title, state, started_at, created_at, quality, expected_quality)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       )
-      .run(rec.id, rec.roomId, rec.roomName, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null);
+      .run(rec.id, rec.roomId, rec.roomName, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null, input.expectedQuality ?? null);
     return rec;
   }
 

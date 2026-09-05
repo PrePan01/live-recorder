@@ -171,7 +171,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const q = req.query as Record<string, string | undefined>;
     const days = Math.min(30, Math.max(1, Number(q.days ?? '7') || 7));
-    const fromIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const fromIso = new Date(services.clock.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const recs = services.recordings.list({ roomId: id, pageSize: 100, dateFrom: fromIso }).items;
     const totalBytes = recs.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
     const completed = recs.filter((r) => r.state === 'completed').length;

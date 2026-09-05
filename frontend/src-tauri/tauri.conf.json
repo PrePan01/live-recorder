@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Live Recorder",
-  "version": "0.5.79",
+  "version": "0.5.84",
   "identifier": "com.live-recorder.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -32,7 +32,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "msi"],
+    "targets": [
+      "app",
+      "msi"
+    ],
     "resources": {
       "../../backend": "backend"
     },

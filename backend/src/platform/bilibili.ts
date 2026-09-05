@@ -128,10 +128,13 @@ export class BilibiliAdapter implements PlatformAdapter {
     return { ...(uname ? { uname } : {}), ...(title ? { title } : {}) };
   }
 
-  /** 取流：优先 http_stream/flv + avc；实际档位按 codec.current_qn 回报。 */
+  /** 取流：优先 http_stream/flv + avc；在全部可用 codec 中选择最接近目标档位的流。
+   *  #xxx 修复：不再只取首个有 URL 的 codec（常为最高档/原画）——选择 actualQn ≤ target 的最高档，
+   *  若无可选（目标档不可用）则取最低可用档，保证「选 360p/720p 不会录成原画」。 */
   private pickStream(data: BiliPlayResponse, targetQn: number): { url: string; format: 'flv' | 'hls'; actualQn: number } | null {
     const streams = data.data?.playurl_info?.playurl?.stream ?? [];
     const ordered = [...streams].sort((a, b) => rankProtocol(a.protocol_name) - rankProtocol(b.protocol_name));
+    let best: { url: string; format: 'flv' | 'hls'; actualQn: number } | null = null;
     for (const stream of ordered) {
       const formats = [...(stream.format ?? [])].sort((a, b) => rankFormat(a.format_name) - rankFormat(b.format_name));
       for (const fmt of formats) {
@@ -143,15 +146,16 @@ export class BilibiliAdapter implements PlatformAdapter {
           const info = codec.url_info?.[0];
           if (!info?.host || !codec.base_url) continue;
           const isFlv = fmt.format_name === 'flv' || codec.base_url.includes('.flv');
-          return {
+          const candidate: { url: string; format: 'flv' | 'hls'; actualQn: number } = {
             url: `${info.host}${codec.base_url}${info.extra ?? ''}`,
             format: isFlv ? 'flv' : 'hls',
             actualQn: picked || current,
           };
+          if (!best || betterQnMatch(candidate.actualQn, best.actualQn, targetQn)) best = candidate;
         }
       }
     }
-    return null;
+    return best;
   }
 
   private availableQns(data: BiliPlayResponse): number[] {
@@ -252,7 +256,19 @@ function rankCodec(name: string | undefined): number {
 function pickQn(accept: number[], target: number): number {
   const sorted = [...accept].sort((a, b) => b - a);
   const exactOrLower = sorted.find((q) => q <= target);
-  return exactOrLower ?? sorted[0] ?? 0;
+  // 目标档位不可用时的回退：取最低可用档（最接近目标），而不是最高档（原画）——
+  // 否则设置 360p/720p 录制而房间未提供该档时会直接录成原画（PrePan：非原画录制历史仍显示原画）。
+  return exactOrLower ?? sorted[sorted.length - 1] ?? 0;
+}
+
+/** 档位匹配比较：a 优于 b 当且仅当——a ≤ target（命中目标或更低）时优先；同侧取更接近 target 的。 */
+function betterQnMatch(a: number, b: number, target: number): boolean {
+  const aOk = a > 0 && a <= target;
+  const bOk = b > 0 && b <= target;
+  if (aOk && !bOk) return true;
+  if (!aOk && bOk) return false;
+  if (aOk && bOk) return a > b; // 都在目标内，取更高档
+  return a > 0 && b > 0 && a < b; // 都高于目标（不可达），取最低档
 }
 
 export type { ErrorObject };
