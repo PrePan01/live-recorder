@@ -270,6 +270,11 @@ export class RealWebDavClient implements WebDavClient {
         if (task.state === 'failed' || task.state === 'canceled') {
           throw new Error(`OpenList 后台上传${task.state === 'canceled' ? '已取消' : '失败'}${task.error ? `：${task.error}` : ''}`);
         }
+        // #16：服务端任务虽未翻 failed，但已携带错误信息（如云盘「资源配额不足」/写入失败）——
+        // 立即透传失败，不再等 10min 卡滞判定，避免用户长时间困惑在固定百分比（QA/PrePan：卡 74% 困惑）。
+        if (task.error) {
+          throw new Error(`OpenList 后台上传失败：${task.error}`);
+        }
         // #228：进度卡滞判定——服务端任务仍在 running 但进度长时间无变化时，
         // 用远端文件核验兜底：文件已完整落盘则判定成功，否则给出明确失败原因。
         if (serverPct !== lastServerPct) {
