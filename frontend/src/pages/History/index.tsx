@@ -16,14 +16,13 @@ import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
-import { fetchUploads, retryUpload, submitOpenList2fa } from '../../api/openlist';
+import { fetchUploads, retryUpload } from '../../api/openlist';
 import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
 import { describeUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { original: '原画', '1080p': '1080p', '720p': '720p', '360p': '360p' };
-const OPENLIST_2FA_MARKER = 'OpenList 需要 2FA 验证';
 function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
   if (progress >= 99) return 'verifying';
   if (progress < 50) return 'sending';
@@ -61,9 +60,6 @@ export default function History() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [, setTick] = useState(0);
-  const [twoFactorOpen, setTwoFactorOpen] = useState(false);
-  const [twoFactorBusy, setTwoFactorBusy] = useState(false);
-  const [twoFactorCode, setTwoFactorCode] = useState('');
 
   // 录制中记录时长本地走时：每秒重渲染一次，不再依赖后端每秒 SSE（QA 性能建议③）。
   useEffect(() => {
@@ -149,6 +145,7 @@ export default function History() {
     }
   };
 
+  // #13 OpenList 2FA：上传任务失败且标记「需要 2FA 验证」时弹窗收集一次性码。
   const retryUploadFor = useCallback(
     async (recordingId: string) => {
       try {
@@ -166,51 +163,6 @@ export default function History() {
     },
     [message],
   );
-
-  // #13 OpenList 2FA：上传任务失败且标记「需要 2FA 验证」时弹窗收集一次性码。
-  const handleTwoFactorSubmit = useCallback(
-    async (otpCode: string) => {
-      setTwoFactorBusy(true);
-      try {
-        await submitOpenList2fa(otpCode);
-        setTwoFactorOpen(false);
-        message.success('2FA 验证成功，上传任务已恢复，可在历史页重新触发');
-        // 验证成功后自动重试所有 2FA 待定的失败任务。
-        try {
-          const jobs = await fetchUploads(100);
-          for (const job of jobs.filter((j) => j.status === 'failed' && (j.error ?? '').includes(OPENLIST_2FA_MARKER))) {
-            void retryUpload(job.id);
-          }
-        } catch {
-          /* 忽略 */
-        }
-      } catch (e) {
-        message.error(e instanceof ApiError ? describeError(e.code, e.message) : '2FA 验证失败');
-      } finally {
-        setTwoFactorBusy(false);
-      }
-    },
-    [message],
-  );
-
-  // 监听上传任务：任一任务带「需要 2FA 验证」标记即弹出输入框（仅弹一次）。
-  useEffect(() => {
-    let disposed = false;
-    void (async () => {
-      try {
-        const jobs = await fetchUploads(100);
-        if (disposed) return;
-        if (jobs.some((j) => j.status === 'failed' && (j.error ?? '').includes(OPENLIST_2FA_MARKER))) {
-          setTwoFactorOpen(true);
-        }
-      } catch {
-        /* 忽略 */
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [items]);
 
   const handleExportCsv = async () => {
     setExporting(true);
@@ -599,30 +551,6 @@ export default function History() {
           )}
         </Space>
       </Drawer>
-      <Modal
-        title="OpenList 需要 2FA 验证"
-        open={twoFactorOpen}
-        onCancel={() => setTwoFactorOpen(false)}
-        onOk={() => void handleTwoFactorSubmit(twoFactorCode)}
-        confirmLoading={twoFactorBusy}
-        okText="验证并恢复上传"
-        cancelText="取消"
-        destroyOnHidden
-      >
-        <Space orientation="vertical" style={{ width: '100%' }}>
-          <Typography.Text type="secondary">
-            OpenList 账号已启用两步验证（2FA）。请在手机验证器中获取一次性验证码并输入，换取短期令牌后自动恢复上传。
-          </Typography.Text>
-          <Input.Password
-            placeholder="6 位验证码"
-            value={twoFactorCode}
-            onChange={(e) => setTwoFactorCode(e.target.value)}
-            onPressEnter={() => void handleTwoFactorSubmit(twoFactorCode)}
-            autoFocus
-            maxLength={12}
-          />
-        </Space>
-      </Modal>
     </div>
   );
 }
