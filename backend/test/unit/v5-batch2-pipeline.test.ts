@@ -894,4 +894,28 @@ describe('V5 OpenList 2FA (#13)', () => {
 
     await app.close();
   });
+
+  it('run(): 2FA 需要码时不重试、直接 failed（避免退避延迟弹窗）', async () => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-2fa-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa1', displayName: '2fa' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2fa', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 需要 2FA 验证');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 需要 2FA 验证');
+    expect(after.retryCount).toBe(1); // 不进入自动重试
+  });
 });
