@@ -278,7 +278,11 @@ export default function SettingsPage() {
                 </Form.Item>
               </Col>
               <Col xs={24} md={8}>
-                <Form.Item label="默认清晰度" name="quality">
+                <Form.Item
+                  label="默认清晰度"
+                  name="quality"
+                  extra="若直播间未提供所选画质，将按实际可用画质录制（历史中会标注）"
+                >
                   <Select
                     options={[
                       { value: 'original', label: '原画' },

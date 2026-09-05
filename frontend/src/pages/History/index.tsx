@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
@@ -22,7 +22,7 @@ import { describeUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
-const QUALITY_LABEL: Record<string, string> = { origin: '原画', '4k': '4K', 'bluray': '蓝光', 'hd': '高清', 'sd': '流畅' };
+const QUALITY_LABEL: Record<string, string> = { original: '原画', '1080p': '1080p', '720p': '720p', '360p': '360p' };
 function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
   if (progress >= 99) return 'verifying';
   if (progress < 50) return 'sending';
@@ -206,7 +206,26 @@ export default function History() {
           </Space>
         ),
       },
-      { title: '清晰度', dataIndex: 'quality', width: 80, render: (q: string | null) => (q ? QUALITY_LABEL[q] ?? q : '-') },
+      {
+        title: '清晰度',
+        dataIndex: 'quality',
+        width: 90,
+        render: (q: string | null, r: Recording) => {
+          if (!q) return '-';
+          const label = QUALITY_LABEL[q] ?? q;
+          // 仅用录制发起时的期望画质快照判断回退；无快照（迁移前旧记录）不提示，避免用当前设置误判（PrePan）。
+          const expected = r.expectedQuality;
+          if (!expected || expected === q) return label;
+          const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
+          return (
+            <Tooltip title={hint}>
+              <span style={{ cursor: 'help' }}>
+                {label} <InfoCircleOutlined style={{ color: '#faad14', fontSize: 12 }} />
+              </span>
+            </Tooltip>
+          );
+        },
+      },
       {
         title: '完整性',
         dataIndex: 'integrity',

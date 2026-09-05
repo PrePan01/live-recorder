@@ -26,6 +26,17 @@ impl ShellState {
 
 const BOOT_EVENT: &str = "boot:state";
 
+/// 唤起主窗口（托盘 open / 单实例恢复 / macOS Dock Reopen 共用）：
+/// macOS 上 show() 不会取消最小化（miniaturize），需 unminimize() 后再 set_focus，
+/// 否则窗口停在 Dock 最小化栏「唤不出」（QA #7 / tauri#12392）。
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[tauri::command]
 async fn get_app_instance() -> Option<contract::AppInstance> {
     // #233：fetch_ready 含 reqwest::blocking，移出主线程避免阻塞 UI。
@@ -155,10 +166,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
             "restart" => {
                 let _ = app.emit("tray:restart", ());
@@ -182,10 +190,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus the existing window instead of starting a second UI/service.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
             let _ = app.emit("boot:existing-instance", ());
         }))
         .plugin(tauri_plugin_log::Builder::default().build())
@@ -235,6 +240,13 @@ pub fn run() {
         if let tauri::RunEvent::Exit = event {
             let state = app_handle.state::<ShellState>();
             state.backend.stop();
+        }
+        // macOS Dock 图标点击 / 应用重新激活（applicationShouldHandleReopen）：
+        // 窗口被 hide（close-to-tray）或最小化后，点击 Dock 图标必须重新唤出主窗口。
+        // 缺失该处理时隐藏窗口无法通过 Dock 唤回（QA #7）。
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            show_main_window(&app_handle);
         }
     });
 }

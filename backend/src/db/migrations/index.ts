@@ -392,6 +392,27 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // 录制发起时设置的期望画质快照（settings.quality），历史页据此判断画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。
+    version: 18,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE recordings ADD COLUMN expected_quality TEXT;`);
+      }
+    },
+  },
+  {
+    // QA #3 阻断：部分存量库 schema_version 已记录 18 但 expected_quality 列缺失（早前 WIP 迁移在 dev 跑过被记录、ALTER 未落库），
+    // v18 因版本已记录被跳过 → 列永远补不上、recordings.create 带 expectedQuality 即报错。追加 v19 幂等 ensure-column（PRAGMA 判存→ALTER 补列）。
+    version: 19,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`).get();
+      if (!has) {
+        db.exec(`ALTER TABLE recordings ADD COLUMN expected_quality TEXT;`);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
