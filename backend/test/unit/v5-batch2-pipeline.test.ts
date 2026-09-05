@@ -754,3 +754,144 @@ describe('V5 Batch2 email simplification (#117)', () => {
     await app.close();
   });
 });
+
+describe('V5 OpenList 2FA (#13)', () => {
+  it('RealWebDavClient.apiToken: 登录 402 标记 pending2fa，put 抛「需要 2FA 验证」而非回退 405', async () => {
+    const orig = globalThis.fetch;
+    let loginCalls = 0;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/login')) {
+        loginCalls += 1;
+        return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+      }
+      // MKCOL/PROPFIND 等 WebDAV 方法在 2FA 检测前调用：返回 200 放行。
+      const method = (init?.method as string | undefined) ?? 'GET';
+      if (method === 'MKCOL') {
+        return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      expect(client.needs2fa(root)).toBe(false);
+      // 首次登录返回 null（无法换取 token），同时记录 pending2fa。
+      const token = await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(token).toBeNull();
+      expect(client.needs2fa(root)).toBe(true);
+      // put 时检测到 2FA → 抛标识错误（即使本地文件存在）。
+      const dir = await mkdtemp(path.join(tmpdir(), 'lr-2fa-'));
+      const file = path.join(dir, 'x.flv');
+      await writeFile(file, Buffer.from([1, 2, 3]));
+      await expect(client.put(`${root}/dav/x/y.flv`, file, 'u', 'p', () => {}, `${root}/dav`)).rejects.toThrow('OpenList 需要 2FA 验证');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('RealWebDavClient.submit2fa: 有效 otp_code 换取 token 并清除 pending2fa', async () => {
+    const orig = globalThis.fetch;
+    let body = '';
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      body = String(init?.body ?? '');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ code: 200, message: 'success', data: { token: 'jwt-short-lived' } }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      // 先触发一次 402 使 pending2fa 置位。
+      const orig2 = globalThis.fetch;
+      globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response)) as typeof fetch;
+      await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      globalThis.fetch = orig2;
+      expect(client.needs2fa(root)).toBe(true);
+
+      const res = await client.submit2fa(root, 'u', 'p', '123456');
+      expect(res.ok).toBe(true);
+      expect(body).toContain('"otp_code":"123456"');
+      expect(client.needs2fa(root)).toBe(false);
+      // token 已缓存：再次 apiToken 不发起网络请求直接返回缓存。
+      const cached = await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(cached).toBe('jwt-short-lived');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('submit2fa: 空码/错误码返回 ok=false 且不清除 pending2fa', async () => {
+    const orig = globalThis.fetch;
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(client.needs2fa(root)).toBe(true);
+
+      const empty = await client.submit2fa(root, 'u', 'p', '');
+      expect(empty.ok).toBe(false);
+      expect(client.needs2fa(root)).toBe(true);
+
+      const bad = await client.submit2fa(root, 'u', 'p', '999999');
+      expect(bad.ok).toBe(false);
+      expect(client.needs2fa(root)).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('POST /settings/openlist/2fa: 无码 400；有效码 ok；无效码报错', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    // 无码 → 422 CONFIG_INVALID
+    const noCode = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: {} });
+    expect(noCode.statusCode).toBe(422);
+    expect(noCode.json().error.code).toBe('CONFIG_INVALID');
+
+    // 有效码 → ok；submit2fa 内部对 /api/auth/login 返回 200+token。
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      const payload = String(init?.body ?? '');
+      if (payload.includes('"otp_code"')) {
+        return { ok: true, status: 200, json: async () => ({ code: 200, message: 'success', data: { token: 'jwt' } }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+    }) as typeof fetch;
+    try {
+      const good = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: { otpCode: '123456' } });
+      expect(good.statusCode).toBe(200);
+      expect(good.json().ok).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+
+    // 无效码 → 4xx CONFIG_LOAD_FAILED
+    const orig2 = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response)) as typeof fetch;
+    try {
+      const bad = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: { otpCode: '000000' } });
+      expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+      expect(bad.json().error.message).toContain('Invalid 2FA code');
+    } finally {
+      globalThis.fetch = orig2;
+    }
+
+    await app.close();
+  });
+});
