@@ -27,7 +27,7 @@ const ERROR_MATCHERS: Array<{ code: UploadErrorCode; test: RegExp; action: strin
   { code: 'OPENLIST_QUOTA_EXCEEDED', test: /配额|存储空间不足|资源配额/, action: 'OpenList 云端存储配额不足，请到 OpenList/云盘清理旧文件或扩容后重新上传。' },
   { code: 'OPENLIST_RESOURCE_NOT_FOUND', test: /资源不存在|文件不存在|目录不存在/, action: 'OpenList 云端找不到该上传资源（目标目录/文件缺失），请先在 OpenList 核对目标路径与云盘状态，确认后重新上传。' },
   { code: 'OPENLIST_TASK_NOT_FOUND', test: /task.*不存在|not found|任务不存在/i, action: 'OpenList 后台任务不存在，可能已被服务端清理，请点击重新上传。' },
-  { code: 'OPENLIST_TASK_FAILED', test: /OpenList 后台上传失败|后台上传失败/, action: 'OpenList 后台任务失败，请查看详细原因；如为云端写入问题需在 OpenList 侧处理。' },
+  { code: 'OPENLIST_TASK_FAILED', test: /OpenList 后台上传(失败|已取消)|后台上传失败/, action: 'OpenList 后台任务已失败或取消，请查看详细原因；如为云端写入问题需在 OpenList 侧处理。' },
   { code: 'OPENLIST_AUTH_FAILED', test: /认证失败|401|403|Invalid.*(token|code|credential)/i, action: 'OpenList 认证失败，请检查账号令牌或重新获取 2FA 验证码。' },
   { code: 'WEBDAV_405', test: /WebDAV PUT 405|method not allowed/i, action: '目标地址不接受 WebDAV PUT，请确认服务器地址以 /dav 开头，并检查目标存储是否允许上传和覆盖。' },
   { code: 'WEBDAV_504', test: /WebDAV PUT 504|gateway timeout/i, action: 'OpenList 或反向代理确认超时；文件可能已写入云盘，请先在 OpenList 核对，确认缺失后再重新上传。' },
