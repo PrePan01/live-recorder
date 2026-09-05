@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { useResizableColumns } from '../../hooks/useResizableColumns';
 import { RecordingStateTag, IntegrityTag } from '../../components/StatusTags';
@@ -23,6 +24,7 @@ import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { original: '原画', '1080p': '1080p', '720p': '720p', '360p': '360p' };
+const QUALITY_RANK: Record<string, number> = { original: 4, '1080p': 3, '720p': 2, '360p': 1 };
 function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
   if (progress >= 99) return 'verifying';
   if (progress < 50) return 'sending';
@@ -43,6 +45,7 @@ export default function History() {
     useRecordingStore();
   const rooms = useRoomStore((s) => s.rooms);
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
+  const configuredQuality = useSettingsStore((s) => s.settings?.quality);
   const [grouped, setGrouped] = useState(false);
   const [roomId, setRoomId] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
@@ -206,7 +209,26 @@ export default function History() {
           </Space>
         ),
       },
-      { title: '清晰度', dataIndex: 'quality', width: 80, render: (q: string | null) => (q ? QUALITY_LABEL[q] ?? q : '-') },
+      {
+        title: '清晰度',
+        dataIndex: 'quality',
+        width: 80,
+        render: (q: string | null) => {
+          if (!q) return '-';
+          const label = QUALITY_LABEL[q] ?? q;
+          const configured = configuredQuality && configuredQuality !== q;
+          const fallback = configured && (QUALITY_RANK[q] ?? 0) < (QUALITY_RANK[configuredQuality] ?? 0);
+          if (!fallback) return label;
+          const hint = `设置默认清晰度为 ${QUALITY_LABEL[configuredQuality!] ?? configuredQuality}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
+          return (
+            <Tooltip title={hint}>
+              <span style={{ cursor: 'help' }}>
+                {label} <InfoCircleOutlined style={{ color: '#faad14', fontSize: 12 }} />
+              </span>
+            </Tooltip>
+          );
+        },
+      },
       {
         title: '完整性',
         dataIndex: 'integrity',
@@ -327,7 +349,7 @@ export default function History() {
         ),
       },
     ],
-    [roomLabel, openDirectory, removeRecording, message],
+    [roomLabel, openDirectory, removeRecording, message, configuredQuality],
   );
 
   const groups = useMemo(() => {
