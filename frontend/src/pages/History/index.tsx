@@ -174,7 +174,8 @@ export default function History() {
         message.success('已触发上传');
         void fetchHistory();
       } catch (e) {
-        message.error(e instanceof ApiError ? describeError(e.code, e.message) : '上传失败');
+        // 直接用后端真实 message（如「源文件已删除，无法上传」），避免 ERROR_MAP 固定文案遮蔽明确原因。
+        message.error(e instanceof ApiError ? e.message : '上传失败');
       }
     },
     [message, fetchHistory],
