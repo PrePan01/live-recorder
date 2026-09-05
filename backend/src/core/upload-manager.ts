@@ -796,6 +796,13 @@ export class UploadManager {
     } catch (err) {
       if (this.repo.get(jobId)?.status === 'cancelled') return;
       const message = err instanceof Error ? err.message : '上传失败';
+      // #13：2FA 需要一次性码，重试无意义（没有码必然再 402）。直接失败交 FE 弹窗输入验证码，
+      // 避免 5s/15s/45s 退避循环让用户等很久才看到弹窗（PrePan：提示后没有立即弹出）。
+      if (message.includes(OPENLIST_2FA_REQUIRED)) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
       const retryCount = job.retryCount + 1;
       if (retryCount <= MAX_RETRIES) {
         const delayMs = RETRY_DELAYS_MS[retryCount - 1] ?? 5_000;

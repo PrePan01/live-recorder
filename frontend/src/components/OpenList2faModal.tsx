@@ -18,7 +18,7 @@ export default function OpenList2faModal() {
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState('');
 
-  const hasPending2fa = jobs.some((j) => j.status === 'failed' && (j.error ?? '').includes(OPENLIST_2FA_MARKER));
+  const hasPending2fa = jobs.some((j) => (j.status === 'failed' || j.status === 'queued') && (j.error ?? '').includes(OPENLIST_2FA_MARKER));
 
   // 挂载时拉取一次当前上传任务，确保启动前已存在的 2FA 失败任务也能触发弹窗（SSE 仅推送新变更）。
   useEffect(() => {
