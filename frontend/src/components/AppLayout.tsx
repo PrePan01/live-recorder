@@ -42,10 +42,7 @@ export default function AppLayout() {
           collapsedWidth={48}
           style={{ borderRight: '1px solid var(--lr-border)', overflow: 'auto' }}
         >
-          <div className="lr-app-brand">
-            <img className="lr-app-brand-icon" src="/icon.png" alt="" />
-            <span>直播录制台</span>
-          </div>
+          <div className="lr-app-brand">直播录制台</div>
           <Menu
             mode="inline"
             selectedKeys={[ITEMS.find((i) => pathname.startsWith(i.key))?.key ?? '']}
