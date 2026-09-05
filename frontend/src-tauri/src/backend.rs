@@ -11,6 +11,8 @@ pub const DEFAULT_PORT: u16 = 43120;
 pub const HOST: &str = "127.0.0.1";
 const POLL_INTERVAL: Duration = Duration::from_millis(350);
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
+/// 停旧换新：SIGTERM 后等待旧后端退出+端口释放的上限，超时升级 SIGKILL（#9 阻塞根因）。
+const STOP_OLD_TIMEOUT_SECS: u64 = 10;
 
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
@@ -78,15 +80,32 @@ impl BackendManager {
                 (Some(bundled), Some(running)) => bundled.trim() == running.trim(),
                 _ => true,
             };
-            let replace = !same_version || existing.pid > 0;
-            if !replace {
+            // 同版本：直接复用既有后端（单实例保障下它属于本应用；若为孤儿则 health 校验已驳回）。
+            // 不再无条件停旧换新（原 `existing.pid > 0` 恒真致 replace 恒 true，同版本复用不可达，放大竞态）。
+            if same_version {
                 return Ok(existing);
             }
-            // 停掉旧/孤儿后端（SIGTERM/taskkill），等待其退出释放端口与实例锁。
-            let _ = stop_pid(existing.pid as u32);
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while Instant::now() < deadline {
-                if !pid_alive(existing.pid as u32) {
+            // 版本不一致：停旧换新。SIGTERM 旧后端后，轮询等待「旧 pid 退出 + 端口可探测空闲」，
+            // 避免新后端 spawn 时旧进程仍占实例锁/端口（#9 阻塞根因）。超时升级 SIGKILL。
+            let old_pid = existing.pid as u32;
+            let _ = stop_pid(old_pid);
+            let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
+            loop {
+                let pid_gone = !pid_alive(old_pid);
+                let port_free = probe_port_free(existing.port);
+                if pid_gone && port_free {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    // 旧后端 SIGTERM 后仍不退（优雅收束卡住/录制收尾慢）：升级 SIGKILL 已知旧后端。
+                    kill_pid(old_pid);
+                    let kill_deadline = Instant::now() + Duration::from_secs(5);
+                    while Instant::now() < kill_deadline {
+                        if !pid_alive(old_pid) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -182,6 +201,28 @@ fn stop_pid(pid: u32) -> Result<(), String> {
 fn pid_alive(_pid: u32) -> bool {
     // Windows 侧简化：taskkill /T 为异步，直接返回 true 让调用方按 5s 上限等待。
     true
+}
+
+/// 探测端口当前是否空闲（无进程监听）。停旧换新时用于确认旧后端已释放端口，避免新后端端口/锁冲突。
+fn probe_port_free(port: u16) -> bool {
+    use std::net::TcpStream;
+    TcpStream::connect_timeout(&format!("{HOST}:{port}").parse().unwrap_or_else(|_| unreachable!()), Duration::from_millis(300)).is_err()
+}
+
+/// 升级强杀已知旧后端（SIGTERM 超时后调用），仅作用于 fetch_ready 确认过的本应用后端 pid。
+#[cfg(unix)]
+fn kill_pid(pid: u32) {
+    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+}
+
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    use std::process::Command as OsCommand;
+    let _ = OsCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F", "/T"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
 }
 
 /// 定位可用的 node 运行时。优先使用打包进 bundle 的 node（Resources/node），
