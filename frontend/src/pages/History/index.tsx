@@ -24,7 +24,6 @@ import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
 const QUALITY_LABEL: Record<string, string> = { original: '原画', '1080p': '1080p', '720p': '720p', '360p': '360p' };
-const QUALITY_RANK: Record<string, number> = { original: 4, '1080p': 3, '720p': 2, '360p': 1 };
 function phaseOfUpload(progress: number): 'sending' | 'cloud' | 'verifying' {
   if (progress >= 99) return 'verifying';
   if (progress < 50) return 'sending';
@@ -216,10 +215,8 @@ export default function History() {
         render: (q: string | null) => {
           if (!q) return '-';
           const label = QUALITY_LABEL[q] ?? q;
-          const configured = configuredQuality && configuredQuality !== q;
-          const fallback = configured && (QUALITY_RANK[q] ?? 0) < (QUALITY_RANK[configuredQuality] ?? 0);
-          if (!fallback) return label;
-          const hint = `设置默认清晰度为 ${QUALITY_LABEL[configuredQuality!] ?? configuredQuality}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
+          if (!configuredQuality || configuredQuality === q) return label;
+          const hint = `设置默认清晰度为 ${QUALITY_LABEL[configuredQuality] ?? configuredQuality}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
           return (
             <Tooltip title={hint}>
               <span style={{ cursor: 'help' }}>
