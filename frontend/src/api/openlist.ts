@@ -40,6 +40,12 @@ export async function testOpenList(): Promise<{ ok: boolean }> {
   return data;
 }
 
+/** 提交 OpenList 2FA 一次性码换取短期 token（#13）。 */
+export async function submitOpenList2fa(otpCode: string): Promise<{ ok: boolean }> {
+  const { data } = await http.post<{ ok: boolean }>('/settings/openlist/2fa', { otpCode });
+  return data;
+}
+
 export async function fetchUploads(limit = 20): Promise<UploadJob[]> {
   const { data } = await http.get<{ uploads: UploadJob[] }>('/uploads', { params: { limit } });
   return data.uploads;

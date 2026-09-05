@@ -67,6 +67,20 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     }
   });
 
+  // 提交 OpenList 2FA 一次性码换取短期 API token（#13）：登录被 402（Invalid 2FA code）后 FE 弹窗收集验证码，
+  // 提交成功后 token 缓存在内存，排队/重试的上传即可复用恢复，无需改动 OpenList 令牌本身。
+  app.post('/api/v1/settings/openlist/2fa', async (req, reply) => {
+    const body = (req.body ?? {}) as { otpCode?: unknown };
+    if (typeof body.otpCode !== 'string' || !body.otpCode.trim()) {
+      throw new AppError('CONFIG_INVALID', '请输入 2FA 一次性验证码');
+    }
+    const result = await services.uploader.submit2fa(body.otpCode.trim());
+    if (!result.ok) {
+      throw new AppError('CONFIG_LOAD_FAILED', result.message ?? 'OpenList 2FA 验证失败', { retryable: true });
+    }
+    return reply.send({ ok: true });
+  });
+
   // 上传任务列表。
   app.get('/api/v1/uploads', async (req, reply) => {
     const qs = req.query as Record<string, string | undefined>;

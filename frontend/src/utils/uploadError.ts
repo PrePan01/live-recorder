@@ -2,6 +2,9 @@
 export function describeUploadError(error: string | null | undefined): string | null {
   if (!error) return null;
   if (error.includes('请检查') || error.includes('请调大') || error.includes('稍后重试')) return error;
+  if (error.includes('OpenList 需要 2FA 验证')) {
+    return 'OpenList 账号已启用 2FA，请在弹出的输入框中输入验证器生成的一次性验证码后重新上传。';
+  }
   if (/WebDAV PUT 504|gateway timeout/i.test(error)) {
     return 'OpenList 或反向代理确认超时；文件可能已经写入云盘，请先在 OpenList 核对，确认缺失后再重新上传。';
   }

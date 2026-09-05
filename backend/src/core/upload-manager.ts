@@ -8,6 +8,10 @@ import { OPENLIST_TOKEN_KEY } from '../security/keys.js';
 
 export interface WebDavClient {
   put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void>;
+  /** 提交 2FA 一次性码换取短期 API token（#13）。 */
+  submit2fa?(root: string, username: string, password: string, otpCode: string): Promise<{ ok: boolean; message?: string }>;
+  /** 该 root 是否需要 2FA 一次性码。 */
+  needs2fa?(root: string): boolean;
 }
 
 interface WebDavClientOptions {
@@ -58,10 +62,14 @@ interface OpenListTaskInfo {
   error?: string;
 }
 
+/** OpenList 需要 2FA 一次性码时抛出的标识错误（job.error 含此标记，FE 据此弹窗输入验证码）。 */
+export const OPENLIST_2FA_REQUIRED = 'OpenList 需要 2FA 验证';
+
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
   private ensuredCollections = new Set<string>();
   private apiTokens = new Map<string, string | null>();
+  private pending2fa = new Set<string>();
 
   private options: WebDavClientOptions;
 
@@ -102,7 +110,13 @@ export class RealWebDavClient implements WebDavClient {
         body: JSON.stringify({ username, password }),
         signal: AbortSignal.timeout(15_000),
       });
-      const payload = await res.json() as { code?: number; data?: { token?: string } };
+      const payload = await res.json() as { code?: number; message?: string; data?: { token?: string } };
+      if (payload.code === 402) {
+        // OpenList 账号启用了 2FA：仅账号密码无法换取 token，需用户输入一次性码（#13）。
+        this.pending2fa.add(root);
+        this.apiTokens.set(root, null);
+        return null;
+      }
       const token = res.ok && payload.code === 200 && typeof payload.data?.token === 'string'
         ? payload.data.token
         : null;
@@ -113,6 +127,35 @@ export class RealWebDavClient implements WebDavClient {
       this.apiTokens.set(root, null);
       return null;
     }
+  }
+
+  /** 提交 2FA 一次性码换取短期 API token；成功缓存并清除待验证标记，返回是否成功。 */
+  async submit2fa(root: string, username: string, password: string, otpCode: string): Promise<{ ok: boolean; message?: string }> {
+    if (!otpCode || !otpCode.trim()) {
+      return { ok: false, message: '请输入 2FA 一次性验证码' };
+    }
+    try {
+      const res = await fetch(`${root}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, otp_code: otpCode.trim() }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const payload = await res.json() as { code?: number; message?: string; data?: { token?: string } };
+      if (payload.code === 200 && typeof payload.data?.token === 'string') {
+        this.apiTokens.set(root, payload.data.token);
+        this.pending2fa.delete(root);
+        return { ok: true };
+      }
+      return { ok: false, message: payload.message || `OpenList 2FA 验证失败（HTTP ${res.status}）` };
+    } catch {
+      return { ok: false, message: '无法连接 OpenList，请检查服务地址与网络' };
+    }
+  }
+
+  /** 该 root 是否需要 2FA 一次性码（最近一次登录被 402 拒绝）。 */
+  needs2fa(root: string): boolean {
+    return this.pending2fa.has(root);
   }
 
   /**
@@ -131,6 +174,11 @@ export class RealWebDavClient implements WebDavClient {
     const target = this.apiTarget(serverUrl, remotePath);
     if (!target) return false;
     const token = await this.apiToken(target.root, username, password);
+    // 账号启用了 2FA：无法静默换取 token。抛出标识错误让 job 落「需要 2FA 验证」，
+    // FE 检测后弹窗输入一次性码（#13）；不再回退单 PUT（服务端对 PUT 返回 405）。
+    if (this.needs2fa(target.root)) {
+      throw new Error(OPENLIST_2FA_REQUIRED);
+    }
     if (!token) return false;
 
     const size = statSync(localPath).size;
@@ -454,6 +502,17 @@ export class RealWebDavClient implements WebDavClient {
     const size = statSync(localPath).size;
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
     await this.ensureParentCollections(remotePath, authorization, serverUrl);
+    // 先探测 OpenList API 登录态：#13 账号启用 2FA 时无法静默换取 token。
+    // 探测一次（命中缓存则零开销），2FA 必需则抛标识错误交 FE 弹窗，不再回退 405 单 PUT。
+    if (serverUrl) {
+      const probeTarget = this.apiTarget(serverUrl, remotePath);
+      if (probeTarget) {
+        await this.apiToken(probeTarget.root, username, token);
+        if (this.needs2fa(probeTarget.root)) {
+          throw new Error(OPENLIST_2FA_REQUIRED);
+        }
+      }
+    }
     // #229 分片并发：大文件优先走 OpenList multipart 分片上传（能力探测+严格回退，失败自动退回单 PUT）。
     if (await this.putAsMultipart(remotePath, localPath, username, token, onProgress, serverUrl)) return;
     if (await this.putAsOpenListTask(remotePath, localPath, username, token, onProgress, serverUrl)) return;
@@ -556,6 +615,38 @@ export class UploadManager {
 
   get uploadRepo(): UploadRepository {
     return this.repo;
+  }
+
+  /** 是否当前 OpenList 账号需要 2FA 一次性码（最近一次 API 登录被 402 拒绝）。 */
+  async needs2fa(): Promise<boolean> {
+    const config = await this.config();
+    if (!config?.serverUrl) return false;
+    const target = this.clientTarget(config.serverUrl);
+    return Boolean(target && this.client.needs2fa?.(target.root));
+  }
+
+  /** 提交 2FA 一次性码换取短期 token；成功返回 ok（token 已缓存，后续上传复用）。 */
+  async submit2fa(otpCode: string): Promise<{ ok: boolean; message?: string }> {
+    const config = await this.config();
+    if (!config?.serverUrl || !config.username) return { ok: false, message: 'OpenList 配置缺失' };
+    const token = await this.services.secretStore.get(OPENLIST_TOKEN_KEY);
+    if (!token) return { ok: false, message: 'OpenList 令牌未配置' };
+    const target = this.clientTarget(config.serverUrl);
+    if (!target) return { ok: false, message: 'OpenList 地址无效' };
+    return this.client.submit2fa
+      ? await this.client.submit2fa(target.root, config.username, token, otpCode)
+      : { ok: false, message: '当前上传实现不支持 2FA' };
+  }
+
+  private clientTarget(serverUrl: string): { root: string } | null {
+    try {
+      const configured = new URL(serverUrl);
+      const davIndex = configured.pathname.indexOf('/dav');
+      if (davIndex < 0) return null;
+      return { root: `${configured.origin}${configured.pathname.slice(0, davIndex)}`.replace(/\/+$/, '') };
+    } catch {
+      return null;
+    }
   }
 
   /**
