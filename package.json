@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "0.5.84",
+  "version": "0.5.85",
   "private": true,
   "description": "直播录制助手",
   "scripts": {
@@ -16,5 +16,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "prettier": "^3.9.6"
   }
 }

@@ -1,11 +1,20 @@
-import { useEffect } from 'react';
-import { Badge, Button, Popover, Progress, Space, Tag, Typography, List } from 'antd';
-import { CloudServerOutlined, WarningOutlined } from '@ant-design/icons';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useServiceStore } from '../stores/serviceStore';
-import { useAlertStore, selectUnreadCount } from '../stores/alertStore';
-import { formatBytes, formatRelative } from '../utils/format';
-import GlobalSearch from './GlobalSearch';
+import { useEffect } from "react";
+import {
+  Badge,
+  Button,
+  Popover,
+  Progress,
+  Space,
+  Tag,
+  Typography,
+  List,
+} from "antd";
+import { CloudServerOutlined, WarningOutlined } from "@ant-design/icons";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useServiceStore } from "../stores/serviceStore";
+import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
+import { formatBytes, formatRelative } from "../utils/format";
+import GlobalSearch from "./GlobalSearch";
 
 export default function StatusBar() {
   const { pathname } = useLocation();
@@ -25,78 +34,101 @@ export default function StatusBar() {
   }, [fetchAlerts]);
 
   useEffect(() => {
-    const t = setInterval(() => void useServiceStore.getState().fetchStatus(), 300_000);
+    const t = setInterval(
+      () => void useServiceStore.getState().fetchStatus(),
+      300_000,
+    );
     return () => clearInterval(t);
   }, []);
 
-  const online = status?.state === 'running' && sseConnected;
+  const online = status?.state === "running" && sseConnected;
   const free = status?.disk?.freeBytes ?? 0;
   const total = status?.disk?.totalBytes ?? 1;
   const freeRatio = total > 0 ? free / total : 0;
   const spaceDanger = free < 20_000_000_000 || freeRatio < 0.1;
-  const isSettingsPage = pathname.startsWith('/settings');
+  const isSettingsPage = pathname.startsWith("/settings");
 
   return (
     <div
       className="lr-statusbar"
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 24,
-        padding: '0 clamp(12px, 2vw, 24px)',
-        background: 'var(--lr-surface)',
-        borderBottom: '1px solid var(--lr-border)',
+        display: "flex",
+        alignItems: "center",
+        padding: "0 clamp(12px, 2vw, 24px)",
+        background: "var(--lr-surface)",
+        borderBottom: "1px solid var(--lr-border)",
+        gap: 20,
         height: 48,
         minWidth: 0,
       }}
     >
       <Space>
-        <CloudServerOutlined style={{ color: online ? '#52c41a' : '#ff4d4f' }} />
+        <CloudServerOutlined
+          style={{ color: online ? "#52c41a" : "#ff4d4f" }}
+        />
         <Typography.Text strong>
-          {status?.state === 'restarting' ? '服务重启中' : online ? '服务正常' : '服务已断开'}
+          {status?.state === "restarting"
+            ? "服务重启中"
+            : online
+              ? "服务正常"
+              : "服务已断开"}
         </Typography.Text>
         {status?.version ? <Tag>{status.version}</Tag> : null}
-        <Tag color={status && status.activeRecordings > 0 ? 'red' : 'default'}>
-          {status ? `录制中 ${status.activeRecordings}` : '录制中 -'}
+        <Tag color={status && status.activeRecordings > 0 ? "red" : "default"}>
+          {status ? `录制中 ${status.activeRecordings}` : "录制中 -"}
         </Tag>
       </Space>
       <GlobalSearch />
-      <Space className="lr-statusbar__disk">
-        <Typography.Text type={spaceDanger ? 'danger' : 'secondary'}>
-          {spaceDanger ? '⚠ 磁盘空间不足' : '磁盘可用'}
-        </Typography.Text>
-        <Progress
-          percent={Math.round(freeRatio * 100)}
-          status={spaceDanger ? 'exception' : 'normal'}
-          size="small"
-          style={{ width: 120 }}
-          format={() => formatBytes(free)}
-        />
-        {spaceDanger ? <Tag color="red">需清理</Tag> : null}
-      </Space>
-      <div style={{ marginLeft: 'auto' }}>
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          marginLeft: "auto",
+        }}
+      >
+        <div className="lr-statusbar__disk">
+          <Typography.Text type={spaceDanger ? "danger" : "secondary"}>
+            {spaceDanger ? "⚠ 磁盘空间不足" : "磁盘可用"}
+          </Typography.Text>
+          <Progress
+            percent={Math.round(freeRatio * 100)}
+            status={spaceDanger ? "exception" : "normal"}
+            size="small"
+            style={{ width: 120 }}
+            format={() => formatBytes(free)}
+          />
+          {spaceDanger ? <Tag color="red">需清理</Tag> : null}
+        </div>
         <Popover
           trigger="click"
           placement="bottomRight"
           content={
             <List
               size="small"
-              style={{ width: 360, maxHeight: 400, overflow: 'auto' }}
+              style={{ width: 360, maxHeight: 400, overflow: "auto" }}
               header={
                 <Space>
                   <Typography.Text strong>告警</Typography.Text>
-                  <Button size="small" disabled={isSettingsPage} onClick={() => void markAllRead()}>
+                  <Button
+                    size="small"
+                    disabled={isSettingsPage}
+                    onClick={() => void markAllRead()}
+                  >
                     全部已读
                   </Button>
                   {!isSettingsPage && (
-                    <Button size="small" type="link" onClick={() => navigate('/settings')}>
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={() => navigate("/settings")}
+                    >
                       查看全部
                     </Button>
                   )}
                 </Space>
               }
               dataSource={alerts.slice(0, 8)}
-              locale={{ emptyText: '暂无告警' }}
+              locale={{ emptyText: "暂无告警" }}
               renderItem={(a) => (
                 <List.Item
                   actions={
@@ -109,12 +141,19 @@ export default function StatusBar() {
                               size="small"
                               type="link"
                               loading={retryingId === a.id}
-                              onClick={() => void retryFailure(a).catch(() => undefined)}
+                              onClick={() =>
+                                void retryFailure(a).catch(() => undefined)
+                              }
                             >
                               重试
                             </Button>
                           ) : null,
-                          <Button key="read" size="small" type="link" onClick={() => void markRead(a.id)}>
+                          <Button
+                            key="read"
+                            size="small"
+                            type="link"
+                            onClick={() => void markRead(a.id)}
+                          >
                             已读
                           </Button>,
                         ]
@@ -141,7 +180,10 @@ export default function StatusBar() {
           }
         >
           <Badge count={unread} size="small" offset={[-4, 4]}>
-            <Button type="text" icon={<WarningOutlined style={{ fontSize: 18 }} />} />
+            <Button
+              type="text"
+              icon={<WarningOutlined style={{ fontSize: 18 }} />}
+            />
           </Badge>
         </Popover>
       </div>

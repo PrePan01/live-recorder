@@ -209,7 +209,7 @@ export default function History() {
       {
         title: '清晰度',
         dataIndex: 'quality',
-        width: 80,
+        width: 90,
         render: (q: string | null, r: Recording) => {
           if (!q) return '-';
           const label = QUALITY_LABEL[q] ?? q;
