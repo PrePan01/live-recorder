@@ -719,6 +719,177 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     }
     expect(singlePut).toBeGreaterThan(0);
   });
+
+  // #23 覆盖补全：客户端 put() 内部各失败路径直接断言（PrePan：测试覆盖所有可能导致上传失败的情况）。
+  it('put: As-Task 任务创建失败（HTTP 非 2xx/无 task id）→ 抛「OpenList 创建上传任务失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-create-fail-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 500, message: '写入失败' }), { status: 500 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 创建上传任务失败');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务轮询到 failed 状态 → 抛「OpenList 后台上传失败」并携带服务端 error', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-failed-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'pending', progress: 0 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'failed', error: '资源不存在(00010010)' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 后台上传失败：资源不存在(00010010)');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务轮询 task.error（配额不足等）→ 立即透传「OpenList 后台上传失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-error-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'running', progress: 50 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'running', progress: 60, error: '资源配额不足' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 后台上传失败：资源配额不足');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务进度卡滞且远端核验失败 → 抛「进度长时间无变化」（不再静默卡 99%）', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-stall-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 2_000, taskStallTimeoutMs: 50, verifyDelaysMs: [0, 50] });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'running', progress: 80 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'running', progress: 80 } }), { status: 200 });
+      if (init?.method === 'PROPFIND') return new Response('', { status: 404 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('进度长时间无变化');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: WebDAV PUT 405（目标不接受 PUT）→ 透传「WebDAV PUT 405」错误（#12 场景）', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-put-405-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (init?.method === 'PUT') return new Response('', { status: 405 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV PUT 405');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: MKCOL 目录创建失败（非 405）→ 抛「WebDAV MKCOL {status}」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mkcol-fail-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    let mkcolAttempts = 0;
+    globalThis.fetch = (async (input, init) => {
+      if (init?.method === 'MKCOL') { mkcolAttempts += 1; return new Response('', { status: 403 }); }
+      if (init?.method === 'PROPFIND') return new Response('', { status: 207 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV MKCOL 403');
+      expect(mkcolAttempts).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('run(): 配置或文件缺失（rec/config 缺失）→ 明确标「配置或文件缺失」', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/cm1', displayName: 'cm' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'scm', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cm-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() { throw new Error('unreachable'); },
+    });
+    // rec 存在但 filePath 指向不存在磁盘路径 → run() 应先命中配置/文件缺失（existsSync false 走源文件已删除）。
+    services.recordings.update(rec.id, { filePath: path.join(dir, 'missing.flv') });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('源文件已删除');
+  });
+
+  it('put: multipart 分片 complete 返回失败状态 → 透传「分片合并/落盘失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mt-fail-'));
+    const file = path.join(dir, 'big.flv');
+    await writeFile(file, Buffer.alloc(40));
+    const client = new RealWebDavClient({ multipartThresholdBytes: 1, multipartChunkSizeBytes: 16, multipartConcurrency: 2, taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.includes('/api/fs/multipart') && url.includes('action=complete')) {
+        return new Response(JSON.stringify({ code: 200, data: { task: { id: 'mt', state: 'failed', error: '资源不存在' } } }), { status: 200 });
+      }
+      if (url.includes('/api/fs/multipart')) return new Response(JSON.stringify({ code: 200, data: { upload_id: 'sess-1' } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 'mt', state: 'failed', error: '资源不存在' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/big.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('分片合并/落盘失败');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
 });
 
 describe('V5 Batch2 email simplification (#117)', () => {
