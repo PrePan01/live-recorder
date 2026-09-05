@@ -174,8 +174,17 @@ export default function History() {
         message.success('已触发上传');
         void fetchHistory();
       } catch (e) {
-        // 直接用后端真实 message（如「源文件已删除，无法上传」），避免 ERROR_MAP 固定文案遮蔽明确原因。
-        message.error(e instanceof ApiError ? e.message : '上传失败');
+        const msg = e instanceof ApiError ? e.message : '上传失败';
+        message.error(msg);
+        // #18 反馈②：手动上传失败（如源文件已删除）→ 本地更新单元格状态，不再停留在「上传」按钮。
+        if (msg.includes('源文件已删除')) {
+          useRecordingStore.getState().patchRecordingUpload(recordingId, {
+            status: 'failed',
+            progress: 0,
+            remotePath: null,
+            error: msg,
+          });
+        }
       }
     },
     [message, fetchHistory],
@@ -322,14 +331,9 @@ export default function History() {
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
             ) : u.status === 'failed' ? (
-              // #18①：源文件已删除 → 明确标注且不再提供无意义的重试。
+              // #18①：源文件已删除 → 明确标注且不再提供无意义的重试/详情。
               u.error?.includes('源文件已删除') ? (
-                <Space size={4}>
-                  <Tag color="red">源文件已删除</Tag>
-                  <Button size="small" type="link" onClick={() => handleUploadErrorDetail(r)}>
-                    查看详情
-                  </Button>
-                </Space>
+                <Tag color="red">源文件已删除</Tag>
               ) : (
                 <Space size={4}>
                   <Tag color="red">失败</Tag>
