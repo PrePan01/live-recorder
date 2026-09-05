@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
@@ -18,7 +18,7 @@ import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
 import { fetchUploads, retryUpload, uploadRecording } from '../../api/openlist';
 import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
-import { describeUploadError } from '../../utils/uploadError';
+import { describeUploadError, classifyUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
@@ -60,6 +60,8 @@ export default function History() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [, setTick] = useState(0);
+  // #19：上传失败任务的「查看详情」弹窗（错误码 + 可执行建议 + 原始错误全文 + 复制）。
+  const [uploadErrorDetail, setUploadErrorDetail] = useState<{ recordingId: string; title: string; raw: string } | null>(null);
 
   // 录制中记录时长本地走时：每秒重渲染一次，不再依赖后端每秒 SSE（QA 性能建议③）。
   useEffect(() => {
@@ -178,6 +180,26 @@ export default function History() {
     [message, fetchHistory],
   );
 
+  // #19：查看失败任务错误详情（错误码 + 可执行建议 + 原始错误全文）。
+  const handleUploadErrorDetail = useCallback((recording: Recording) => {
+    const raw = recording.upload?.error ?? '未知错误';
+    setUploadErrorDetail({
+      recordingId: recording.id,
+      title: recording.streamTitle || recording.id,
+      raw,
+    });
+  }, []);
+
+  const handleCopyErrorDetail = useCallback(async () => {
+    if (!uploadErrorDetail) return;
+    try {
+      await navigator.clipboard.writeText(uploadErrorDetail.raw);
+      message.success('错误详情已复制');
+    } catch {
+      message.error('复制失败，请手动复制');
+    }
+  }, [uploadErrorDetail, message]);
+
   const handleExportCsv = async () => {
     setExporting(true);
     try {
@@ -284,8 +306,11 @@ export default function History() {
               </Tooltip>
             );
           }
+          const info = classifyUploadError(u.error);
           const detail =
-            describeUploadError(u.error) ??
+            (u.status === 'failed' && u.error
+              ? info.action
+              : describeUploadError(u.error)) ??
             (u.status === 'running' && u.progress >= 99
               ? uploadPhaseText('verifying', u.progress, r.endedAt ?? r.startedAt)
               : u.remotePath);
@@ -300,12 +325,18 @@ export default function History() {
               u.error?.includes('源文件已删除') ? (
                 <Space size={4}>
                   <Tag color="red">源文件已删除</Tag>
+                  <Button size="small" type="link" onClick={() => handleUploadErrorDetail(r)}>
+                    查看详情
+                  </Button>
                 </Space>
               ) : (
                 <Space size={4}>
                   <Tag color="red">失败</Tag>
                   <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
                     重试
+                  </Button>
+                  <Button size="small" type="link" onClick={() => handleUploadErrorDetail(r)}>
+                    查看详情
                   </Button>
                 </Space>
               )
@@ -385,7 +416,7 @@ export default function History() {
         ),
       },
     ],
-    [roomLabel, openDirectory, removeRecording, message, handleManualUpload],
+    [roomLabel, openDirectory, removeRecording, message, handleManualUpload, handleUploadErrorDetail],
   );
 
   const groups = useMemo(() => {
@@ -589,6 +620,49 @@ export default function History() {
           )}
         </Space>
       </Drawer>
+      {/* #19：上传失败错误详情——分级展示（可执行建议 + 错误码 + 原始错误全文）+ 复制。 */}
+      <Modal
+        title={`上传错误详情${uploadErrorDetail ? `：${uploadErrorDetail.title}` : ''}`}
+        open={uploadErrorDetail !== null}
+        onCancel={() => setUploadErrorDetail(null)}
+        footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => void handleCopyErrorDetail()}>
+            复制错误详情
+          </Button>,
+          <Button key="close" type="primary" onClick={() => setUploadErrorDetail(null)}>
+            关闭
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        {uploadErrorDetail ? (
+          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                错误码
+              </Typography.Text>
+              <Tag color="red">{classifyUploadError(uploadErrorDetail.raw).code}</Tag>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                处理建议
+              </Typography.Text>
+              <Typography.Text>{classifyUploadError(uploadErrorDetail.raw).action}</Typography.Text>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                详细原因（原始错误）
+              </Typography.Text>
+              <Typography.Paragraph
+                style={{ margin: 0 }}
+                copyable={{ text: uploadErrorDetail.raw }}
+              >
+                <Typography.Text type="danger">{uploadErrorDetail.raw}</Typography.Text>
+              </Typography.Paragraph>
+            </div>
+          </Space>
+        ) : null}
+      </Modal>
     </div>
   );
 }
