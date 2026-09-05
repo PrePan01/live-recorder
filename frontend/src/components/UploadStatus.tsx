@@ -5,6 +5,7 @@ import type { UploadJob } from '../api/openlist';
 import { describeError } from '../utils/errorMap';
 import { ApiError } from '../types/error';
 import { formatRelative } from '../utils/format';
+import { useShallow } from 'zustand/react/shallow';
 import { useUploadStore } from '../stores/uploadStore';
 import { describeUploadError, classifyUploadError } from '../utils/uploadError';
 import { uploadPhaseLabel, uploadPhaseText } from '../utils/uploadProgress';
@@ -21,7 +22,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   const { message } = App.useApp();
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [loading, setLoading] = useState(false);
-  const liveJobs = useUploadStore((s) => s.jobs.filter((j) => j.recordingId === recordingId));
+  const liveJobs = useUploadStore(useShallow((s) => s.jobs.filter((j) => j.recordingId === recordingId)));
 
   const load = async () => {
     setLoading(true);
