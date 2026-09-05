@@ -183,6 +183,7 @@ export default function History() {
             progress: 0,
             remotePath: null,
             error: msg,
+            updatedAt: new Date().toISOString(),
           });
         }
       }
@@ -322,7 +323,7 @@ export default function History() {
               ? info.action
               : describeUploadError(u.error)) ??
             (u.status === 'running' && u.progress >= 99
-              ? uploadPhaseText('verifying', u.progress, r.endedAt ?? r.startedAt)
+              ? uploadPhaseText('verifying', u.progress, u.updatedAt ?? r.endedAt ?? r.startedAt)
               : u.remotePath);
           const node =
             u.status === 'running' ? (
