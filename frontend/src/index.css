@@ -88,9 +88,6 @@ body {
 }
 
 .lr-app-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   height: 56px;
   padding: 16px 24px;
   overflow: hidden;
@@ -101,24 +98,20 @@ body {
   white-space: nowrap;
 }
 
-.lr-app-brand-icon {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-}
-
 .ant-layout-sider-collapsed .lr-app-brand {
-  display: flex;
-  justify-content: center;
+  display: grid;
   padding-inline: 0;
+  place-items: center;
   color: transparent;
   font-size: 0;
 }
 
-.ant-layout-sider-collapsed .lr-app-brand-icon {
-  width: 24px;
-  height: 24px;
+.ant-layout-sider-collapsed .lr-app-brand::before {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: url('/icon.png') center / cover no-repeat;
+  content: '';
 }
 
 .lr-app-content {
