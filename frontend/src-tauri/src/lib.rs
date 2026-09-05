@@ -129,11 +129,21 @@ async fn get_diagnostics() -> Vec<DiagnosticItem> {
                 key: "service".to_string(),
                 message: format!("本地服务运行中（{}）", instance.port),
             }),
-            None => items.push(DiagnosticItem::Error {
-                key: "service".to_string(),
-                message: "本地服务未就绪".to_string(),
-                detail: Some("端口不可用或服务启动失败".to_string()),
-            }),
+            None => {
+                // 区分「端口仍被旧服务占用（未退出）」vs「启动失败」：端口有响应但 ready 文件缺失/不健康 → 旧服务占用。
+                let port_occupied = backend::fetch_health(backend::DEFAULT_PORT).is_some();
+                items.push(DiagnosticItem::Error {
+                    key: "service".to_string(),
+                    message: "本地服务未就绪".to_string(),
+                    detail: Some(
+                        if port_occupied {
+                            format!("端口 {} 仍被旧服务占用，正在等待其退出后重启（或请手动退出旧版本后重试）", backend::DEFAULT_PORT)
+                        } else {
+                            "服务启动失败，请点击「安全重试」重新拉起".to_string()
+                        },
+                    ),
+                });
+            }
         }
         items
     })
