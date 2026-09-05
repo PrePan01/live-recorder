@@ -88,6 +88,9 @@ body {
 }
 
 .lr-app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   height: 56px;
   padding: 16px 24px;
   overflow: hidden;
@@ -98,22 +101,24 @@ body {
   white-space: nowrap;
 }
 
+.lr-app-brand-icon {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
 .ant-layout-sider-collapsed .lr-app-brand {
-  display: grid;
+  display: flex;
+  justify-content: center;
   padding-inline: 0;
-  place-items: center;
   color: transparent;
   font-size: 0;
 }
 
-.ant-layout-sider-collapsed .lr-app-brand::before {
-  width: 18px;
-  height: 18px;
-  border: 4px solid color-mix(in srgb, var(--lr-primary) 22%, transparent);
-  border-radius: 50%;
-  background: var(--lr-primary);
-  box-shadow: inset 0 0 0 3px var(--lr-surface);
-  content: '';
+.ant-layout-sider-collapsed .lr-app-brand-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .lr-app-content {
@@ -158,11 +163,9 @@ body {
   display: flex;
   width: 100%;
   margin-bottom: 16px;
-  padding: 12px;
   gap: 8px;
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
-  background: color-mix(in srgb, var(--lr-surface) 92%, transparent);
 }
 
 /* 通用容器层级：表格和功能卡片在浅色、深色下保持一致边界。 */
