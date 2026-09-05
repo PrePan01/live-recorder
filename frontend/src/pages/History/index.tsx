@@ -16,7 +16,7 @@ import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
-import { fetchUploads, retryUpload } from '../../api/openlist';
+import { fetchUploads, retryUpload, uploadRecording } from '../../api/openlist';
 import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
 import { describeUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
@@ -164,6 +164,20 @@ export default function History() {
     [message],
   );
 
+  // #18②：手动上传未自动上传的录制（无上传任务时 History 提供「上传」按钮）。
+  const handleManualUpload = useCallback(
+    async (recordingId: string) => {
+      try {
+        await uploadRecording(recordingId);
+        message.success('已触发上传');
+        void fetchHistory();
+      } catch (e) {
+        message.error(e instanceof ApiError ? describeError(e.code, e.message) : '上传失败');
+      }
+    },
+    [message, fetchHistory],
+  );
+
   const handleExportCsv = async () => {
     setExporting(true);
     try {
@@ -252,7 +266,24 @@ export default function History() {
         dataIndex: 'upload',
         width: 150,
         render: (u: Recording['upload'], r: Recording) => {
-          if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
+          // #18②：无上传任务的录制提供「上传」按钮（未开自动上传或上传被删除时）。
+          if (!u) {
+            const canUpload = r.state === 'completed' && !!r.filePath;
+            return (
+              <Tooltip title={canUpload ? '点击上传到 OpenList' : '录制未完成或文件不存在，无法上传'}>
+                <span>
+                  <Button
+                    size="small"
+                    type="link"
+                    disabled={!canUpload}
+                    onClick={() => void handleManualUpload(r.id)}
+                  >
+                    上传
+                  </Button>
+                </span>
+              </Tooltip>
+            );
+          }
           const detail =
             describeUploadError(u.error) ??
             (u.status === 'running' && u.progress >= 99
@@ -265,12 +296,19 @@ export default function History() {
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
             ) : u.status === 'failed' ? (
-              <Space size={4}>
-                <Tag color="red">失败</Tag>
-                <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
-                  重试
-                </Button>
-              </Space>
+              // #18①：源文件已删除 → 明确标注且不再提供无意义的重试。
+              u.error?.includes('源文件已删除') ? (
+                <Space size={4}>
+                  <Tag color="red">源文件已删除</Tag>
+                </Space>
+              ) : (
+                <Space size={4}>
+                  <Tag color="red">失败</Tag>
+                  <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
+                    重试
+                  </Button>
+                </Space>
+              )
             ) : (
               <Tag
                 color={u.status === 'ok' ? 'green' : u.status === 'cancelled' ? 'default' : 'default'}
@@ -347,7 +385,7 @@ export default function History() {
         ),
       },
     ],
-    [roomLabel, openDirectory, removeRecording, message],
+    [roomLabel, openDirectory, removeRecording, message, handleManualUpload],
   );
 
   const groups = useMemo(() => {
