@@ -601,6 +601,8 @@ export class RealWebDavClient implements WebDavClient {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+/** #16 优化②：上传泵有界并发（默认 2）——单个 As-Task 长轮询不阻塞整条队列，后续任务可并行推进。 */
+const UPLOAD_PUMP_CONCURRENCY = 2;
 
 /**
  * OpenList 自动上传（V5 Batch2 #116）：上传队列、进度、重试、取消。
@@ -742,22 +744,26 @@ export class UploadManager {
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping) return; // 单泵串行，避免重入风暴
+    // #16 优化②：有界并发（默认 2），单个 As-Task 长轮询不再阻塞整条上传队列；
+    // 后续任务可并行推进，避免「一条卡 74%、其余全排队」。pumping 仅防重入风暴。
+    if (this.pumping) return;
     this.pumping = true;
     try {
       while (this.queue.length > 0) {
-        const jobId = this.queue.shift()!;
-        if (this.running.has(jobId)) continue;
-        this.running.add(jobId);
-        try {
-          await this.run(jobId);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : '上传任务异常';
-          this.repo.update(jobId, { status: 'failed', error: message });
-          this.emit(jobId);
-        } finally {
-          this.running.delete(jobId);
-        }
+        const batch = this.queue.splice(0, UPLOAD_PUMP_CONCURRENCY);
+        const runnable = batch.filter((id) => !this.running.has(id));
+        await Promise.all(runnable.map(async (jobId) => {
+          this.running.add(jobId);
+          try {
+            await this.run(jobId);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : '上传任务异常';
+            this.repo.update(jobId, { status: 'failed', error: message });
+            this.emit(jobId);
+          } finally {
+            this.running.delete(jobId);
+          }
+        }));
       }
     } finally {
       this.pumping = false;
