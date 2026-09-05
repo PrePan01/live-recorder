@@ -820,6 +820,14 @@ export class UploadManager {
         this.emit(jobId);
         return;
       }
+      // #22（PrePan 反馈）：OpenList 服务端 As-Task 已确认失败的错误（task.error 透传，
+      // 如「资源不存在/配额不足」）重试无意义——服务端任务已终态，退避重试必然再失败且徒增等待。
+      // 与 #13 2FA 同理直接 failed，立即透传展示，让用户尽快看到明确原因。
+      if (message.startsWith('OpenList 后台上传失败') || message.startsWith('OpenList 后台上传')) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
       const retryCount = job.retryCount + 1;
       if (retryCount <= MAX_RETRIES) {
         const delayMs = RETRY_DELAYS_MS[retryCount - 1] ?? 5_000;
