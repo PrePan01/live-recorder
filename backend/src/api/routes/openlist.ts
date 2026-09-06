@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { existsSync } from 'node:fs';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import type { OpenListConfig } from '../../types/index.js';
@@ -67,6 +68,20 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     }
   });
 
+  // 提交 OpenList 2FA 一次性码换取短期 API token（#13）：登录被 402（Invalid 2FA code）后 FE 弹窗收集验证码，
+  // 提交成功后 token 缓存在内存，排队/重试的上传即可复用恢复，无需改动 OpenList 令牌本身。
+  app.post('/api/v1/settings/openlist/2fa', async (req, reply) => {
+    const body = (req.body ?? {}) as { otpCode?: unknown };
+    if (typeof body.otpCode !== 'string' || !body.otpCode.trim()) {
+      throw new AppError('CONFIG_INVALID', '请输入 2FA 一次性验证码');
+    }
+    const result = await services.uploader.submit2fa(body.otpCode.trim());
+    if (!result.ok) {
+      throw new AppError('CONFIG_LOAD_FAILED', result.message ?? 'OpenList 2FA 验证失败', { retryable: true });
+    }
+    return reply.send({ ok: true });
+  });
+
   // 上传任务列表。
   app.get('/api/v1/uploads', async (req, reply) => {
     const qs = req.query as Record<string, string | undefined>;
@@ -95,7 +110,10 @@ export function registerOpenListRoutes(app: FastifyInstance, services: Services)
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
-    if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法上传', { recordingId: id });
+    // #18：源文件已从磁盘删除 → 明确提示，避免静默无响应。
+    if (!rec.filePath || !existsSync(rec.filePath)) {
+      throw new AppError('CONFIG_LOAD_FAILED', '源文件已删除，无法上传', { recordingId: id });
+    }
     const job = await services.uploader.enqueue(id);
     if (!job) throw new AppError('CONFIG_LOAD_FAILED', 'OpenList 未启用或令牌未配置', { recordingId: id });
     return reply.send({ upload: job });

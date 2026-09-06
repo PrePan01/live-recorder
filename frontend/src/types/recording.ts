@@ -15,6 +15,8 @@ export interface UploadSnapshot {
   progress: number;
   remotePath: string | null;
   error: string | null;
+  /** 上传任务最后更新时间（verifying 等待计时基准，避免用录制结束时间误导）。 */
+  updatedAt?: string | null;
 }
 
 export interface PipelineMetadata {

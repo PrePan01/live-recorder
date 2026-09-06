@@ -23,7 +23,7 @@ interface RecordingRow {
   metadata: string | null;
   cover_path: string | null;
   created_at: string;
-  upload?: { status: string; progress: number; remotePath: string | null; error: string | null };
+  upload?: { status: string; progress: number; remotePath: string | null; error: string | null; updatedAt: string };
 }
 
 function parseError(raw: string | null): ErrorObject | null {
@@ -178,17 +178,17 @@ export class RecordingRepository {
     const marks = ids.map(() => '?').join(',');
     const latest = this.db
       .prepare(
-        `SELECT recording_id, status, progress, remote_path, error FROM (
-           SELECT recording_id, status, progress, remote_path, error,
+        `SELECT recording_id, status, progress, remote_path, error, updated_at FROM (
+           SELECT recording_id, status, progress, remote_path, error, updated_at,
                   ROW_NUMBER() OVER (PARTITION BY recording_id ORDER BY updated_at DESC, created_at DESC, id DESC) AS rn
            FROM upload_jobs WHERE recording_id IN (${marks})
          ) WHERE rn = 1`,
       )
-      .all(...ids) as Array<{ recording_id: string; status: string; progress: number; remote_path: string | null; error: string | null }>;
+      .all(...ids) as Array<{ recording_id: string; status: string; progress: number; remote_path: string | null; error: string | null; updated_at: string }>;
     const byRec = new Map(latest.map((u) => [u.recording_id, u]));
     for (const row of rows) {
       const u = byRec.get(row.id);
-      if (u) row.upload = { status: u.status, progress: u.progress, remotePath: u.remote_path, error: u.error };
+      if (u) row.upload = { status: u.status, progress: u.progress, remotePath: u.remote_path, error: u.error, updatedAt: u.updated_at };
     }
   }
 

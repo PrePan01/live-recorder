@@ -601,6 +601,47 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(progress.at(-1)).toBe(100);
   });
 
+  it('#24: 云盘写入完成（serverPct=100）但任务未翻 succeeded → 立即远端核验判定成功，不再等卡滞窗口', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-verify-'));
+    const file = path.join(dir, 'v.flv');
+    const bytes = Buffer.alloc(64, 7);
+    await writeFile(file, bytes);
+    const progress: number[] = [];
+    let pollCalls = 0;
+    let propfindCalls = 0;
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 5_000, taskStallTimeoutMs: 60_000, verifyDelaysMs: [0, 50] });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) {
+        if (init?.body) {
+          for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume */ }
+        }
+        return new Response(JSON.stringify({ code: 200, data: { task: { id: 't-verify', state: 'running', progress: 100 } } }), { status: 200 });
+      }
+      if (url.includes('/api/task/upload/info')) {
+        pollCalls += 1;
+        return new Response(JSON.stringify({ code: 200, data: { id: 't-verify', state: 'running', progress: 100 } }), { status: 200 });
+      }
+      if (init?.method === 'PROPFIND') {
+        propfindCalls += 1;
+        return new Response(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:getcontentlength>${bytes.length}</D:getcontentlength></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`, { status: 207 });
+      }
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/archive/v.flv', file, 'u', 'p', (pct) => progress.push(pct), 'https://dav.example.com/dav/archive');
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(progress.at(-1)).toBe(100);
+    // 立即核验命中（远小于 taskStallTimeoutMs=60s），而非等卡滞窗口。
+    expect(pollCalls).toBeLessThanOrEqual(5);
+    expect(propfindCalls).toBeGreaterThan(0);
+  });
+
   it('uses the OpenList background task API and reports its server-side progress', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-openlist-task-'));
     const file = path.join(dir, 'task.flv');
@@ -719,6 +760,177 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     }
     expect(singlePut).toBeGreaterThan(0);
   });
+
+  // #23 覆盖补全：客户端 put() 内部各失败路径直接断言（PrePan：测试覆盖所有可能导致上传失败的情况）。
+  it('put: As-Task 任务创建失败（HTTP 非 2xx/无 task id）→ 抛「OpenList 创建上传任务失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-create-fail-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 500, message: '写入失败' }), { status: 500 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 创建上传任务失败');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务轮询到 failed 状态 → 抛「OpenList 后台上传失败」并携带服务端 error', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-failed-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'pending', progress: 0 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'failed', error: '资源不存在(00010010)' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 后台上传失败：资源不存在(00010010)');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务轮询 task.error（配额不足等）→ 立即透传「OpenList 后台上传失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-error-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'running', progress: 50 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'running', progress: 60, error: '资源配额不足' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 后台上传失败：资源配额不足');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: 任务进度卡滞且远端核验失败 → 抛「进度长时间无变化」（不再静默卡 99%）', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-stall-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 2_000, taskStallTimeoutMs: 50, verifyDelaysMs: [0, 50] });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) return new Response(JSON.stringify({ code: 200, data: { task: { id: 't1', state: 'running', progress: 80 } } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 't1', state: 'running', progress: 80 } }), { status: 200 });
+      if (init?.method === 'PROPFIND') return new Response('', { status: 404 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('进度长时间无变化');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: WebDAV PUT 405（目标不接受 PUT）→ 透传「WebDAV PUT 405」错误（#12 场景）', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-put-405-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (init?.method === 'PUT') return new Response('', { status: 405 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV PUT 405');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('put: MKCOL 目录创建失败（非 405）→ 抛「WebDAV MKCOL {status}」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mkcol-fail-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    let mkcolAttempts = 0;
+    globalThis.fetch = (async (input, init) => {
+      if (init?.method === 'MKCOL') { mkcolAttempts += 1; return new Response('', { status: 403 }); }
+      if (init?.method === 'PROPFIND') return new Response('', { status: 207 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV MKCOL 403');
+      expect(mkcolAttempts).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('run(): 配置或文件缺失（rec/config 缺失）→ 明确标「配置或文件缺失」', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/cm1', displayName: 'cm' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'scm', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cm-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() { throw new Error('unreachable'); },
+    });
+    // rec 存在但 filePath 指向不存在磁盘路径 → run() 应先命中配置/文件缺失（existsSync false 走源文件已删除）。
+    services.recordings.update(rec.id, { filePath: path.join(dir, 'missing.flv') });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('源文件已删除');
+  });
+
+  it('put: multipart 分片 complete 返回失败状态 → 透传「分片合并/落盘失败」', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mt-fail-'));
+    const file = path.join(dir, 'big.flv');
+    await writeFile(file, Buffer.alloc(40));
+    const client = new RealWebDavClient({ multipartThresholdBytes: 1, multipartChunkSizeBytes: 16, multipartConcurrency: 2, taskPollIntervalMs: 1, taskPollTimeoutMs: 1_000 });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.includes('/api/fs/multipart') && url.includes('action=complete')) {
+        return new Response(JSON.stringify({ code: 200, data: { task: { id: 'mt', state: 'failed', error: '资源不存在' } } }), { status: 200 });
+      }
+      if (url.includes('/api/fs/multipart')) return new Response(JSON.stringify({ code: 200, data: { upload_id: 'sess-1' } }), { status: 200 });
+      if (url.includes('/api/task/upload/info')) return new Response(JSON.stringify({ code: 200, data: { id: 'mt', state: 'failed', error: '资源不存在' } }), { status: 200 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(client.put('https://dav.example.com/dav/archive/big.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('分片合并/落盘失败');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
 });
 
 describe('V5 Batch2 email simplification (#117)', () => {
@@ -752,5 +964,330 @@ describe('V5 Batch2 email simplification (#117)', () => {
     expect(testRes.statusCode).toBe(200);
     expect(testRes.json().ok).toBe(true);
     await app.close();
+  });
+});
+
+describe('V5 OpenList 2FA (#13)', () => {
+  it('RealWebDavClient.apiToken: 登录 402 标记 pending2fa，put 抛「需要 2FA 验证」而非回退 405', async () => {
+    const orig = globalThis.fetch;
+    let loginCalls = 0;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/login')) {
+        loginCalls += 1;
+        return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+      }
+      // MKCOL/PROPFIND 等 WebDAV 方法在 2FA 检测前调用：返回 200 放行。
+      const method = (init?.method as string | undefined) ?? 'GET';
+      if (method === 'MKCOL') {
+        return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      expect(client.needs2fa(root)).toBe(false);
+      // 首次登录返回 null（无法换取 token），同时记录 pending2fa。
+      const token = await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(token).toBeNull();
+      expect(client.needs2fa(root)).toBe(true);
+      // put 时检测到 2FA → 抛标识错误（即使本地文件存在）。
+      const dir = await mkdtemp(path.join(tmpdir(), 'lr-2fa-'));
+      const file = path.join(dir, 'x.flv');
+      await writeFile(file, Buffer.from([1, 2, 3]));
+      await expect(client.put(`${root}/dav/x/y.flv`, file, 'u', 'p', () => {}, `${root}/dav`)).rejects.toThrow('OpenList 需要 2FA 验证');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('RealWebDavClient.submit2fa: 有效 otp_code 换取 token 并清除 pending2fa', async () => {
+    const orig = globalThis.fetch;
+    let body = '';
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      body = String(init?.body ?? '');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ code: 200, message: 'success', data: { token: 'jwt-short-lived' } }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      // 先触发一次 402 使 pending2fa 置位。
+      const orig2 = globalThis.fetch;
+      globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response)) as typeof fetch;
+      await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      globalThis.fetch = orig2;
+      expect(client.needs2fa(root)).toBe(true);
+
+      const res = await client.submit2fa(root, 'u', 'p', '123456');
+      expect(res.ok).toBe(true);
+      expect(body).toContain('"otp_code":"123456"');
+      expect(client.needs2fa(root)).toBe(false);
+      // token 已缓存：再次 apiToken 不发起网络请求直接返回缓存。
+      const cached = await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(cached).toBe('jwt-short-lived');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('submit2fa: 空码/错误码返回 ok=false 且不清除 pending2fa', async () => {
+    const orig = globalThis.fetch;
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new RealWebDavClient();
+      const root = 'https://dav.example.com';
+      await (client as unknown as { apiToken(r: string, u: string, p: string): Promise<string | null> }).apiToken(root, 'u', 'p');
+      expect(client.needs2fa(root)).toBe(true);
+
+      const empty = await client.submit2fa(root, 'u', 'p', '');
+      expect(empty.ok).toBe(false);
+      expect(client.needs2fa(root)).toBe(true);
+
+      const bad = await client.submit2fa(root, 'u', 'p', '999999');
+      expect(bad.ok).toBe(false);
+      expect(client.needs2fa(root)).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('POST /settings/openlist/2fa: 无码 400；有效码 ok；无效码报错', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const { app } = buildApp(services);
+    const inj = host(app);
+
+    // 无码 → 422 CONFIG_INVALID
+    const noCode = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: {} });
+    expect(noCode.statusCode).toBe(422);
+    expect(noCode.json().error.code).toBe('CONFIG_INVALID');
+
+    // 有效码 → ok；submit2fa 内部对 /api/auth/login 返回 200+token。
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      const payload = String(init?.body ?? '');
+      if (payload.includes('"otp_code"')) {
+        return { ok: true, status: 200, json: async () => ({ code: 200, message: 'success', data: { token: 'jwt' } }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response;
+    }) as typeof fetch;
+    try {
+      const good = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: { otpCode: '123456' } });
+      expect(good.statusCode).toBe(200);
+      expect(good.json().ok).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+
+    // 无效码 → 4xx CONFIG_LOAD_FAILED
+    const orig2 = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ code: 402, message: 'Invalid 2FA code', data: null }) } as unknown as Response)) as typeof fetch;
+    try {
+      const bad = await inj({ method: 'POST', url: '/api/v1/settings/openlist/2fa', payload: { otpCode: '000000' } });
+      expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+      expect(bad.json().error.message).toContain('Invalid 2FA code');
+    } finally {
+      globalThis.fetch = orig2;
+    }
+
+    await app.close();
+  });
+
+  it('run(): 2FA 需要码时不重试、直接 failed（避免退避延迟弹窗）', async () => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-2fa-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa1', displayName: '2fa' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2fa', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 需要 2FA 验证');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 需要 2FA 验证');
+    expect(after.retryCount).toBe(1); // 不进入自动重试
+  });
+
+  it('run(): 源文件已删除 → 明确标「源文件已删除」而非静默/误判（#18）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/del1', displayName: 'del' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sdel', streamTitle: 't' });
+    // DB 仍有 filePath，但磁盘文件已删除（如用户手动清理）→ 重试应明确报「源文件已删除」。
+    services.recordings.update(rec.id, { state: 'completed', filePath: path.join(tmpdir(), 'deleted_never_exists.flv') });
+
+    const jobs = services.uploader.uploadRepo;
+    services.uploader = new UploadManager(services, { async put() { throw new Error('should not be called'); } });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('源文件已删除');
+    expect(after.retryCount).toBe(0); // 不进入重试
+  });
+
+  it('POST /recordings/:id/upload：源文件已删除 → 明确报错「源文件已删除」（#18）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/up1', displayName: 'up' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sup', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: path.join(tmpdir(), 'gone_never_exists.flv') });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.json().error.message).toContain('源文件已删除');
+    await app.close();
+  });
+
+  // #22（PrePan）：OpenList 服务端永久性错误（task.error 透传，如「资源不存在(00010010)」「配额不足」）
+  // 退避重试无意义——服务端任务已终态，重试必然再失败且徒增等待、累积 retryCount。应与 #13 2FA 同理直接 failed。
+  it('run(): 服务端永久性错误（OpenList 后台上传失败）→ 直接 failed 不重试（#22 fail-fast）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/perm1', displayName: 'perm' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sperm', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-perm-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 后台上传失败：资源不存在(00010010)');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 后台上传失败：资源不存在(00010010)');
+    expect(after.retryCount).toBe(1); // 直接 failed，不进入自动退避重试（#22 fail-fast）
+  });
+
+  it('run(): 服务端「任务等待超时」→ 直接 failed 不重试（#22）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/to1', displayName: 'to' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sto', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-to-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('OpenList 后台上传任务等待超时');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 后台上传任务等待超时');
+    expect(after.retryCount).toBe(1); // fail-fast
+  });
+
+  // #22 边界：瞬时网络类错误（无法读取进度/卡滞核验）仍应保留退避重试，不应误伤 fail-fast。
+  it('run(): 瞬时网络错误（无法读取 OpenList 后台上传进度）→ 保留退避重试（非永久性）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/net1', displayName: 'net' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'snet', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-net-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error('无法读取 OpenList 后台上传进度：ECONNRESET');
+      },
+    });
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => (services.uploader.uploadRepo.get(job!.id)?.error ?? '').includes('无法读取 OpenList 后台上传进度'));
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('无法读取 OpenList 后台上传进度');
+    expect(after.retryCount).toBe(1); // 进入退避重试，非 fail-fast
+    expect(after.status).toBe('queued');
+  });
+
+  // #23 边界：入队后令牌被移除（如配置变更）→ run() 明确报「令牌未配置」，非误判其他错误。
+  it('run(): 入队后令牌被移除 → 明确标「OpenList 令牌未配置」（#23）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/tok1', displayName: 'tok' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'stok', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-tok-run-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+
+    // 先以「有 token」入队并成功一次，再移除 token 触发重试 → run() 命中令牌未配置。
+    await services.secretStore.set('openlist.token', 'tok');
+    services.uploader = new UploadManager(services, {
+      async put() { /* 成功 */ },
+    });
+    const first = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(first!.id)?.status === 'ok');
+
+    await services.secretStore.delete('openlist.token');
+    // 直接对已 ok 的任务 retry → run() 里令牌已缺失。
+    const job = await services.uploader.retry(first!.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    expect(after.error).toContain('OpenList 令牌未配置');
+    expect(after.retryCount).toBe(0); // run() 令牌缺失直接 failed，不增加重试计数
+  });
+
+  // #23 边界：特殊字符房间名 → resolveRemotePath 净化非法字符，不产生非法远端路径。
+  it('resolveRemotePath: 特殊字符房间名被净化（\\/:*?"<>| → _）（#23）', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/spec1', displayName: 'a/b:c*d?' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sspec', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-spec-'));
+    const file = path.join(dir, 'x.flv');
+    await writeFile(file, Buffer.from([1, 2, 3]));
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    const remote = (services.uploader as unknown as { resolveRemotePath(c: never, p: string, r: never): string }).resolveRemotePath(
+      { serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } as never,
+      file,
+      rec as never,
+    );
+    expect(remote).not.toContain('a/b:c*d?');
+    expect(remote).toContain('a_b_c_d_');
   });
 });

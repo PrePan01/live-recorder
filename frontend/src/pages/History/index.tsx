@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Collapse, DatePicker, Drawer, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, EditOutlined, PlayCircleOutlined, WarningOutlined, ExperimentOutlined, ExportOutlined, InfoCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useRecordingStore } from '../../stores/recordingStore';
@@ -16,9 +16,9 @@ import { describeError } from '../../utils/errorMap';
 import PipelineTimeline from '../../components/PipelineTimeline';
 import UploadStatus from '../../components/UploadStatus';
 import { createExport, cancelExport, fetchExports } from '../../api/export';
-import { fetchUploads, retryUpload } from '../../api/openlist';
+import { fetchUploads, retryUpload, uploadRecording } from '../../api/openlist';
 import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
-import { describeUploadError } from '../../utils/uploadError';
+import { describeUploadError, classifyUploadError } from '../../utils/uploadError';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
@@ -60,6 +60,8 @@ export default function History() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [, setTick] = useState(0);
+  // #19：上传失败任务的「查看详情」弹窗（错误码 + 可执行建议 + 原始错误全文 + 复制）。
+  const [uploadErrorDetail, setUploadErrorDetail] = useState<{ recordingId: string; title: string; raw: string } | null>(null);
 
   // 录制中记录时长本地走时：每秒重渲染一次，不再依赖后端每秒 SSE（QA 性能建议③）。
   useEffect(() => {
@@ -145,6 +147,7 @@ export default function History() {
     }
   };
 
+  // #13 OpenList 2FA：上传任务失败且标记「需要 2FA 验证」时弹窗收集一次性码。
   const retryUploadFor = useCallback(
     async (recordingId: string) => {
       try {
@@ -162,6 +165,51 @@ export default function History() {
     },
     [message],
   );
+
+  // #18②：手动上传未自动上传的录制（无上传任务时 History 提供「上传」按钮）。
+  const handleManualUpload = useCallback(
+    async (recordingId: string) => {
+      try {
+        await uploadRecording(recordingId);
+        message.success('已触发上传');
+        void fetchHistory();
+      } catch (e) {
+        const msg = e instanceof ApiError ? e.message : '上传失败';
+        message.error(msg);
+        // #18 反馈②：手动上传失败（如源文件已删除）→ 本地更新单元格状态，不再停留在「上传」按钮。
+        if (msg.includes('源文件已删除')) {
+          useRecordingStore.getState().patchRecordingUpload(recordingId, {
+            status: 'failed',
+            progress: 0,
+            remotePath: null,
+            error: msg,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    },
+    [message, fetchHistory],
+  );
+
+  // #19：查看失败任务错误详情（错误码 + 可执行建议 + 原始错误全文）。
+  const handleUploadErrorDetail = useCallback((recording: Recording) => {
+    const raw = recording.upload?.error ?? '未知错误';
+    setUploadErrorDetail({
+      recordingId: recording.id,
+      title: recording.streamTitle || recording.id,
+      raw,
+    });
+  }, []);
+
+  const handleCopyErrorDetail = useCallback(async () => {
+    if (!uploadErrorDetail) return;
+    try {
+      await navigator.clipboard.writeText(uploadErrorDetail.raw);
+      message.success('错误详情已复制');
+    } catch {
+      message.error('复制失败，请手动复制');
+    }
+  }, [uploadErrorDetail, message]);
 
   const handleExportCsv = async () => {
     setExporting(true);
@@ -251,11 +299,31 @@ export default function History() {
         dataIndex: 'upload',
         width: 150,
         render: (u: Recording['upload'], r: Recording) => {
-          if (!u) return <Typography.Text type="secondary">—</Typography.Text>;
+          // #18②：无上传任务的录制提供「上传」按钮（未开自动上传或上传被删除时）。
+          if (!u) {
+            const canUpload = r.state === 'completed' && !!r.filePath;
+            return (
+              <Tooltip title={canUpload ? '点击上传到 OpenList' : '录制未完成或文件不存在，无法上传'}>
+                <span>
+                  <Button
+                    size="small"
+                    type="link"
+                    disabled={!canUpload}
+                    onClick={() => void handleManualUpload(r.id)}
+                  >
+                    上传
+                  </Button>
+                </span>
+              </Tooltip>
+            );
+          }
+          const info = classifyUploadError(u.error);
           const detail =
-            describeUploadError(u.error) ??
+            (u.status === 'failed' && u.error
+              ? info.action
+              : describeUploadError(u.error)) ??
             (u.status === 'running' && u.progress >= 99
-              ? uploadPhaseText('verifying', u.progress, r.endedAt ?? r.startedAt)
+              ? uploadPhaseText('verifying', u.progress, u.updatedAt ?? r.endedAt ?? r.startedAt)
               : u.remotePath);
           const node =
             u.status === 'running' ? (
@@ -264,12 +332,20 @@ export default function History() {
                 <Progress percent={u.progress} size="small" style={{ width: 56 }} />
               </Space>
             ) : u.status === 'failed' ? (
-              <Space size={4}>
-                <Tag color="red">失败</Tag>
-                <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
-                  重试
-                </Button>
-              </Space>
+              // #18①：源文件已删除 → 明确标注且不再提供无意义的重试/详情。
+              u.error?.includes('源文件已删除') ? (
+                <Tag color="red">源文件已删除</Tag>
+              ) : (
+                <Space size={4}>
+                  <Tag color="red">失败</Tag>
+                  <Button size="small" type="link" onClick={() => void retryUploadFor(r.id)}>
+                    重试
+                  </Button>
+                  <Button size="small" type="link" onClick={() => handleUploadErrorDetail(r)}>
+                    查看详情
+                  </Button>
+                </Space>
+              )
             ) : (
               <Tag
                 color={u.status === 'ok' ? 'green' : u.status === 'cancelled' ? 'default' : 'default'}
@@ -346,7 +422,7 @@ export default function History() {
         ),
       },
     ],
-    [roomLabel, openDirectory, removeRecording, message],
+    [roomLabel, openDirectory, removeRecording, message, handleManualUpload, handleUploadErrorDetail],
   );
 
   const groups = useMemo(() => {
@@ -550,6 +626,49 @@ export default function History() {
           )}
         </Space>
       </Drawer>
+      {/* #19：上传失败错误详情——分级展示（可执行建议 + 错误码 + 原始错误全文）+ 复制。 */}
+      <Modal
+        title={`上传错误详情${uploadErrorDetail ? `：${uploadErrorDetail.title}` : ''}`}
+        open={uploadErrorDetail !== null}
+        onCancel={() => setUploadErrorDetail(null)}
+        footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => void handleCopyErrorDetail()}>
+            复制错误详情
+          </Button>,
+          <Button key="close" type="primary" onClick={() => setUploadErrorDetail(null)}>
+            关闭
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        {uploadErrorDetail ? (
+          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                错误码
+              </Typography.Text>
+              <Tag color="red">{classifyUploadError(uploadErrorDetail.raw).code}</Tag>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                处理建议
+              </Typography.Text>
+              <Typography.Text>{classifyUploadError(uploadErrorDetail.raw).action}</Typography.Text>
+            </div>
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                详细原因（原始错误）
+              </Typography.Text>
+              <Typography.Paragraph
+                style={{ margin: 0 }}
+                copyable={{ text: uploadErrorDetail.raw }}
+              >
+                <Typography.Text type="danger">{uploadErrorDetail.raw}</Typography.Text>
+              </Typography.Paragraph>
+            </div>
+          </Space>
+        ) : null}
+      </Modal>
     </div>
   );
 }
