@@ -16,11 +16,18 @@ const STOP_OLD_TIMEOUT_SECS: u64 = 10;
 
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
+    /// 启动互斥（#26）：setup 自动拉起线程与前端 boot()（start_service command）会并发调用 start()。
+    /// 无互斥时两线程都过 is_running=false → 各自停旧换新/spawn → 双后端竞争实例锁/端口，
+    /// 败者 wait_ready 30s 超时 → Degraded「服务未就绪」。互斥保证仅一线程执行 spawn，余者等其完成后走复用。
+    starting: Mutex<()>,
 }
 
 impl BackendManager {
     pub fn new() -> Self {
-        Self { child: Mutex::new(None) }
+        Self {
+            child: Mutex::new(None),
+            starting: Mutex::new(()),
+        }
     }
 
     fn backend_cwd() -> Option<PathBuf> {
@@ -71,6 +78,13 @@ impl BackendManager {
     /// 版本不一致或既有后端为孤儿（父 app 已退出，单实例保障下任何外来后端即孤儿）→ 停旧换新。
     /// 同版本快速重启走 self.is_running 复用本进程子进程。
     pub fn start(&self) -> Result<AppInstance, String> {
+        // #26：串行化启动。setup 自动拉起线程与前端 boot() 并发调用 start() 时，
+        // 只有首个线程执行 spawn；其余线程持锁等待其完成后，走 is_running/wait_ready 复用，
+        // 避免双后端竞争实例锁/端口导致一方 30s 超时「服务未就绪」。
+        let _start_guard = self
+            .starting
+            .lock()
+            .map_err(|_| "启动锁不可用".to_string())?;
         if self.is_running() {
             return self.wait_ready();
         }
