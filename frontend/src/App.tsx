@@ -11,6 +11,7 @@ import { useSSE } from './hooks/useSSE';
 import { useServiceStore } from './stores/serviceStore';
 import { useBootStore, subscribeBridgeEvents } from './stores/bootStore';
 import RecordingCompleteNotice from './components/RecordingCompleteNotice';
+import OpenList2faModal from './components/OpenList2faModal';
 import LazyRouteErrorBoundary from './components/LazyRouteErrorBoundary';
 
 // 路由级懒加载：重页面按需拆分，首屏 bundle 显著变小（QA 性能建议）。
@@ -64,6 +65,7 @@ export default function App() {
   return (
     <>
       <RecordingCompleteNotice />
+      <OpenList2faModal />
       <BootGate>
         <LazyRouteErrorBoundary>
           <Suspense fallback={<div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}>加载中…</div>}>

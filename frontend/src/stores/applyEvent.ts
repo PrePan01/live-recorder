@@ -49,6 +49,7 @@ export function applyServerEvent(e: ServerEvent) {
         progress: e.upload.progress,
         remotePath: e.upload.remotePath,
         error: e.upload.error,
+        updatedAt: e.upload.updatedAt,
       });
       break;
   }

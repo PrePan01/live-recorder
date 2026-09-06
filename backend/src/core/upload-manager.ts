@@ -1,4 +1,4 @@
-import { createReadStream, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { createReadStream, statSync, openSync, readSync, closeSync, existsSync } from 'node:fs';
 import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -8,6 +8,10 @@ import { OPENLIST_TOKEN_KEY } from '../security/keys.js';
 
 export interface WebDavClient {
   put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void>;
+  /** 提交 2FA 一次性码换取短期 API token（#13）。 */
+  submit2fa?(root: string, username: string, password: string, otpCode: string): Promise<{ ok: boolean; message?: string }>;
+  /** 该 root 是否需要 2FA 一次性码。 */
+  needs2fa?(root: string): boolean;
 }
 
 interface WebDavClientOptions {
@@ -58,10 +62,14 @@ interface OpenListTaskInfo {
   error?: string;
 }
 
+/** OpenList 需要 2FA 一次性码时抛出的标识错误（job.error 含此标记，FE 据此弹窗输入验证码）。 */
+export const OPENLIST_2FA_REQUIRED = 'OpenList 需要 2FA 验证';
+
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
   private ensuredCollections = new Set<string>();
   private apiTokens = new Map<string, string | null>();
+  private pending2fa = new Set<string>();
 
   private options: WebDavClientOptions;
 
@@ -102,7 +110,13 @@ export class RealWebDavClient implements WebDavClient {
         body: JSON.stringify({ username, password }),
         signal: AbortSignal.timeout(15_000),
       });
-      const payload = await res.json() as { code?: number; data?: { token?: string } };
+      const payload = await res.json() as { code?: number; message?: string; data?: { token?: string } };
+      if (payload.code === 402) {
+        // OpenList 账号启用了 2FA：仅账号密码无法换取 token，需用户输入一次性码（#13）。
+        this.pending2fa.add(root);
+        this.apiTokens.set(root, null);
+        return null;
+      }
       const token = res.ok && payload.code === 200 && typeof payload.data?.token === 'string'
         ? payload.data.token
         : null;
@@ -113,6 +127,35 @@ export class RealWebDavClient implements WebDavClient {
       this.apiTokens.set(root, null);
       return null;
     }
+  }
+
+  /** 提交 2FA 一次性码换取短期 API token；成功缓存并清除待验证标记，返回是否成功。 */
+  async submit2fa(root: string, username: string, password: string, otpCode: string): Promise<{ ok: boolean; message?: string }> {
+    if (!otpCode || !otpCode.trim()) {
+      return { ok: false, message: '请输入 2FA 一次性验证码' };
+    }
+    try {
+      const res = await fetch(`${root}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, otp_code: otpCode.trim() }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const payload = await res.json() as { code?: number; message?: string; data?: { token?: string } };
+      if (payload.code === 200 && typeof payload.data?.token === 'string') {
+        this.apiTokens.set(root, payload.data.token);
+        this.pending2fa.delete(root);
+        return { ok: true };
+      }
+      return { ok: false, message: payload.message || `OpenList 2FA 验证失败（HTTP ${res.status}）` };
+    } catch {
+      return { ok: false, message: '无法连接 OpenList，请检查服务地址与网络' };
+    }
+  }
+
+  /** 该 root 是否需要 2FA 一次性码（最近一次登录被 402 拒绝）。 */
+  needs2fa(root: string): boolean {
+    return this.pending2fa.has(root);
   }
 
   /**
@@ -131,6 +174,11 @@ export class RealWebDavClient implements WebDavClient {
     const target = this.apiTarget(serverUrl, remotePath);
     if (!target) return false;
     const token = await this.apiToken(target.root, username, password);
+    // 账号启用了 2FA：无法静默换取 token。抛出标识错误让 job 落「需要 2FA 验证」，
+    // FE 检测后弹窗输入一次性码（#13）；不再回退单 PUT（服务端对 PUT 返回 405）。
+    if (this.needs2fa(target.root)) {
+      throw new Error(OPENLIST_2FA_REQUIRED);
+    }
     if (!token) return false;
 
     const size = statSync(localPath).size;
@@ -222,8 +270,21 @@ export class RealWebDavClient implements WebDavClient {
         if (task.state === 'failed' || task.state === 'canceled') {
           throw new Error(`OpenList 后台上传${task.state === 'canceled' ? '已取消' : '失败'}${task.error ? `：${task.error}` : ''}`);
         }
+        // #16：服务端任务虽未翻 failed，但已携带错误信息（如云盘「资源配额不足」/写入失败）——
+        // 立即透传失败，不再等 10min 卡滞判定，避免用户长时间困惑在固定百分比（QA/PrePan：卡 74% 困惑）。
+        if (task.error) {
+          throw new Error(`OpenList 后台上传失败：${task.error}`);
+        }
         // #228：进度卡滞判定——服务端任务仍在 running 但进度长时间无变化时，
         // 用远端文件核验兜底：文件已完整落盘则判定成功，否则给出明确失败原因。
+        // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded（OpenList 部分驱动不翻态）时，
+        // 立即远端核验即可判定成功，不必再等 taskStallTimeoutMs 卡滞窗口（避免「最终确认」长时间挂起）。
+        if (serverPct >= 100) {
+          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+            onProgress(100);
+            return true;
+          }
+        }
         if (serverPct !== lastServerPct) {
           lastServerPct = serverPct;
           lastProgressChangeAt = Date.now();
@@ -430,6 +491,10 @@ export class RealWebDavClient implements WebDavClient {
         if (payload.data.state === 'failed' || payload.data.state === 'canceled') {
           throw new Error(`OpenList 分片合并/落盘${payload.data.state === 'canceled' ? '已取消' : '失败'}${payload.data.error ? `：${payload.data.error}` : ''}`);
         }
+        // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded 时，立即远端核验判定成功。
+        if (serverPct >= 100) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) return;
+        }
         if (serverPct !== lastServerPct) {
           lastServerPct = serverPct;
           lastProgressChangeAt = Date.now();
@@ -441,6 +506,7 @@ export class RealWebDavClient implements WebDavClient {
         const message = err instanceof Error ? err.message : String(err);
         if (message.startsWith('OpenList 分片')) throw err;
         consecutiveFailures += 1;
+        // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutiveFailures >= 10) {
           if (await this.remoteFileMatches(remotePath, size, authorization)) return;
           throw new Error(`无法读取 OpenList 分片任务进度：${message}`);
@@ -454,6 +520,17 @@ export class RealWebDavClient implements WebDavClient {
     const size = statSync(localPath).size;
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
     await this.ensureParentCollections(remotePath, authorization, serverUrl);
+    // 先探测 OpenList API 登录态：#13 账号启用 2FA 时无法静默换取 token。
+    // 探测一次（命中缓存则零开销），2FA 必需则抛标识错误交 FE 弹窗，不再回退 405 单 PUT。
+    if (serverUrl) {
+      const probeTarget = this.apiTarget(serverUrl, remotePath);
+      if (probeTarget) {
+        await this.apiToken(probeTarget.root, username, token);
+        if (this.needs2fa(probeTarget.root)) {
+          throw new Error(OPENLIST_2FA_REQUIRED);
+        }
+      }
+    }
     // #229 分片并发：大文件优先走 OpenList multipart 分片上传（能力探测+严格回退，失败自动退回单 PUT）。
     if (await this.putAsMultipart(remotePath, localPath, username, token, onProgress, serverUrl)) return;
     if (await this.putAsOpenListTask(remotePath, localPath, username, token, onProgress, serverUrl)) return;
@@ -537,6 +614,8 @@ export class RealWebDavClient implements WebDavClient {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+/** #16 优化②：上传泵有界并发（默认 2）——单个 As-Task 长轮询不阻塞整条队列，后续任务可并行推进。 */
+const UPLOAD_PUMP_CONCURRENCY = 2;
 
 /**
  * OpenList 自动上传（V5 Batch2 #116）：上传队列、进度、重试、取消。
@@ -556,6 +635,38 @@ export class UploadManager {
 
   get uploadRepo(): UploadRepository {
     return this.repo;
+  }
+
+  /** 是否当前 OpenList 账号需要 2FA 一次性码（最近一次 API 登录被 402 拒绝）。 */
+  async needs2fa(): Promise<boolean> {
+    const config = await this.config();
+    if (!config?.serverUrl) return false;
+    const target = this.clientTarget(config.serverUrl);
+    return Boolean(target && this.client.needs2fa?.(target.root));
+  }
+
+  /** 提交 2FA 一次性码换取短期 token；成功返回 ok（token 已缓存，后续上传复用）。 */
+  async submit2fa(otpCode: string): Promise<{ ok: boolean; message?: string }> {
+    const config = await this.config();
+    if (!config?.serverUrl || !config.username) return { ok: false, message: 'OpenList 配置缺失' };
+    const token = await this.services.secretStore.get(OPENLIST_TOKEN_KEY);
+    if (!token) return { ok: false, message: 'OpenList 令牌未配置' };
+    const target = this.clientTarget(config.serverUrl);
+    if (!target) return { ok: false, message: 'OpenList 地址无效' };
+    return this.client.submit2fa
+      ? await this.client.submit2fa(target.root, config.username, token, otpCode)
+      : { ok: false, message: '当前上传实现不支持 2FA' };
+  }
+
+  private clientTarget(serverUrl: string): { root: string } | null {
+    try {
+      const configured = new URL(serverUrl);
+      const davIndex = configured.pathname.indexOf('/dav');
+      if (davIndex < 0) return null;
+      return { root: `${configured.origin}${configured.pathname.slice(0, davIndex)}`.replace(/\/+$/, '') };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -646,22 +757,26 @@ export class UploadManager {
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping) return; // 单泵串行，避免重入风暴
+    // #16 优化②：有界并发（默认 2），单个 As-Task 长轮询不再阻塞整条上传队列；
+    // 后续任务可并行推进，避免「一条卡 74%、其余全排队」。pumping 仅防重入风暴。
+    if (this.pumping) return;
     this.pumping = true;
     try {
       while (this.queue.length > 0) {
-        const jobId = this.queue.shift()!;
-        if (this.running.has(jobId)) continue;
-        this.running.add(jobId);
-        try {
-          await this.run(jobId);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : '上传任务异常';
-          this.repo.update(jobId, { status: 'failed', error: message });
-          this.emit(jobId);
-        } finally {
-          this.running.delete(jobId);
-        }
+        const batch = this.queue.splice(0, UPLOAD_PUMP_CONCURRENCY);
+        const runnable = batch.filter((id) => !this.running.has(id));
+        await Promise.all(runnable.map(async (jobId) => {
+          this.running.add(jobId);
+          try {
+            await this.run(jobId);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : '上传任务异常';
+            this.repo.update(jobId, { status: 'failed', error: message });
+            this.emit(jobId);
+          } finally {
+            this.running.delete(jobId);
+          }
+        }));
       }
     } finally {
       this.pumping = false;
@@ -673,8 +788,14 @@ export class UploadManager {
     if (!job) return;
     const rec = this.services.recordings.get(job.recordingId);
     const config = await this.config();
-    if (!rec || !rec.filePath || !config || !config.serverUrl) {
+    if (!rec || !config || !config.serverUrl) {
       this.repo.update(jobId, { status: 'failed', error: '配置或文件缺失' });
+      this.emit(jobId);
+      return;
+    }
+    // #18：源文件已从磁盘删除（非仅 DB 字段缺失）→ 明确标注「源文件已删除」，不再静默/误判重试。
+    if (!rec.filePath || !existsSync(rec.filePath)) {
+      this.repo.update(jobId, { status: 'failed', error: '源文件已删除，无法上传' });
       this.emit(jobId);
       return;
     }
@@ -705,6 +826,21 @@ export class UploadManager {
     } catch (err) {
       if (this.repo.get(jobId)?.status === 'cancelled') return;
       const message = err instanceof Error ? err.message : '上传失败';
+      // #13：2FA 需要一次性码，重试无意义（没有码必然再 402）。直接失败交 FE 弹窗输入验证码，
+      // 避免 5s/15s/45s 退避循环让用户等很久才看到弹窗（PrePan：提示后没有立即弹出）。
+      if (message.includes(OPENLIST_2FA_REQUIRED)) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
+      // #22（PrePan 反馈）：OpenList 服务端 As-Task 已确认失败的错误（task.error 透传，
+      // 如「资源不存在/配额不足」）重试无意义——服务端任务已终态，退避重试必然再失败且徒增等待。
+      // 与 #13 2FA 同理直接 failed，立即透传展示，让用户尽快看到明确原因。
+      if (message.startsWith('OpenList 后台上传失败') || message.startsWith('OpenList 后台上传')) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
       const retryCount = job.retryCount + 1;
       if (retryCount <= MAX_RETRIES) {
         const delayMs = RETRY_DELAYS_MS[retryCount - 1] ?? 5_000;
