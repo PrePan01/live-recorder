@@ -16,11 +16,18 @@ const STOP_OLD_TIMEOUT_SECS: u64 = 10;
 
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
+    /// 启动互斥（#26）：setup 自动拉起线程与前端 boot()（start_service command）会并发调用 start()。
+    /// 无互斥时两线程都过 is_running=false → 各自停旧换新/spawn → 双后端竞争实例锁/端口，
+    /// 败者 wait_ready 30s 超时 → Degraded「服务未就绪」。互斥保证仅一线程执行 spawn，余者等其完成后走复用。
+    starting: Mutex<()>,
 }
 
 impl BackendManager {
     pub fn new() -> Self {
-        Self { child: Mutex::new(None) }
+        Self {
+            child: Mutex::new(None),
+            starting: Mutex::new(()),
+        }
     }
 
     fn backend_cwd() -> Option<PathBuf> {
@@ -71,9 +78,17 @@ impl BackendManager {
     /// 版本不一致或既有后端为孤儿（父 app 已退出，单实例保障下任何外来后端即孤儿）→ 停旧换新。
     /// 同版本快速重启走 self.is_running 复用本进程子进程。
     pub fn start(&self) -> Result<AppInstance, String> {
+        // #26：串行化启动。setup 自动拉起线程与前端 boot() 并发调用 start() 时，
+        // 只有首个线程执行 spawn；其余线程持锁等待其完成后，走 is_running/wait_ready 复用，
+        // 避免双后端竞争实例锁/端口导致一方 30s 超时「服务未就绪」。
+        let _start_guard = self
+            .starting
+            .lock()
+            .map_err(|_| "启动锁不可用".to_string())?;
         if self.is_running() {
             return self.wait_ready();
         }
+        // ① 基于 ready 文件探测到的既有健康实例：同版本复用；异版本停旧换新。
         if let Some(existing) = fetch_ready() {
             let same_version = match (bundled_backend_version(), fetch_health(existing.port).and_then(|h| h.version)) {
                 // 两侧版本都可判定且一致 → 可复用候选；无法判定时保守视为可复用。
@@ -81,34 +96,25 @@ impl BackendManager {
                 _ => true,
             };
             // 同版本：直接复用既有后端（单实例保障下它属于本应用；若为孤儿则 health 校验已驳回）。
-            // 不再无条件停旧换新（原 `existing.pid > 0` 恒真致 replace 恒 true，同版本复用不可达，放大竞态）。
             if same_version {
                 return Ok(existing);
             }
-            // 版本不一致：停旧换新。SIGTERM 旧后端后，轮询等待「旧 pid 退出 + 端口可探测空闲」，
-            // 避免新后端 spawn 时旧进程仍占实例锁/端口（#9 阻塞根因）。超时升级 SIGKILL。
+            // 版本不一致：停旧换新（SIGTERM → 轮询端口/pid 释放，超时 SIGKILL，#9）。
             let old_pid = existing.pid as u32;
-            let _ = stop_pid(old_pid);
-            let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
-            loop {
-                let pid_gone = !pid_alive(old_pid);
-                let port_free = probe_port_free(existing.port);
-                if pid_gone && port_free {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    // 旧后端 SIGTERM 后仍不退（优雅收束卡住/录制收尾慢）：升级 SIGKILL 已知旧后端。
-                    kill_pid(old_pid);
-                    let kill_deadline = Instant::now() + Duration::from_secs(5);
-                    while Instant::now() < kill_deadline {
-                        if !pid_alive(old_pid) {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
+            self.stop_existing_pid(old_pid, existing.port);
+        }
+        // ② #26 盲区补强：覆盖安装首启时旧后端进程存活、但 ready.json/health 校验那一刻未通过
+        //    → fetch_ready()=None → 原逻辑跳过停旧直接 spawn → 新后端 InstanceLock.acquire 见旧 pid
+        //    存活即拒绝退出、不写 ready →「服务未就绪」（手动停 node 后即恢复）。
+        //    现改为直接读 instance.lock：凡锁内 PID 存活且非本进程已 spawn 的 child → 一律先停旧，
+        //    再 spawn。与 ① 幂等（同一 pid 二次 stop 无害）。
+        if let Some(lock_pid) = read_instance_lock_pid() {
+            let is_own_child = match self.child.lock() {
+                Ok(guard) => guard.as_ref().map(|c| c.id() == lock_pid).unwrap_or(false),
+                Err(_) => false,
+            };
+            if !is_own_child && pid_alive(lock_pid) {
+                self.stop_existing_pid(lock_pid, DEFAULT_PORT);
             }
         }
         let cwd = Self::backend_cwd().ok_or_else(|| "未找到后端运行目录".to_string())?;
@@ -157,6 +163,35 @@ impl BackendManager {
     pub fn stop(&self) {
         if let Some(child) = self.child.lock().ok().and_then(|mut c| c.take()) {
             let _ = stop_child(child);
+        }
+    }
+
+    /// 停旧换新（#9/#26）：SIGTERM 已知旧/孤儿后端后，轮询等待「旧 pid 退出 + 端口可探测空闲」，
+    /// 避免新后端 spawn 时旧进程仍占实例锁/端口。超时升级 SIGKILL。
+    /// pid 来自 fetch_ready 已确认健康的后端，或 instance.lock 中 PID 存活的实例（仅本应用数据域），
+    /// 不会误杀无关进程。
+    fn stop_existing_pid(&self, old_pid: u32, port: u16) {
+        let _ = stop_pid(old_pid);
+        let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
+        loop {
+            let pid_gone = !pid_alive(old_pid);
+            let port_free = probe_port_free(port);
+            if pid_gone && port_free {
+                break;
+            }
+            if Instant::now() >= deadline {
+                // SIGTERM 后仍不退（优雅收束卡住/录制收尾慢）：升级 SIGKILL 已知旧后端。
+                kill_pid(old_pid);
+                let kill_deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < kill_deadline {
+                    if !pid_alive(old_pid) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
@@ -428,4 +463,13 @@ fn ready_file_path() -> Option<PathBuf> {
         PathBuf::from(xdg).join("live-recorder")
     };
     Some(base.join("state").join("ready.json"))
+}
+
+/// #26：读 instance.lock 中的 PID——凡锁内 PID 存活且非本进程 spawn 的 child 即视为「残留旧/孤儿后端」，
+/// spawn 前需先停旧。不依赖 ready.json/health 可达（覆盖安装首启时旧进程存活但 ready/health 未通过的盲区）。
+fn read_instance_lock_pid() -> Option<u32> {
+    let lock_file = ready_file_path()?.parent()?.join("instance.lock");
+    let raw = std::fs::read_to_string(lock_file).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parsed.get("pid").and_then(|p| p.as_u64()).map(|p| p as u32)
 }
