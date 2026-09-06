@@ -277,6 +277,14 @@ export class RealWebDavClient implements WebDavClient {
         }
         // #228：进度卡滞判定——服务端任务仍在 running 但进度长时间无变化时，
         // 用远端文件核验兜底：文件已完整落盘则判定成功，否则给出明确失败原因。
+        // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded（OpenList 部分驱动不翻态）时，
+        // 立即远端核验即可判定成功，不必再等 taskStallTimeoutMs 卡滞窗口（避免「最终确认」长时间挂起）。
+        if (serverPct >= 100) {
+          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+            onProgress(100);
+            return true;
+          }
+        }
         if (serverPct !== lastServerPct) {
           lastServerPct = serverPct;
           lastProgressChangeAt = Date.now();
@@ -483,6 +491,10 @@ export class RealWebDavClient implements WebDavClient {
         if (payload.data.state === 'failed' || payload.data.state === 'canceled') {
           throw new Error(`OpenList 分片合并/落盘${payload.data.state === 'canceled' ? '已取消' : '失败'}${payload.data.error ? `：${payload.data.error}` : ''}`);
         }
+        // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded 时，立即远端核验判定成功。
+        if (serverPct >= 100) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) return;
+        }
         if (serverPct !== lastServerPct) {
           lastServerPct = serverPct;
           lastProgressChangeAt = Date.now();
@@ -494,6 +506,7 @@ export class RealWebDavClient implements WebDavClient {
         const message = err instanceof Error ? err.message : String(err);
         if (message.startsWith('OpenList 分片')) throw err;
         consecutiveFailures += 1;
+        // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutiveFailures >= 10) {
           if (await this.remoteFileMatches(remotePath, size, authorization)) return;
           throw new Error(`无法读取 OpenList 分片任务进度：${message}`);

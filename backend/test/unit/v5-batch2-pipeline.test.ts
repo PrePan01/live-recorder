@@ -601,6 +601,47 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(progress.at(-1)).toBe(100);
   });
 
+  it('#24: 云盘写入完成（serverPct=100）但任务未翻 succeeded → 立即远端核验判定成功，不再等卡滞窗口', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-verify-'));
+    const file = path.join(dir, 'v.flv');
+    const bytes = Buffer.alloc(64, 7);
+    await writeFile(file, bytes);
+    const progress: number[] = [];
+    let pollCalls = 0;
+    let propfindCalls = 0;
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 5_000, taskStallTimeoutMs: 60_000, verifyDelaysMs: [0, 50] });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'MKCOL') return new Response('', { status: 201 });
+      if (url.endsWith('/api/auth/login')) return new Response(JSON.stringify({ code: 200, data: { token: 'jwt' } }), { status: 200 });
+      if (url.endsWith('/api/fs/put')) {
+        if (init?.body) {
+          for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume */ }
+        }
+        return new Response(JSON.stringify({ code: 200, data: { task: { id: 't-verify', state: 'running', progress: 100 } } }), { status: 200 });
+      }
+      if (url.includes('/api/task/upload/info')) {
+        pollCalls += 1;
+        return new Response(JSON.stringify({ code: 200, data: { id: 't-verify', state: 'running', progress: 100 } }), { status: 200 });
+      }
+      if (init?.method === 'PROPFIND') {
+        propfindCalls += 1;
+        return new Response(`<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:getcontentlength>${bytes.length}</D:getcontentlength></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`, { status: 207 });
+      }
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/archive/v.flv', file, 'u', 'p', (pct) => progress.push(pct), 'https://dav.example.com/dav/archive');
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(progress.at(-1)).toBe(100);
+    // 立即核验命中（远小于 taskStallTimeoutMs=60s），而非等卡滞窗口。
+    expect(pollCalls).toBeLessThanOrEqual(5);
+    expect(propfindCalls).toBeGreaterThan(0);
+  });
+
   it('uses the OpenList background task API and reports its server-side progress', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-openlist-task-'));
     const file = path.join(dir, 'task.flv');
