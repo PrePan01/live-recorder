@@ -153,7 +153,7 @@ describe('sidecar start (integration)', () => {
     await first.close();
   });
 
-  it('watchParentExit exits when its parent process dies (宿主强退兜底 #199)', async () => {
+  it.skipIf(process.platform === 'win32')('watchParentExit exits when its parent process dies (宿主强退兜底 #199)', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-ppid-'));
     const marker = path.join(dir, 'done');
     const childReady = path.join(dir, 'child-ready');
