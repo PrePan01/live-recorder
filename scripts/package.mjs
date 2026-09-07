@@ -104,8 +104,12 @@ if (!isWin) {
     const dir = path.join(bundle, sub);
     if (existsSync(dir)) {
       for (const f of readdirSync(dir)) {
-        copyFileSync(path.join(dir, f), path.join(release, f));
-        products.push(f);
+        // WiX requires a locale (en-US) internally, but it is not part of the
+        // user-facing installer filename.
+        const outputName = f.replace(/_en-US(?=\.(?:msi|exe)$)/i, '');
+        copyFileSync(path.join(dir, f), path.join(release, outputName));
+        products.push(outputName);
+        console.log(`[package] 拷贝 -> release/${outputName}`);
       }
     }
   }
