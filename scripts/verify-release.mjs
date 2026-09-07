@@ -28,6 +28,7 @@ function run(label, command, args, cwd = root) {
 try {
   run('Install backend dependencies', npm, ['--prefix', 'backend', 'ci']);
   run('Install frontend dependencies', npm, ['--prefix', 'frontend', 'ci']);
+  run('Compile backend', npm, ['--prefix', 'backend', 'run', 'build']);
   run('Verify backend', npm, ['--prefix', 'backend', 'test']);
   run('Verify frontend', npm, ['--prefix', 'frontend', 'test']);
   run('Build installer', npm, ['run', 'package']);
