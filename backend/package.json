@@ -3,7 +3,7 @@
   "version": "0.5.89",
   "private": true,
   "type": "module",
-  "description": "本地直播录制服务",
+  "description": "Local live recording service",
   "engines": {
     "node": ">=22"
   },

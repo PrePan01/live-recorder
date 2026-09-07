@@ -2,7 +2,7 @@
   "name": "live-recorder",
   "version": "0.5.89",
   "private": true,
-  "description": "直播录制助手",
+  "description": "Live Recorder desktop application",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:real": "node scripts/dev.mjs real",
