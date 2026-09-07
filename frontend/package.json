@@ -1,10 +1,11 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.5.88",
+  "version": "0.5.90",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",

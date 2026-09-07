@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { StreamRecordingEngine, parseM3u8, hlsPollIntervalMs } from '../../src/recorder/stream-recorder.js';
+import { buildMinimalFlv } from '../../src/platform/fake-adapter.js';
 
 function chunksBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -15,9 +16,10 @@ function chunksBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
 
 function endlessBody(): ReadableStream<Uint8Array> {
   let count = 0;
+  const flv = buildMinimalFlv();
   return new ReadableStream({
     pull(controller) {
-      controller.enqueue(new Uint8Array([count++ % 256]));
+      controller.enqueue(count++ === 0 ? flv : flv.subarray(13));
       if (count > 100_000) controller.close();
     },
   });
@@ -91,13 +93,24 @@ describe('StreamRecordingEngine (HTTP)', () => {
     const out = path.join(dir, 'c.flv');
     const engine = new StreamRecordingEngine(mockFetch(200, endlessBody));
     let received = 0;
+    let stopRequested = false;
     const run = async () => {
       for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
         if (ev.type === 'data') received += 1;
-        if (received === 2) await engine.stop();
+        if (received === 2) {
+          stopRequested = true;
+          await engine.stop();
+        }
       }
     };
-    await Promise.race([run(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([run(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), 5000); })]);
+    } finally {
+      clearTimeout(timer);
+      await engine.stop();
+    }
+    expect(stopRequested).toBe(true);
     const info = await stat(out);
     expect(info.size).toBeGreaterThan(0);
   });

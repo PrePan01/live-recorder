@@ -1,0 +1,25 @@
+.card {
+    position: relative;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.title {
+    position: absolute;
+    right: 0;
+    top: 0;
+    z-index: 100;
+    background: rgba(13,13,13,.8);
+    padding-left: 8px;
+    color: white;
+    display: inline-flex;
+    align-items: center;
+}
+
+.textButton {
+    color: white;
+}
+
+:global(:fullscreen) .fullscreenButton {
+    display: none;
+}

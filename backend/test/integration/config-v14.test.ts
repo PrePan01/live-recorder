@@ -23,7 +23,7 @@ describe('v1.4 browse-directories', () => {
     const names = res.json().directories.map((d: { name: string }) => d.name);
     expect(names).toEqual(expect.arrayContaining(['subA', 'subB']));
     expect(res.json().path).toBe(path.resolve(base));
-    expect(res.json().directories[0].path).toMatch(new RegExp(`^${base}`));
+    expect(path.dirname(res.json().directories[0].path)).toBe(base);
     await app.close();
   });
 

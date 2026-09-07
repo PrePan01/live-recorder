@@ -25,6 +25,8 @@ pub struct Health {
     pub port: u16,
     pub version: Option<String>,
     #[serde(default)]
+    pub started_at: String,
+    #[serde(default)]
     pub uptime_seconds: u64,
     #[serde(default)]
     pub setup_completed: bool,
@@ -36,9 +38,17 @@ pub enum DiagnosticItem {
     #[serde(rename = "ok")]
     Ok { key: String, message: String },
     #[serde(rename = "warn")]
-    Warn { key: String, message: String, detail: Option<String> },
+    Warn {
+        key: String,
+        message: String,
+        detail: Option<String>,
+    },
     #[serde(rename = "error")]
-    Error { key: String, message: String, detail: Option<String> },
+    Error {
+        key: String,
+        message: String,
+        detail: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

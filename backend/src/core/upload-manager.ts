@@ -622,6 +622,11 @@ const UPLOAD_PUMP_CONCURRENCY = 2;
  * 令牌进 SecretStore（OPENLIST_TOKEN_KEY）不落盘；远端对象用 recordingId 幂等键，失败不删本地原件。
  */
 export class UploadManager {
+  get busy(): boolean { return this.running.size > 0 || this.queue.length > 0 || this.pumping; }
+
+  resetIdleState(): void {
+    this.client = new RealWebDavClient();
+  }
   private queue: string[] = [];
   private running = new Set<string>();
   private pumping = false;
@@ -696,6 +701,7 @@ export class UploadManager {
   /** 录制完成时入队上传（openlist.enabled 且令牌已配置时）。 */
   async enqueue(recordingId: string): Promise<UploadJob | null> {
     const config = await this.config();
+    if (this.services.resetting) return null;
     const rec = this.services.recordings.get(recordingId);
     if (!rec || !rec.filePath) return null;
     const room = this.services.rooms.get(rec.roomId);

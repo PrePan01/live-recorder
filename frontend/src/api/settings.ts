@@ -1,6 +1,13 @@
 import { http } from './client';
 import type { Settings, SettingsInput } from '../types/settings';
 
+export async function resetApplication(keepRecordings: boolean): Promise<{ ok: true; retainedFiles: string[] }> {
+  const { data } = await http.post<{ ok: true; retainedFiles: string[] }>(
+    '/settings/reset', { confirm: 'RESET', keepRecordings }, { timeout: 120_000 },
+  );
+  return data;
+}
+
 export async function fetchSettings(): Promise<Settings> {
   const { data } = await http.get<{ settings: Settings }>('/settings');
   return data.settings;

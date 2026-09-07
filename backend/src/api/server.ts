@@ -17,6 +17,7 @@ import { registerNamingRoutes } from './routes/naming.js';
 import { registerOpenListRoutes } from './routes/openlist.js';
 import { registerScheduleRoutes } from './routes/schedules.js';
 import { registerExportRoutes } from './routes/exports.js';
+import { registerResetRoutes } from './routes/reset.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 import { DEFAULT_PORT } from '../sidecar/ports.js';
@@ -38,6 +39,12 @@ export interface BuiltApp {
 
 export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltApp {
   const app = Fastify({ logger: false, forceCloseConnections: true });
+  const writes = new Set<string>();
+  app.addHook('preHandler', async (req) => {
+    if (services.resetting) throw new AppError('DIAGNOSTIC_CONFLICT', '正在重置，请稍后重试');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) writes.add(req.id);
+  });
+  app.addHook('onResponse', async (req) => { writes.delete(req.id); });
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
   services.manager.preview = preview;
@@ -63,7 +70,8 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
 
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host;
-    if (host && !allowedHosts.has(host)) {
+    const livePort = instance?.port ?? port;
+    if (host && !allowedHosts.has(host) && host !== `127.0.0.1:${livePort}` && host !== `localhost:${livePort}`) {
       return reply.status(403).send({
         error: { code: 'SERVICE_UNAVAILABLE', message: '仅允许本机访问', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
@@ -71,7 +79,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
     // CORS：Origin 命中白名单时放行并回 CORS 头（WebView/浏览器跨域请求即使服务端 200，缺 ACAO 也会被浏览器拦截）。
     const origin = req.headers.origin;
     if (origin !== undefined) {
-      if (!allowedOrigins.has(origin)) {
+      if (!allowedOrigins.has(origin) && origin !== `http://127.0.0.1:${livePort}` && origin !== `http://localhost:${livePort}`) {
         return reply.status(403).send({
           error: { code: 'SERVICE_UNAVAILABLE', message: 'Origin 不在白名单', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
         });
@@ -113,7 +121,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
         state: 'running',
         version: APP_VERSION,
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
-        setupCompleted: Boolean(stored && stored.recordingDirectory.length > 0),
+        setupCompleted: Boolean(stored?.recordingDirectory?.length),
         ...(instance
           ? {
               ready: true,
@@ -144,9 +152,10 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerOpenListRoutes(app, services);
   registerScheduleRoutes(app, services);
   registerExportRoutes(app, services);
+  registerResetRoutes(app, services, () => writes.size);
   registerSse(app, services, sse);
 
-  const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, port);
+  const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, () => instance?.port ?? port);
   app.addHook('onClose', async () => {
     services.scheduler.stop();
     ws.dispose();

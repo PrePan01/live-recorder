@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import Database from 'better-sqlite3';
 import { APP_VERSION } from './types.js';
 import { nowIso } from '../utils/id.js';
 
@@ -8,6 +9,7 @@ export interface InstanceLockInfo {
   pid: number;
   version: string;
   startedAt: string;
+  leaseVersion?: number;
 }
 
 export interface AcquireResult {
@@ -46,13 +48,29 @@ function isStale(info: InstanceLockInfo): boolean {
 export class InstanceLock {
   readonly file: string;
   private info: InstanceLockInfo;
+  private lease: Database.Database | null = null;
+  private static owners = new Map<string, InstanceLock>();
 
   private constructor(dir: string, instanceId: string) {
     this.file = join(dir, 'instance.lock');
-    this.info = { instanceId, pid: process.pid, version: APP_VERSION, startedAt: nowIso() };
+    this.info = {
+      instanceId,
+      pid: process.pid,
+      version: APP_VERSION,
+      startedAt: nowIso(),
+      leaseVersion: 1,
+    };
   }
 
-  static async acquire(dir: string, instanceId: string): Promise<AcquireResult & { handle: InstanceLockHandle }> {
+  static async acquire(
+    dir: string,
+    instanceId: string,
+  ): Promise<AcquireResult & { handle: InstanceLockHandle }> {
+    dir = resolve(dir);
+    const owned = InstanceLock.owners.get(join(dir, 'instance.lock'));
+    if (owned?.info.instanceId === instanceId && (await owned.held())) {
+      return { acquired: true, existing: null, handle: owned };
+    }
     const lock = new InstanceLock(dir, instanceId);
     const result = await lock.doAcquire();
     return { ...result, handle: lock };
@@ -60,37 +78,73 @@ export class InstanceLock {
 
   private async doAcquire(): Promise<AcquireResult> {
     await mkdir(dirname(this.file), { recursive: true });
-    const existing = await this.read();
-    if (existing) {
-      // 已存在但 PID 存活且 instanceId 一致：同进程重复 acquire（幂等，视为已持有）。
-      if (!isStale(existing) && existing.instanceId === this.info.instanceId && existing.pid === process.pid) {
-        this.info = existing;
-        return { acquired: true, existing: null };
+    // SQLite 的 OS 文件锁在进程退出/崩溃时自动释放；JSON 仅用于身份发现。
+    // 避免先读后 rename 让两个进程同时“取得”同一把锁。
+    const lease = new Database(
+      join(dirname(this.file), 'instance-lease.sqlite'),
+      { timeout: 0 },
+    );
+    try {
+      lease.exec('BEGIN IMMEDIATE');
+    } catch (error) {
+      lease.close();
+      if ((error as { code?: string }).code === 'SQLITE_BUSY') {
+        return { acquired: false, existing: await this.read() };
       }
-      // 已存在且 PID 存活但属于其他实例：拒绝，不覆盖。
-      if (!isStale(existing)) {
+      throw error;
+    }
+    this.lease = lease;
+    try {
+      const existing = await this.read();
+      // 兼容旧版本（没有 SQLite 租约）的存活后端，不越过它启动第二实例。
+      if (existing && existing.leaseVersion !== 1 && !isStale(existing)) {
+        this.closeLease();
         return { acquired: false, existing };
       }
-      // 过期状态：先清理再原子写入。
       await this.write();
+      InstanceLock.owners.set(this.file, this);
       return { acquired: true, existing: null };
+    } catch (error) {
+      this.closeLease();
+      throw error;
     }
-    await this.write();
-    return { acquired: true, existing: null };
+  }
+
+  private closeLease(): void {
+    this.lease?.close();
+    this.lease = null;
+    if (InstanceLock.owners.get(this.file) === this)
+      InstanceLock.owners.delete(this.file);
   }
 
   /** 删除本实例持有的锁文件；非本实例持有则不动。 */
   async release(): Promise<void> {
-    const existing = await this.read();
-    if (existing && existing.instanceId === this.info.instanceId && existing.pid === this.info.pid) {
-      await unlink(this.file).catch(() => undefined);
+    try {
+      const existing = await this.read();
+      if (
+        this.lease &&
+        existing &&
+        existing.instanceId === this.info.instanceId &&
+        existing.pid === this.info.pid
+      ) {
+        await unlink(this.file).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+      }
+    } finally {
+      this.closeLease();
     }
   }
 
   /** 检查本实例是否仍持有锁（进程重启后旧锁自动视为过期）。 */
   async held(): Promise<boolean> {
     const existing = await this.read();
-    return Boolean(existing && existing.instanceId === this.info.instanceId && existing.pid === this.info.pid);
+    return Boolean(
+      this.lease &&
+      existing &&
+      existing.instanceId === this.info.instanceId &&
+      existing.pid === this.info.pid,
+    );
   }
 
   get instanceId(): string {
@@ -101,12 +155,19 @@ export class InstanceLock {
     try {
       const raw = await readFile(this.file, 'utf8');
       const parsed = JSON.parse(raw) as InstanceLockInfo;
-      if (!parsed || typeof parsed.instanceId !== 'string' || typeof parsed.pid !== 'number') return null;
+      if (
+        !parsed ||
+        typeof parsed.instanceId !== 'string' ||
+        !Number.isInteger(parsed.pid) ||
+        parsed.pid <= 1
+      )
+        return null;
       return parsed;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === 'ENOENT') return null;
-      return null;
+      if (err instanceof SyntaxError) return null;
+      throw err;
     }
   }
 
