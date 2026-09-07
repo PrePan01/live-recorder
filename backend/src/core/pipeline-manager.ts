@@ -22,6 +22,7 @@ interface QueueEntry {
 export class PipelineManager {
   private queue: QueueEntry[] = [];
   private running = new Set<string>();
+  get busy(): boolean { return this.running.size > 0 || this.queue.length > 0; }
   private pipelineRepo: PipelineRepository;
 
   constructor(private services: Services) {

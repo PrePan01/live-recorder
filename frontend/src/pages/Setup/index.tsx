@@ -1,11 +1,20 @@
-import { useEffect, useState } from 'react';
-import { App, Button, Card, Checkbox, Form, Input, InputNumber, Space, Steps, Typography } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { App, Button, Card, Input, InputNumber, Select, Space, Steps, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { validateDirectory, updateSettings, testSmtp } from '../../api/settings';
+import { validateDirectory, updateSettings } from '../../api/settings';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useServiceStore } from '../../stores/serviceStore';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
+import DirectoryPicker from '../../components/DirectoryPicker';
+import type { Quality } from '../../types/settings';
+
+const qualityOptions = [
+  { value: 'original', label: '原画' },
+  { value: '1080p', label: '1080p' },
+  { value: '720p', label: '720p' },
+  { value: '360p', label: '360p' },
+];
 
 interface DirState {
   checking: boolean;
@@ -21,21 +30,31 @@ export default function Setup() {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState<string>(settings?.recordingDirectory ?? '');
   const [dirState, setDirState] = useState<DirState>({ checking: false, valid: null, message: null });
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const validationId = useRef(0);
   const [concurrency, setConcurrency] = useState<number>(settings?.maxConcurrentRecordings ?? 2);
-  const [mailOn, setMailOn] = useState(false);
-  const [mail, setMail] = useState({ host: '', port: 465, username: '', from: '', to: '', secure: true, password: '' });
+  const [quality, setQuality] = useState<Quality>(settings?.quality ?? 'original');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!settings) void load();
   }, [settings, load]);
 
-  const validate = async () => {
+  const changeDirectory = (path: string) => {
+    validationId.current += 1;
+    setDir(path);
+    setDirState({ checking: false, valid: null, message: null });
+  };
+
+  const validate = async (path = dir) => {
+    const id = ++validationId.current;
     setDirState({ checking: true, valid: null, message: null });
     try {
-      await validateDirectory(dir.trim());
+      await validateDirectory(path.trim());
+      if (id !== validationId.current) return;
       setDirState({ checking: false, valid: true, message: null });
     } catch (e) {
+      if (id !== validationId.current) return;
       setDirState({
         checking: false,
         valid: false,
@@ -50,20 +69,7 @@ export default function Setup() {
       await updateSettings({
         recordingDirectory: dir.trim(),
         maxConcurrentRecordings: concurrency,
-        mail: {
-          enabled: mailOn,
-          ...(mailOn
-            ? {
-                host: mail.host,
-                port: mail.port,
-                username: mail.username,
-                from: mail.from,
-                recipients: mail.to ? [mail.to] : [],
-                secure: mail.secure,
-                password: mail.password || undefined,
-              }
-            : {}),
-        },
+        quality,
       });
       await useServiceStore.getState().fetchStatus();
       message.success('设置已保存');
@@ -81,7 +87,7 @@ export default function Setup() {
     <Card className="lr-setup-card" title="首次设置">
       <Steps
         current={step}
-        items={[{ title: '保存目录' }, { title: '并发数' }, { title: '邮件通知' }, { title: '完成' }]}
+        items={[{ title: '保存目录' }, { title: '并发数' }, { title: '录制清晰度' }, { title: '完成' }]}
         style={{ marginBottom: 32 }}
       />
       {step === 0 && (
@@ -89,17 +95,27 @@ export default function Setup() {
           <Typography.Text>选择录像保存目录：</Typography.Text>
           <Space.Compact style={{ width: '100%' }}>
             <Input
-              placeholder="如 /Users/you/Videos/live-recorder"
+              placeholder="输入保存路径，或点击浏览选择目录"
               value={dir}
-              onChange={(e) => setDir(e.target.value)}
+              onChange={(e) => changeDirectory(e.target.value)}
               onPressEnter={() => void validate()}
             />
+            <Button onClick={() => setPickerOpen(true)}>浏览…</Button>
             <Button type="primary" loading={dirState.checking} disabled={!dir.trim()} onClick={() => void validate()}>
               校验
             </Button>
           </Space.Compact>
           {dirState.valid === true && <Typography.Text type="success">目录可写，可以使用</Typography.Text>}
           {dirState.valid === false && <Typography.Text type="danger">{dirState.message ?? '目录不可用'}</Typography.Text>}
+          <DirectoryPicker
+            open={pickerOpen}
+            initialPath={dir.trim() || undefined}
+            onClose={() => setPickerOpen(false)}
+            onPick={(path) => {
+              changeDirectory(path);
+              void validate(path);
+            }}
+          />
         </Space>
       )}
       {step === 1 && (
@@ -110,48 +126,17 @@ export default function Setup() {
       )}
       {step === 2 && (
         <Space orientation="vertical" style={{ width: '100%' }}>
-          <Checkbox checked={mailOn} onChange={(e) => setMailOn(e.target.checked)}>
-            启用 SMTP 邮件告警（可跳过）
-          </Checkbox>
-          {mailOn && (
-            <Form layout="vertical">
-              <Space wrap>
-                <Form.Item label="SMTP 服务器" style={{ marginBottom: 8 }}>
-                  <Input value={mail.host} onChange={(e) => setMail({ ...mail, host: e.target.value })} placeholder="smtp.example.com" />
-                </Form.Item>
-                <Form.Item label="端口" style={{ marginBottom: 8 }}>
-                  <InputNumber value={mail.port} onChange={(v) => setMail({ ...mail, port: v ?? 465 })} />
-                </Form.Item>
-                <Form.Item label="用户名" style={{ marginBottom: 8 }}>
-                  <Input value={mail.username} onChange={(e) => setMail({ ...mail, username: e.target.value })} />
-                </Form.Item>
-                <Form.Item label="发件地址" style={{ marginBottom: 8 }}>
-                  <Input value={mail.from} onChange={(e) => setMail({ ...mail, from: e.target.value })} />
-                </Form.Item>
-                <Form.Item label="收件地址" style={{ marginBottom: 8 }}>
-                  <Input value={mail.to} onChange={(e) => setMail({ ...mail, to: e.target.value })} />
-                </Form.Item>
-                <Form.Item label="密码" style={{ marginBottom: 8 }}>
-                  <Input.Password value={mail.password} onChange={(e) => setMail({ ...mail, password: e.target.value })} />
-                </Form.Item>
-              </Space>
-              <Checkbox checked={mail.secure} onChange={(e) => setMail({ ...mail, secure: e.target.checked })}>
-                使用 TLS
-              </Checkbox>
-              <div>
-                <Button
-                  disabled={!mail.host || !mail.to}
-                  onClick={() =>
-                    testSmtp()
-                      .then(() => message.success('测试邮件已发送'))
-                      .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '发送失败'))
-                  }
-                >
-                  测试发送
-                </Button>
-              </div>
-            </Form>
-          )}
+          <Typography.Text>选择默认录制清晰度：</Typography.Text>
+          <Select<Quality>
+            aria-label="录制清晰度"
+            value={quality}
+            onChange={setQuality}
+            options={qualityOptions}
+            style={{ width: '100%', maxWidth: 320 }}
+          />
+          <Typography.Text type="secondary">
+            默认原画，可在设置中修改。若直播间未提供所选画质，将按实际可用画质录制（历史中会标注）。
+          </Typography.Text>
         </Space>
       )}
       {step === 3 && (
@@ -162,9 +147,7 @@ export default function Setup() {
             <br />
             并发数：{concurrency}
             <br />
-            邮件通知：{mailOn ? `${mail.host} → ${mail.to}` : '未启用'}
-            <br />
-            清晰度：原画（默认，可在设置中修改）
+            清晰度：{qualityOptions.find((option) => option.value === quality)?.label}
           </Typography.Paragraph>
         </Space>
       )}
@@ -173,12 +156,9 @@ export default function Setup() {
           上一步
         </Button>
         {step < 3 ? (
-          <Space>
-            {step === 2 && <Button onClick={() => setStep(3)}>跳过</Button>}
-            <Button type="primary" disabled={!canNext} onClick={() => setStep(step + 1)}>
-              下一步
-            </Button>
-          </Space>
+          <Button type="primary" disabled={!canNext} onClick={() => setStep(step + 1)}>
+            下一步
+          </Button>
         ) : (
           <Button type="primary" loading={saving} onClick={() => void finish()}>
             完成设置

@@ -281,6 +281,7 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   };
 
   const handleUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (services.resetting) { socket.destroy(); return; }
     const port = typeof portOrResolver === 'function' ? portOrResolver() : portOrResolver;
     const host = req.headers.host ?? '';
     const origin = req.headers.origin;
@@ -331,4 +332,3 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   server.on('upgrade', onUpgrade);
   return { wss, dispose: () => server.off('upgrade', onUpgrade) };
 }
-

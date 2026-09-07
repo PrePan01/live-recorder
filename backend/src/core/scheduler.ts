@@ -26,6 +26,9 @@ export class Scheduler {
     }
   }
 
+  get isRunning(): boolean { return this.running; }
+  get isChecking(): boolean { return this.checking.size > 0; }
+
   stop(): void {
     this.running = false;
     for (const [platform, handle] of this.handles) {
@@ -74,6 +77,7 @@ export class Scheduler {
   }
 
   async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
+    if (this.services.resetting) return;
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 

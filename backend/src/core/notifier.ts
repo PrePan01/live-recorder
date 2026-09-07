@@ -14,6 +14,9 @@ const SUBJECTS: Record<NotifyEvent, string> = {
 /** 邮件通知：三类事件；同房间同类事件 30 分钟窗口去重；SMTP 失败只告警不影响录制。 */
 export class Notifier {
   private lastSent = new Map<string, number>();
+  private pending = 0;
+  get busy(): boolean { return this.pending > 0; }
+  reset(): void { this.lastSent.clear(); }
 
   constructor(
     private mailer: Mailer,
@@ -31,11 +34,14 @@ export class Notifier {
     const config = this.config();
     if (!config || !config.enabled || !config.host) return;
     const subject = SUBJECTS[event].replace('{title}', context.title ?? '直播');
+    this.pending += 1;
     try {
       await this.mailer.send(config, { to: config.recipients, subject, text: subject });
       this.lastSent.set(key, this.clock.now());
     } catch {
       this.alerts.create({ level: 'warning', source: 'smtp', message: `SMTP 通知发送失败（${event}）`, occurredAt: this.clock.iso() });
+    } finally {
+      this.pending -= 1;
     }
   }
 }

@@ -38,6 +38,7 @@ import { ExportManager } from './export-manager.js';
 export type AdapterMode = 'fake' | 'real';
 
 export interface Services {
+  resetting?: boolean;
   mode: AdapterMode;
   startedAt: number;
   events: AppEventBus;

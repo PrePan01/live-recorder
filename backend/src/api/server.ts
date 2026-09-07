@@ -17,6 +17,7 @@ import { registerNamingRoutes } from './routes/naming.js';
 import { registerOpenListRoutes } from './routes/openlist.js';
 import { registerScheduleRoutes } from './routes/schedules.js';
 import { registerExportRoutes } from './routes/exports.js';
+import { registerResetRoutes } from './routes/reset.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
 import { PreviewManager, attachWebSocketUpgrade } from './websocket.js';
 import { DEFAULT_PORT } from '../sidecar/ports.js';
@@ -38,6 +39,12 @@ export interface BuiltApp {
 
 export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltApp {
   const app = Fastify({ logger: false, forceCloseConnections: true });
+  const writes = new Set<string>();
+  app.addHook('preHandler', async (req) => {
+    if (services.resetting) throw new AppError('DIAGNOSTIC_CONFLICT', '正在重置，请稍后重试');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) writes.add(req.id);
+  });
+  app.addHook('onResponse', async (req) => { writes.delete(req.id); });
   const sse = new SSEBroadcaster();
   const preview = new PreviewManager(services);
   services.manager.preview = preview;
@@ -145,6 +152,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerOpenListRoutes(app, services);
   registerScheduleRoutes(app, services);
   registerExportRoutes(app, services);
+  registerResetRoutes(app, services, () => writes.size);
   registerSse(app, services, sse);
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, () => instance?.port ?? port);

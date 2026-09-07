@@ -16,6 +16,7 @@ import PipelineConfigCard from '../../components/PipelineConfigCard';
 import NamingRuleCard from '../../components/NamingRuleCard';
 import OpenListConfigCard from '../../components/OpenListConfigCard';
 import EmailConfigCard from '../../components/EmailConfigCard';
+import ResetSettingsCard from '../../components/ResetSettingsCard';
 import { describeError } from '../../utils/errorMap';
 import { ApiError } from '../../types/error';
 import { formatBytes, formatTime } from '../../utils/format';
@@ -625,6 +626,16 @@ export default function SettingsPage() {
         </Card>
       </Col>
     </Row>
+    <ResetSettingsCard
+      onExport={onExport}
+      exporting={exporting}
+      beforeReset={() => {
+        if (debounceRef.current) {
+          clearTimeout(debounceRef.current);
+          debounceRef.current = null;
+        }
+      }}
+    />
     </div>
   );
 }
