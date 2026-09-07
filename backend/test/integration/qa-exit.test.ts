@@ -216,7 +216,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
       await settle(clock, 500);
     }
     expect(services.recordings.get(rec.id)!.state).toBe('recording');
-    expect(services.recordings.get(rec.id)!.filePath).toMatch(new RegExp(`^${dir}/bilibili/`));
+    expect(services.recordings.get(rec.id)!.filePath?.startsWith(path.join(dir, 'bilibili') + path.sep)).toBe(true);
 
     for (let i = 0; i < 12 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
       await settle(clock, 500);

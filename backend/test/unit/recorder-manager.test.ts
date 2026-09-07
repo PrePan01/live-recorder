@@ -79,7 +79,7 @@ describe('RecorderManager', () => {
     await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
     expect(rec.filePath).toBeNull();
     const withPath = services.recordings.get(rec.id)!;
-    expect(withPath.filePath).toMatch(new RegExp(`^${dir}/bilibili/`));
+    expect(withPath.filePath?.startsWith(path.join(dir, 'bilibili') + path.sep)).toBe(true);
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
 
     for (let i = 0; i < 40 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
