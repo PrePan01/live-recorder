@@ -1,32 +1,17 @@
 import { create } from 'zustand';
-import type { AppInstance, BootEvent, BootState, DiagnosticItem } from '../types/desktop';
+import type { AppInstance, BootState, DiagnosticItem } from '../types/desktop';
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
 import { EndpointResolver } from '../api/endpoint';
 
 export const bridge = detectBridge();
 
-// 原生启动/停止可能因残留进程或 I/O 挂起；页面必须有可恢复的终态。
-const BOOT_TIMEOUT_MS = 60_000;
-async function withBootTimeout(operation: Promise<BootEvent>): Promise<BootEvent> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('本地服务启动超过 60 秒，请查看诊断后重试。')), BOOT_TIMEOUT_MS);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 interface BootStateStore {
   state: BootState;
   instance: AppInstance | null;
   diagnostics: DiagnosticItem[];
   loading: boolean;
+  slow: boolean;
   boot: () => Promise<void>;
   restart: () => Promise<void>;
   refreshDiagnostics: () => Promise<void>;
@@ -40,12 +25,23 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
   instance: null,
   diagnostics: [],
   loading: false,
+  slow: false,
   async boot() {
     if (get().loading) return;
-    set({ loading: true, state: 'booting' });
+    set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
+    const timer = setTimeout(() => set({ slow: true }), 15_000);
     try {
-      const event = await withBootTimeout(bridge.startService());
-      if (event.instance) EndpointResolver.set(event.instance);
+      const event = await bridge.startService();
+      if (event.instance) {
+        if (EndpointResolver.instanceId !== event.instance.instanceId) {
+          useServiceStore.setState({
+            status: null,
+            loading: false,
+            error: null,
+          });
+        }
+        EndpointResolver.set(event.instance);
+      }
       set({
         state: event.state,
         instance: event.instance ?? null,
@@ -53,15 +49,38 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
         loading: false,
       });
     } catch (error) {
-      set({ state: 'degraded', loading: false, diagnostics: [{ key: 'service', message: '本地服务启动失败', detail: String(error) }] });
+      set({
+        state: 'degraded',
+        loading: false,
+        diagnostics: [
+          {
+            key: 'service',
+            message: '本地服务启动失败',
+            detail: String(error),
+          },
+        ],
+      });
+    } finally {
+      clearTimeout(timer);
+      set({ slow: false });
     }
   },
   async restart() {
     if (get().loading) return;
-    set({ loading: true, state: 'booting' });
+    set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
+    const timer = setTimeout(() => set({ slow: true }), 15_000);
     try {
-      const event = await withBootTimeout(bridge.restartService());
-      if (event.instance) EndpointResolver.set(event.instance);
+      const event = await bridge.restartService();
+      if (event.instance) {
+        if (EndpointResolver.instanceId !== event.instance.instanceId) {
+          useServiceStore.setState({
+            status: null,
+            loading: false,
+            error: null,
+          });
+        }
+        EndpointResolver.set(event.instance);
+      }
       set({
         state: event.state,
         instance: event.instance ?? null,
@@ -69,7 +88,20 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
         loading: false,
       });
     } catch (error) {
-      set({ state: 'degraded', loading: false, diagnostics: [{ key: 'service', message: '本地服务重启失败', detail: String(error) }] });
+      set({
+        state: 'degraded',
+        loading: false,
+        diagnostics: [
+          {
+            key: 'service',
+            message: '本地服务重启失败',
+            detail: String(error),
+          },
+        ],
+      });
+    } finally {
+      clearTimeout(timer);
+      set({ slow: false });
     }
   },
   async refreshDiagnostics() {
@@ -105,7 +137,7 @@ export function subscribeBridgeEvents() {
   );
   disposers.push(
     bridge.onExistingInstance(() => {
-      setState('existing-instance');
+      /* 已有主窗口仅被唤醒，不改变工作台状态。 */
     }),
   );
   disposers.push(

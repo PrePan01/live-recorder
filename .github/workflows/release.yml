@@ -33,7 +33,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
 
       - name: Validate version and release state
         id: release
@@ -91,7 +91,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -110,8 +110,20 @@ jobs:
       - name: Install dependencies
         run: npm run install:ci
 
+      - name: Verify backend and frontend
+        run: |
+          npm --prefix backend run build
+          npm --prefix backend test
+          npm --prefix frontend test
+
       - name: Build installer
         run: npm run package
+
+      - name: Verify native service lifecycle
+        run: cargo test --manifest-path frontend/src-tauri/Cargo.toml --lib
+
+      - name: Verify installation payload
+        run: node scripts/check-installation.mjs
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7

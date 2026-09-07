@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { EndpointResolver } from '../api/endpoint';
 import { fetchServiceStatus } from '../api/service';
 import type { ServiceStatus } from '../types/service';
 
@@ -19,10 +20,14 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
   error: null,
   async fetchStatus() {
     if (get().loading) return;
+    const endpoint = EndpointResolver.base;
     set({ loading: true, error: null });
     try {
-      set({ status: await fetchServiceStatus(), loading: false, error: null });
+      const status = await fetchServiceStatus();
+      if (endpoint !== EndpointResolver.base) return;
+      set({ status, loading: false, error: null });
     } catch {
+      if (endpoint !== EndpointResolver.base) return;
       set({
         loading: false,
         // 连接失败不能证明尚未初始化；保留最后一次可信状态。

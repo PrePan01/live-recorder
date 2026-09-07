@@ -1,4 +1,4 @@
-import { statfsSync } from 'node:fs';
+import { statfs } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface DiskSpace {
@@ -11,11 +11,11 @@ export interface DiskGuard {
 }
 
 /** 读取指定目录所在文件系统的真实剩余/总空间；目录不存在时向上找最近存在的祖先。 */
-export function realDiskSpace(directory: string): DiskSpace {
+export async function realDiskSpace(directory: string): Promise<DiskSpace> {
   let p = directory;
   for (let i = 0; i < 64; i += 1) {
     try {
-      const s = statfsSync(p);
+      const s = await statfs(p);
       return { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize };
     } catch {
       const parent = dirname(p);
@@ -32,6 +32,7 @@ export function realDiskSpace(directory: string): DiskSpace {
  */
 export class FakeDiskGuard implements DiskGuard {
   private override: DiskSpace | null;
+  private pending = new Map<string, Promise<DiskSpace>>();
   constructor(space?: DiskSpace) {
     this.override = space ?? null;
   }
@@ -39,6 +40,15 @@ export class FakeDiskGuard implements DiskGuard {
     this.override = space;
   }
   inspect(directory: string): Promise<DiskSpace> {
-    return Promise.resolve(this.override ?? realDiskSpace(directory));
+    if (this.override) return Promise.resolve(this.override);
+    const existing = this.pending.get(directory);
+    if (existing) return existing;
+    let timer: ReturnType<typeof setTimeout>;
+    const operation = Promise.race([
+      realDiskSpace(directory),
+      new Promise<DiskSpace>((resolve) => { timer = setTimeout(() => resolve({ freeBytes: 0, totalBytes: 0 }), 2000); }),
+    ]).finally(() => { clearTimeout(timer); this.pending.delete(directory); });
+    this.pending.set(directory, operation);
+    return operation;
   }
 }

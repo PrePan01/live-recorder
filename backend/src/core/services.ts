@@ -76,8 +76,8 @@ export interface BuildOptions {
 export function productionDataDir(): string {
   const home = os.homedir();
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'live-recorder');
-  if (process.platform === 'win32') return path.join(process.env.APPDATA ?? home, 'live-recorder');
-  return path.join(process.env.XDG_DATA_HOME ?? path.join(home, '.local', 'share'), 'live-recorder');
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || home, 'live-recorder');
+  return path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'live-recorder');
 }
 
 /** #224 P0 深度防御：开发环境（mode=development）下数据/状态路径不得指向生产数据目录，否则启动即拒。 */
@@ -109,7 +109,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const mode: AdapterMode = opts.mode ?? (process.env.RECORDING_ADAPTER === 'real' ? 'real' : 'fake');
   const dbPath = opts.dbPath ?? process.env.LIVE_RECORDER_DB ?? path.join(defaultDataDir(), 'live-recorder.db');
   const db = openDatabase(dbPath);
-  runMigrations(db);
+  try { runMigrations(db); } catch (error) { db.close(); throw error; }
   const clock = opts.clock ?? new SystemClock();
   const fakeEngine = new FakeRecordingEngine(clock);
 

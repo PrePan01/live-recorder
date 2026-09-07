@@ -6,10 +6,32 @@ import { useBootStore } from '../../stores/bootStore';
 const STEPS = ['获取实例锁', '启动本地服务', '检查健康与目录', '准备工作台'];
 
 export default function Startup() {
-  const { state, restart, refreshDiagnostics } = useBootStore();
+  const {
+    state,
+    boot,
+    restart,
+    refreshDiagnostics,
+    diagnostics,
+    loading,
+    slow,
+  } = useBootStore();
   const navigate = useNavigate();
   // 原生接口返回前尚不能确认健康检查完成，不按计时器伪造启动进度。
-  const step = state === 'ready' ? 3 : 1;
+  const phase = diagnostics[0]?.key;
+  const step =
+    state === 'ready'
+      ? 3
+      : phase === 'health'
+        ? 2
+        : phase === 'starting'
+          ? 1
+          : 0;
+  useEffect(() => {
+    if (!loading) return;
+    void refreshDiagnostics();
+    const timer = setInterval(() => void refreshDiagnostics(), 1000);
+    return () => clearInterval(timer);
+  }, [loading, refreshDiagnostics]);
 
   useEffect(() => {
     if (state === 'ready') {
@@ -24,12 +46,25 @@ export default function Startup() {
         <Result
           status="warning"
           title="服务未就绪"
-          subTitle="本地服务启动失败，请查看诊断详情后重试。"
+          subTitle={
+            diagnostics[0]?.detail?.split('\n')[0] ||
+            diagnostics[0]?.message ||
+            '本地服务暂未连接，可重试连接或查看诊断。'
+          }
           extra={
             <Space>
-              <Button onClick={() => navigate('/startup-diagnostics')}>打开诊断</Button>
-              <Button type="primary" onClick={() => void restart()}>
-                安全重试
+              <Button onClick={() => navigate('/startup-diagnostics')}>
+                打开诊断
+              </Button>
+              <Button
+                type="primary"
+                onClick={() => void boot()}
+                loading={loading}
+              >
+                重试连接
+              </Button>
+              <Button onClick={() => void restart()} disabled={loading}>
+                重启服务
               </Button>
             </Space>
           }
@@ -57,6 +92,17 @@ export default function Startup() {
         Live Recorder
       </Typography.Title>
       <Spin size="large" />
+      <Typography.Text>
+        {diagnostics[0]?.message || '正在检查本地服务'}
+      </Typography.Text>
+      {slow && (
+        <Typography.Text type="secondary">
+          启动耗时较长，仍在等待当前进程；完成后会自动进入工作台。
+        </Typography.Text>
+      )}
+      <Button type="link" onClick={() => navigate('/startup-diagnostics')}>
+        查看启动详情
+      </Button>
       <Steps
         current={step}
         orientation="vertical"

@@ -273,7 +273,7 @@ export class PreviewManager {
   }
 }
 
-export function attachWebSocketUpgrade(services: Services, preview: PreviewManager, server: import('node:http').Server, extraOrigins: string[] = [], port = 43120): { wss: WSS; dispose: () => void } {
+export function attachWebSocketUpgrade(services: Services, preview: PreviewManager, server: import('node:http').Server, extraOrigins: string[] = [], portOrResolver: number | (() => number) = 43120): { wss: WSS; dispose: () => void } {
   const wss = new WebSocketServer({ noServer: true });
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -281,6 +281,7 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
   };
 
   const handleUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const port = typeof portOrResolver === 'function' ? portOrResolver() : portOrResolver;
     const host = req.headers.host ?? '';
     const origin = req.headers.origin;
     // 兜底：允许 Vite 代理（5173）与 Tauri WebView（tauri.localhost）转发的 Host，避免未设 changeOrigin 时被误拒。

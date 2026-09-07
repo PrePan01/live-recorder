@@ -9,8 +9,8 @@ use tauri::{
     AppHandle, Emitter, Manager, State,
 };
 
-use contract::{BootEvent, BootState, DiagnosticItem};
 use backend::BackendManager;
+use contract::{BootEvent, BootState, DiagnosticItem};
 
 struct ShellState {
     backend: BackendManager,
@@ -40,18 +40,16 @@ fn show_main_window(app: &AppHandle) {
 #[tauri::command]
 async fn get_app_instance() -> Option<contract::AppInstance> {
     // #233：fetch_ready 含 reqwest::blocking，移出主线程避免阻塞 UI。
-    tauri::async_runtime::spawn_blocking(backend::fetch_ready).await.ok().flatten()
+    tauri::async_runtime::spawn_blocking(backend::fetch_ready)
+        .await
+        .ok()
+        .flatten()
 }
 
 #[tauri::command]
 async fn get_health() -> Option<contract::Health> {
     tauri::async_runtime::spawn_blocking(|| {
-        for port in backend_candidates() {
-            if let Some(h) = backend::fetch_health(port) {
-                return Some(h);
-            }
-        }
-        None
+        backend::fetch_ready().and_then(|instance| backend::fetch_health(instance.port))
     })
     .await
     .ok()
@@ -60,10 +58,14 @@ async fn get_health() -> Option<contract::Health> {
 
 /// 同步执行服务启动（backend.start() 含 spawn + 最长 ~30s health 轮询，均为阻塞调用）。
 /// 必须在非主线程调用（#233：主线程跑会阻塞 UI → 整客户端卡死）。
-fn start_service_sync(app: &AppHandle) -> Result<BootEvent, String> {
+fn start_service_sync(app: &AppHandle, restart: bool) -> Result<BootEvent, String> {
     let state = app.state::<ShellState>();
     state.set_boot(app, BootState::Booting);
-    match state.backend.start() {
+    match if restart {
+        state.backend.restart()
+    } else {
+        state.backend.start()
+    } {
         Ok(instance) => {
             let event = BootEvent {
                 state: BootState::Ready,
@@ -92,7 +94,7 @@ fn start_service_sync(app: &AppHandle) -> Result<BootEvent, String> {
 #[tauri::command]
 async fn start_service(app: AppHandle) -> Result<BootEvent, String> {
     let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || start_service_sync(&handle))
+    tauri::async_runtime::spawn_blocking(move || start_service_sync(&handle, false))
         .await
         .map_err(|e| format!("启动服务任务异常: {e}"))?
 }
@@ -102,7 +104,7 @@ async fn stop_service(app: AppHandle) {
     let handle = app.clone();
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<ShellState>();
-        state.backend.stop();
+        let _ = state.backend.stop();
     })
     .await;
 }
@@ -110,57 +112,22 @@ async fn stop_service(app: AppHandle) {
 #[tauri::command]
 async fn restart_service(app: AppHandle) -> Result<BootEvent, String> {
     let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = handle.state::<ShellState>();
-        state.backend.stop();
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        start_service_sync(&handle)
-    })
-    .await
-    .map_err(|e| format!("重启服务任务异常: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || start_service_sync(&handle, true))
+        .await
+        .map_err(|e| format!("重启服务任务异常: {e}"))?
 }
 
 #[tauri::command]
-async fn get_diagnostics() -> Vec<DiagnosticItem> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut items = vec![];
-        match backend::fetch_ready() {
-            Some(instance) => items.push(DiagnosticItem::Ok {
-                key: "service".to_string(),
-                message: format!("本地服务运行中（{}）", instance.port),
-            }),
-            None => {
-                // 区分「端口仍被旧服务占用（未退出）」vs「启动失败」：端口有响应但 ready 文件缺失/不健康 → 旧服务占用。
-                let port_occupied = backend::fetch_health(backend::DEFAULT_PORT).is_some();
-                items.push(DiagnosticItem::Error {
-                    key: "service".to_string(),
-                    message: "本地服务未就绪".to_string(),
-                    detail: Some(
-                        if port_occupied {
-                            format!("端口 {} 仍被旧服务占用，正在等待其退出后重启（或请手动退出旧版本后重试）", backend::DEFAULT_PORT)
-                        } else {
-                            "服务启动失败，请点击「安全重试」重新拉起".to_string()
-                        },
-                    ),
-                });
-            }
-        }
-        items
-    })
-    .await
-    .unwrap_or_default()
+async fn get_diagnostics(app: AppHandle) -> Vec<DiagnosticItem> {
+    // 返回实际启动阶段/原始错误，不再用一次探测覆盖错误上下文。
+    app.state::<ShellState>().backend.diagnostics()
 }
 
 #[tauri::command]
 fn quit_app(app: AppHandle, state: State<'_, ShellState>) {
     // Graceful exit: stop the backend service first, then exit the app.
-    state.backend.stop();
+    let _ = state.backend.stop();
     app.exit(0);
-}
-
-fn backend_candidates() -> Vec<u16> {
-    // P0 隔离硬化（#224）：仅本应用默认端口；健康检查不再探测候选范围，避免误连 dev（43140）。
-    vec![backend::DEFAULT_PORT]
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -172,7 +139,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open, &restart, &sep, &diagnostics, &sep, &quit])?;
 
     TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().cloned().unwrap())
+        // 所有平台托盘使用透明底 PNG，独立于 macOS 白底应用 ICNS。
+        .icon(tauri::include_image!("icons/32x32.png"))
+        .icon_as_template(false)
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => {
@@ -201,7 +170,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus the existing window instead of starting a second UI/service.
             show_main_window(app);
-            let _ = app.emit("boot:existing-instance", ());
+            // 此回调运行在已有主实例中；只唤醒窗口，不能把正常工作台切成“已有实例”。
         }))
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
@@ -245,7 +214,7 @@ pub fn run() {
         // 占用 43120，导致升级新版时后端不更新。这里在进程退出时兜底停掉后端。
         if let tauri::RunEvent::Exit = event {
             let state = app_handle.state::<ShellState>();
-            state.backend.stop();
+            let _ = state.backend.stop();
         }
         // macOS Dock 图标点击 / 应用重新激活（applicationShouldHandleReopen）：
         // 窗口被 hide（close-to-tray）或最小化后，点击 Dock 图标必须重新唤出主窗口。

@@ -401,7 +401,7 @@ describe('RecorderManager', () => {
     for (let i = 0; i < 20 && services.recordings.list({ roomId: room.id }).items.length < 2; i += 1) {
       await settle(clock, 500);
     }
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length >= 2);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.some((r) => r.id !== first.id && r.state === 'recording'));
     const recs = services.recordings.list({ roomId: room.id }).items;
     expect(recs.length).toBeGreaterThanOrEqual(2);
     // list 按 started_at 倒序：recs[0]=新段（recording），recs[1]=旧段（completed）
@@ -445,14 +445,18 @@ describe('RecorderManager', () => {
       await settle(clock, 500);
     }
     await waitFor(() => services.recordings.list({ roomId: room.id }).items.length >= 2);
-    await waitFor(() => services.uploader.uploadRepo.jobForRecording(first.id) !== null);
-    expect(services.uploader.uploadRepo.jobForRecording(first.id)).not.toBeNull();
-
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.some((r) => r.state === 'recording'));
     const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
     await services.manager.stopRecording(room.id);
     for (let i = 0; i < 20 && services.recordings.get(activeRec.id)!.state !== 'completed'; i += 1) {
       await settle(clock, 500);
     }
     await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+    // 转封装失败重试使用 FakeClock；停止第二段后继续推进收尾任务。
+    const deadline = Date.now() + 5000;
+    while (services.uploader.uploadRepo.jobForRecording(first.id) === null && Date.now() < deadline) {
+      await settle(clock, 500);
+    }
+    expect(services.uploader.uploadRepo.jobForRecording(first.id)).not.toBeNull();
   });
 });

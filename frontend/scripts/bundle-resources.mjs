@@ -47,12 +47,21 @@ try {
 
 const src = candidates.find((p) => p && existsSync(p));
 if (!src) {
-  console.error('[bundle-resources] 未找到 node 运行时，跳过打包 node（后端可能无法启动）');
-  process.exit(0);
+  console.error('[bundle-resources] 未找到 Node 运行时，停止打包');
+  process.exit(1);
 }
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);
 console.log(`[bundle-resources] node -> ${dest}`);
+
+// 使用实际随包运行时检查原生依赖、迁移和路由编译；原生崩溃同样使打包失败。
+const smoke = spawnSync(dest, ['--expose-gc', join(root, '../backend/scripts/check-runtime.mjs')], {
+  cwd: join(root, '../backend'), stdio: 'inherit', timeout: 30_000, windowsHide: true,
+});
+if (smoke.status !== 0 || smoke.error) {
+  console.error('[bundle-resources] 随包 Node 运行时自检失败', smoke.error ?? smoke.signal ?? smoke.status);
+  process.exit(1);
+}
 
 // Windows 打包不需要 dmg/hdiutil 清理。
 if (isWin) {

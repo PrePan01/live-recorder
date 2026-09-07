@@ -103,7 +103,8 @@ describe('#220 录制完成「询问是否保留」', () => {
 
     await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 's99' });
     // 驱动假引擎写满 frames 并 natural end（fake engine：6 帧 × 500ms，逐拍推进以触发各帧定时器）。
-    for (let i = 0; i < 10; i += 1) {
+    const deadline = Date.now() + 5000;
+    while (!services.recordings.list({ pageSize: 100 }).items.some((r) => r.state === 'awaiting_confirmation') && Date.now() < deadline) {
       clock.advance(500);
       await sleep(5);
     }

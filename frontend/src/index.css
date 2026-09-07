@@ -109,8 +109,7 @@ body {
 .ant-layout-sider-collapsed .lr-app-brand::before {
   width: 20px;
   height: 20px;
-  border-radius: 5px;
-  background: url('/icon.png') center / cover no-repeat;
+  background: url('/icon1.png') center / contain no-repeat;
   content: '';
 }
 

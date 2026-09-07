@@ -1,7 +1,7 @@
 # 直播录制助手（Live Recorder）
 
 <h1 align="center">
-  <img src="frontend/public/icon.png" alt="Live Recorder" width="128" />
+  <img src="frontend/public/icon1.png" alt="Live Recorder" width="128" />
 </h1>
 
 直播录制工具（macOS / Windows）。支持 B站 / 抖音直播间。
@@ -47,7 +47,7 @@
 
 ### 从源码运行
 
-环境要求：Node.js ≥ 20。
+环境要求：Node.js ≥ 22（安装包内置运行时，无需用户另行安装）。
 
 ```bash
 npm run setup
@@ -76,6 +76,7 @@ npm run dev
 npm run dev        # 开发服务器
 npm run build      # 构建（tsc + vite build）
 npm run lint       # 代码检查
+npm run icons:generate # 更新桌面图标：macOS 应用白底，其余透明底
 
 # 后端（backend/）
 npm run dev        # 开发（tsx watch）
@@ -94,6 +95,11 @@ npm run tauri:build
 > 不会自动携带隔离变量，需自行 `export LIVE_RECORDER_DATA_DIR=... LIVE_RECORDER_PORT=43140` 后再启动。
 
 ### 打包
+
+图标素材：`frontend/public/icon.png` 仅用于 macOS 应用的 ICNS；
+`frontend/public/icon1.png` 用于 Windows 应用 ICO、通用 PNG、所有平台托盘及界面标识。
+更新素材后运行 `npm --prefix frontend run icons:generate`，提交生成的 `frontend/src-tauri/icons/` 桌面图标。
+托盘由 Rust `setup_tray` 统一创建，不在 Tauri 配置中重复声明，也不启用单色模板模式。
 
 - macOS：`cd frontend && npm run tauri:build`，产物在 `release/`（.app + .dmg）
 - Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物 `.msi` / `.exe`（或使用 CI 的 `windows-latest` runner）

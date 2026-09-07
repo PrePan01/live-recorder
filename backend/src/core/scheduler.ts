@@ -20,7 +20,9 @@ export class Scheduler {
     this.running = true;
     // 启动后先完成一轮检测，再开始按平台间隔轮询；恢复服务无需额外等待一个周期。
     for (const platform of PLATFORMS) {
-      void this.runPlatform(platform).finally(() => this.scheduleNext(platform));
+      void this.runPlatform(platform)
+        .catch((error: unknown) => { console.error(`scheduler ${platform} check failed`, error); })
+        .finally(() => this.scheduleNext(platform));
     }
   }
 
@@ -41,7 +43,9 @@ export class Scheduler {
     if (!this.running) return;
     const ms = this.intervalFor(platform) * 1000;
     const handle = this.services.clock.setTimeout(() => {
-      void this.runPlatform(platform).finally(() => this.scheduleNext(platform));
+      void this.runPlatform(platform)
+        .catch((error: unknown) => { console.error(`scheduler ${platform} check failed`, error); })
+        .finally(() => this.scheduleNext(platform));
     }, ms);
     this.handles.set(platform, handle);
   }

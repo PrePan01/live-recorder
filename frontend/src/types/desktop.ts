@@ -25,6 +25,7 @@ export interface Health {
 export type DiagnosticStatus = 'ok' | 'warn' | 'error';
 
 export interface DiagnosticItem {
+  status?: DiagnosticStatus;
   key: string;
   message: string;
   detail?: string | null;

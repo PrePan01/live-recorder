@@ -10,7 +10,7 @@ const FFPROBE_TIMEOUT_MS = 15_000;
  */
 export function checkFileIntegrity(filePath: string, timeoutMs = FFPROBE_TIMEOUT_MS): Promise<RecordingIntegrity> {
   return new Promise((resolve) => {
-    const child = spawn(resolveBin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath]);
+    const child = spawn(resolveBin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath], { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve('pending');

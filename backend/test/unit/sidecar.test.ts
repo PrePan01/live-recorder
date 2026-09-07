@@ -135,7 +135,7 @@ async function readdirSafe(dir: string): Promise<string[]> {
 describe('sidecar start (integration)', () => {
   it('starts a sidecar, reports instance fields, and closes cleanly', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-sidecar-'));
-    const run = await startSidecar({ host: '127.0.0.1', stateDir: dir, preferredPort: 43990, instanceId: 'inst_start' });
+    const run = await startSidecar({ dbPath: ':memory:', mode: 'fake', host: '127.0.0.1', stateDir: dir, preferredPort: 43990, instanceId: 'inst_start' });
     expect(run.instance.instanceId).toBe('inst_start');
     expect(run.instance.port).toBe(43990);
     expect(run.instance.pid).toBe(process.pid);
@@ -148,8 +148,8 @@ describe('sidecar start (integration)', () => {
 
   it('fails to start a second sidecar sharing a state dir', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-sidecar2-'));
-    const first = await startSidecar({ host: '127.0.0.1', stateDir: dir, preferredPort: 43991, instanceId: 'inst_one' });
-    await expect(startSidecar({ host: '127.0.0.1', stateDir: dir, preferredPort: 43992, instanceId: 'inst_two' })).rejects.toThrow(/another live-recorder instance/);
+    const first = await startSidecar({ dbPath: ':memory:', mode: 'fake', host: '127.0.0.1', stateDir: dir, preferredPort: 43991, instanceId: 'inst_one' });
+    await expect(startSidecar({ dbPath: ':memory:', mode: 'fake', host: '127.0.0.1', stateDir: dir, preferredPort: 43992, instanceId: 'inst_two' })).rejects.toThrow(/another live-recorder instance/);
     await first.close();
   });
 
@@ -160,7 +160,7 @@ describe('sidecar start (integration)', () => {
     const childScript = `
       import { watchParentExit } from '${distStart}';
       import { writeFile } from 'node:fs/promises';
-      watchParentExit(async () => { await writeFile('${marker}', 'x'); process.exit(0); });
+      watchParentExit(async () => { await writeFile(${JSON.stringify(marker)}, 'x'); process.exit(0); });
       console.log('child-ready');
       setInterval(() => {}, 1000);
     `;
@@ -186,5 +186,50 @@ describe('sidecar start (integration)', () => {
     } finally {
       middle.kill('SIGKILL');
     }
+  });
+});
+describe('startup resilience', () => {
+  it('allows only one concurrent lock holder', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-lock-race-'));
+    const attempts = await Promise.all(Array.from({ length: 12 }, (_, i) => InstanceLock.acquire(dir, `racer-${i}`)));
+    try { expect(attempts.filter((result) => result.acquired)).toHaveLength(1); }
+    finally { for (const result of attempts) if (result.acquired) await result.handle.release(); }
+  });
+
+  it('publishes the real OS assigned port and serves health on it', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-port-zero-'));
+    const run = await startSidecar({ stateDir: dir, dbPath: ':memory:', mode: 'fake', preferredPort: 0 });
+    try {
+      expect(run.instance.port).toBeGreaterThan(0);
+      const response = await fetch(`${run.instance.baseUrl}/api/v1/health`);
+      expect(response.status).toBe(200);
+      expect((await response.json()).serviceStatus.instanceId).toBe(run.instance.instanceId);
+      expect((await readReadyFile(run.readyFile))?.port).toBe(run.instance.port);
+    } finally { await run.close(); }
+  });
+
+  it('starts on a fallback port when the actual preferred listener is occupied', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-port-fallback-'));
+    const port = await osFreePort('127.0.0.1');
+    await occupyPort('127.0.0.1', port);
+    const run = await startSidecar({ stateDir: dir, dbPath: ':memory:', mode: 'fake', preferredPort: port });
+    try {
+      expect(run.instance.port).not.toBe(port);
+      expect((await fetch(`${run.instance.baseUrl}/api/v1/health`)).status).toBe(200);
+    } finally { await run.close(); }
+  });
+
+  it('releases its lease after startup fails and can start on the next attempt', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-startup-fail-'));
+    const badDb = path.join(dir, 'bad.db');
+    await writeFile(badDb, 'not a sqlite database');
+    await expect(startSidecar({ stateDir: dir, dbPath: badDb, mode: 'fake', preferredPort: 0 })).rejects.toThrow();
+    expect(await readdirSafe(dir)).not.toContain('instance.lock');
+    const run = await startSidecar({ stateDir: dir, dbPath: ':memory:', mode: 'fake', preferredPort: 0 });
+    await Promise.all([run.close(), run.close()]);
+    expect(await readReadyFile(run.readyFile)).toBeNull();
+    const next = await InstanceLock.acquire(dir, 'after-close');
+    expect(next.acquired).toBe(true);
+    await next.handle.release();
   });
 });

@@ -15,7 +15,7 @@
     "version:set": "node scripts/version-set.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "prettier": "^3.9.6"

@@ -1,263 +1,497 @@
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::contract::{AppInstance, Health};
+use crate::contract::{AppInstance, DiagnosticItem, Health};
 
-pub const DEFAULT_PORT: u16 = 43120;
 pub const HOST: &str = "127.0.0.1";
 const POLL_INTERVAL: Duration = Duration::from_millis(350);
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 /// 停旧换新：SIGTERM 后等待旧后端退出+端口释放的上限，超时升级 SIGKILL（#9 阻塞根因）。
 const STOP_OLD_TIMEOUT_SECS: u64 = 10;
 
+/// 后台控制台程序不应在 Windows 上创建独立窗口；仅重定向 stdio 不足以隐藏它。
+fn background_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+#[derive(Clone)]
+struct LaunchConfig {
+    cwd: PathBuf,
+    node: String,
+    args: Vec<String>,
+    ready_file: PathBuf,
+}
+
+impl LaunchConfig {
+    fn discover() -> Result<Self, String> {
+        let cwd = backend_cwd().ok_or_else(|| {
+            "安装包缺少 backend/dist/index.js，请重新安装完整客户端。".to_string()
+        })?;
+        Ok(Self {
+            cwd,
+            node: backend_cmd(),
+            args: backend_args(),
+            ready_file: ready_file_path().ok_or_else(|| {
+                "无法确定状态目录：请检查当前用户的 APPDATA（Windows）或 HOME（macOS）。"
+                    .to_string()
+            })?,
+        })
+    }
+}
+
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
-    /// 启动互斥（#26）：setup 自动拉起线程与前端 boot()（start_service command）会并发调用 start()。
-    /// 无互斥时两线程都过 is_running=false → 各自停旧换新/spawn → 双后端竞争实例锁/端口，
-    /// 败者 wait_ready 30s 超时 → Degraded「服务未就绪」。互斥保证仅一线程执行 spawn，余者等其完成后走复用。
-    starting: Mutex<()>,
+    instance: Mutex<Option<AppInstance>>,
+    // 启动、重试、重启和停止共用同一把锁，不能交错操作同一个后端。
+    lifecycle: Mutex<()>,
+    diagnostics: Mutex<Vec<DiagnosticItem>>,
+    config: Option<LaunchConfig>,
 }
 
 impl BackendManager {
     pub fn new() -> Self {
         Self {
             child: Mutex::new(None),
-            starting: Mutex::new(()),
+            instance: Mutex::new(None),
+            lifecycle: Mutex::new(()),
+            diagnostics: Mutex::new(vec![]),
+            config: None,
         }
     }
 
-    fn backend_cwd() -> Option<PathBuf> {
-        let explicit = std::env::var("LR_BACKEND_CWD").ok().map(PathBuf::from);
-        if let Some(path) = explicit {
-            return Some(path);
-        }
-        // Dev layout: <repo>/frontend/../backend
-        // 注意：打包后（Finder 双击）current_dir 可能是 /，parent() 为 None，
-        // 不能因 dev 分支短路，否则永远到不了下面的打包布局分支。
-        if let Some(cwd) = std::env::current_dir().ok().and_then(|d| d.parent().map(|p| p.join("backend"))) {
-            if cwd.join("package.json").exists() {
-                return Some(cwd);
-            }
-        }
-        // Packaged layout: backend shipped under app bundle Resources.
-        //   macOS: <app>.app/Contents/Resources/backend
-        //   Windows: resources dir next to the exe (target/release/backend)
-        let exe = std::env::current_exe().ok()?;
-        let mut candidates = Vec::new();
-        // macOS: <exe>/../../Resources/backend  (exe = .../Contents/MacOS/app)
-        if let Some(contents) = exe.parent().and_then(|p| p.parent()) {
-            candidates.push(contents.join("Resources").join("backend"));
-        }
-        // Windows/dev fallback: <exe>/../backend (exe = target/release/app.exe)
-        if let Some(parent) = exe.parent() {
-            candidates.push(parent.join("backend"));
-        }
-        for c in candidates {
-            if c.join("package.json").exists() {
-                return Some(c);
-            }
-        }
-        None
+    fn report(&self, key: &str, message: &str) {
+        *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()) = vec![DiagnosticItem::Warn {
+            key: key.to_string(),
+            message: message.to_string(),
+            detail: None,
+        }];
+    }
+
+    pub fn diagnostics(&self) -> Vec<DiagnosticItem> {
+        self.diagnostics
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn is_running(&self) -> bool {
         self.child
             .lock()
             .ok()
-            .and_then(|mut c| c.as_mut().map(|c| matches!(c.try_wait(), Ok(None))))
+            .and_then(|mut child| {
+                child
+                    .as_mut()
+                    .map(|child| matches!(child.try_wait(), Ok(None)))
+            })
             .unwrap_or(false)
     }
 
-    /// Spawn the backend sidecar as a child and poll until
-    /// `GET /api/v1/health` reports ready, returning the AppInstance.
-    /// 复用既有后端需「同版本 且 父进程存活」（PM #199 决策）：
-    /// 版本不一致或既有后端为孤儿（父 app 已退出，单实例保障下任何外来后端即孤儿）→ 停旧换新。
-    /// 同版本快速重启走 self.is_running 复用本进程子进程。
     pub fn start(&self) -> Result<AppInstance, String> {
-        // #26：串行化启动。setup 自动拉起线程与前端 boot() 并发调用 start() 时，
-        // 只有首个线程执行 spawn；其余线程持锁等待其完成后，走 is_running/wait_ready 复用，
-        // 避免双后端竞争实例锁/端口导致一方 30s 超时「服务未就绪」。
-        let _start_guard = self
-            .starting
-            .lock()
-            .map_err(|_| "启动锁不可用".to_string())?;
-        if self.is_running() {
-            return self.wait_ready();
-        }
-        // ① 基于 ready 文件探测到的既有健康实例：同版本复用；异版本停旧换新。
-        if let Some(existing) = fetch_ready() {
-            let same_version = match (bundled_backend_version(), fetch_health(existing.port).and_then(|h| h.version)) {
-                // 两侧版本都可判定且一致 → 可复用候选；无法判定时保守视为可复用。
-                (Some(bundled), Some(running)) => bundled.trim() == running.trim(),
-                _ => true,
-            };
-            // 同版本：直接复用既有后端（单实例保障下它属于本应用；若为孤儿则 health 校验已驳回）。
-            if same_version {
-                return Ok(existing);
-            }
-            // 版本不一致：停旧换新（SIGTERM → 轮询端口/pid 释放，超时 SIGKILL，#9）。
-            let old_pid = existing.pid as u32;
-            self.stop_existing_pid(old_pid, existing.port);
-        }
-        // ② #26 盲区补强：覆盖安装首启时旧后端进程存活、但 ready.json/health 校验那一刻未通过
-        //    → fetch_ready()=None → 原逻辑跳过停旧直接 spawn → 新后端 InstanceLock.acquire 见旧 pid
-        //    存活即拒绝退出、不写 ready →「服务未就绪」（手动停 node 后即恢复）。
-        //    现改为直接读 instance.lock：凡锁内 PID 存活且非本进程已 spawn 的 child → 一律先停旧，
-        //    再 spawn。与 ① 幂等（同一 pid 二次 stop 无害）。
-        if let Some(lock_pid) = read_instance_lock_pid() {
-            let is_own_child = match self.child.lock() {
-                Ok(guard) => guard.as_ref().map(|c| c.id() == lock_pid).unwrap_or(false),
-                Err(_) => false,
-            };
-            if !is_own_child && pid_alive(lock_pid) {
-                self.stop_existing_pid(lock_pid, DEFAULT_PORT);
-            }
-        }
-        let cwd = Self::backend_cwd().ok_or_else(|| "未找到后端运行目录".to_string())?;
-        let ready_file = ready_file_path().ok_or_else(|| "无法确定状态目录".to_string())?;
-        let state_dir = ready_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| ready_file.clone());
-        let mut command = Command::new(backend_cmd());
-        command
-            .args(backend_args())
-            .current_dir(&cwd)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .env("LR_EXTRA_ORIGINS", tauri_origin_list())
-            .env("LIVE_RECORDER_STATE_DIR", &state_dir)
-            .env("LIVE_RECORDER_READY_FILE", &ready_file)
-            // 桌面端是生产环境：后端必须走真实适配器/录制引擎。
-            // 默认 real；仅当调用方显式设置 RECORDING_ADAPTER 时才尊重其值（例如手动 fake 调试）。
-            .env("RECORDING_ADAPTER", std::env::var("RECORDING_ADAPTER").unwrap_or_else(|_| "real".to_string()));
-        let child = command
-            .spawn()
-            .map_err(|e| format!("启动后端失败: {e}"))?;
-        let pid = child.id();
-        *self.child.lock().map_err(|_| "锁不可用".to_string())? = Some(child);
-        let mut instance = self.wait_ready()?;
-        instance.pid = pid;
-        Ok(instance)
+        self.run(false)
+    }
+    pub fn restart(&self) -> Result<AppInstance, String> {
+        self.run(true)
     }
 
-    fn wait_ready(&self) -> Result<AppInstance, String> {
+    fn run(&self, restart: bool) -> Result<AppInstance, String> {
+        let _guard = self
+            .lifecycle
+            .lock()
+            .map_err(|_| "服务管理锁不可用".to_string())?;
+        self.report("prepare", "正在检查运行环境与本地数据目录");
+        let result = (|| {
+            let config = self
+                .config
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(LaunchConfig::discover)?;
+            if restart {
+                self.report("stopping", "正在结束旧服务，保留本地数据");
+                self.stop_inner()?;
+            }
+            self.start_inner(&config)
+        })();
+        match &result {
+            Ok(instance) => {
+                *self.instance.lock().unwrap_or_else(|e| e.into_inner()) = Some(instance.clone());
+                *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()) =
+                    vec![DiagnosticItem::Ok {
+                        key: "service".into(),
+                        message: format!("本地服务运行中（{}）", instance.port),
+                    }];
+            }
+            Err(detail) => {
+                *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()) =
+                    vec![DiagnosticItem::Error {
+                        key: "service".into(),
+                        message: "本地服务暂未就绪".into(),
+                        detail: Some(detail.clone()),
+                    }];
+            }
+        }
+        result
+    }
+
+    fn start_inner(&self, config: &LaunchConfig) -> Result<AppInstance, String> {
+        let state_dir = config.ready_file.parent().ok_or("状态文件路径无效")?;
+        fs::create_dir_all(state_dir)
+            .map_err(|e| format!("无法创建状态目录 {}：{e}", state_dir.display()))?;
+        let log_path = state_dir.join("backend.log");
+        if self.is_running() {
+            self.report("health", "服务进程仍在启动，正在等待健康检查");
+            // 上次观察超时不是进程退出，继续观察同一进程，不重复拉起。
+            return self.wait_ready(config, &log_path);
+        }
+        {
+            let mut child = self.child.lock().map_err(|_| "进程管理锁不可用")?;
+            if let Some(process) = child.as_mut() {
+                process
+                    .try_wait()
+                    .map_err(|e| format!("读取旧后端状态失败：{e}"))?;
+            }
+            *child = None;
+        }
+        if let Some(existing) = read_ready_at(&config.ready_file) {
+            let expected = fs::read_to_string(config.cwd.join("package.json"))
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|json| {
+                    json.get("version")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                });
+            let actual = fetch_health(existing.port).and_then(|health| health.version);
+            if expected.is_some() && expected == actual {
+                return Ok(existing);
+            }
+            self.report("stopping", "正在更新旧版本本地服务");
+            stop_existing_pid(existing.pid)?;
+        }
+        // 只有同一个随包 Node 的进程才能作为本应用残留后端处理。
+        // 单凭状态文件里的 PID 不足以证明进程归属（PID 可能已被系统复用）。
+        if let Some(pid) = read_lock_pid_at(&config.ready_file) {
+            if pid_alive(pid) {
+                if same_executable(pid, Path::new(&config.node)) {
+                    self.report("stopping", "正在恢复上次未正常退出的本地服务");
+                    stop_existing_pid(pid)?;
+                } else {
+                    return Err(format!("状态目录被进程 {pid} 占用，无法确认其属于本客户端。请关闭使用该目录的其他实例后重试；本地数据未更改。"));
+                }
+            }
+        }
+        for attempt in 1..=2 {
+            self.report(
+                "starting",
+                if attempt == 1 {
+                    "正在启动本地服务"
+                } else {
+                    "服务意外退出，正在自动恢复（第 2 次）"
+                },
+            );
+            let mut log = open_backend_log(&log_path)?;
+            let _ = writeln!(
+                log,
+                "\n--- backend start attempt {attempt}; node={}; cwd={} ---",
+                config.node,
+                config.cwd.display()
+            );
+            let stderr = log
+                .try_clone()
+                .map_err(|e| format!("无法写入启动日志：{e}"))?;
+            let mut command = background_command(&config.node);
+            command
+                .args(&config.args)
+                .current_dir(&config.cwd)
+                .stdout(Stdio::from(log))
+                .stderr(Stdio::from(stderr))
+                .env("LR_EXTRA_ORIGINS", tauri_origin_list())
+                .env("LIVE_RECORDER_STATE_DIR", state_dir)
+                .env("LIVE_RECORDER_READY_FILE", &config.ready_file)
+                .env(
+                    "RECORDING_ADAPTER",
+                    std::env::var("RECORDING_ADAPTER").unwrap_or_else(|_| "real".into()),
+                );
+            let child = command.spawn().map_err(|e| {
+                format!(
+                    "无法运行 Node（{}）：{e}。请检查安装文件是否完整。",
+                    config.node
+                )
+            })?;
+            *self.child.lock().map_err(|_| "进程管理锁不可用")? = Some(child);
+            self.report("health", "进程已启动，正在检查本地接口");
+            match self.wait_ready(config, &log_path) {
+                Ok(instance) => return Ok(instance),
+                Err(error) => {
+                    // 仅确认进程退出后才自动重试一次；慢启动不触发杀进程/重复启动。
+                    if attempt == 2 || self.is_running() {
+                        return Err(error);
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    fn wait_ready(&self, config: &LaunchConfig, log_path: &Path) -> Result<AppInstance, String> {
         let deadline = Instant::now() + POLL_TIMEOUT;
         loop {
-            if let Some(instance) = fetch_ready() {
-                return Ok(instance);
+            let pid = {
+                let mut guard = self.child.lock().map_err(|_| "进程管理锁不可用")?;
+                let child = guard.as_mut().ok_or("启动进程已被停止")?;
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("读取后端进程状态失败：{e}"))?
+                {
+                    return Err(format!(
+                        "后端进程已退出（{status}）。\n日志：{}\n{}",
+                        log_path.display(),
+                        log_tail(log_path)
+                    ));
+                }
+                child.id()
+            };
+            if let Some(instance) = read_ready_at(&config.ready_file) {
+                if instance.pid == pid {
+                    return Ok(instance);
+                }
             }
             if Instant::now() >= deadline {
-                return Err("后端在 30 秒内未就绪".to_string());
+                return Err(format!("后端进程 {pid} 仍在运行，但本地接口在 30 秒内未就绪。可继续等待后点击重试连接；只有选择重启才会停止此进程。\n日志：{}\n{}", log_path.display(), log_tail(log_path)));
             }
             std::thread::sleep(POLL_INTERVAL);
         }
     }
 
-    /// Stop the child gracefully (SIGTERM on Unix). We never SIGKILL a PID we
-    /// did not spawn, so unknown/foreign processes are untouched.
-    pub fn stop(&self) {
-        if let Some(child) = self.child.lock().ok().and_then(|mut c| c.take()) {
-            let _ = stop_child(child);
-        }
+    pub fn stop(&self) -> Result<(), String> {
+        let _guard = self.lifecycle.lock().map_err(|_| "服务管理锁不可用")?;
+        self.stop_inner()
     }
 
-    /// 停旧换新（#9/#26）：SIGTERM 已知旧/孤儿后端后，轮询等待「旧 pid 退出 + 端口可探测空闲」，
-    /// 避免新后端 spawn 时旧进程仍占实例锁/端口。超时升级 SIGKILL。
-    /// pid 来自 fetch_ready 已确认健康的后端，或 instance.lock 中 PID 存活的实例（仅本应用数据域），
-    /// 不会误杀无关进程。
-    fn stop_existing_pid(&self, old_pid: u32, port: u16) {
-        let _ = stop_pid(old_pid);
-        let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
-        loop {
-            let pid_gone = !pid_alive(old_pid);
-            let port_free = probe_port_free(port);
-            if pid_gone && port_free {
-                break;
+    fn stop_inner(&self) -> Result<(), String> {
+        if let Some(child) = self.child.lock().map_err(|_| "进程管理锁不可用")?.take() {
+            stop_child(child)?;
+        } else if let Some(instance) = self.instance.lock().map_err(|_| "实例锁不可用")?.as_ref()
+        {
+            if fetch_health(instance.port).is_some_and(|health| health_matches(instance, &health)) {
+                stop_existing_pid(instance.pid)?;
             }
-            if Instant::now() >= deadline {
-                // SIGTERM 后仍不退（优雅收束卡住/录制收尾慢）：升级 SIGKILL 已知旧后端。
-                kill_pid(old_pid);
-                let kill_deadline = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < kill_deadline {
-                    if !pid_alive(old_pid) {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                break;
-            }
+        }
+        *self.instance.lock().map_err(|_| "实例锁不可用")? = None;
+        Ok(())
+    }
+}
+
+fn backend_cwd() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("LR_BACKEND_CWD") {
+        if !explicit.is_empty() {
+            return Some(PathBuf::from(explicit));
+        }
+    }
+    // 安装包永远优先使用自己的资源，不受终端当前目录影响。
+    if let Some(resources) = bundled_resources_dir() {
+        let packaged = resources.join("backend");
+        if packaged.join("dist/index.js").is_file() {
+            return Some(packaged);
+        }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../backend");
+        if development.join("dist/index.js").is_file() {
+            return Some(development);
+        }
+    }
+    None
+}
+
+fn open_backend_log(path: &Path) -> Result<fs::File, String> {
+    if fs::metadata(path).is_ok_and(|meta| meta.len() > 1_048_576) {
+        let _ = fs::rename(path, path.with_extension("previous.log"));
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| {
+            format!(
+                "无法写入启动日志 {}：{e}。请检查当前用户的目录权限。",
+                path.display()
+            )
+        })
+}
+
+fn log_tail(path: &Path) -> String {
+    let Ok(mut file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let offset = file
+        .metadata()
+        .map(|meta| meta.len().saturating_sub(6000))
+        .unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(offset));
+    let mut bytes = Vec::new();
+    let _ = file.take(6000).read_to_end(&mut bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn stop_existing_pid(pid: u32) -> Result<(), String> {
+    if pid <= 1 || pid == std::process::id() {
+        return Err("拒绝停止无效后端 PID".into());
+    }
+    if !pid_alive(pid) {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    unsafe {
+        if libc::kill(pid as i32, libc::SIGTERM) != 0 {
+            return Err(format!(
+                "无法停止后端 {pid}：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = background_command("taskkill")
+            .args(["/PID", &pid.to_string(), "/T"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
+    while pid_alive(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if pid_alive(pid) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        {
+            let _ = background_command("taskkill")
+                .args(["/PID", &pid.to_string(), "/F", "/T"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pid_alive(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-}
-
-/// 读取打包内置后端的 package.json 版本，用于与运行中后端比对（升级替换判断）。
-fn bundled_backend_version() -> Option<String> {
-    let cwd = BackendManager::backend_cwd()?;
-    let pkg = std::fs::read_to_string(cwd.join("package.json")).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&pkg).ok()?;
-    json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
-}
-
-/// 停止一个非本进程启动的旧/孤儿后端：SIGTERM（Unix，后端有优雅收束）或 taskkill（Windows）。
-/// pid 来自 fetch_ready 已确认健康的后端实例，不会误杀无关进程。
-#[cfg(unix)]
-fn stop_pid(pid: u32) -> Result<(), String> {
-    let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-    if ret != 0 {
-        return Err("发送 SIGTERM 失败".to_string());
+    if pid_alive(pid) {
+        Err(format!("后端 {pid} 尚未退出，请检查进程权限后重试。"))
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
-    let ret = unsafe { libc::kill(pid as i32, 0) };
-    ret == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    pid > 1
+        && (unsafe { libc::kill(pid as i32, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
 }
 
 #[cfg(windows)]
-fn stop_pid(pid: u32) -> Result<(), String> {
-    use std::process::Command as OsCommand;
-    let _ = OsCommand::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    Ok(())
+mod win_process {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        pub fn GetExitCodeProcess(handle: *mut c_void, code: *mut u32) -> i32;
+        pub fn QueryFullProcessImageNameW(
+            handle: *mut c_void,
+            flags: u32,
+            name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+        pub fn CloseHandle(handle: *mut c_void) -> i32;
+    }
 }
 
 #[cfg(windows)]
-fn pid_alive(_pid: u32) -> bool {
-    // Windows 侧简化：taskkill /T 为异步，直接返回 true 让调用方按 5s 上限等待。
-    true
+fn pid_alive(pid: u32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    unsafe {
+        let handle = win_process::OpenProcess(0x1000, 0, pid);
+        if handle.is_null() {
+            return std::io::Error::last_os_error().raw_os_error() == Some(5);
+        }
+        let mut code = 0;
+        let ok = win_process::GetExitCodeProcess(handle, &mut code) != 0;
+        win_process::CloseHandle(handle);
+        ok && code == 259
+    }
 }
 
-/// 探测端口当前是否空闲（无进程监听）。停旧换新时用于确认旧后端已释放端口，避免新后端端口/锁冲突。
-fn probe_port_free(port: u16) -> bool {
-    use std::net::TcpStream;
-    TcpStream::connect_timeout(&format!("{HOST}:{port}").parse().unwrap_or_else(|_| unreachable!()), Duration::from_millis(300)).is_err()
+fn same_executable(pid: u32, expected: &Path) -> bool {
+    process_executable(pid)
+        .and_then(|path| path.canonicalize().ok())
+        .zip(expected.canonicalize().ok())
+        .is_some_and(|(actual, expected)| actual == expected)
 }
 
-/// 升级强杀已知旧后端（SIGTERM 超时后调用），仅作用于 fetch_ready 确认过的本应用后端 pid。
-#[cfg(unix)]
-fn kill_pid(pid: u32) {
-    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+#[cfg(target_os = "macos")]
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    #[link(name = "proc")]
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, size: u32) -> i32;
+    }
+    let mut buffer = vec![0u8; 4096];
+    let len = unsafe { proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(len as usize);
+    use std::os::unix::ffi::OsStringExt;
+    Some(PathBuf::from(std::ffi::OsString::from_vec(
+        buffer[..end].to_vec(),
+    )))
 }
 
 #[cfg(windows)]
-fn kill_pid(pid: u32) {
-    use std::process::Command as OsCommand;
-    let _ = OsCommand::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/F", "/T"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    unsafe {
+        let handle = win_process::OpenProcess(0x1000, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut buffer = vec![0u16; 32768];
+        let mut length = buffer.len() as u32;
+        let ok =
+            win_process::QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length)
+                != 0;
+        win_process::CloseHandle(handle);
+        ok.then(|| PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/exe")).ok()
 }
 
 /// 定位可用的 node 运行时。优先使用打包进 bundle 的 node（Resources/node），
@@ -271,8 +505,12 @@ fn backend_cmd() -> String {
     }
     // 1) Packaged node: <bundle Resources>/node（Windows 为 node.exe）
     if let Some(res) = bundled_resources_dir() {
-        let bundled = if cfg!(windows) { res.join("node.exe") } else { res.join("node") };
-        if bundled.exists() {
+        let bundled = if cfg!(windows) {
+            res.join("node.exe")
+        } else {
+            res.join("node")
+        };
+        if bundled.is_file() {
             return bundled.to_string_lossy().to_string();
         }
     }
@@ -283,7 +521,6 @@ fn backend_cmd() -> String {
     // 3) 常见用户级安装路径（nvm / Homebrew / 独立安装）
     let home = std::env::var("HOME").unwrap_or_default();
     let mut fallbacks = vec![
-        format!("{home}/.nvm/versions/node"),
         format!("{home}/.local/bin/node"),
         "/usr/local/bin/node".to_string(),
         "/opt/homebrew/bin/node".to_string(),
@@ -302,7 +539,7 @@ fn backend_cmd() -> String {
         }
     }
     for p in fallbacks {
-        if std::path::Path::new(&p).exists() {
+        if std::path::Path::new(&p).is_file() {
             return p;
         }
     }
@@ -324,8 +561,7 @@ fn bundled_resources_dir() -> Option<PathBuf> {
 }
 
 fn command_exists(cmd: &str) -> bool {
-    use std::process::Command;
-    Command::new(cmd)
+    background_command(cmd)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -355,6 +591,9 @@ fn tauri_origin_list() -> String {
 
 #[cfg(unix)]
 fn stop_child(mut child: Child) -> Result<(), String> {
+    if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+        return Ok(());
+    }
     let pid = child.id() as i32;
     let ret = unsafe { libc::kill(pid, libc::SIGTERM) };
     if ret != 0 {
@@ -380,10 +619,12 @@ fn stop_child(mut child: Child) -> Result<(), String> {
 
 #[cfg(windows)]
 fn stop_child(mut child: Child) -> Result<(), String> {
+    if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+        return Ok(());
+    }
     // Windows 无 SIGTERM；用 taskkill（不带 /F）向进程发送终止消息，
     // 让后端自己的优雅收束逻辑（删 ready/锁、收束录制）有机会执行。
-    use std::process::Command as OsCommand;
-    let _ = OsCommand::new("taskkill")
+    let _ = background_command("taskkill")
         .args(["/PID", &child.id().to_string(), "/T"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -395,7 +636,8 @@ fn stop_child(mut child: Child) -> Result<(), String> {
             break;
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            child.kill().map_err(|e| format!("停止后端失败: {e}"))?;
+            child.wait().map_err(|e| format!("回收后端失败: {e}"))?;
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -406,32 +648,51 @@ fn stop_child(mut child: Child) -> Result<(), String> {
 /// 读取受控 ready 文件获取真实 AppInstance（含 OS 分配端口、pid、startedAt）。
 /// ready 文件位置：<dataDir>/state/ready.json，其中 dataDir 与后端 defaultDataDir 一致。
 pub fn read_ready_file() -> Option<AppInstance> {
-    let path = ready_file_path()?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    let instance: AppInstance = serde_json::from_str(&raw).ok()?;
-    // 校验该实例仍在运行（health 可达且 ready=true）才视为有效。
-    match fetch_health(instance.port) {
-        Some(health) if health.ready => Some(instance),
-        _ => None,
-    }
+    read_ready_at(&ready_file_path()?)
 }
 
-/// 探测就绪实例（P0 隔离硬化，#224）：仅复用本应用数据目录 ready 文件确认的后端实例
-/// （ready 文件由后端写入其自身数据目录，即该后端必然属于本应用数据域）。
-/// 不做任何端口轮询盲接管——否则正式客户端可能误接管 dev 后端（曾因 dev 端口 43130
-/// 落在 43120-43130 探测范围致正式客户端连到 dev 数据）。ready 缺失时返回 None，由调用方拉起本包后端。
+fn health_matches(instance: &AppInstance, health: &Health) -> bool {
+    health.ready
+        && health.instance_id == instance.instance_id
+        && health.port == instance.port
+        && health.api_version == instance.api_version
+        && health.started_at == instance.started_at
+}
+
+fn read_ready_at(path: &Path) -> Option<AppInstance> {
+    let instance: AppInstance = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    if instance.pid <= 1
+        || instance.port == 0
+        || instance.host != HOST
+        || instance.api_version != "v1"
+        || instance.instance_id.is_empty()
+        || instance.base_url != format!("http://{HOST}:{}", instance.port)
+    {
+        return None;
+    }
+    let health = fetch_health(instance.port)?;
+    health_matches(&instance, &health).then_some(instance)
+}
+
+/// 仅使用当前数据目录声明且身份匹配的就绪实例，不扫描/接管其他端口。
 pub fn fetch_ready() -> Option<AppInstance> {
     read_ready_file()
 }
 
 pub fn fetch_health(port: u16) -> Option<Health> {
-    let url = format!("http://{HOST}:{port}/api/v1/health");
-    let resp = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_millis(800))
-        .build()
-        .ok()?
-        .get(&url)
+    static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
+    let client = CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_millis(800))
+                .build()
+                .ok()
+        })
+        .as_ref()?;
+    let resp = client
+        .get(format!("http://{HOST}:{port}/api/v1/health"))
         .send()
         .ok()?;
     if !resp.status().is_success() {
@@ -442,7 +703,7 @@ pub fn fetch_health(port: u16) -> Option<Health> {
         #[serde(rename = "serviceStatus")]
         service_status: Health,
     }
-    resp.json::<Envelope>().ok().map(|e| e.service_status)
+    resp.json::<Envelope>().ok().map(|body| body.service_status)
 }
 
 fn ready_file_path() -> Option<PathBuf> {
@@ -450,17 +711,14 @@ fn ready_file_path() -> Option<PathBuf> {
 }
 
 // 显式传入平台和环境，便于在任意宿主上验证 Windows 不依赖 HOME。
-fn ready_file_path_for(
-    platform: &str,
-    env: impl Fn(&str) -> Option<String>,
-) -> Option<PathBuf> {
-    if let Some(path) = env("LIVE_RECORDER_READY_FILE") {
+fn ready_file_path_for(platform: &str, env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    if let Some(path) = env("LIVE_RECORDER_READY_FILE").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(path));
     }
-    if let Some(dir) = env("LIVE_RECORDER_STATE_DIR") {
+    if let Some(dir) = env("LIVE_RECORDER_STATE_DIR").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(dir).join("ready.json"));
     }
-    if let Some(dir) = env("LR_STATE_DIR") {
+    if let Some(dir) = env("LR_STATE_DIR").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(dir).join("ready.json"));
     }
     // 与后端 defaultDataDir 的开发数据目录覆盖保持一致。
@@ -469,7 +727,12 @@ fn ready_file_path_for(
     }
     // 各平台只读取自身所需变量。Windows 安装环境通常没有 HOME。
     let base = match platform {
-        "windows" => PathBuf::from(env("APPDATA")?).join("live-recorder"),
+        "windows" => PathBuf::from(
+            env("APPDATA")
+                .filter(|value| !value.is_empty())
+                .or_else(|| env("USERPROFILE"))?,
+        )
+        .join("live-recorder"),
         "macos" => PathBuf::from(env("HOME")?)
             .join("Library")
             .join("Application Support")
@@ -485,13 +748,11 @@ fn ready_file_path_for(
     Some(base.join("state").join("ready.json"))
 }
 
-/// #26：读 instance.lock 中的 PID——凡锁内 PID 存活且非本进程 spawn 的 child 即视为「残留旧/孤儿后端」，
-/// spawn 前需先停旧。不依赖 ready.json/health 可达（覆盖安装首启时旧进程存活但 ready/health 未通过的盲区）。
-fn read_instance_lock_pid() -> Option<u32> {
-    let lock_file = ready_file_path()?.parent()?.join("instance.lock");
-    let raw = std::fs::read_to_string(lock_file).ok()?;
+fn read_lock_pid_at(ready: &Path) -> Option<u32> {
+    let raw = fs::read_to_string(ready.parent()?.join("instance.lock")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    parsed.get("pid").and_then(|p| p.as_u64()).map(|p| p as u32)
+    let pid = u32::try_from(parsed.get("pid")?.as_u64()?).ok()?;
+    (pid > 1 && pid != std::process::id()).then_some(pid)
 }
 
 #[cfg(all(test, unix))]
@@ -505,7 +766,7 @@ mod tests {
         let child = Command::new("sleep").arg("30").spawn().unwrap();
         *manager.child.lock().unwrap() = Some(child);
         assert!(manager.is_running());
-        manager.stop();
+        manager.stop().unwrap();
         assert!(!manager.is_running());
     }
 
@@ -517,7 +778,9 @@ mod tests {
             .spawn()
             .unwrap();
         let mut line = String::new();
-        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
         assert_eq!(line.trim(), "ready");
         let started = Instant::now();
         stop_child(child).unwrap();
@@ -531,14 +794,19 @@ mod state_directory_tests {
 
     fn resolve(platform: &str, vars: &[(&str, &str)]) -> Option<PathBuf> {
         ready_file_path_for(platform, |key| {
-            vars.iter().find(|(name, _)| *name == key).map(|(_, value)| value.to_string())
+            vars.iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| value.to_string())
         })
     }
 
     #[test]
     fn windows_uses_appdata_without_home() {
         let appdata = r"C:\Users\用户\AppData\Roaming";
-        let expected = PathBuf::from(appdata).join("live-recorder").join("state").join("ready.json");
+        let expected = PathBuf::from(appdata)
+            .join("live-recorder")
+            .join("state")
+            .join("ready.json");
         assert_eq!(resolve("windows", &[("APPDATA", appdata)]), Some(expected));
     }
 
@@ -555,19 +823,128 @@ mod state_directory_tests {
             ("LR_STATE_DIR", "legacy-state"),
             ("LIVE_RECORDER_DATA_DIR", "dev-data"),
         ];
-        assert_eq!(resolve("windows", &vars), Some(PathBuf::from("custom/ready.json")));
-        assert_eq!(resolve("windows", &vars[1..]), Some(PathBuf::from("state-override").join("ready.json")));
-        assert_eq!(resolve("windows", &vars[2..]), Some(PathBuf::from("legacy-state").join("ready.json")));
-        assert_eq!(resolve("windows", &vars[3..]), Some(PathBuf::from("dev-data").join("state").join("ready.json")));
+        assert_eq!(
+            resolve("windows", &vars),
+            Some(PathBuf::from("custom/ready.json"))
+        );
+        assert_eq!(
+            resolve("windows", &vars[1..]),
+            Some(PathBuf::from("state-override").join("ready.json"))
+        );
+        assert_eq!(
+            resolve("windows", &vars[2..]),
+            Some(PathBuf::from("legacy-state").join("ready.json"))
+        );
+        assert_eq!(
+            resolve("windows", &vars[3..]),
+            Some(PathBuf::from("dev-data").join("state").join("ready.json"))
+        );
     }
 
     #[test]
     fn unix_defaults_remain_compatible_with_backend() {
-        assert_eq!(resolve("macos", &[("HOME", "/Users/test")]),
-            Some(PathBuf::from("/Users/test/Library/Application Support/live-recorder/state/ready.json")));
-        assert_eq!(resolve("linux", &[("HOME", "/home/test")]),
-            Some(PathBuf::from("/home/test/.local/share/live-recorder/state/ready.json")));
-        assert_eq!(resolve("linux", &[("XDG_DATA_HOME", "/data")]),
-            Some(PathBuf::from("/data/live-recorder/state/ready.json")));
+        assert_eq!(
+            resolve("macos", &[("HOME", "/Users/test")]),
+            Some(PathBuf::from(
+                "/Users/test/Library/Application Support/live-recorder/state/ready.json"
+            ))
+        );
+        assert_eq!(
+            resolve("linux", &[("HOME", "/home/test")]),
+            Some(PathBuf::from(
+                "/home/test/.local/share/live-recorder/state/ready.json"
+            ))
+        );
+        assert_eq!(
+            resolve("linux", &[("XDG_DATA_HOME", "/data")]),
+            Some(PathBuf::from("/data/live-recorder/state/ready.json"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    fn fixture(crash: bool) -> BackendManager {
+        let dir = std::env::temp_dir().join(format!(
+            "lr-lifecycle-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("package.json"), r#"{"version":"test"}"#).unwrap();
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/backend.cjs");
+        let mut manager = BackendManager::new();
+        let mut args = vec![script.to_string_lossy().into_owned()];
+        if crash {
+            args.push("--crash".into());
+        }
+        manager.config = Some(LaunchConfig {
+            cwd: dir.clone(),
+            node: std::env::var("LR_TEST_NODE").unwrap_or_else(|_| "node".into()),
+            args,
+            ready_file: dir.join("ready.json"),
+        });
+        manager
+    }
+
+    #[test]
+    fn concurrent_starts_share_one_process_and_restart_replaces_it() {
+        let manager = Arc::new(fixture(false));
+        let other = Arc::clone(&manager);
+        let pending = std::thread::spawn(move || other.start().unwrap());
+        let first = manager.start().unwrap();
+        let second = pending.join().unwrap();
+        assert_eq!(first.pid, second.pid);
+        assert_eq!(first.instance_id, second.instance_id);
+        let restarted = manager.restart().unwrap();
+        assert_ne!(restarted.pid, first.pid);
+        assert!(!pid_alive(first.pid));
+        manager.stop().unwrap();
+        assert!(!pid_alive(restarted.pid));
+    }
+
+    #[test]
+    fn immediate_exit_reports_original_error_without_waiting_thirty_seconds() {
+        let manager = fixture(true);
+        let started = Instant::now();
+        let error = manager.start().unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(error.contains("fixture: native dependency unavailable"));
+        assert!(error.contains("17"));
+        assert!(!manager.is_running());
+        let diagnostics = serde_json::to_string(&manager.diagnostics()).unwrap();
+        assert!(diagnostics.contains("fixture: native dependency unavailable"));
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn a_stale_ready_file_cannot_identify_a_different_live_server() {
+        let manager = fixture(false);
+        let instance = manager.start().unwrap();
+        let path = &manager.config.as_ref().unwrap().ready_file;
+        let mut forged = instance.clone();
+        forged.instance_id = "stale-instance".into();
+        fs::write(path, serde_json::to_vec(&forged).unwrap()).unwrap();
+        assert!(read_ready_at(path).is_none());
+        manager.stop().unwrap();
+    }
+
+    #[test]
+    fn process_identity_is_checked_using_the_executable() {
+        assert!(pid_alive(std::process::id()));
+        assert!(!pid_alive(0));
+        assert!(same_executable(
+            std::process::id(),
+            &std::env::current_exe().unwrap()
+        ));
+        assert!(!same_executable(
+            std::process::id(),
+            Path::new("not-the-backend")
+        ));
     }
 }
