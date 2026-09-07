@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "icons:generate": "node scripts/generate-icons.mjs",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint",

@@ -33,8 +33,11 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
     });
-    // #162：添加后立即触发一次检测，让显示名尽快自动解析（否则要等调度器最长 120s，期间名字为空）。
-    void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
+    // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
+    // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
+    if (!room.displayName.trim()) {
+      void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
+    }
     services.events.emit({ type: 'room:updated', data: enrich(room) });
     return reply.status(201).send({ room: enrich(room) });
   });
