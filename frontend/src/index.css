@@ -60,6 +60,7 @@ body {
 
 * {
   box-sizing: border-box;
+  user-select: none;
 }
 
 ::selection {
@@ -75,7 +76,7 @@ body {
     var(--lr-bg);
 }
 
-.lr-app-header {
+.lr-app-footer {
   position: relative;
   z-index: 10;
   border-bottom: 1px solid var(--lr-border);
@@ -87,6 +88,10 @@ body {
   box-shadow: 1px 0 0 var(--lr-border);
 }
 
+.lr-app-sider > .ant-layout-sider-trigger {
+  margin-bottom: 30px;
+}
+
 .lr-app-brand {
   height: 56px;
   padding: 16px 24px;
@@ -96,6 +101,15 @@ body {
   font-weight: 750;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+.lr-app-version {
+  font-size: 10px;
+  position: absolute;
+  bottom: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--lr-text-tertiary);
 }
 
 .ant-layout-sider-collapsed .lr-app-brand {
