@@ -234,11 +234,7 @@ pub fn run() {
         ])
         .setup(|app| {
             setup_tray(app)?;
-            // Kick off the boot sequence on launch（已在独立线程跑，不阻塞主线程）。
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let _ = start_service_sync(&handle);
-            });
+            // 由前端 start_service 统一启动并接收结果，避免两条启动链交错发出状态事件。
             Ok(())
         })
         .build(tauri::generate_context!())

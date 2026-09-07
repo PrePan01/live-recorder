@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Button, Result, Space, Steps, Spin, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { useBootStore } from '../../stores/bootStore';
@@ -8,16 +8,8 @@ const STEPS = ['获取实例锁', '启动本地服务', '检查健康与目录',
 export default function Startup() {
   const { state, restart, refreshDiagnostics } = useBootStore();
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
-
-  useEffect(() => {
-    const timers = [
-      setTimeout(() => setStep(1), 200),
-      setTimeout(() => setStep(2), 500),
-      setTimeout(() => setStep(3), 900),
-    ];
-    return () => timers.forEach(clearTimeout);
-  }, []);
+  // 原生接口返回前尚不能确认健康检查完成，不按计时器伪造启动进度。
+  const step = state === 'ready' ? 3 : 1;
 
   useEffect(() => {
     if (state === 'ready') {

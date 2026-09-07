@@ -68,7 +68,7 @@ impl BackendManager {
         self.child
             .lock()
             .ok()
-            .and_then(|mut c| c.as_mut().map(|c| c.try_wait().ok().is_none()))
+            .and_then(|mut c| c.as_mut().map(|c| matches!(c.try_wait(), Ok(None))))
             .unwrap_or(false)
     }
 
@@ -360,7 +360,21 @@ fn stop_child(mut child: Child) -> Result<(), String> {
     if ret != 0 {
         return Err("发送 SIGTERM 失败".to_string());
     }
-    let _ = child.wait();
+    let deadline = Instant::now() + Duration::from_secs(STOP_OLD_TIMEOUT_SECS);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Err(e) => return Err(format!("等待后端退出失败: {e}")),
+            Ok(None) => {}
+        }
+        if Instant::now() >= deadline {
+            // 仅处理本应用持有的子进程，避免断网时优雅退出挂起拖死重启。
+            child.kill().map_err(|e| format!("停止后端失败: {e}"))?;
+            child.wait().map_err(|e| format!("回收后端失败: {e}"))?;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
     Ok(())
 }
 
@@ -413,6 +427,7 @@ pub fn fetch_ready() -> Option<AppInstance> {
 pub fn fetch_health(port: u16) -> Option<Health> {
     let url = format!("http://{HOST}:{port}/api/v1/health");
     let resp = reqwest::blocking::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_millis(800))
         .build()
         .ok()?
@@ -472,4 +487,35 @@ fn read_instance_lock_pid() -> Option<u32> {
     let raw = std::fs::read_to_string(lock_file).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
     parsed.get("pid").and_then(|p| p.as_u64()).map(|p| p as u32)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+
+    #[test]
+    fn running_child_is_recognized_and_reaped() {
+        let manager = BackendManager::new();
+        let child = Command::new("sleep").arg("30").spawn().unwrap();
+        *manager.child.lock().unwrap() = Some(child);
+        assert!(manager.is_running());
+        manager.stop();
+        assert!(!manager.is_running());
+    }
+
+    #[test]
+    fn stop_bounds_wait_for_child_ignoring_sigterm() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+        let started = Instant::now();
+        stop_child(child).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(20));
+    }
 }

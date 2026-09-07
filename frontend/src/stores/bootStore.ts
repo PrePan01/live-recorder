@@ -1,10 +1,26 @@
 import { create } from 'zustand';
-import type { AppInstance, BootState, DiagnosticItem } from '../types/desktop';
+import type { AppInstance, BootEvent, BootState, DiagnosticItem } from '../types/desktop';
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
 import { EndpointResolver } from '../api/endpoint';
 
 export const bridge = detectBridge();
+
+// 原生启动/停止可能因残留进程或 I/O 挂起；页面必须有可恢复的终态。
+const BOOT_TIMEOUT_MS = 60_000;
+async function withBootTimeout(operation: Promise<BootEvent>): Promise<BootEvent> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('本地服务启动超过 60 秒，请查看诊断后重试。')), BOOT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 interface BootStateStore {
   state: BootState;
@@ -19,15 +35,16 @@ interface BootStateStore {
   setDiagnostics: (d: DiagnosticItem[]) => void;
 }
 
-export const useBootStore = create<BootStateStore>((set) => ({
+export const useBootStore = create<BootStateStore>((set, get) => ({
   state: 'booting',
   instance: null,
   diagnostics: [],
   loading: false,
   async boot() {
+    if (get().loading) return;
     set({ loading: true, state: 'booting' });
     try {
-      const event = await bridge.startService();
+      const event = await withBootTimeout(bridge.startService());
       if (event.instance) EndpointResolver.set(event.instance);
       set({
         state: event.state,
@@ -35,14 +52,15 @@ export const useBootStore = create<BootStateStore>((set) => ({
         diagnostics: event.diagnostics,
         loading: false,
       });
-    } catch {
-      set({ state: 'degraded', loading: false });
+    } catch (error) {
+      set({ state: 'degraded', loading: false, diagnostics: [{ key: 'service', message: '本地服务启动失败', detail: String(error) }] });
     }
   },
   async restart() {
-    set({ loading: true });
+    if (get().loading) return;
+    set({ loading: true, state: 'booting' });
     try {
-      const event = await bridge.restartService();
+      const event = await withBootTimeout(bridge.restartService());
       if (event.instance) EndpointResolver.set(event.instance);
       set({
         state: event.state,
@@ -50,8 +68,8 @@ export const useBootStore = create<BootStateStore>((set) => ({
         diagnostics: event.diagnostics,
         loading: false,
       });
-    } catch {
-      set({ state: 'degraded', loading: false });
+    } catch (error) {
+      set({ state: 'degraded', loading: false, diagnostics: [{ key: 'service', message: '本地服务重启失败', detail: String(error) }] });
     }
   },
   async refreshDiagnostics() {
@@ -70,7 +88,7 @@ export const useBootStore = create<BootStateStore>((set) => ({
 }));
 
 export function subscribeBridgeEvents() {
-  const { setState, boot } = useBootStore.getState();
+  const { setState, restart } = useBootStore.getState();
   const disposers: (() => void)[] = [];
 
   disposers.push(
@@ -79,7 +97,8 @@ export function subscribeBridgeEvents() {
         setState('existing-instance');
       } else if (state === 'ready' || state === 'degraded') {
         void useBootStore.getState().refreshDiagnostics();
-      } else {
+      } else if (state !== 'booting') {
+        // 启动命令的返回值负责完成状态切换，延迟的原生 booting 事件不能倒退已完成的启动。
         setState(state);
       }
     }),
@@ -91,7 +110,7 @@ export function subscribeBridgeEvents() {
   );
   disposers.push(
     bridge.onTray((action) => {
-      if (action === 'restart') void boot();
+      if (action === 'restart') void restart();
       if (action === 'diagnostics') setState('degraded');
       if (action === 'quit') {
         const active = useServiceStore.getState().status?.activeRecordings ?? 0;
