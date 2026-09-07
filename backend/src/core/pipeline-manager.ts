@@ -22,6 +22,7 @@ interface QueueEntry {
 export class PipelineManager {
   private queue: QueueEntry[] = [];
   private running = new Set<string>();
+  get busy(): boolean { return this.running.size > 0 || this.queue.length > 0; }
   private pipelineRepo: PipelineRepository;
 
   constructor(private services: Services) {
@@ -226,7 +227,7 @@ async function probeDurationMs(filePath: string): Promise<number | null> {
   try {
     const { spawn } = await import('node:child_process');
     return await new Promise<number | null>((resolve) => {
-      const child = spawn(resolveBin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath]);
+      const child = spawn(resolveBin('ffprobe'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath], { windowsHide: true });
       let out = '';
       const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(null); }, 15_000);
       child.stdout.on('data', (d: Buffer) => { out += d.toString(); });

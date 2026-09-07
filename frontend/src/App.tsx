@@ -25,13 +25,17 @@ const Wall = lazy(() => import('./pages/Wall'));
 function SetupGuard({ children }: { children: JSX.Element }) {
   const status = useServiceStore((s) => s.status);
   const fetchStatus = useServiceStore((s) => s.fetchStatus);
+  const error = useServiceStore((s) => s.error);
   const { pathname } = useLocation();
 
   useEffect(() => {
-    if (!status) void fetchStatus();
+    if (status) return;
+    void fetchStatus();
+    const timer = setInterval(() => void fetchStatus(), 5000);
+    return () => clearInterval(timer);
   }, [status, fetchStatus]);
 
-  if (!status) return <NavigateBlock />;
+  if (!status) return <NavigateBlock error={error} onRetry={() => void fetchStatus()} />;
   if (!status.setupCompleted && pathname !== '/setup') return <Navigate to="/setup" replace />;
   if (status.setupCompleted && pathname === '/setup') return <Navigate to="/monitor" replace />;
   return children;
@@ -53,14 +57,13 @@ function BootGate({ children }: { children: JSX.Element }) {
 
 export default function App() {
   useSSE();
-  const bootState = useBootStore((s) => s.state);
   const boot = useBootStore((s) => s.boot);
 
   useEffect(() => {
     const unsub = subscribeBridgeEvents();
-    if (bootState === 'booting') void boot();
+    if (useBootStore.getState().state === 'booting') void boot();
     return unsub;
-  }, [bootState, boot]);
+  }, [boot]);
 
   return (
     <>

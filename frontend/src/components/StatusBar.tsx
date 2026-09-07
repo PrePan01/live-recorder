@@ -58,7 +58,7 @@ export default function StatusBar() {
         background: "var(--lr-surface)",
         borderBottom: "1px solid var(--lr-border)",
         gap: 20,
-        height: 48,
+        height: 36,
         minWidth: 0,
       }}
     >
@@ -73,12 +73,13 @@ export default function StatusBar() {
               ? "服务正常"
               : "服务已断开"}
         </Typography.Text>
-        {status?.version ? <Tag>{status.version}</Tag> : null}
         <Tag color={status && status.activeRecordings > 0 ? "red" : "default"}>
           {status ? `录制中 ${status.activeRecordings}` : "录制中 -"}
         </Tag>
       </Space>
-      <GlobalSearch />
+      <div style={{ marginLeft: "auto" }}>
+        <GlobalSearch />
+      </div>
       <div
         style={{
           display: "inline-flex",

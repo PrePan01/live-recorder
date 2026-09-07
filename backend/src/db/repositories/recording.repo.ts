@@ -200,6 +200,10 @@ export class RecordingRepository {
     return row !== undefined;
   }
 
+  listActive(): Recording[] {
+    return (this.db.prepare("SELECT * FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')").all() as RecordingRow[]).map(rowToRecording);
+  }
+
   activeCount(): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) AS c FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')`)

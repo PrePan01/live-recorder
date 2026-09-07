@@ -19,6 +19,8 @@ function probePort(host: string, port: number): Promise<boolean> {
  * 仅监听环回地址；端口占用只触发换端口，不影响占用者。
  */
 export async function pickPort(host: string, preferred: number = DEFAULT_PORT): Promise<number> {
+  if (!Number.isInteger(preferred) || preferred < 0 || preferred > 65535) throw new Error('invalid backend port');
+  if (preferred === 0) return osFreePort(host);
   const candidates = [preferred, ...BACKUP_PORTS];
   for (const port of candidates) {
     if (await probePort(host, port)) return port;

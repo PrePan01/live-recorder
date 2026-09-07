@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization
+  Culture="en-US"
+  Codepage="65001"
+  xmlns="http://schemas.microsoft.com/wix/2006/localization"
+>
+  <String Id="LaunchApp">Launch Live Recorder</String>
+  <String Id="DowngradeErrorMessage">A newer version of Live Recorder is already installed.</String>
+  <String Id="PathEnvVarFeature">Add the install location of Live Recorder to the PATH system environment variable. This allows the application to be called from any location.</String>
+  <String Id="InstallAppFeature">Installs Live Recorder.</String>
+</WixLocalization>

@@ -25,7 +25,7 @@ export async function remuxFlvToMp4(flvPath: string): Promise<string | null> {
 
 function runFfmpeg(args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(resolveBin('ffmpeg'), args);
+    const child = spawn(resolveBin('ffmpeg'), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve(false);

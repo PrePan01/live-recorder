@@ -11,6 +11,7 @@ interface BootStateStore {
   instance: AppInstance | null;
   diagnostics: DiagnosticItem[];
   loading: boolean;
+  slow: boolean;
   boot: () => Promise<void>;
   restart: () => Promise<void>;
   refreshDiagnostics: () => Promise<void>;
@@ -19,39 +20,88 @@ interface BootStateStore {
   setDiagnostics: (d: DiagnosticItem[]) => void;
 }
 
-export const useBootStore = create<BootStateStore>((set) => ({
+export const useBootStore = create<BootStateStore>((set, get) => ({
   state: 'booting',
   instance: null,
   diagnostics: [],
   loading: false,
+  slow: false,
   async boot() {
-    set({ loading: true, state: 'booting' });
+    if (get().loading) return;
+    set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
+    const timer = setTimeout(() => set({ slow: true }), 15_000);
     try {
       const event = await bridge.startService();
-      if (event.instance) EndpointResolver.set(event.instance);
+      if (event.instance) {
+        if (EndpointResolver.instanceId !== event.instance.instanceId) {
+          useServiceStore.setState({
+            status: null,
+            loading: false,
+            error: null,
+          });
+        }
+        EndpointResolver.set(event.instance);
+      }
       set({
         state: event.state,
         instance: event.instance ?? null,
         diagnostics: event.diagnostics,
         loading: false,
       });
-    } catch {
-      set({ state: 'degraded', loading: false });
+    } catch (error) {
+      set({
+        state: 'degraded',
+        loading: false,
+        diagnostics: [
+          {
+            key: 'service',
+            message: '本地服务启动失败',
+            detail: String(error),
+          },
+        ],
+      });
+    } finally {
+      clearTimeout(timer);
+      set({ slow: false });
     }
   },
   async restart() {
-    set({ loading: true });
+    if (get().loading) return;
+    set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
+    const timer = setTimeout(() => set({ slow: true }), 15_000);
     try {
       const event = await bridge.restartService();
-      if (event.instance) EndpointResolver.set(event.instance);
+      if (event.instance) {
+        if (EndpointResolver.instanceId !== event.instance.instanceId) {
+          useServiceStore.setState({
+            status: null,
+            loading: false,
+            error: null,
+          });
+        }
+        EndpointResolver.set(event.instance);
+      }
       set({
         state: event.state,
         instance: event.instance ?? null,
         diagnostics: event.diagnostics,
         loading: false,
       });
-    } catch {
-      set({ state: 'degraded', loading: false });
+    } catch (error) {
+      set({
+        state: 'degraded',
+        loading: false,
+        diagnostics: [
+          {
+            key: 'service',
+            message: '本地服务重启失败',
+            detail: String(error),
+          },
+        ],
+      });
+    } finally {
+      clearTimeout(timer);
+      set({ slow: false });
     }
   },
   async refreshDiagnostics() {
@@ -70,7 +120,7 @@ export const useBootStore = create<BootStateStore>((set) => ({
 }));
 
 export function subscribeBridgeEvents() {
-  const { setState, boot } = useBootStore.getState();
+  const { setState, restart } = useBootStore.getState();
   const disposers: (() => void)[] = [];
 
   disposers.push(
@@ -79,19 +129,20 @@ export function subscribeBridgeEvents() {
         setState('existing-instance');
       } else if (state === 'ready' || state === 'degraded') {
         void useBootStore.getState().refreshDiagnostics();
-      } else {
+      } else if (state !== 'booting') {
+        // 启动命令的返回值负责完成状态切换，延迟的原生 booting 事件不能倒退已完成的启动。
         setState(state);
       }
     }),
   );
   disposers.push(
     bridge.onExistingInstance(() => {
-      setState('existing-instance');
+      /* 已有主窗口仅被唤醒，不改变工作台状态。 */
     }),
   );
   disposers.push(
     bridge.onTray((action) => {
-      if (action === 'restart') void boot();
+      if (action === 'restart') void restart();
       if (action === 'diagnostics') setState('degraded');
       if (action === 'quit') {
         const active = useServiceStore.getState().status?.activeRecordings ?? 0;

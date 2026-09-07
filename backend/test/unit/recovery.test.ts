@@ -40,3 +40,15 @@ describe('recoverStaleRecordings (#82)', () => {
     expect(services.recordings.get(r4.id)!.failureReason?.code).toBe('RECORDING_EMPTY');
   });
 });
+it('releases all stale slots before filesystem recovery, including records beyond the first page', async () => {
+  const services = buildServices({ dbPath: ':memory:', mode: 'fake' });
+  const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'recovery' });
+  for (let i = 0; i < 125; i++) {
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: `old-${i}`, streamTitle: '' });
+    services.recordings.update(rec.id, { state: 'recording', filePath: '/missing/file.flv' });
+  }
+  const recovery = recoverStaleRecordings(services);
+  expect(services.recordings.activeCount()).toBe(0);
+  expect(await recovery).toBe(125);
+  services.db.close();
+});

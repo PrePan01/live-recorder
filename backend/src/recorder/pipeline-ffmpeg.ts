@@ -13,7 +13,7 @@ interface FfmpegResult {
 
 export function runFfmpeg(args: string[], timeoutMs = FFMPEG_TIMEOUT_MS): Promise<FfmpegResult> {
   return new Promise((resolve) => {
-    const child = spawn(resolveBin('ffmpeg'), args);
+    const child = spawn(resolveBin('ffmpeg'), args, { windowsHide: true });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve({ ok: false, code: null, stderr: 'timeout' });
