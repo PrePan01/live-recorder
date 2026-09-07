@@ -142,6 +142,17 @@ describe('#220 录制完成「询问是否保留」', () => {
     expect(kept.json().recording.state).toBe('completed');
     await expect(access(file)).resolves.toBeUndefined();
 
+    const oldName = path.join(dir, 'original-name.flv');
+    const newName = path.join(dir, '用户指定名称.flv');
+    await writeFile(oldName, 'FLV3');
+    const renamed = services.recordings.create({ roomId: 'room_1', roomName: '改名', platform: 'bilibili', streamSessionId: 's7', streamTitle: 't' });
+    services.recordings.update(renamed.id, { state: 'awaiting_confirmation', filePath: oldName, fileSizeBytes: 4 });
+    const renamedResult = await app.inject({ method: 'POST', url: `/api/v1/recordings/${renamed.id}/confirm`, headers: HOST, payload: { keep: true, fileName: '用户指定名称' } });
+    expect(renamedResult.statusCode).toBe(200);
+    expect(renamedResult.json().recording.filePath).toBe(newName);
+    await expect(access(oldName)).rejects.toBeTruthy();
+    await expect(access(newName)).resolves.toBeUndefined();
+
     const file2 = path.join(dir, 'seg2.flv');
     await writeFile(file2, 'FLV2');
     const rec2 = services.recordings.create({ roomId: 'room_1', roomName: '丢弃', platform: 'bilibili', streamSessionId: 's6', streamTitle: 't' });

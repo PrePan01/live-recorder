@@ -158,7 +158,7 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
   // #220 统一决策接口（FE 契约）：keep=true 保留（恢复管线+上传）；keep=false 不保留（删文件+删记录）。
   app.post('/api/v1/recordings/:id/confirm', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { keep?: unknown };
+    const body = (req.body ?? {}) as { keep?: unknown; fileName?: unknown };
     if (typeof body.keep !== 'boolean') {
       throw new AppError('CONFIG_INVALID', 'keep 必须为布尔值', { recordingId: id });
     }
@@ -168,6 +168,12 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     }
     if (rec.state !== 'awaiting_confirmation') {
       throw new AppError('CONFIG_INVALID', '仅待确认保留的录制可执行决策', { recordingId: id });
+    }
+    if (body.keep && body.fileName !== undefined) {
+      if (typeof body.fileName !== 'string' || body.fileName.trim().length === 0) {
+        throw new AppError('CONFIG_INVALID', 'fileName 必须为非空字符串', { recordingId: id });
+      }
+      await renameRecordingFile(services, rec, body.fileName);
     }
     if (body.keep) {
       services.manager.resumeAfterConfirmation(id);
@@ -239,6 +245,23 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     reply.header('Content-Disposition', 'attachment; filename="recordings.csv"');
     return reply.send(csv);
   });
+}
+
+/** 确认保留时改名：用户只控制文件基名，扩展名沿用当前录制格式。 */
+async function renameRecordingFile(services: Services, rec: import('../../types/index.js').Recording, requestedName: string): Promise<void> {
+  if (!rec.filePath) return;
+  const ext = extnameOf(rec.filePath);
+  const requested = basename(requestedName.trim());
+  // 兼容旧客户端可能传入扩展名；最终扩展名仍由录制格式决定（mp4_after 会在后处理时转成 .mp4）。
+  const base = requested.replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, '');
+  const nextPath = join(dirname(rec.filePath), `${sanitizeFileBase(base)}${ext}`);
+  try {
+    await rename(rec.filePath, nextPath);
+    services.recordings.update(rec.id, { streamTitle: base.trim(), filePath: nextPath });
+  } catch {
+    // 文件缺失/改名失败时不阻断保留流程，仍使用原文件继续处理。
+    services.recordings.update(rec.id, { streamTitle: base.trim() });
+  }
 }
 
 function csvCell(v: string): string {

@@ -35,7 +35,7 @@ export async function deleteRecording(id: string): Promise<void> {
 }
 
 /** #220/#221：录制完成后「是否保留」决策。keep=true 保留（恢复管线+上传）；keep=false 不保留（删文件+删记录）。 */
-export async function confirmRecordingKeep(id: string, keep: boolean): Promise<Recording | null> {
-  const { data } = await http.post<{ recording?: Recording }>(`/recordings/${id}/confirm`, { keep });
+export async function confirmRecordingKeep(id: string, keep: boolean, fileName?: string): Promise<Recording | null> {
+  const { data } = await http.post<{ recording?: Recording }>(`/recordings/${id}/confirm`, { keep, ...(keep && fileName ? { fileName } : {}) });
   return data?.recording ?? null;
 }
