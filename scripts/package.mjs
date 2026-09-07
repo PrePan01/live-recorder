@@ -37,7 +37,7 @@ run('npm', ['prune', '--omit=dev'], backendDir);
 // 2) tauri build（含前端 vite build + bundle-resources；后端已在步骤 1 构建并精简，跳过 bundle-resources 内重建）
 console.log('[package] 2/4 tauri build…');
 process.env.LR_SKIP_BACKEND_BUILD = '1';
-run(isWin ? 'npx.cmd' : 'npx', ['tauri', 'build'], path.join(root, 'frontend'));
+run(isWin ? 'npx.cmd' : 'npx', ['tauri', 'build', ...(process.env.CI ? ['--verbose'] : [])], path.join(root, 'frontend'));
 
 // 3) macOS dmg
 if (!isWin) {
