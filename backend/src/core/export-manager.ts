@@ -12,6 +12,8 @@ import { APP_VERSION } from '../sidecar/types.js';
  * 生成 manifest.json（含哈希/版本，不含密钥）。缺失 sidecar/封面标部分成功，不损坏源文件。
  */
 export class ExportManager {
+  private activeCount = 0;
+  get busy(): boolean { return this.activeCount > 0; }
   private repo: ExportRepository;
 
   constructor(private services: Services) {
@@ -26,7 +28,8 @@ export class ExportManager {
   async create(recordingIds: string[], baseDir: string): Promise<ExportJob> {
     const job = this.repo.create({ recordingIds });
     const dir = path.join(baseDir, `export_${this.services.clock.iso().replace(/[-:]/g, '').replace('.', '_')}`);
-    void this.run(job.id, dir);
+    this.activeCount += 1;
+    void this.run(job.id, dir).finally(() => { this.activeCount -= 1; });
     return job;
   }
 

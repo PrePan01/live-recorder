@@ -4,6 +4,11 @@ on:
   push:
     branches: [release]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release (leave disabled for validation builds)
+        type: boolean
+        default: false
 
 concurrency:
   group: release-branch
@@ -28,18 +33,25 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
 
       - name: Validate version and release state
         id: release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
           version="$(node scripts/check-release-version.mjs)"
           tag="v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if [ "$PUBLISH_RELEASE" != "true" ]; then
+            echo "Validation build only; skip tag and release checks."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" >/dev/null 2>&1; then
             echo "Release ${tag} already exists; nothing to publish."
@@ -79,7 +91,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -98,8 +110,20 @@ jobs:
       - name: Install dependencies
         run: npm run install:ci
 
+      - name: Verify backend
+        run: npm --prefix backend test
+
+      - name: Verify frontend
+        run: npm --prefix frontend test
+
       - name: Build installer
         run: npm run package
+
+      - name: Verify native service lifecycle
+        run: cargo test --manifest-path frontend/src-tauri/Cargo.toml --lib
+
+      - name: Verify installation payload
+        run: node scripts/check-installation.mjs
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
@@ -111,7 +135,7 @@ jobs:
 
   release:
     needs: [prepare, build]
-    if: needs.prepare.outputs.should_release == 'true'
+    if: needs.prepare.outputs.should_release == 'true' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     permissions:
       contents: write

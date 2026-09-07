@@ -14,7 +14,8 @@ export async function browseDirectories(path?: string): Promise<BrowseDirectorie
 }
 
 export async function pickDirectory(): Promise<string | null> {
-  const { data } = await http.post<{ ok: boolean; directory: string | null }>('/settings/pick-directory');
+  // 原生对话框等待用户选择或取消，不受普通请求的 10 秒超时限制。
+  const { data } = await http.post<{ ok: boolean; directory: string | null }>('/settings/pick-directory', undefined, { timeout: 0 });
   return data.directory;
 }
 

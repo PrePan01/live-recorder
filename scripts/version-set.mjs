@@ -20,6 +20,7 @@ function setJsonVersion(rel, version) {
   const json = JSON.parse(readFileSync(file, 'utf8'));
   if (json.version === undefined) throw new Error(`${rel} 无 version 字段`);
   json.version = version;
+  if (json.packages?.['']) json.packages[''].version = version;
   writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
   console.log(`  ✓ ${rel} → ${version}`);
 }

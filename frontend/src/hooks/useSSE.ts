@@ -10,6 +10,7 @@ import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
 import type { UploadJob } from '../api/openlist';
 import { applyServerEvent } from '../stores/applyEvent';
+import { useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
@@ -43,7 +44,9 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
 
 /** 契约 v1.3：SSE 标准帧（event: 名称 + data: JSON），data 不内嵌 type。 */
 export function useSSE() {
+  const ready = useBootStore((state) => state.state === 'ready');
   useEffect(() => {
+    if (!ready) return;
     let disposed = false;
     let es: EventSource | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -67,6 +70,7 @@ export function useSSE() {
       es.onopen = () => {
         attempt = 0;
         setConnected(true);
+        void useServiceStore.getState().fetchStatus();
       };
       for (const name of SSE_EVENT_NAMES) {
         es.addEventListener(name, (msg) => handle(name, (msg as MessageEvent<string>).data));
@@ -101,5 +105,5 @@ export function useSSE() {
       es?.close();
       setConnected(false);
     };
-  }, []);
+  }, [ready]);
 }

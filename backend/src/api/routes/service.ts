@@ -23,9 +23,9 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '0.5.88',
+        version: '0.5.90',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
-        setupCompleted: Boolean(stored && stored.recordingDirectory.length > 0),
+        setupCompleted: Boolean(stored?.recordingDirectory?.length),
         disk,
         activeRecordings: services.recordings.activeCount(),
       },

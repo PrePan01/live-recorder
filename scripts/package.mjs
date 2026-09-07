@@ -37,7 +37,7 @@ run('npm', ['prune', '--omit=dev'], backendDir);
 // 2) tauri build（含前端 vite build + bundle-resources；后端已在步骤 1 构建并精简，跳过 bundle-resources 内重建）
 console.log('[package] 2/4 tauri build…');
 process.env.LR_SKIP_BACKEND_BUILD = '1';
-run(isWin ? 'npx.cmd' : 'npx', ['tauri', 'build'], path.join(root, 'frontend'));
+run(isWin ? 'npx.cmd' : 'npx', ['tauri', 'build', ...(process.env.CI ? ['--verbose'] : [])], path.join(root, 'frontend'));
 
 // 3) macOS dmg
 if (!isWin) {
@@ -104,8 +104,12 @@ if (!isWin) {
     const dir = path.join(bundle, sub);
     if (existsSync(dir)) {
       for (const f of readdirSync(dir)) {
-        copyFileSync(path.join(dir, f), path.join(release, f));
-        products.push(f);
+        // WiX requires a locale (en-US) internally, but it is not part of the
+        // user-facing installer filename.
+        const outputName = f.replace(/_en-US(?=\.(?:msi|exe)$)/i, '');
+        copyFileSync(path.join(dir, f), path.join(release, outputName));
+        products.push(outputName);
+        console.log(`[package] 拷贝 -> release/${outputName}`);
       }
     }
   }

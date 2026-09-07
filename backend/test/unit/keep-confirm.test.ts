@@ -103,7 +103,8 @@ describe('#220 录制完成「询问是否保留」', () => {
 
     await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 's99' });
     // 驱动假引擎写满 frames 并 natural end（fake engine：6 帧 × 500ms，逐拍推进以触发各帧定时器）。
-    for (let i = 0; i < 10; i += 1) {
+    const deadline = Date.now() + 5000;
+    while (!services.recordings.list({ pageSize: 100 }).items.some((r) => r.state === 'awaiting_confirmation') && Date.now() < deadline) {
       clock.advance(500);
       await sleep(5);
     }
@@ -140,6 +141,17 @@ describe('#220 录制完成「询问是否保留」', () => {
     expect(kept.statusCode).toBe(200);
     expect(kept.json().recording.state).toBe('completed');
     await expect(access(file)).resolves.toBeUndefined();
+
+    const oldName = path.join(dir, 'original-name.flv');
+    const newName = path.join(dir, '用户指定名称.flv');
+    await writeFile(oldName, 'FLV3');
+    const renamed = services.recordings.create({ roomId: 'room_1', roomName: '改名', platform: 'bilibili', streamSessionId: 's7', streamTitle: 't' });
+    services.recordings.update(renamed.id, { state: 'awaiting_confirmation', filePath: oldName, fileSizeBytes: 4 });
+    const renamedResult = await app.inject({ method: 'POST', url: `/api/v1/recordings/${renamed.id}/confirm`, headers: HOST, payload: { keep: true, fileName: '用户指定名称' } });
+    expect(renamedResult.statusCode).toBe(200);
+    expect(renamedResult.json().recording.filePath).toBe(newName);
+    await expect(access(oldName)).rejects.toBeTruthy();
+    await expect(access(newName)).resolves.toBeUndefined();
 
     const file2 = path.join(dir, 'seg2.flv');
     await writeFile(file2, 'FLV2');

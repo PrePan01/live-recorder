@@ -230,7 +230,7 @@ export function nativePickDirectory(): Promise<string | null> {
       command = 'zenity';
       args = ['--file-selection', '--directory'];
     }
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     child.stdout.on('data', (d) => (out += String(d)));
     child.on('error', () => resolve(null));

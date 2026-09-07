@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { EndpointResolver } from '../api/endpoint';
 import { fetchServiceStatus } from '../api/service';
 import type { ServiceStatus } from '../types/service';
 
@@ -6,29 +7,31 @@ interface ServiceState {
   status: ServiceStatus | null;
   sseConnected: boolean;
   loading: boolean;
+  error: string | null;
   fetchStatus: () => Promise<void>;
   setSseConnected: (v: boolean) => void;
   patchStatus: (p: Partial<ServiceStatus>) => void;
 }
 
-export const useServiceStore = create<ServiceState>((set) => ({
+export const useServiceStore = create<ServiceState>((set, get) => ({
   status: null,
   sseConnected: false,
   loading: false,
+  error: null,
   async fetchStatus() {
-    set({ loading: true });
+    if (get().loading) return;
+    const endpoint = EndpointResolver.base;
+    set({ loading: true, error: null });
     try {
-      set({ status: await fetchServiceStatus(), loading: false });
+      const status = await fetchServiceStatus();
+      if (endpoint !== EndpointResolver.base) return;
+      set({ status, loading: false, error: null });
     } catch {
+      if (endpoint !== EndpointResolver.base) return;
       set({
         loading: false,
-        status: {
-          state: 'running',
-          version: null,
-          disk: { freeBytes: 0, totalBytes: 0 },
-          activeRecordings: 0,
-          setupCompleted: false,
-        },
+        // 连接失败不能证明尚未初始化；保留最后一次可信状态。
+        error: '无法连接到本地服务，请稍后重试。',
       });
     }
   },

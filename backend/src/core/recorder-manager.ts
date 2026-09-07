@@ -42,6 +42,17 @@ interface PreviewSession {
 
 export class RecorderManager {
   private active = new Map<string, ActiveSession>();
+  private backgroundTasks = 0;
+
+  get busy(): boolean { return this.active.size > 0 || this.backgroundTasks > 0; }
+
+  async resetIdleState(): Promise<void> {
+    await Promise.all([...this.previewSessions.keys()].map((id) => this.stopPreviewStream(id)));
+  }
+
+  clearPendingConfirmations(): void {
+    for (const id of this.confirmTimers.keys()) this.clearConfirmTimer(id);
+  }
   preview: PreviewSink | null = null;
 
   /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
@@ -98,6 +109,7 @@ export class RecorderManager {
    * 仅当房间开播、且既无录制会话也无预览会话时启动；后续帧由引擎 data 事件转发到 preview。
    */
   async ensurePreviewStream(roomId: string): Promise<void> {
+    if (this.services.resetting) return;
     if (this.previewSessions.has(roomId) || this.previewTransitions.has(roomId) || this.active.has(roomId)) return;
     const room = this.services.rooms.get(roomId);
     if (!room || room.lastLiveStatus !== 'live') return;
@@ -106,7 +118,7 @@ export class RecorderManager {
       const cookie = await this.services.platformCookie(room.platform);
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
       // getStreamUrl 期间可能已经点击了录制；二次检查避免迟到的 preview-only 流覆盖录制流。
-      if (this.previewSessions.has(roomId) || this.previewTransitions.has(roomId) || this.active.has(roomId)) return;
+      if (this.services.resetting || !this.services.rooms.get(roomId) || this.previewSessions.has(roomId) || this.previewTransitions.has(roomId) || this.active.has(roomId)) return;
       const engine = this.services.engineFor();
       const session: PreviewSession = {
         engine,
@@ -151,6 +163,7 @@ export class RecorderManager {
 
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
+    if (this.services.resetting) return;
     if (this.active.has(room.id)) return;
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
@@ -437,6 +450,11 @@ export class RecorderManager {
    * 文件存在 → completed + 收尾；文件缺失 → failed（无法保留）。
    */
   resumeAfterConfirmation(recordingId: string): void {
+    if (this.services.resetting) {
+      this.clearConfirmTimer(recordingId);
+      this.confirmTimers.set(recordingId, this.services.clock.setTimeout(() => this.resumeAfterConfirmation(recordingId), 1_000));
+      return;
+    }
     this.clearConfirmTimer(recordingId);
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
@@ -487,11 +505,12 @@ export class RecorderManager {
     // mp4_after（且管线未启用）：先完成 FLV→MP4 转封装再入队管线/上传——
     // 避免上传抢在转封装前按旧 filePath 把 FLV 传走（PrePan：偶现转 mp4 失败上传的却是 flv）。
     if (this.settings().recordingFormat === 'mp4_after' && rec.filePath && !(this.services.pipeline.pipelineConfig().enabled)) {
+      this.backgroundTasks += 1;
       void (async () => {
         const updated = await this.remuxToMp4(rec);
         this.services.events.emit({ type: 'recording:updated', data: updated ?? this.services.recordings.get(recordingId)! });
         this.services.pipeline.enqueue(recordingId);
-      })();
+      })().finally(() => { this.backgroundTasks -= 1; });
       return;
     }
     // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）；未启用时触发上传。
@@ -520,6 +539,7 @@ export class RecorderManager {
 
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
   private verifyIntegrity(rec: import('../types/index.js').Recording): void {
+    this.backgroundTasks += 1;
     void (async () => {
       try {
         const integrity = await checkFileIntegrity(rec.filePath!);
@@ -532,7 +552,7 @@ export class RecorderManager {
       } catch {
         // 应用关闭/校验中途异常：忽略（完整性校验非关键路径）。
       }
-    })();
+    })().finally(() => { this.backgroundTasks -= 1; });
   }
 
   private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string): Promise<void> {
