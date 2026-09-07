@@ -277,7 +277,6 @@ body {
 
 .lr-wall-grid {
   display: grid;
-  gap: 10px;
 }
 
 .lr-wall-card {
@@ -502,6 +501,7 @@ body {
   align-items: center;
   margin-inline-end: 0;
   white-space: nowrap;
+  padding: 0;
 }
 
 .lr-room-card .ant-card-head-title .ant-space-item .ant-typography-ellipsis {
