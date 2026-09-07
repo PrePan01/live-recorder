@@ -50,6 +50,13 @@
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "language": {
+          "en-US": {
+            "localePath": "./windows/locales/en-US.wxl"
+          }
+        }
       }
     }
   }
