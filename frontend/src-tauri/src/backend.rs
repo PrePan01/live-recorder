@@ -446,36 +446,41 @@ pub fn fetch_health(port: u16) -> Option<Health> {
 }
 
 fn ready_file_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("LIVE_RECORDER_READY_FILE") {
+    ready_file_path_for(std::env::consts::OS, |key| std::env::var(key).ok())
+}
+
+// 显式传入平台和环境，便于在任意宿主上验证 Windows 不依赖 HOME。
+fn ready_file_path_for(
+    platform: &str,
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<PathBuf> {
+    if let Some(path) = env("LIVE_RECORDER_READY_FILE") {
         return Some(PathBuf::from(path));
     }
-    if let Ok(dir) = std::env::var("LIVE_RECORDER_STATE_DIR") {
+    if let Some(dir) = env("LIVE_RECORDER_STATE_DIR") {
         return Some(PathBuf::from(dir).join("ready.json"));
     }
-    if let Ok(dir) = std::env::var("LR_STATE_DIR") {
+    if let Some(dir) = env("LR_STATE_DIR") {
         return Some(PathBuf::from(dir).join("ready.json"));
     }
-    // 开发/运行环境数据目录覆盖：与后端 defaultDataDir 的 LIVE_RECORDER_DATA_DIR 保持一致
-    // （开发隔离时 dev 后端与 Tauri 宿主都落在同一独立数据目录）。
-    if let Ok(dir) = std::env::var("LIVE_RECORDER_DATA_DIR") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir).join("state").join("ready.json"));
-        }
+    // 与后端 defaultDataDir 的开发数据目录覆盖保持一致。
+    if let Some(dir) = env("LIVE_RECORDER_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        return Some(PathBuf::from(dir).join("state").join("ready.json"));
     }
-    let home = std::env::var("HOME").ok()?;
-    let base = if cfg!(target_os = "macos") {
-        PathBuf::from(&home)
+    // 各平台只读取自身所需变量。Windows 安装环境通常没有 HOME。
+    let base = match platform {
+        "windows" => PathBuf::from(env("APPDATA")?).join("live-recorder"),
+        "macos" => PathBuf::from(env("HOME")?)
             .join("Library")
             .join("Application Support")
-            .join("live-recorder")
-    } else if cfg!(target_os = "windows") {
-        let appdata = std::env::var("APPDATA").ok()?;
-        PathBuf::from(appdata).join("live-recorder")
-    } else {
-        let xdg = std::env::var("XDG_DATA_HOME")
-            .ok()
-            .unwrap_or_else(|| format!("{home}/.local/share"));
-        PathBuf::from(xdg).join("live-recorder")
+            .join("live-recorder"),
+        _ => {
+            let data_home = match env("XDG_DATA_HOME") {
+                Some(dir) => PathBuf::from(dir),
+                None => PathBuf::from(env("HOME")?).join(".local").join("share"),
+            };
+            data_home.join("live-recorder")
+        }
     };
     Some(base.join("state").join("ready.json"))
 }
@@ -517,5 +522,52 @@ mod tests {
         let started = Instant::now();
         stop_child(child).unwrap();
         assert!(started.elapsed() < Duration::from_secs(20));
+    }
+}
+
+#[cfg(test)]
+mod state_directory_tests {
+    use super::*;
+
+    fn resolve(platform: &str, vars: &[(&str, &str)]) -> Option<PathBuf> {
+        ready_file_path_for(platform, |key| {
+            vars.iter().find(|(name, _)| *name == key).map(|(_, value)| value.to_string())
+        })
+    }
+
+    #[test]
+    fn windows_uses_appdata_without_home() {
+        let appdata = r"C:\Users\用户\AppData\Roaming";
+        let expected = PathBuf::from(appdata).join("live-recorder").join("state").join("ready.json");
+        assert_eq!(resolve("windows", &[("APPDATA", appdata)]), Some(expected));
+    }
+
+    #[test]
+    fn windows_does_not_use_unix_home() {
+        assert_eq!(resolve("windows", &[("HOME", "/home/user")]), None);
+    }
+
+    #[test]
+    fn explicit_paths_take_precedence_without_platform_environment() {
+        let vars = [
+            ("LIVE_RECORDER_READY_FILE", "custom/ready.json"),
+            ("LIVE_RECORDER_STATE_DIR", "state-override"),
+            ("LR_STATE_DIR", "legacy-state"),
+            ("LIVE_RECORDER_DATA_DIR", "dev-data"),
+        ];
+        assert_eq!(resolve("windows", &vars), Some(PathBuf::from("custom/ready.json")));
+        assert_eq!(resolve("windows", &vars[1..]), Some(PathBuf::from("state-override").join("ready.json")));
+        assert_eq!(resolve("windows", &vars[2..]), Some(PathBuf::from("legacy-state").join("ready.json")));
+        assert_eq!(resolve("windows", &vars[3..]), Some(PathBuf::from("dev-data").join("state").join("ready.json")));
+    }
+
+    #[test]
+    fn unix_defaults_remain_compatible_with_backend() {
+        assert_eq!(resolve("macos", &[("HOME", "/Users/test")]),
+            Some(PathBuf::from("/Users/test/Library/Application Support/live-recorder/state/ready.json")));
+        assert_eq!(resolve("linux", &[("HOME", "/home/test")]),
+            Some(PathBuf::from("/home/test/.local/share/live-recorder/state/ready.json")));
+        assert_eq!(resolve("linux", &[("XDG_DATA_HOME", "/data")]),
+            Some(PathBuf::from("/data/live-recorder/state/ready.json")));
     }
 }
