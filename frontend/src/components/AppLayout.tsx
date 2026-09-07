@@ -85,7 +85,7 @@ export default function AppLayout() {
             items={ITEMS}
             style={{ paddingTop: 4 }}
           />
-          <div className="lr-app-version">{status.version}</div>
+          <div className="lr-app-version">{status?.version ?? ""}</div>
         </Sider>
         <Content
           className="lr-app-content"
