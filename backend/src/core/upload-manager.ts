@@ -550,6 +550,16 @@ export class RealWebDavClient implements WebDavClient {
         this.options.uploadIdleTimeoutMs,
       );
     };
+    // 文件流/undici 可能需要一个事件循环周期才产出首个 chunk；不要让极短的
+    // 空闲阈值在请求刚创建时误判为上传停滞。首个 chunk 后恢复严格的配置阈值。
+    const initialUploadTimeoutMs = Math.max(this.options.uploadIdleTimeoutMs, 100);
+    const armInitialUploadIdleTimer = () => {
+      clearPhaseTimer();
+      phaseTimer = setTimeout(
+        () => controller.abort(new Error('WebDAV 上传数据长时间停滞')),
+        initialUploadTimeoutMs,
+      );
+    };
     const armResponseTimer = () => {
       clearPhaseTimer();
       phaseTimer = setTimeout(
@@ -576,7 +586,7 @@ export class RealWebDavClient implements WebDavClient {
       },
     });
     const body = createReadStream(localPath).pipe(progress);
-    armUploadIdleTimer();
+    armInitialUploadIdleTimer();
     try {
       const res = await fetch(remotePath, {
         method: 'PUT',

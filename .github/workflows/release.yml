@@ -110,9 +110,6 @@ jobs:
       - name: Install dependencies
         run: npm run install:ci
 
-      - name: Compile backend
-        run: npm --prefix backend run build
-
       - name: Verify backend
         run: npm --prefix backend test
 
