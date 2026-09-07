@@ -31,7 +31,7 @@ async function stop(signal = 'SIGTERM') {
     current.kill(signal);
   });
 }
-async function start(port) {
+async function start(port, mode = 'fake') {
   child = spawn(process.execPath, [path.join(backend, 'dist/index.js')], {
     cwd: backend,
     env: {
@@ -41,7 +41,7 @@ async function start(port) {
       LIVE_RECORDER_READY_FILE: ready,
       LIVE_RECORDER_PORT: String(port),
       LIVE_RECORDER_DB: path.join(data, 'live-recorder.db'),
-      RECORDING_ADAPTER: 'fake',
+      RECORDING_ADAPTER: mode,
       // Offline/proxy failures must not affect the local boot sequence.
       HTTP_PROXY: 'http://127.0.0.1:1',
       HTTPS_PROXY: 'http://127.0.0.1:1',
@@ -102,8 +102,12 @@ try {
   const restarted = await start(0);
   assert.notEqual(restarted.instanceId, recovered.instanceId);
   await stop();
+  // 安装版默认使用 real，覆盖真实适配器/凭据存储初始化，而非仅测试假模式。
+  const production = await start(0, 'real');
+  assert.notEqual(production.instanceId, restarted.instanceId);
+  await stop();
   console.log(
-    'startup smoke passed: occupied port, OS assigned port, abrupt exit recovery, restart, Unicode paths, unavailable proxy',
+    'startup smoke passed: occupied port, OS assigned port, abrupt exit recovery, restart, Unicode paths, unavailable proxy, production mode',
   );
 } finally {
   await stop();
