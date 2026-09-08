@@ -26,7 +26,14 @@ const run = (cmd, args, cwd) => {
 
 // 1) 后端构建
 console.log('[package] 1/4 构建后端 dist…');
-run('npm', ['run', 'build'], path.join(root, 'backend'));
+if (process.env.LR_SKIP_BACKEND_BUILD === '1') {
+  if (!existsSync(path.join(root, 'backend', 'dist', 'index.js'))) {
+    throw new Error('LR_SKIP_BACKEND_BUILD=1 requires an already compiled backend/dist/index.js');
+  }
+  console.log('[package] 使用已构建并验证的后端 dist');
+} else {
+  run('npm', ['run', 'build'], path.join(root, 'backend'));
+}
 
 // 1.5) 打包前把后端 node_modules 精简为仅生产依赖（dev 依赖 typescript/vitest 等占 ~90MB，运行不需要）
 //      打包完成后再恢复完整依赖，避免影响开发环境。
@@ -119,11 +126,13 @@ if (!isWin) {
 rmSync(bundle, { recursive: true, force: true });
 
 // 6) 恢复后端完整依赖（含 dev 依赖），避免影响开发/测试环境。
-console.log('[package] 恢复后端完整依赖（npm ci）…');
-try {
-  run('npm', ['ci'], backendDir);
-} catch {
-  console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
+if (process.env.LR_SKIP_BACKEND_RESTORE !== '1') {
+  console.log('[package] 恢复后端完整依赖（npm ci）…');
+  try {
+    run('npm', ['ci'], backendDir);
+  } catch {
+    console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
+  }
 }
 
 console.log(`[package] 完成 ✅ 产物已输出到 release/: ${products.join(', ')}`);
