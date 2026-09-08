@@ -92,6 +92,16 @@ body {
   box-shadow: 1px 0 0 var(--lr-border);
 }
 
+/* Ant Design's Sider `dark` variant defaults to navy (#001529), while the
+   app's dark theme uses neutral grays. Keep the entire navigation surface
+   (including the otherwise separately colored collapse trigger) consistent. */
+:root[data-theme="dark"] .lr-app-sider,
+:root[data-theme="dark"] .lr-app-sider .ant-layout-sider-children,
+:root[data-theme="dark"] .lr-app-sider .ant-menu,
+:root[data-theme="dark"] .lr-app-sider > .ant-layout-sider-trigger {
+  background: var(--lr-bg);
+}
+
 .lr-app-sider > .ant-layout-sider-trigger {
   margin-bottom: 30px;
 }
