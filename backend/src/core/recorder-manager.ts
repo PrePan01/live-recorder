@@ -168,7 +168,13 @@ export class RecorderManager {
     void (async () => {
       try {
         const result = await buffer.exportTo(filePath, Math.min(lookbackSeconds, availableSeconds));
-        const completed = this.services.recordings.update(recording.id, { state: 'completed', filePath, fileSizeBytes: result.bytes, endedAt: this.services.clock.iso() });
+        // A highlight is copied from an already-buffered stream, so export
+        // itself takes only milliseconds.  Persist the clip's media interval
+        // rather than that copy interval; history, stats and CSV all derive
+        // duration from startedAt/endedAt.
+        const endedAt = this.services.clock.iso();
+        const startedAt = new Date(new Date(endedAt).getTime() - result.actualSeconds * 1_000).toISOString();
+        const completed = this.services.recordings.update(recording.id, { state: 'completed', filePath, fileSizeBytes: result.bytes, startedAt, endedAt });
         if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: completed });
         this.finishOrConfirm(recording.id);
       } catch (error) {
