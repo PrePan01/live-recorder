@@ -1,20 +1,21 @@
-# 直播录制助手（Live Recorder）
-
 <h1 align="center">
+  <div>直播录制助手（Live Recorder）</div>
+  <br>
   <img src="frontend/public/icon1.png" alt="Live Recorder" width="128" />
 </h1>
+<h4 align="center">直播录制工具（macOS / Windows）。支持 B站 / 抖音直播间。</h4>
 
-直播录制工具（macOS / Windows）。支持 B站 / 抖音直播间。
 
 ## 简介
 
-直播录制助手是一款常驻本机的直播录制服务：添加关注直播间后，检测到开播即自动开始录制，也可手动开始录制，录制文件直接保存本地
-支持直播实时预览、录制历史回放、后处理管线、自动上传、通知提醒等完整功能。
+直播录制助手是一款常驻本机的直播录制服务
+
+支持开播自动录制、手动开始录制、直播实时预览、录制历史回放、后处理管线、自动上传、通知提醒等等完整功能
 
 ## 功能
 
 ### 录制与监控
-- B站 / 抖音直播间检测与自动录制，手动录制 / 停止，支持保存为 FLV、MP4
+- B站 / 抖音直播间检测与自动录制，手动录制 / 停止，支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）
 - 监控总览：卡片 / 列表视图、收藏置顶、当前录制时长、直播预览、开播预测、实时状态
 - 多路直播墙（2×2 / 3×3，最多 4 路）
 - 磁盘空间守卫、断流续录、录制完整性校验、并发上限与去重
@@ -22,11 +23,11 @@
 ### 房间管理
 - 直播间管理：搜索 / 筛选 / 分页、批量添加、标签分组、单独自动录制开关、定时录制计划
 - 全局搜索
-- 房间健康度与录制统计
+- 录制统计
 
 ### 录制历史与回放
-- 历史列表：筛选 / 分页 / 回放（FLV / MP4）、重命名 / 删除（连带文件）、CSV 导出 / 批量删除
-- 上传状态列、失败原因与重试
+- 历史列表：筛选 / 分页 / 回放（FLV / MP4）、重命名 / 删除、CSV 导出 / 批量删除
+- 上传状态、失败原因与重试
 
 ### 后处理与分发
 - 后处理管线：校验 → 封面帧 → 切片合并 → 压缩转封装 → 归档，失败保留源文件、定向重试
@@ -35,15 +36,14 @@
 - 邮件通知（SMTP 预设，失败提醒去重）
 
 ### 桌面客户端
-- macOS / Windows 桌面端（Tauri）：双击启动、托盘、单实例、端口防冲突、升级自动切换新后端
-- 桌面通知、深色 / 浅色 / 跟随系统主题
+- macOS / Windows 桌面端（Tauri）
 
 ## 安装
 
 ### 使用发布包
 
-- macOS：下载 `Live Recorder_x.y.z_aarch64.dmg` 安装，或直接运行 `Live Recorder.app`（首次启动自动拉起本地服务）
-- Windows：下载 `.msi` / `.exe` 安装包（需在 Windows 环境构建，见「开发 · 打包」）
+- macOS：下载 `Live Recorder_x.y.z_aarch64.dmg` 安装
+- Windows：下载 `.msi` 安装包安装
 
 ### 从源码运行
 
@@ -59,17 +59,15 @@ npm run dev
 ### 三步开始开发
 
 1. 安装依赖：`npm run setup`
-2. 启动项目：`npm run dev`（默认真实模式，行为与正式环境一致，仅数据隔离；fake 冒烟用 `npm run dev:fake`）
+2. 启动项目：`npm run dev`（Web端）或 `npm run dev:tarui`（客户端）
 3. 开始开发
-
-需要直接在桌面客户端开发时，使用 `npm run dev:tarui`。它会先构建 Tauri 壳所需的后端，再打开 Tauri 客户端；前端改动会在客户端内热更新。该命令默认使用 `.dev-data` 和端口 `43140`；若检测到后端端口或 Vite 的 `5173` 被占用，会自动执行 `npm run dev:stop` 后继续启动。
 
 ### 目录结构
 
 - `backend/`：本地常驻服务（Fastify + SQLite，端口 43120；REST / SSE / WS 预览）
 - `frontend/`：Web 管理控制台与桌面客户端（React + Vite + Ant Design，端口 5173；Tauri 壳在 `frontend/src-tauri`）
 - `reports/`：测试计划与验收报告
-- `release/`：打包产物（.app / .dmg / .msi / .exe）
+- `release/`：打包产物
 
 ### 常用命令
 
@@ -90,18 +88,7 @@ npm run typecheck  # 类型检查
 npm run tauri:build
 ```
 
-> 开发环境数据隔离（#219）+ 默认真实模式（#223）：根目录 `npm run dev`（scripts/dev.mjs）默认 `RECORDING_ADAPTER=real`
-> （真实适配器，行为与正式环境一致），并让 dev 后端使用独立数据目录 `<仓库>/.dev-data` 与独立端口 `43140`，
-> 与本地安装客户端（数据目录 + 端口 43120）完全隔离，开发中改动不会影响已安装客户端的房间/录制/设置。
-> fake 模式仅限显式 `npm run dev:fake`（快速冒烟/CI）。若改用 `npm run tauri:dev`（后端由 Rust 壳拉起），
-> 不会自动携带隔离变量，需自行 `export LIVE_RECORDER_DATA_DIR=... LIVE_RECORDER_PORT=43140` 后再启动。
-
 ### 打包
-
-图标素材：`frontend/public/icon.png` 仅用于 macOS 应用的 ICNS；
-`frontend/public/icon1.png` 用于 Windows 应用 ICO、通用 PNG、所有平台托盘及界面标识。
-更新素材后运行 `npm --prefix frontend run icons:generate`，提交生成的 `frontend/src-tauri/icons/` 桌面图标。
-托盘由 Rust `setup_tray` 统一创建，不在 Tauri 配置中重复声明，也不启用单色模板模式。
 
 - macOS：`cd frontend && npm run tauri:build`，产物在 `release/`（.app + .dmg）
 - Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物 `.msi` / `.exe`（或使用 CI 的 `windows-latest` runner）
@@ -129,6 +116,7 @@ npm run tauri:build
 4. 合入前请确保：lint / typecheck / 全量测试通过，并由 QA 完成回归
 
 ## 截图
-![](docs/images/overview.png)
-
-![](docs/images/upload.png)
+![监控总览](http://qn.bspartner.top/images/PixPin_2026-09-08_19-19-35-2026-09-08-nJJtCB2M.png)
+![直播间管理](http://qn.bspartner.top/images/PixPin_2026-09-08_19-19-58-2026-09-08-STkZ75BL.png)
+![录制历史](http://qn.bspartner.top/images/Pasted%20image%2020260908193103-2026-09-08-vhUF39wF.png)
+![直播墙](http://qn.bspartner.top/images/PixPin_2026-09-08_19-20-52-2026-09-08-cJoI4FSR.png)
