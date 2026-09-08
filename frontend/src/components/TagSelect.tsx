@@ -26,7 +26,15 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
   const selected = tags.filter((t) => value.includes(t.id));
 
   const onCreate = async () => {
-    const values = await form.validateFields();
+    // `validateFields` rejects for ordinary field errors.  Handle that local
+    // UI outcome before the asynchronous create flow so it cannot reach the
+    // global unhandled-rejection fatal-error handler.
+    let values: { name: string; color: string };
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
     setCreating(true);
     try {
       const tag = await create({ name: values.name.trim(), color: values.color });
@@ -44,7 +52,7 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
     <div style={{ width: 260 }}>
       <Form form={form} layout="vertical" size="small">
         <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="name" noStyle rules={[{ required: true, message: '必填' }, { max: 30, message: '≤30 字符' }]}>
+          <Form.Item name="name" noStyle rules={[{ required: true, whitespace: true, message: '必填' }, { max: 30, message: '≤30 字符' }]}>
             <Input placeholder="新标签名" />
           </Form.Item>
           <Form.Item name="color" initialValue={PRESET_COLORS[0]} noStyle>
