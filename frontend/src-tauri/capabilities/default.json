@@ -8,6 +8,7 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-minimize",
+    "core:window:allow-set-fullscreen",
     "core:window:allow-close",
     "notification:default",
     "dialog:default",

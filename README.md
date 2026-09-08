@@ -62,6 +62,8 @@ npm run dev
 2. 启动项目：`npm run dev`（默认真实模式，行为与正式环境一致，仅数据隔离；fake 冒烟用 `npm run dev:fake`）
 3. 开始开发
 
+需要直接在桌面客户端开发时，使用 `npm run dev:tarui`。它会先构建 Tauri 壳所需的后端，再打开 Tauri 客户端；前端改动会在客户端内热更新。该命令默认使用 `.dev-data` 和端口 `43140`；若检测到后端端口或 Vite 的 `5173` 被占用，会自动执行 `npm run dev:stop` 后继续启动。
+
 ### 目录结构
 
 - `backend/`：本地常驻服务（Fastify + SQLite，端口 43120；REST / SSE / WS 预览）
