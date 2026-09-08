@@ -6,6 +6,7 @@ import { recordingFilePath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
 import { remuxFlvToMp4 } from '../recorder/remux.js';
 import type { RecordingEvent } from '../recorder/engine.js';
+import { HighlightBuffer } from '../recorder/highlight-buffer.js';
 import type { Notifier } from './notifier.js';
 import type { Services } from './services.js';
 
@@ -48,6 +49,7 @@ export class RecorderManager {
 
   async resetIdleState(): Promise<void> {
     await Promise.all([...this.previewSessions.keys()].map((id) => this.stopPreviewStream(id)));
+    await Promise.all([...this.highlightBuffers.keys()].map((id) => this.disableHighlightBuffer(id)));
   }
 
   clearPendingConfirmations(): void {
@@ -57,6 +59,8 @@ export class RecorderManager {
 
   /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
   private confirmTimers = new Map<string, unknown>();
+  /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
+  private highlightBuffers = new Map<string, HighlightBuffer>();
 
   constructor(private services: Services, private notifier: Notifier) {}
 
@@ -104,6 +108,79 @@ export class RecorderManager {
     return this.previewSessions.has(roomId);
   }
 
+  async enableHighlightBuffer(roomId: string): Promise<{ availableSeconds: number; maxSeconds: number }> {
+    if (this.active.has(roomId)) throw new AppError('RECORDING_NOT_AVAILABLE', '实时录制中无需使用精彩时刻', { roomId });
+    const room = this.services.rooms.get(roomId);
+    if (!room || room.lastLiveStatus !== 'live') throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法启用精彩时刻', { roomId });
+    const settings = this.settings();
+    if (settings.highlightEnabled === false) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻功能未开启', { roomId });
+    if (!settings.recordingDirectory) throw new AppError('DIRECTORY_NOT_WRITABLE', '请先配置录像保存目录', { roomId });
+    let buffer = this.highlightBuffers.get(roomId);
+    if (!buffer) {
+      const dir = path.join(settings.recordingDirectory, '.live-recorder-cache', roomId);
+      buffer = new HighlightBuffer(dir, settings.highlightBufferSeconds ?? 300);
+      await buffer.start();
+      this.highlightBuffers.set(roomId, buffer);
+    } else {
+      buffer.setRetainSeconds(settings.highlightBufferSeconds ?? 300);
+    }
+    return { availableSeconds: buffer.availableSeconds(), maxSeconds: settings.highlightBufferSeconds ?? 300 };
+  }
+
+  async disableHighlightBuffer(roomId: string): Promise<void> {
+    const buffer = this.highlightBuffers.get(roomId);
+    if (!buffer) return;
+    this.highlightBuffers.delete(roomId);
+    await buffer.clear();
+  }
+
+  /** 清空内容但保留当前观看的缓存会话，后续预览帧会立即重新累计。 */
+  async clearHighlightBuffer(roomId: string): Promise<void> {
+    const buffer = this.highlightBuffers.get(roomId);
+    if (!buffer) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻缓存未启用', { roomId });
+    await buffer.reset();
+  }
+
+  async disableAllHighlightBuffers(): Promise<void> {
+    await Promise.all([...this.highlightBuffers.keys()].map((id) => this.disableHighlightBuffer(id)));
+  }
+
+  highlightStatus(roomId: string): { enabled: boolean; availableSeconds: number; maxSeconds: number } {
+    const buffer = this.highlightBuffers.get(roomId);
+    return { enabled: Boolean(buffer), availableSeconds: buffer?.availableSeconds() ?? 0, maxSeconds: this.settings().highlightBufferSeconds ?? 300 };
+  }
+
+  async exportHighlight(roomId: string, lookbackSeconds: number): Promise<{ recordingId: string; availableSeconds: number }> {
+    if (this.active.has(roomId)) throw new AppError('RECORDING_NOT_AVAILABLE', '实时录制中无需使用精彩时刻', { roomId });
+    const room = this.services.rooms.get(roomId);
+    const buffer = this.highlightBuffers.get(roomId);
+    if (this.settings().highlightEnabled === false) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻功能未开启', { roomId });
+    if (!room || !buffer) throw new AppError('RECORDING_NOT_AVAILABLE', '请先在普通观看窗口中等待精彩时刻缓存', { roomId });
+    const maxSeconds = this.settings().highlightBufferSeconds ?? 300;
+    if (!Number.isInteger(lookbackSeconds) || lookbackSeconds < 1 || lookbackSeconds > maxSeconds) throw new AppError('CONFIG_INVALID', `回溯时长需为 1 秒至 ${maxSeconds} 秒`, { roomId });
+    const availableSeconds = buffer.availableSeconds();
+    if (availableSeconds < 1) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻缓存尚未就绪', { roomId });
+    const settings = this.settings();
+    const recording = this.services.recordings.create({ roomId, roomName: room.displayName, platform: room.platform, streamSessionId: null, streamTitle: `精彩时刻｜${room.displayName}`, quality: settings.quality, expectedQuality: settings.quality });
+    const base = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, recording.startedAt, settings.recordingFormat, settings.namingRule, settings.quality, room.id);
+    const parsed = path.parse(base);
+    const filePath = path.join(parsed.dir, `${parsed.name}_highlight_${recording.id}${parsed.ext}`);
+    void (async () => {
+      try {
+        const result = await buffer.exportTo(filePath, Math.min(lookbackSeconds, availableSeconds));
+        const completed = this.services.recordings.update(recording.id, { state: 'completed', filePath, fileSizeBytes: result.bytes, endedAt: this.services.clock.iso() });
+        if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: completed });
+        this.finishOrConfirm(recording.id);
+      } catch (error) {
+        const err = new AppError('RECORDING_START_FAILED', `精彩时刻导出失败: ${(error as Error).message}`, { roomId, recordingId: recording.id });
+        const failed = this.services.recordings.update(recording.id, { state: 'failed', endedAt: this.services.clock.iso(), failureReason: err.toObject() });
+        this.services.events.emit({ type: 'recording:updated', data: failed });
+      }
+    })();
+    this.services.events.emit({ type: 'recording:updated', data: recording });
+    return { recordingId: recording.id, availableSeconds };
+  }
+
   /**
    * 为开播但未录制的房间启动预览专用拉流（outputPath=null，引擎只产出 data 事件供预览转发，不写文件）。
    * 仅当房间开播、且既无录制会话也无预览会话时启动；后续帧由引擎 data 事件转发到 preview。
@@ -130,7 +207,10 @@ export class RecorderManager {
         try {
           const input = { url: stream.url, format: stream.format, ...(stream.headers ? { headers: stream.headers } : {}) };
           for await (const event of engine.start(input, null)) {
-            if (event.type === 'data') this.preview?.broadcastFrame(roomId, event.chunk);
+            if (event.type === 'data') {
+              if (this.settings().highlightEnabled !== false) this.highlightBuffers.get(roomId)?.append(event.chunk);
+              this.preview?.broadcastFrame(roomId, event.chunk);
+            }
             if (event.type === 'error') break;
           }
         } catch {
@@ -159,12 +239,16 @@ export class RecorderManager {
     await session.engine.stop().catch(() => undefined);
     // 旧拉流完全退出之后才能启动录制，否则两套 FLV 数据会交错写入同一个预览连接。
     await session.done.catch(() => undefined);
+    // WebSocket 可能因 mpegts.js 的短暂重连而一度变成“最后一个客户端断开”。
+    // 不能在这里清理精彩时刻缓存，否则播放器重连成功后缓存已丢失且前端不会重新启用。
+    // 普通观看窗口卸载、关闭总开关、开始实时录制和服务重置会显式清理它。
   }
 
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
     if (this.services.resetting) return;
     if (this.active.has(room.id)) return;
+    await this.disableHighlightBuffer(room.id);
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
     if (!opts.manual && sessionId && this.services.recordings.hasSession(room.id, sessionId)) {

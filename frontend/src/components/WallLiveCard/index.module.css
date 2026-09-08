@@ -20,6 +20,7 @@
     color: white;
 }
 
-:global(:fullscreen) .fullscreenButton {
+:global(:fullscreen) .fullscreenButton,
+:global([data-wall-fullscreen]) .fullscreenButton {
     display: none;
 }

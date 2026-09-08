@@ -143,6 +143,8 @@ export default function SettingsPage() {
         recordingFormat: settings.recordingFormat ?? "source_flv",
         autoRecord: settings.autoRecord ?? true,
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
+        highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
+        highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
         douyinCookie: "",
         mail: {
@@ -370,16 +372,10 @@ export default function SettingsPage() {
               <div className="lr-settings-section">
                 <Typography.Title
                   className="lr-settings-section__title"
-                  level={5}
+                  level={4}
                 >
                   外观与存储
                 </Typography.Title>
-                <Typography.Paragraph
-                  className="lr-settings-section__hint"
-                  type="secondary"
-                >
-                  选择界面显示方式，并确认录像保存位置可用。
-                </Typography.Paragraph>
                 <Form.Item label="主题" name="theme">
                   <Radio.Group
                     options={THEME_OPTIONS}
@@ -415,16 +411,10 @@ export default function SettingsPage() {
               <div className="lr-settings-section">
                 <Typography.Title
                   className="lr-settings-section__title"
-                  level={5}
+                  level={4}
                 >
                   录制行为
                 </Typography.Title>
-                <Typography.Paragraph
-                  className="lr-settings-section__hint"
-                  type="secondary"
-                >
-                  设置录制性能、画质与文件格式。
-                </Typography.Paragraph>
                 <Row gutter={16}>
                   <Col xs={24} md={8}>
                     <Form.Item
@@ -487,80 +477,111 @@ export default function SettingsPage() {
                     }
                   />
                 ) : null}
-                <Form.Item
-                  label="检测到开播自动录制"
-                  name="autoRecord"
-                  valuePropName="checked"
-                >
-                  <Switch />
-                </Form.Item>
-                <Form.Item
-                  label="录制完成后询问是否保留"
-                  name="confirmAfterComplete"
-                  valuePropName="checked"
-                >
-                  <Switch />
-                </Form.Item>
-              </div>
-              <div className="lr-settings-section">
-                <Typography.Title
-                  className="lr-settings-section__title"
-                  level={5}
-                >
-                  检测频率
-                </Typography.Title>
-                <Typography.Paragraph
-                  className="lr-settings-section__hint"
-                  type="secondary"
-                >
-                  按平台设置开播状态的检查间隔（秒），数值越小响应越快。
-                </Typography.Paragraph>
-                <Row gutter={16}>
-                  <Col xs={24} md={8}>
-                    <Form.Item
-                      label="全局默认"
-                      name={["checkIntervalSec", "default"]}
-                      rules={[{ required: true }]}
-                    >
-                      <InputNumber
-                        min={10}
-                        max={3600}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item
-                      label="B站"
-                      name={["checkIntervalSec", "bilibili"]}
-                      rules={[{ required: true }]}
-                    >
-                      <InputNumber
-                        min={10}
-                        max={3600}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item
-                      label="抖音"
-                      name={["checkIntervalSec", "douyin"]}
-                      rules={[{ required: true }]}
-                    >
-                      <InputNumber
-                        min={10}
-                        max={3600}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
+                <div className="lr-settings-section">
+                  <Typography.Title
+                    className="lr-settings-section__title"
+                    level={4}
+                  >
+                    自动录制
+                  </Typography.Title>
+                  <Form.Item
+                    label="检测到开播自动录制"
+                    name="autoRecord"
+                    valuePropName="checked"
+                  >
+                    <Switch />
+                  </Form.Item>
+                  <Typography.Title
+                    className="lr-settings-section__title"
+                    level={5}
+                  >
+                    检测频率
+                  </Typography.Title>
+                  <Typography.Paragraph
+                    className="lr-settings-section__hint"
+                    type="secondary"
+                  >
+                    按平台设置开播状态的检查间隔（秒），数值越小响应越快。
+                  </Typography.Paragraph>
+                  <Row gutter={16}>
+                    <Col xs={24} md={8}>
+                      <Form.Item
+                        label="全局默认"
+                        name={["checkIntervalSec", "default"]}
+                        rules={[{ required: true }]}
+                      >
+                        <InputNumber
+                          min={10}
+                          max={3600}
+                          style={{ width: "100%" }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Form.Item
+                        label="B站"
+                        name={["checkIntervalSec", "bilibili"]}
+                        rules={[{ required: true }]}
+                      >
+                        <InputNumber
+                          min={10}
+                          max={3600}
+                          style={{ width: "100%" }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Form.Item
+                        label="抖音"
+                        name={["checkIntervalSec", "douyin"]}
+                        rules={[{ required: true }]}
+                      >
+                        <InputNumber
+                          min={10}
+                          max={3600}
+                          style={{ width: "100%" }}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </div>
+                <div className="lr-settings-section">
+                  <Typography.Title
+                    className="lr-settings-section__title"
+                    level={4}
+                  >
+                    精彩时刻
+                  </Typography.Title>
+                  <Form.Item
+                    label="开启精彩时刻"
+                    name="highlightEnabled"
+                    valuePropName="checked"
+                    extra="开启后，支持保存当前时刻前的片段。"
+                  >
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item
+                    label="精彩时刻缓存上限"
+                    name="highlightBufferSeconds"
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={5} max={600} addonAfter="秒" />
+                  </Form.Item>
+                </div>
+                <div className="lr-settings-section">
+                  <Form.Item
+                    label="录制完成后询问是否保留"
+                    name="confirmAfterComplete"
+                    valuePropName="checked"
+                  >
+                    <Switch />
+                  </Form.Item>
+                </div>
               </div>
               <div className="lr-settings-section lr-settings-section--credential">
                 <Typography.Title
                   className="lr-settings-section__title"
-                  level={5}
+                  level={4}
                 >
                   抖音 Cookie
                 </Typography.Title>

@@ -84,6 +84,11 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      npm_config_audit: 'false'
+      npm_config_fund: 'false'
+      npm_config_prefer_offline: 'true'
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -120,10 +125,11 @@ jobs:
         run: npm --prefix frontend test
 
       - name: Build installer
+        env:
+          # Already compiled and tested above; CI does not need dev dependencies restored.
+          LR_SKIP_BACKEND_BUILD: '1'
+          LR_SKIP_BACKEND_RESTORE: '1'
         run: npm run package
-
-      - name: Verify native service lifecycle
-        run: cargo test --manifest-path frontend/src-tauri/Cargo.toml --lib
 
       - name: Verify installation payload
         run: node scripts/check-installation.mjs
@@ -135,9 +141,46 @@ jobs:
           path: ${{ matrix.files }}
           if-no-files-found: error
           retention-days: 14
+          # DMG/MSI files are already compressed.
+          compression-level: 0
+
+  native-test:
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # Lifecycle tests launch their own Node fixture; no installer resources needed.
+      TAURI_CONFIG: '{"bundle":{"resources":null}}'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust tests
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+          cache-on-failure: true
+
+      - name: Verify native service lifecycle
+        run: cargo test --locked --manifest-path frontend/src-tauri/Cargo.toml --lib
 
   release:
-    needs: [prepare, build]
+    needs: [prepare, build, native-test]
     if: needs.prepare.outputs.should_release == 'true' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     permissions:

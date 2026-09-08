@@ -12,6 +12,14 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     return reply.send({ rooms: services.rooms.list().map(enrich) });
   });
 
+  // 监控总览刷新时使用：对所有启用的直播间立即执行一次开播检测。
+  // 等待各检测完成后再返回，前端随后重新拉取列表即可展示最终状态。
+  app.post('/api/v1/rooms/check-enabled', async (_req, reply) => {
+    const rooms = services.rooms.listEnabled();
+    await Promise.all(rooms.map((room) => services.scheduler.triggerImmediateCheck(room.id)));
+    return reply.send({ ok: true, checked: rooms.length });
+  });
+
   app.post('/api/v1/rooms', async (req, reply) => {
     const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean };
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
@@ -154,6 +162,36 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     await services.scheduler.triggerImmediateCheck(id);
     return reply.send({ ok: true });
+  });
+
+  // 精彩时刻只由普通观看弹窗显式启用；直播墙从不调用这些接口，避免多路缓存写盘。
+  app.post('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send({ highlight: await services.manager.enableHighlightBuffer(id) });
+  });
+
+  app.delete('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await services.manager.disableHighlightBuffer(id);
+    return reply.status(204).send();
+  });
+
+  app.post('/api/v1/rooms/:id/highlight-buffer/clear', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await services.manager.clearHighlightBuffer(id);
+    return reply.send({ ok: true });
+  });
+
+  app.get('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send({ highlight: services.manager.highlightStatus(id) });
+  });
+
+  app.post('/api/v1/rooms/:id/highlights', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { lookbackSeconds?: unknown };
+    if (typeof body.lookbackSeconds !== 'number') throw new AppError('CONFIG_INVALID', 'lookbackSeconds 必须为数字', { roomId: id });
+    return reply.status(202).send({ highlight: await services.manager.exportHighlight(id, body.lookbackSeconds) });
   });
 
   app.post('/api/v1/rooms/:id/stop-recording', async (req, reply) => {

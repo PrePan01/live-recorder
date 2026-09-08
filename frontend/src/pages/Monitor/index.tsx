@@ -5,6 +5,7 @@ import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, St
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { checkEnabledRooms } from '../../api/rooms';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { formatRelative } from '../../utils/format';
@@ -166,6 +167,7 @@ export default function Monitor() {
   const [view, setView] = useState<'卡片' | '列表'>(() => (localStorage.getItem('lr-monitor-view') === '列表' ? '列表' : '卡片'));
   const [filter, setFilter] = useState<'全部' | '开播中' | '录制中' | '收藏'>('全部');
   const [keyword, setKeyword] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
 
@@ -224,6 +226,19 @@ export default function Monitor() {
       return;
     }
     setWatching(room);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await checkEnabledRooms();
+      await fetchRooms();
+      message.success('已刷新并完成开播检测');
+    } catch {
+      message.error('刷新或开播检测失败，请稍后重试');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const listColumns: ColumnsType<Room> = [
@@ -339,12 +354,8 @@ export default function Monitor() {
           />
           <Button
             icon={<ReloadOutlined />}
-            loading={loading}
-            onClick={() =>
-              void fetchRooms()
-                .then(() => message.success('已刷新'))
-                .catch(() => message.error('刷新失败，请稍后重试'))
-            }
+            loading={loading || refreshing}
+            onClick={() => void handleRefresh()}
           >
             刷新
           </Button>
