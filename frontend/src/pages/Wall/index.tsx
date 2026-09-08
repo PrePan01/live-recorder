@@ -226,6 +226,7 @@ export default function Wall() {
           room={fullscreen}
           titlePrefix="全屏"
           defaultWidth={880}
+          enableHighlights={false}
           onClose={() => setFullscreen(null)}
         />
       ) : null}

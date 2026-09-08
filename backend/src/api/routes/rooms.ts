@@ -156,6 +156,36 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     return reply.send({ ok: true });
   });
 
+  // 精彩时刻只由普通观看弹窗显式启用；直播墙从不调用这些接口，避免多路缓存写盘。
+  app.post('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send({ highlight: await services.manager.enableHighlightBuffer(id) });
+  });
+
+  app.delete('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await services.manager.disableHighlightBuffer(id);
+    return reply.status(204).send();
+  });
+
+  app.post('/api/v1/rooms/:id/highlight-buffer/clear', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await services.manager.clearHighlightBuffer(id);
+    return reply.send({ ok: true });
+  });
+
+  app.get('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send({ highlight: services.manager.highlightStatus(id) });
+  });
+
+  app.post('/api/v1/rooms/:id/highlights', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { lookbackSeconds?: unknown };
+    if (typeof body.lookbackSeconds !== 'number') throw new AppError('CONFIG_INVALID', 'lookbackSeconds 必须为数字', { roomId: id });
+    return reply.status(202).send({ highlight: await services.manager.exportHighlight(id, body.lookbackSeconds) });
+  });
+
   app.post('/api/v1/rooms/:id/stop-recording', async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);

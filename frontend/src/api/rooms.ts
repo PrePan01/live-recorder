@@ -52,6 +52,27 @@ export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }
 
+export interface HighlightBufferStatus { enabled: boolean; availableSeconds: number; maxSeconds: number }
+
+export async function enableHighlightBuffer(id: string): Promise<HighlightBufferStatus> {
+  const { data } = await http.post<{ highlight: HighlightBufferStatus }>(`/rooms/${id}/highlight-buffer`);
+  return data.highlight;
+}
+
+export async function disableHighlightBuffer(id: string): Promise<void> { await http.delete(`/rooms/${id}/highlight-buffer`); }
+
+export async function clearHighlightBuffer(id: string): Promise<void> { await http.post(`/rooms/${id}/highlight-buffer/clear`); }
+
+export async function fetchHighlightBufferStatus(id: string): Promise<HighlightBufferStatus> {
+  const { data } = await http.get<{ highlight: HighlightBufferStatus }>(`/rooms/${id}/highlight-buffer`);
+  return data.highlight;
+}
+
+export async function exportHighlight(id: string, lookbackSeconds: number): Promise<{ recordingId: string; availableSeconds: number }> {
+  const { data } = await http.post<{ highlight: { recordingId: string; availableSeconds: number } }>(`/rooms/${id}/highlights`, { lookbackSeconds });
+  return data.highlight;
+}
+
 export interface RoomStats {
   roomId: string;
   days: number;

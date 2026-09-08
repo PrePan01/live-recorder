@@ -52,6 +52,8 @@ export interface Settings {
   notifications?: NotificationPreference;
   /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
   confirmAfterComplete?: boolean;
+  highlightBufferSeconds?: number;
+  highlightEnabled?: boolean;
 }
 
 export interface MailInput {
@@ -80,5 +82,6 @@ export interface SettingsInput {
   theme?: ThemePreference;
   /** #220/#221：录制完成后询问是否保留 */
   confirmAfterComplete?: boolean;
+  highlightBufferSeconds?: number;
+  highlightEnabled?: boolean;
 }
-

@@ -143,6 +143,8 @@ export default function SettingsPage() {
         recordingFormat: settings.recordingFormat ?? "source_flv",
         autoRecord: settings.autoRecord ?? true,
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
+        highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
+        highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
         douyinCookie: "",
         mail: {
@@ -500,6 +502,21 @@ export default function SettingsPage() {
                   valuePropName="checked"
                 >
                   <Switch />
+                </Form.Item>
+                <Form.Item
+                  label="开启精彩时刻"
+                  name="highlightEnabled"
+                  valuePropName="checked"
+                  extra="开启后，支持保存当前时刻前的片段。"
+                >
+                  <Switch />
+                </Form.Item>
+                <Form.Item
+                  label="精彩时刻缓存上限"
+                  name="highlightBufferSeconds"
+                  rules={[{ required: true }]}
+                >
+                  <InputNumber min={5} max={600} addonAfter="秒" />
                 </Form.Item>
               </div>
               <div className="lr-settings-section">
