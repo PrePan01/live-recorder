@@ -58,7 +58,13 @@ export const useWallStore = create<WallState>()(
     (set, get) => ({
       roomIds: [],
       grid: '2x2',
-      setGrid: (grid) => set({ grid }),
+      setGrid: (grid) => set((s) => ({
+        grid,
+        // A smaller grid must not leave off-grid players mounted.  Keep the
+        // first physical slots (including intentional empty slots) so the
+        // layout remains stable and 3x3 -> 2x2 retains only slots 1-4.
+        roomIds: s.roomIds.slice(0, getWallCapacity(grid)),
+      })),
       moveRoomToSlot: (sourceId, target) => {
         set((s) => {
           const source = s.roomIds.indexOf(sourceId);
