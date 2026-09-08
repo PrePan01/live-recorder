@@ -44,6 +44,11 @@ export async function checkRoomNow(id: string): Promise<void> {
   await http.post(`/rooms/${id}/check`);
 }
 
+/** 对全部启用直播间执行一次即时开播检测。 */
+export async function checkEnabledRooms(): Promise<void> {
+  await http.post('/rooms/check-enabled');
+}
+
 export async function startRoomRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/start-recording`);
 }

@@ -12,6 +12,14 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     return reply.send({ rooms: services.rooms.list().map(enrich) });
   });
 
+  // 监控总览刷新时使用：对所有启用的直播间立即执行一次开播检测。
+  // 等待各检测完成后再返回，前端随后重新拉取列表即可展示最终状态。
+  app.post('/api/v1/rooms/check-enabled', async (_req, reply) => {
+    const rooms = services.rooms.listEnabled();
+    await Promise.all(rooms.map((room) => services.scheduler.triggerImmediateCheck(room.id)));
+    return reply.send({ ok: true, checked: rooms.length });
+  });
+
   app.post('/api/v1/rooms', async (req, reply) => {
     const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean };
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
