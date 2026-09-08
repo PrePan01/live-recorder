@@ -157,7 +157,15 @@ export default function Rooms() {
   };
 
   const submit = async () => {
-    const values = await form.validateFields();
+    // Ant Design rejects when client-side validation fails.  This handler is
+    // invoked with `void submit()`, so validation failures must be consumed
+    // here instead of becoming a window-level unhandled rejection.
+    let values: { url: string; displayName?: string };
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
     const platform = guessPlatform(values.url);
     if (!platform) {
       message.error('仅支持 B站 / 抖音 直播链接');
