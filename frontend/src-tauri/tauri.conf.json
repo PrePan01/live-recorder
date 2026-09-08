@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Live Recorder",
-  "version": "0.5.90",
+  "version": "0.5.100",
   "identifier": "com.live-recorder.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -19,6 +19,7 @@
         "minWidth": 720,
         "minHeight": 480,
         "resizable": true,
+        "dragDropEnabled": false,
         "fullscreen": false
       }
     ],

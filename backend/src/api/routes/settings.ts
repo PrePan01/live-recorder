@@ -33,6 +33,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     };
     validateSettings(merged);
     services.settings.save(merged);
+    if (merged.highlightEnabled === false) await services.manager.disableAllHighlightBuffers();
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
     if (douyinCookie !== null) {

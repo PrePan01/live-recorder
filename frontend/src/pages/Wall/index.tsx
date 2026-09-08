@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Modal, Segmented, Select, Space, Typography } from "antd";
-import { FullscreenOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
 import { useRoomStore } from "../../stores/roomStore";
 import { usePreviewStore } from "../../stores/previewStore";
 import { getWallCapacity, useWallStore } from "../../stores/wallStore";
@@ -8,6 +12,7 @@ import PreviewModal from "../../components/PreviewModal";
 import WallGrid from "../../components/WallGrid";
 import type { Room } from "../../types/room";
 import styles from "./index.module.css";
+import { enterWallFullscreen as requestWallFullscreen } from "./fullscreen";
 
 export default function Wall() {
   const { message } = App.useApp();
@@ -24,18 +29,74 @@ export default function Wall() {
   const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [fullscreen, setFullscreen] = useState<Room | null>(null);
   const videoAreaRef = useRef<HTMLDivElement>(null);
+  const [wallFullscreen, setWallFullscreen] = useState(false);
+  const restoreFullscreen = useRef<(() => Promise<void>) | null>(null);
+  const fullscreenBusy = useRef(false);
+  const mounted = useRef(true);
 
   const enterWallFullscreen = async () => {
+    if (
+      fullscreenBusy.current ||
+      restoreFullscreen.current ||
+      !videoAreaRef.current
+    )
+      return;
+    fullscreenBusy.current = true;
     try {
-      if (!videoAreaRef.current?.requestFullscreen) {
-        message.warning("当前环境不支持视频区域全屏");
-        return;
+      const restore = await requestWallFullscreen(videoAreaRef.current);
+      if (!mounted.current) await restore();
+      else {
+        restoreFullscreen.current = restore;
+        setWallFullscreen(true);
       }
-      await videoAreaRef.current.requestFullscreen();
     } catch {
       message.error("无法进入全屏，请重试");
+    } finally {
+      fullscreenBusy.current = false;
     }
   };
+
+  const exitWallFullscreen = useCallback(async () => {
+    if (fullscreenBusy.current || !restoreFullscreen.current) return;
+    fullscreenBusy.current = true;
+    try {
+      await restoreFullscreen.current();
+      restoreFullscreen.current = null;
+      setWallFullscreen(false);
+    } catch {
+      message.error("无法退出全屏，请重试");
+    } finally {
+      fullscreenBusy.current = false;
+    }
+  }, [message]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      void restoreFullscreen.current?.().catch(() => {});
+      restoreFullscreen.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!wallFullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        void exitWallFullscreen();
+      }
+    };
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) void exitWallFullscreen();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, [wallFullscreen, exitWallFullscreen]);
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error("房间加载失败"));
@@ -93,6 +154,7 @@ export default function Wall() {
           />
           <Button
             icon={<FullscreenOutlined />}
+            aria-label="全屏直播墙"
             onClick={() => void enterWallFullscreen()}
             disabled={wallRooms.length === 0}
           ></Button>
@@ -105,13 +167,24 @@ export default function Wall() {
           </Button>
         </Space>
       </Space>
-      <div ref={videoAreaRef} className={styles.videoArea}>
+      <div
+        ref={videoAreaRef}
+        className={`${styles.videoArea} ${wallFullscreen ? styles.fullscreen : ""}`}
+        data-wall-fullscreen={wallFullscreen || undefined}
+      >
         <WallGrid
           rooms={wallRooms}
           grid={grid}
           onFullscreen={setFullscreen}
           onRemove={handleRemove}
         />
+        {wallFullscreen && (
+          <Button
+            className={styles.exitFullscreen}
+            icon={<FullscreenExitOutlined />}
+            onClick={() => void exitWallFullscreen()}
+          ></Button>
+        )}
       </div>
       <Modal
         title="添加房间到直播墙"
@@ -153,6 +226,7 @@ export default function Wall() {
           room={fullscreen}
           titlePrefix="全屏"
           defaultWidth={880}
+          enableHighlights={false}
           onClose={() => setFullscreen(null)}
         />
       ) : null}

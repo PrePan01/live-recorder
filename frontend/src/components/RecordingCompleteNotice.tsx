@@ -70,8 +70,9 @@ export default function RecordingCompleteNotice() {
     <Modal
       open={!!pendingConfirm}
       title="录制完成"
-      closable={false}
-      maskClosable={false}
+    closable={false}
+    maskClosable={false}
+    zIndex={1200}
       footer={null}
       onCancel={() => clearPendingConfirm()}
     >

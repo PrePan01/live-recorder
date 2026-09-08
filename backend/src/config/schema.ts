@@ -30,6 +30,12 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.confirmAfterComplete !== undefined && typeof s.confirmAfterComplete !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'confirmAfterComplete 必须为布尔值');
   }
+  if (s.highlightBufferSeconds !== undefined && (!Number.isInteger(s.highlightBufferSeconds) || s.highlightBufferSeconds < 5 || s.highlightBufferSeconds > 600)) {
+    throw new AppError('CONFIG_INVALID', '精彩时刻缓存时长需为 5 秒至 10 分钟');
+  }
+  if (s.highlightEnabled !== undefined && typeof s.highlightEnabled !== 'boolean') {
+    throw new AppError('CONFIG_INVALID', 'highlightEnabled 必须为布尔值');
+  }
   if (s.theme !== undefined && s.theme !== 'light' && s.theme !== 'dark' && s.theme !== 'system') {
     throw new AppError('CONFIG_INVALID', 'theme 仅支持 light/dark/system');
   }

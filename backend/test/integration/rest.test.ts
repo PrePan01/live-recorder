@@ -175,6 +175,22 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('checks every enabled room through the bulk live-status endpoint', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const enabled = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/301', displayName: '启用' });
+    const disabled = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/302', displayName: '停用', enabled: false });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+
+    const res = await app.inject({ method: 'POST', url: '/api/v1/rooms/check-enabled', headers: { host: '127.0.0.1:43120' } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, checked: 1 });
+    expect(services.rooms.get(enabled.id)!.lastCheckedAt).not.toBeNull();
+    expect(services.rooms.get(disabled.id)!.lastCheckedAt).toBeNull();
+    await app.close();
+  });
+
   it('favorites a room and surfaces activeRecording in room responses', async () => {
     const services = newServices();
     const { app } = buildApp(services);
