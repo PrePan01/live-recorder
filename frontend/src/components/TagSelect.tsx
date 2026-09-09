@@ -56,7 +56,15 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
             <Input placeholder="新标签名" />
           </Form.Item>
           <Form.Item name="color" initialValue={PRESET_COLORS[0]} noStyle>
-            <Select style={{ width: 100 }} options={PRESET_COLORS.map((c) => ({ value: c, label: <AntTag color={c}>{c}</AntTag> }))} />
+            <Select
+              className="lr-tag-color-select"
+              style={{ width: 112 }}
+              popupMatchSelectWidth={false}
+              options={PRESET_COLORS.map((c) => ({
+                value: c,
+                label: <AntTag className="lr-tag-color-option" color={c}>{c}</AntTag>,
+              }))}
+            />
           </Form.Item>
           <Button icon={<PlusOutlined />} loading={creating} onClick={() => void onCreate()} />
         </Space.Compact>

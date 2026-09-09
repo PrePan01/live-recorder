@@ -9,7 +9,6 @@ import {
   Input,
   InputNumber,
   List,
-  Radio,
   Row,
   Select,
   Space,
@@ -42,6 +41,7 @@ import {
   type SelfCheckStatus,
 } from "../../api/service";
 import DirectoryPicker from "../../components/DirectoryPicker";
+import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import PipelineConfigCard from "../../components/PipelineConfigCard";
 import NamingRuleCard from "../../components/NamingRuleCard";
 import OpenListConfigCard from "../../components/OpenListConfigCard";
@@ -377,10 +377,9 @@ export default function SettingsPage() {
                   外观与存储
                 </Typography.Title>
                 <Form.Item label="主题" name="theme">
-                  <Radio.Group
+                  <MemphisRadioGroup
                     options={THEME_OPTIONS}
-                    optionType="button"
-                    buttonStyle="solid"
+                    value={preference}
                     onChange={(e) =>
                       setPreference(e.target.value as ThemePreference)
                     }

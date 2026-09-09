@@ -386,7 +386,7 @@ export default function Rooms() {
     {
       title: "链接",
       dataIndex: "url",
-      width: 220,
+      width: 300,
       ellipsis: true,
       render: (u: string) => (
         <Typography.Link copyable={{ text: u }} href={u} target="_blank">

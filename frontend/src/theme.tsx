@@ -15,24 +15,26 @@ const STORAGE_KEY = 'live-recorder-theme';
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export const baseToken = {
-  colorPrimary: '#2563eb',
-  colorInfo: '#2563eb',
-  colorSuccess: '#16a34a',
-  colorWarning: '#d97706',
-  colorError: '#dc2626',
-  borderRadius: 10,
-  controlHeight: 36,
+  // The component library retains its behavioral primitives, while its visual
+  // language is supplied by the Memphis token layer in index.css.
+  colorPrimary: '#7b61ff',
+  colorInfo: '#2ec4b6',
+  colorSuccess: '#168c72',
+  colorWarning: '#c98a00',
+  colorError: '#d62f62',
+  borderRadius: 0,
+  controlHeight: 38,
   fontSize: 14,
-  wireframe: false,
-  motionDurationMid: '0.25s',
-  motionDurationSlow: '0.35s',
+  wireframe: true,
+  motionDurationMid: '0.28s',
+  motionDurationSlow: '0.4s',
 };
 
 const componentTokens = {
   Card: { paddingLG: 20 },
-  Button: { fontWeight: 600 },
-  Menu: { itemHeight: 44, itemBorderRadius: 8, itemMarginInline: 8 },
-  Table: { headerBg: 'transparent' },
+  Button: { fontWeight: 700, primaryShadow: 'none', defaultShadow: 'none' },
+  Menu: { itemHeight: 46, itemBorderRadius: 0, itemMarginInline: 6 },
+  Table: { headerBg: 'transparent', headerBorderRadius: 0 },
 };
 
 export function initialPreference(): ThemePreference {

@@ -72,7 +72,7 @@ export default function Index({
             room.lastLiveStatus !== "live" || isShowTitle ? "flex" : "none",
         }}
       >
-        <PlatformLogoTag platform={room.platform} isShowName={false} />
+        <PlatformLogoTag platform={room.platform} />
         <span
           style={{
             overflow: "hidden",
@@ -110,7 +110,12 @@ export default function Index({
             title="移除该路？录制不受影响"
             onConfirm={() => onRemove(room)}
           >
-            <Button type="text" size="small" danger icon={<CloseOutlined />} />
+            <Button
+              className={styles.textButton}
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+            />
           </Popconfirm>
         </Space>
       </div>

@@ -97,7 +97,10 @@ export default function AppLayout() {
             overflow: "hidden",
           }}
         >
-          <div className="lr-app-brand">直播录制台</div>
+          <div className="lr-app-brand">
+            <img src="/icon1.png" alt="直播录制台" draggable={false} />
+            <span>直播录制台</span>
+          </div>
           <Menu
             mode="inline"
             selectedKeys={[

@@ -223,7 +223,6 @@ export default function PreviewModal({
       width={width}
       centered
       destroyOnHidden
-      styles={{ container: { padding: "14px 20px" } }}
       onCancel={handleClose}
     >
       <div>
@@ -235,10 +234,7 @@ export default function PreviewModal({
             overflow: "hidden",
           }}
         >
-          <VideoPlayer
-            roomId={room.id}
-            platform={room.platform}
-          />
+          <VideoPlayer roomId={room.id} platform={room.platform} />
           <div
             onMouseDown={onHandleDown}
             title="拖动调整大小"
@@ -266,7 +262,8 @@ export default function PreviewModal({
                 icon={<StopOutlined />}
                 loading={busy && actingAction === "stop"}
               >
-                停止录制（{formatRecordingElapsed(live.activeRecording?.startedAt)}）
+                停止录制（
+                {formatRecordingElapsed(live.activeRecording?.startedAt)}）
               </Button>
             </Popconfirm>
           ) : (
