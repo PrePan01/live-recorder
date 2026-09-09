@@ -45,6 +45,7 @@ export default function History() {
   const rooms = useRoomStore((s) => s.rooms);
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
   const upsertUpload = useUploadStore((s) => s.upsert);
+  const requestTwoFactorPrompt = useUploadStore((s) => s.requestTwoFactorPrompt);
   const [grouped, setGrouped] = useState(false);
   const [roomId, setRoomId] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
@@ -165,6 +166,7 @@ export default function History() {
         // depends on an asynchronous SSE delivery race.
         upsertUpload(retried);
         if ((retried.error ?? '').includes('OpenList 需要 2FA 验证')) {
+          requestTwoFactorPrompt();
           message.info('需要完成 2FA 验证后才能继续上传');
         } else {
           message.success('已触发重试');
@@ -173,7 +175,7 @@ export default function History() {
         message.error(e instanceof ApiError ? describeError(e.code, e.message) : '重试失败');
       }
     },
-    [message, upsertUpload],
+    [message, requestTwoFactorPrompt, upsertUpload],
   );
 
   // #18②：手动上传未自动上传的录制（无上传任务时 History 提供「上传」按钮）。
