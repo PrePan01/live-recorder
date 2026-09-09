@@ -413,6 +413,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // Stable CSV cursor pages and room insight aggregates both filter by room
+    // then walk recording time. These append-only indexes avoid a temporary
+    // sort at 10k+ history rows while preserving existing migration data.
+    version: 20,
+    up: (db) => {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_room_started_id ON recordings(room_id, started_at DESC, id DESC);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_started_id ON recordings(started_at DESC, id DESC);`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

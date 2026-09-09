@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { App, Button, Card, Col, Empty, Input, Popconfirm, Row, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { EyeOutlined, LinkOutlined, ReloadOutlined, StarFilled, StarOutlined, StopOutlined, VideoCameraAddOutlined } from '@ant-design/icons';
 import { useRoomStore } from '../../stores/roomStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { checkEnabledRooms } from '../../api/rooms';
+import { checkEnabledRooms, fetchRoomInsights, type RoomInsight } from '../../api/rooms';
 import { PlatformLogoTag } from '../../components/PlatformLogo';
 import { MonitorStateTag } from '../../components/StatusTags';
 import { formatRelative } from '../../utils/format';
@@ -18,7 +18,7 @@ import { ApiError } from '../../types/error';
 import { describeError } from '../../utils/errorMap';
 import type { Room } from '../../types/room';
 
-function RoomCard({
+const RoomCard = memo(function RoomCard({
   room,
   onWatch,
   onCheck,
@@ -30,6 +30,7 @@ function RoomCard({
   acting,
   recentlyStopped,
   autoRecordEnabled,
+  insight,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -42,6 +43,7 @@ function RoomCard({
   acting?: boolean;
   recentlyStopped?: boolean;
   autoRecordEnabled: boolean;
+  insight?: RoomInsight;
 }) {
   const recording = room.monitorState === 'recording' || room.monitorState === 'reconnecting';
   const onAir = room.lastLiveStatus === 'live';
@@ -83,7 +85,7 @@ function RoomCard({
         <Tag color={autoRecordEnabled ? 'blue' : 'orange'} style={{ marginInlineEnd: 0 }}>
           {autoRecordEnabled ? '自动录' : '未自动录'}
         </Tag>
-        <LivePredictionBadge roomId={room.id} />
+        <LivePredictionBadge insight={insight} />
         {room.tags.length > 0 ? (
           <Space size={[4, 4]} wrap>
             {room.tags.map((t) => (
@@ -102,7 +104,7 @@ function RoomCard({
         />
       </div>
       <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
-        <RoomHealth roomId={room.id} />
+        <RoomHealth insight={insight} />
       </div>
       {room.lastError ? (
         <Typography.Paragraph className="lr-room-card__error" type="danger" style={{ marginBottom: 10, marginTop: 0 }}>
@@ -154,7 +156,7 @@ function RoomCard({
       </div>
     </Card>
   );
-}
+});
 
 export default function Monitor() {
   const { message } = App.useApp();
@@ -170,6 +172,7 @@ export default function Monitor() {
   const [refreshing, setRefreshing] = useState(false);
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
+  const [insights, setInsights] = useState<Record<string, RoomInsight>>({});
 
   useEffect(() => {
     const ids = Object.keys(recentStop);
@@ -187,14 +190,27 @@ export default function Monitor() {
     return () => clearTimeout(timer);
   }, [recentStop]);
 
-  const onStopRoom = (room: Room) => {
+  const onStopRoom = useCallback((room: Room) => {
     setRecentStop((prev) => ({ ...prev, [room.id]: Date.now() }));
     void stopRoomRecording(room.id).catch(() => message.error('停止请求失败'));
-  };
+  }, [message, stopRoomRecording]);
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error('房间列表加载失败'));
   }, [fetchRooms, message]);
+
+  useEffect(() => {
+    const ids = rooms.filter((room) => room.enabled).map((room) => room.id);
+    if (ids.length === 0) {
+      setInsights({});
+      return;
+    }
+    let disposed = false;
+    void fetchRoomInsights(ids)
+      .then((next) => { if (!disposed) setInsights(next); })
+      .catch(() => { if (!disposed) setInsights({}); });
+    return () => { disposed = true; };
+  }, [rooms]);
 
   useEffect(() => {
     if (!settings) void loadSettings();
@@ -220,19 +236,37 @@ export default function Monitor() {
     (r) => r.monitorState === 'recording' || r.monitorState === 'reconnecting',
   ).length;
 
-  const handleWatch = (room: Room) => {
+  const handleWatch = useCallback((room: Room) => {
     if (!openPreview(room.id)) {
       message.warning(describeError('PREVIEW_LIMIT_REACHED'));
       return;
     }
     setWatching(room);
-  };
+  }, [message, openPreview]);
+
+  const onCheckRoom = useCallback((room: Room) => {
+    void checkRoomNow(room.id).catch((e) =>
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '检测请求失败'),
+    );
+  }, [checkRoomNow, message]);
+
+  const onRecordRoom = useCallback((room: Room) => {
+    void startRoomRecording(room.id).catch((e) =>
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制请求失败'),
+    );
+  }, [message, startRoomRecording]);
+
+  const onFavoriteRoom = useCallback((room: Room, favorited: boolean) => {
+    void favoriteRoom(room.id, favorited).catch((e) =>
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
+    );
+  }, [favoriteRoom, message]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
       await checkEnabledRooms();
-      await fetchRooms();
+      await fetchRooms(true);
       message.success('已刷新并完成开播检测');
     } catch {
       message.error('刷新或开播检测失败，请稍后重试');
@@ -383,24 +417,13 @@ export default function Monitor() {
                 acting={actingRoomId === room.id}
                 actingAction={actingRoomId === room.id ? (actingAction ?? undefined) : undefined}
                 onWatch={handleWatch}
-                onCheck={(r) =>
-                  void checkRoomNow(r.id).catch((e) =>
-                    message.error(e instanceof ApiError ? describeError(e.code, e.message) : '检测请求失败'),
-                  )
-                }
+                onCheck={onCheckRoom}
                 onStop={onStopRoom}
                 recentlyStopped={recentStop[room.id] !== undefined}
                 autoRecordEnabled={room.autoRecord ?? settings?.autoRecord ?? true}
-                onRecord={(r) =>
-                  void startRoomRecording(r.id).catch((e) =>
-                    message.error(e instanceof ApiError ? describeError(e.code, e.message) : '录制请求失败'),
-                  )
-                }
-                onFavorite={(r, fav) =>
-                  void favoriteRoom(r.id, fav).catch((e) =>
-                    message.error(e instanceof ApiError ? describeError(e.code, e.message) : '收藏操作失败'),
-                  )
-                }
+                insight={insights[room.id]}
+                onRecord={onRecordRoom}
+                onFavorite={onFavoriteRoom}
                 layout="card"
               />
             </Col>

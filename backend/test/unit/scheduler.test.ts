@@ -41,6 +41,21 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('keeps a due schedule claimed by one platform timer until the other platform consumes it', () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/99', displayName: 'D' });
+    const schedule = services.schedules.create({ roomId: room.id, daysOfWeek: [6], startTime: '10:00', timezone: 'local' });
+    const dueAt = new Date('2026-08-29T10:00:00.000Z').getTime();
+    services.schedules.update(schedule.id, { nextRunAt: new Date(dueAt).toISOString() });
+
+    // In production each platform timer captures its own Date.now(), so these
+    // calls deliberately use different values. The Bilibili timer claims all
+    // due schedules first; it must not discard the Douyin item.
+    const scheduler = services.scheduler as unknown as { dueScheduleChecks(now: number, platform: 'bilibili' | 'douyin'): string[] };
+    expect(scheduler.dueScheduleChecks(dueAt + 1, 'bilibili')).toEqual([]);
+    expect(scheduler.dueScheduleChecks(dueAt + 2, 'douyin')).toEqual([room.id]);
+  });
+
   it('persists adapter display names and emits updated rooms for Bilibili and Douyin (#91)', async () => {
     const { services } = newServices();
     const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/91', displayName: '', autoRecord: false });

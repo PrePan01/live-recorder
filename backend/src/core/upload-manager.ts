@@ -1,4 +1,5 @@
-import { createReadStream, statSync, openSync, readSync, closeSync, existsSync } from 'node:fs';
+import { createReadStream, statSync, existsSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -67,7 +68,6 @@ export const OPENLIST_2FA_REQUIRED = 'OpenList 需要 2FA 验证';
 
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
-  private ensuredCollections = new Set<string>();
   private apiTokens = new Map<string, string | null>();
   private pending2fa = new Set<string>();
 
@@ -352,7 +352,6 @@ export class RealWebDavClient implements WebDavClient {
       const collection = new URL(target.origin);
       collection.pathname = pathname;
       const url = collection.toString().replace(/\/$/, '');
-      if (this.ensuredCollections.has(url)) continue;
       const res = await fetch(url, {
         method: 'MKCOL',
         headers: { Authorization: authorization },
@@ -360,7 +359,6 @@ export class RealWebDavClient implements WebDavClient {
       });
       // 405 是 WebDAV 对“目录已存在”的标准响应；2xx 表示创建成功。
       if (!res.ok && res.status !== 405) throw new Error(`WebDAV MKCOL ${res.status}`);
-      this.ensuredCollections.add(url);
     }
   }
 
@@ -404,7 +402,10 @@ export class RealWebDavClient implements WebDavClient {
     const uploadChunk = async (index: number): Promise<void> => {
       const start = index * chunkSize;
       const end = Math.min(start + chunkSize, size);
-      const chunk = readRange(localPath, start, end);
+      // A task only reaches here after acquiring one of the bounded upload
+      // slots.  Keep range I/O asynchronous so a slow disk cannot stall the
+      // service event loop (and do not preallocate queued chunks).
+      const chunk = await readRange(localPath, start, end);
       const res = await fetch(`${target.root}/api/fs/multipart?action=upload`, {
         method: 'PUT',
         headers: chunkHeaders(index),
@@ -642,6 +643,8 @@ export class UploadManager {
   private pumping = false;
   private repo: UploadRepository;
   private client: WebDavClient;
+  /** 仅恢复触发当前 2FA 挑战的任务，不能把历史失败任务全部唤醒。 */
+  private pending2faJobs = new Set<string>();
 
   constructor(private services: Services, client?: WebDavClient) {
     this.repo = new UploadRepository(services.db);
@@ -668,9 +671,24 @@ export class UploadManager {
     if (!token) return { ok: false, message: 'OpenList 令牌未配置' };
     const target = this.clientTarget(config.serverUrl);
     if (!target) return { ok: false, message: 'OpenList 地址无效' };
-    return this.client.submit2fa
+    const result = this.client.submit2fa
       ? await this.client.submit2fa(target.root, config.username, token, otpCode)
       : { ok: false, message: '当前上传实现不支持 2FA' };
+    if (result.ok) this.resume2faJobs();
+    return result;
+  }
+
+  /** 2FA 成功后，仅恢复触发本次挑战的上传任务。 */
+  private resume2faJobs(): void {
+    const jobIds = [...this.pending2faJobs];
+    this.pending2faJobs.clear();
+    for (const jobId of jobIds) {
+      const job = this.repo.get(jobId);
+      if (!job || job.status !== 'failed' || !job.error?.includes(OPENLIST_2FA_REQUIRED)) continue;
+      this.repo.update(job.id, { status: 'queued', error: null });
+      this.emit(job.id);
+      this.enqueueJob(job.id);
+    }
   }
 
   private clientTarget(serverUrl: string): { root: string } | null {
@@ -736,6 +754,23 @@ export class UploadManager {
   async retry(jobId: string): Promise<UploadJob | null> {
     const job = this.repo.get(jobId);
     if (!job) return null;
+    // A retry cannot satisfy a two-factor challenge. Keep the explicit marker
+    // visible and re-emit it so every caller can immediately open the OTP UI
+    // instead of briefly clearing the error and waiting for a later SSE frame.
+    if (job.error?.includes(OPENLIST_2FA_REQUIRED) && await this.needs2fa()) {
+      this.pending2faJobs.add(jobId);
+      this.emit(jobId);
+      return job;
+    }
+    // Once the real client has learned that this account needs 2FA, avoid a
+    // redundant queued upload; surface the challenge synchronously to retry
+    // callers as well as to the eventual worker path.
+    if (await this.needs2fa()) {
+      this.repo.update(jobId, { status: 'failed', error: OPENLIST_2FA_REQUIRED });
+      const blocked = this.repo.get(jobId);
+      this.emit(jobId);
+      return blocked;
+    }
     if (job.status === 'queued') {
       this.enqueueJob(jobId);
       return this.repo.get(jobId);
@@ -827,12 +862,19 @@ export class UploadManager {
 
     try {
       let lastProgress = -1;
+      let lastPersistAt = Number.NEGATIVE_INFINITY;
       await this.client.put(remotePath, rec.filePath, config.username, token, (pct) => {
         const current = this.repo.get(jobId);
         if (current?.status !== 'running') return;
         const normalized = Math.max(0, Math.min(100, Math.floor(pct)));
         if (normalized === lastProgress) return;
         lastProgress = normalized;
+        const now = this.services.clock.now();
+        // Intermediate progress is best-effort UI feedback. Persisting every
+        // network chunk creates write/SSE pressure under multipart uploads;
+        // terminal state below is always written immediately.
+        if (this.services.mode !== 'fake' && now - lastPersistAt < 500 && normalized < 100) return;
+        lastPersistAt = now;
         this.repo.update(jobId, { progress: normalized });
         this.emit(jobId);
       }, config.serverUrl);
@@ -845,6 +887,7 @@ export class UploadManager {
       // #13：2FA 需要一次性码，重试无意义（没有码必然再 402）。直接失败交 FE 弹窗输入验证码，
       // 避免 5s/15s/45s 退避循环让用户等很久才看到弹窗（PrePan：提示后没有立即弹出）。
       if (message.includes(OPENLIST_2FA_REQUIRED)) {
+        this.pending2faJobs.add(jobId);
         this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
         this.emit(jobId);
         return;
@@ -898,20 +941,20 @@ export class UploadManager {
   }
 }
 
-/** #229 分片上传：同步读取文件 [start,end) 区间字节。 */
-function readRange(filePath: string, start: number, end: number): Buffer {
+/** #229 分片上传：异步读取文件 [start,end) 区间字节。 */
+async function readRange(filePath: string, start: number, end: number): Promise<Buffer> {
   const length = end - start;
-  const fd = openSync(filePath, 'r');
+  const handle = await open(filePath, 'r');
   try {
     const buf = Buffer.alloc(length);
     let offset = 0;
     while (offset < length) {
-      const n = readSync(fd, buf, offset, length - offset, start + offset);
-      if (n <= 0) break;
-      offset += n;
+      const { bytesRead } = await handle.read(buf, offset, length - offset, start + offset);
+      if (bytesRead <= 0) break;
+      offset += bytesRead;
     }
     return buf.subarray(0, offset);
   } finally {
-    closeSync(fd);
+    await handle.close();
   }
 }

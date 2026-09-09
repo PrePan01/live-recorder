@@ -57,7 +57,7 @@ export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }
 
-export interface HighlightBufferStatus { enabled: boolean; availableSeconds: number; maxSeconds: number }
+export interface HighlightBufferStatus { enabled: boolean; availableSeconds: number; maxSeconds: number; accepting: boolean; disabledReason?: 'slow_disk' | 'write_error' }
 
 export async function enableHighlightBuffer(id: string): Promise<HighlightBufferStatus> {
   const { data } = await http.post<{ highlight: HighlightBufferStatus }>(`/rooms/${id}/highlight-buffer`);
@@ -89,6 +89,20 @@ export interface RoomStats {
   lastCheckedAt: string | null;
   lastError: Record<string, unknown> | null;
   byDay: Array<{ date: string; count: number; bytes: number }>;
+}
+
+export interface RoomInsight {
+  totalRecordings: number;
+  totalBytes: number;
+  successRate: number;
+  completed: number;
+  failed: number;
+  prediction: { startAt: string | null; endAt: string | null; confidence: 'high' | 'medium' | 'low' | null; basedOnDays: number; notice: string | null };
+}
+
+export async function fetchRoomInsights(roomIds: string[]): Promise<Record<string, RoomInsight>> {
+  const { data } = await http.post<{ insights: Record<string, RoomInsight> }>('/rooms/insights/batch', { roomIds });
+  return data.insights;
 }
 
 export async function fetchRoomStats(id: string): Promise<RoomStats> {

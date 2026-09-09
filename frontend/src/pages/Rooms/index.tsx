@@ -1,41 +1,83 @@
-import { useEffect, useMemo, useState } from 'react';
-import { App, Alert, Button, Drawer, Form, Input, List, Modal, Popconfirm, Popover, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
-import {PlusOutlined, StarFilled, StarOutlined, ScheduleOutlined, DeleteOutlined} from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
-import { useRoomStore } from '../../stores/roomStore';
-import { useTagStore } from '../../stores/tagStore';
-import { useResizableColumns } from '../../hooks/useResizableColumns';
-import { MonitorStateTag } from '../../components/StatusTags';
-import { PlatformLogoTag } from '../../components/PlatformLogo';
-import TagSelect from '../../components/TagSelect';
-import SchedulePanel from '../../components/SchedulePanel';
-import type { Room } from '../../types/room';
-import { ApiError } from '../../types/error';
-import { describeError } from '../../utils/errorMap';
-import { formatRelative } from '../../utils/format';
+import { useEffect, useMemo, useState } from "react";
+import {
+  App,
+  Alert,
+  Button,
+  Drawer,
+  Form,
+  Input,
+  List,
+  Modal,
+  Popconfirm,
+  Popover,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  PlusOutlined,
+  StarFilled,
+  StarOutlined,
+  ScheduleOutlined,
+  DeleteOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import { useRoomStore } from "../../stores/roomStore";
+import { useTagStore } from "../../stores/tagStore";
+import { useResizableColumns } from "../../hooks/useResizableColumns";
+import { MonitorStateTag } from "../../components/StatusTags";
+import { PlatformLogoTag } from "../../components/PlatformLogo";
+import TagSelect from "../../components/TagSelect";
+import SchedulePanel from "../../components/SchedulePanel";
+import type { Room } from "../../types/room";
+import { ApiError } from "../../types/error";
+import { describeError } from "../../utils/errorMap";
+import { formatRelative } from "../../utils/format";
 
-function guessPlatform(url: string): Room['platform'] | null {
-  if (/live\.douyin\.com|douyin\.com/.test(url)) return 'douyin';
-  if (/live\.bilibili\.com|bilibili\.com/.test(url)) return 'bilibili';
+function guessPlatform(url: string): Room["platform"] | null {
+  if (/live\.douyin\.com|douyin\.com/.test(url)) return "douyin";
+  if (/live\.bilibili\.com|bilibili\.com/.test(url)) return "bilibili";
   return null;
 }
 
-const PLATFORM_LABEL: Record<Room['platform'], string> = { bilibili: 'B站', douyin: '抖音' };
+const PLATFORM_LABEL: Record<Room["platform"], string> = {
+  bilibili: "B站",
+  douyin: "抖音",
+};
 
 export default function Rooms() {
   const { message } = App.useApp();
-  const { rooms, loading, fetchRooms, addRoom, batchAddRooms, editRoom, removeRoom, toggleRoom, favoriteRoom, setAutoRecord, updateRoomTags, checkRoomNow } = useRoomStore();
+  const {
+    rooms,
+    loading,
+    fetchRooms,
+    addRoom,
+    batchAddRooms,
+    editRoom,
+    removeRoom,
+    toggleRoom,
+    favoriteRoom,
+    setAutoRecord,
+    updateRoomTags,
+    checkRoomNow,
+  } = useRoomStore();
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchBusy2, setBatchBusy2] = useState(false);
-  const [batchText, setBatchText] = useState('');
-  const [batchResult, setBatchResult] = useState<Awaited<ReturnType<typeof batchAddRooms>> | null>(null);
+  const [batchText, setBatchText] = useState("");
+  const [batchResult, setBatchResult] = useState<Awaited<
+    ReturnType<typeof batchAddRooms>
+  > | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [form] = Form.useForm<{ url: string; displayName?: string }>();
-  const [keyword, setKeyword] = useState('');
+  const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState<string>();
   const [state, setState] = useState<string>();
   const [favOnly, setFavOnly] = useState<boolean>(false);
@@ -47,17 +89,25 @@ export default function Rooms() {
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
 
   useEffect(() => {
-    void fetchRooms().catch(() => message.error('房间列表加载失败'));
+    void fetchRooms().catch(() => message.error("直播间列表加载失败"));
   }, [fetchRooms, message]);
 
   useEffect(() => {
-    void useTagStore.getState().load().catch(() => undefined);
+    void useTagStore
+      .getState()
+      .load()
+      .catch(() => undefined);
   }, []);
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return rooms.filter((r) => {
-      if (kw && !r.displayName.toLowerCase().includes(kw) && !r.url.toLowerCase().includes(kw)) return false;
+      if (
+        kw &&
+        !r.displayName.toLowerCase().includes(kw) &&
+        !r.url.toLowerCase().includes(kw)
+      )
+        return false;
       if (platform && r.platform !== platform) return false;
       if (state && r.monitorState !== state) return false;
       if (favOnly && !r.favorited) return false;
@@ -66,28 +116,33 @@ export default function Rooms() {
     });
   }, [rooms, keyword, platform, state, favOnly, tagId]);
 
-  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+  const paginated = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const focusId = params.get('focus');
+    const focusId = params.get("focus");
     if (!focusId || rooms.length === 0) return;
     const idx = rooms.findIndex((r) => r.id === focusId);
     if (idx === -1) return;
     const targetPage = Math.floor(idx / pageSize) + 1;
     setPage(targetPage);
     const timer = setTimeout(() => {
-      const el = document.querySelector(`[data-room-id="${focusId}"]`) as HTMLElement | null;
+      const el = document.querySelector(
+        `[data-room-id="${focusId}"]`,
+      ) as HTMLElement | null;
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.style.transition = 'background 1s ease';
-        el.style.background = 'var(--lr-hover-bg)';
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.style.transition = "background 1s ease";
+        el.style.background = "var(--lr-hover-bg)";
         setTimeout(() => {
-          el.style.background = '';
+          el.style.background = "";
         }, 2000);
       }
     }, 400);
-    window.history.replaceState({}, '', '/rooms');
+    window.history.replaceState({}, "", "/rooms");
     return () => clearTimeout(timer);
   }, [rooms, pageSize]);
 
@@ -96,16 +151,20 @@ export default function Rooms() {
   const runBatch = async (fn: (r: Room) => Promise<void>, okMsg: string) => {
     const targets = rooms.filter((r) => selectedKeys.includes(r.id));
     if (targets.length === 0) {
-      message.warning('请先选择要操作的房间');
+      message.warning("请先选择要操作的直播间");
       return;
     }
     setBatchBusy(true);
     try {
       await Promise.all(targets.map((r) => fn(r)));
-      message.success(`${okMsg} ${targets.length} 个房间`);
+      message.success(`${okMsg} ${targets.length} 个直播间`);
       setSelectedKeys([]);
     } catch (e) {
-      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量操作失败');
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "批量操作失败",
+      );
     } finally {
       setBatchBusy(false);
     }
@@ -116,26 +175,26 @@ export default function Rooms() {
       <Button
         size="small"
         disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() =>
-          void runBatch((r) => toggleRoom(r.id, true), '已启用')
-        }
+        onClick={() => void runBatch((r) => toggleRoom(r.id, true), "已启用")}
       >
         批量启用
       </Button>
       <Button
         size="small"
         disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() =>
-          void runBatch((r) => toggleRoom(r.id, false), '已停用')
-        }
+        onClick={() => void runBatch((r) => toggleRoom(r.id, false), "已停用")}
       >
         批量停用
       </Button>
       <Popconfirm
-        title={`确定删除所选 ${selectedKeys.length} 个房间？不可恢复。`}
-        onConfirm={() => void runBatch((r) => removeRoom(r.id), '已删除')}
+        title={`确定删除所选 ${selectedKeys.length} 个直播间？不可恢复。`}
+        onConfirm={() => void runBatch((r) => removeRoom(r.id), "已删除")}
       >
-        <Button size="small" danger disabled={batchBusy || selectedKeys.length === 0}>
+        <Button
+          size="small"
+          danger
+          disabled={batchBusy || selectedKeys.length === 0}
+        >
           批量删除
         </Button>
       </Popconfirm>
@@ -168,7 +227,7 @@ export default function Rooms() {
     }
     const platform = guessPlatform(values.url);
     if (!platform) {
-      message.error('仅支持 B站 / 抖音 直播链接');
+      message.error("仅支持 B站 / 抖音 直播链接");
       return;
     }
     setSubmitting(true);
@@ -178,27 +237,32 @@ export default function Rooms() {
         if (tagIds.length > 0 || editing.tags.length > 0) {
           await updateRoomTags(editing.id, tagIds);
         }
-        message.success('房间已更新');
+        message.success("直播间已更新");
       } else {
         const room = await addRoom({ ...values, platform });
-        message.success('房间已添加，正在识别显示名…');
+        message.success("直播间已添加");
         // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
         void checkRoomNow(room.id).catch(() => undefined);
       }
       setModalOpen(false);
     } catch (e) {
-      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '保存失败');
+      message.error(
+        e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
-  const urlValue = Form.useWatch('url', form);
+  const urlValue = Form.useWatch("url", form);
 
   const submitBatch = async () => {
-    const urls = batchText.split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const urls = batchText
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (urls.length === 0) {
-      message.warning('请粘贴至少一行直播链接');
+      message.warning("请粘贴至少一行直播链接");
       return;
     }
     setBatchBusy2(true);
@@ -206,9 +270,15 @@ export default function Rooms() {
     try {
       const res = await batchAddRooms(urls);
       setBatchResult(res);
-      message.success(`成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`);
+      message.success(
+        `成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`,
+      );
     } catch (e) {
-      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '批量添加失败');
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "批量添加失败",
+      );
     } finally {
       setBatchBusy2(false);
     }
@@ -216,46 +286,74 @@ export default function Rooms() {
 
   const columns: ColumnsType<Room> = [
     {
-      title: '收藏',
-      dataIndex: 'favorited',
+      title: "收藏",
+      dataIndex: "favorited",
       width: 70,
       render: (v: boolean, room) => (
         <Button
           type="text"
           size="small"
-          icon={v ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+          icon={
+            v ? <StarFilled style={{ color: "#faad14" }} /> : <StarOutlined />
+          }
           onClick={() =>
             void favoriteRoom(room.id, !v).catch((e) =>
-              message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'),
+              message.error(
+                e instanceof ApiError
+                  ? describeError(e.code, e.message)
+                  : "操作失败",
+              ),
             )
           }
         />
       ),
     },
-    { title: '平台', dataIndex: 'platform', width: 90, render: (p) => <PlatformLogoTag platform={p} /> },
     {
-      title: '自动录制',
-      dataIndex: 'autoRecord',
+      title: "平台",
+      dataIndex: "platform",
+      width: 90,
+      render: (p) => <PlatformLogoTag platform={p} />,
+    },
+    {
+      title: "自动录制",
+      dataIndex: "autoRecord",
       width: 130,
       render: (v: boolean | null, room) => (
         <Select
           size="small"
-          value={v === null ? 'inherit' : v ? 'on' : 'off'}
+          value={v === null ? "inherit" : v ? "on" : "off"}
           style={{ width: 112 }}
           onChange={(val) =>
-            void setAutoRecord(room.id, val === 'inherit' ? null : val === 'on')
-              .then(() => message.success(val === 'inherit' ? '已恢复跟随全局' : `已${val === 'on' ? '开启' : '关闭'}`))
-              .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'))
+            void setAutoRecord(room.id, val === "inherit" ? null : val === "on")
+              .then(() =>
+                message.success(
+                  val === "inherit"
+                    ? "已恢复跟随全局"
+                    : `已${val === "on" ? "开启" : "关闭"}`,
+                ),
+              )
+              .catch((e) =>
+                message.error(
+                  e instanceof ApiError
+                    ? describeError(e.code, e.message)
+                    : "操作失败",
+                ),
+              )
           }
           options={[
-            { value: 'inherit', label: '跟随全局' },
-            { value: 'on', label: '开启' },
-            { value: 'off', label: '关闭' },
+            { value: "inherit", label: "跟随全局" },
+            { value: "on", label: "开启" },
+            { value: "off", label: "关闭" },
           ]}
         />
       ),
     },
-    { title: '显示名', dataIndex: 'displayName', width: 160, ellipsis: true, render: (v: string, r) => (
+    {
+      title: "显示名",
+      dataIndex: "displayName",
+      width: 160,
+      ellipsis: true,
+      render: (v: string, r) => (
         <Space size={4}>
           <span>{v}</span>
           {r.titleFallbackUsed ? (
@@ -266,12 +364,13 @@ export default function Rooms() {
             </Tooltip>
           ) : null}
         </Space>
-      ) },
+      ),
+    },
     {
-      title: '标签',
-      dataIndex: 'tags',
+      title: "标签",
+      dataIndex: "tags",
       width: 160,
-      render: (ts: Room['tags']) =>
+      render: (ts: Room["tags"]) =>
         ts.length === 0 ? (
           <Typography.Text type="secondary">-</Typography.Text>
         ) : (
@@ -285,8 +384,8 @@ export default function Rooms() {
         ),
     },
     {
-      title: '链接',
-      dataIndex: 'url',
+      title: "链接",
+      dataIndex: "url",
       width: 220,
       ellipsis: true,
       render: (u: string) => (
@@ -295,45 +394,67 @@ export default function Rooms() {
         </Typography.Link>
       ),
     },
-    { title: '状态', dataIndex: 'monitorState', width: 100, render: (s) => <MonitorStateTag state={s} /> },
     {
-      title: '最近错误',
-      dataIndex: 'lastError',
+      title: "状态",
+      dataIndex: "monitorState",
+      width: 100,
+      render: (s) => <MonitorStateTag state={s} />,
+    },
+    {
+      title: "最近错误",
+      dataIndex: "lastError",
       width: 180,
       ellipsis: true,
-      render: (e: Room['lastError']) => (e ? <Typography.Text type="danger">{e.message}</Typography.Text> : '-'),
+      render: (e: Room["lastError"]) =>
+        e ? <Typography.Text type="danger">{e.message}</Typography.Text> : "-",
     },
-    { title: '最近检测', dataIndex: 'lastCheckedAt', width: 110, render: (t) => formatRelative(t) },
     {
-      title: '启用',
-      dataIndex: 'enabled',
+      title: "最近检测",
+      dataIndex: "lastCheckedAt",
+      width: 110,
+      render: (t) => formatRelative(t),
+    },
+    {
+      title: "启用",
+      dataIndex: "enabled",
       width: 70,
       render: (v: boolean, room) => (
         <Switch
           checked={v}
           onChange={(checked) =>
             void toggleRoom(room.id, checked).catch((e) =>
-              message.error(e instanceof ApiError ? describeError(e.code, e.message) : '操作失败'),
+              message.error(
+                e instanceof ApiError
+                  ? describeError(e.code, e.message)
+                  : "操作失败",
+              ),
             )
           }
         />
       ),
     },
     {
-      title: '操作',
+      title: "操作",
       width: 220,
-      fixed: 'right' as const,
+      fixed: "right" as const,
       render: (_, room) => (
         <Space>
           <Button size="small" type="link" onClick={() => openEdit(room)}>
             编辑
           </Button>
-          <Button size="small" type="link" icon={<ScheduleOutlined />} onClick={() => setScheduleRoom(room)}>
+          <Button
+            size="small"
+            type="link"
+            icon={<ScheduleOutlined />}
+            onClick={() => setScheduleRoom(room)}
+          >
             计划
           </Button>
           <Popconfirm
             title="删除后不可恢复，确定？"
-            onConfirm={() => void removeRoom(room.id).catch(() => message.error('删除失败'))}
+            onConfirm={() =>
+              void removeRoom(room.id).catch(() => message.error("删除失败"))
+            }
           >
             <Button size="small" type="link" danger icon={<DeleteOutlined />}>
               删除
@@ -344,7 +465,8 @@ export default function Rooms() {
     },
   ];
 
-  const { columns: resizedColumns, components: resizableComponents } = useResizableColumns<Room>(columns);
+  const { columns: resizedColumns, components: resizableComponents } =
+    useResizableColumns<Room>(columns);
 
   return (
     <div className="lr-page">
@@ -353,7 +475,12 @@ export default function Rooms() {
           直播间管理
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
-          <Button icon={<PlusOutlined />} onClick={() => { setBatchOpen(true); }}>
+          <Button
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setBatchOpen(true);
+            }}
+          >
             批量添加
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
@@ -382,8 +509,8 @@ export default function Rooms() {
             resetPage();
           }}
           options={[
-            { value: 'bilibili', label: 'B站' },
-            { value: 'douyin', label: '抖音' },
+            { value: "bilibili", label: "B站" },
+            { value: "douyin", label: "抖音" },
           ]}
         />
         <Select
@@ -396,13 +523,13 @@ export default function Rooms() {
             resetPage();
           }}
           options={[
-            { value: 'idle', label: '空闲' },
-            { value: 'checking', label: '检测中' },
-            { value: 'recording', label: '录制中' },
-            { value: 'reconnecting', label: '重连中' },
-            { value: 'completed', label: '已完成' },
-            { value: 'failed', label: '失败' },
-            { value: 'disabled', label: '已停用' },
+            { value: "idle", label: "空闲" },
+            { value: "checking", label: "检测中" },
+            { value: "recording", label: "录制中" },
+            { value: "reconnecting", label: "重连中" },
+            { value: "completed", label: "已完成" },
+            { value: "failed", label: "失败" },
+            { value: "disabled", label: "已停用" },
           ]}
         />
         <Select
@@ -417,7 +544,7 @@ export default function Rooms() {
           options={tags.map((t) => ({ value: t.id, label: t.name }))}
         />
         <Button
-          type={favOnly ? 'primary' : 'default'}
+          type={favOnly ? "primary" : "default"}
           icon={<StarOutlined />}
           onClick={() => {
             setFavOnly((v) => !v);
@@ -429,7 +556,11 @@ export default function Rooms() {
         <Popover content={batchActions} trigger="click" placement="bottom">
           <Button disabled={selectedKeys.length === 0}>批量操作</Button>
         </Popover>
-        {selectedKeys.length > 0 ? <Typography.Text type="secondary">已选 {selectedKeys.length} 项</Typography.Text> : null}
+        {selectedKeys.length > 0 ? (
+          <Typography.Text type="secondary">
+            已选 {selectedKeys.length} 项
+          </Typography.Text>
+        ) : null}
       </Space>
       <Table
         rowKey="id"
@@ -439,15 +570,20 @@ export default function Rooms() {
         loading={loading}
         sticky={{ offsetScroll: 8 }}
         scroll={{ x: 1500 }}
-        onRow={(r) => ({ 'data-room-id': r.id } as React.HTMLAttributes<HTMLElement>)}
-        rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+        onRow={(r) =>
+          ({ "data-room-id": r.id }) as React.HTMLAttributes<HTMLElement>
+        }
+        rowSelection={{
+          selectedRowKeys: selectedKeys,
+          onChange: setSelectedKeys,
+        }}
         pagination={{
           current: page,
           pageSize,
           total: filtered.length,
           showSizeChanger: true,
           pageSizeOptions: [10, 20, 50],
-          showTotal: (t) => `共 ${t} 个房间`,
+          showTotal: (t) => `共 ${t} 个直播间`,
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -455,7 +591,7 @@ export default function Rooms() {
         }}
       />
       <Modal
-        title={editing ? '编辑直播间' : '添加直播间'}
+        title={editing ? "编辑直播间" : "添加直播间"}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => void submit()}
@@ -467,13 +603,19 @@ export default function Rooms() {
             name="url"
             label="直播链接"
             rules={[
-              { required: true, message: '请输入直播链接' },
+              { required: true, message: "请输入直播链接" },
               {
                 validator: (_, v: string) =>
-                  !v || guessPlatform(v) ? Promise.resolve() : Promise.reject(new Error('仅支持 B站 / 抖音 直播链接')),
+                  !v || guessPlatform(v)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error("仅支持 B站 / 抖音 直播链接")),
               },
             ]}
-            extra={urlValue && guessPlatform(urlValue) ? `识别为：${PLATFORM_LABEL[guessPlatform(urlValue)!]}` : undefined}
+            extra={
+              urlValue && guessPlatform(urlValue)
+                ? `识别为：${PLATFORM_LABEL[guessPlatform(urlValue)!]}`
+                : undefined
+            }
           >
             <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
           </Form.Item>
@@ -481,7 +623,10 @@ export default function Rooms() {
             <Input placeholder="主播昵称" />
           </Form.Item>
           {editing ? (
-            <Form.Item label="标签" extra="单房间最多 20 个；在弹层内可创建/删除标签">
+            <Form.Item
+              label="标签"
+              extra="单直播间最多 20 个；在弹层内可创建/删除标签"
+            >
               <TagSelect value={tagIds} onChange={setTagIds} />
             </Form.Item>
           ) : null}
@@ -493,7 +638,7 @@ export default function Rooms() {
         onCancel={() => {
           setBatchOpen(false);
           setBatchResult(null);
-          setBatchText('');
+          setBatchText("");
         }}
         onOk={() => void submitBatch()}
         confirmLoading={batchBusy2}
@@ -501,11 +646,14 @@ export default function Rooms() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
-          每行一个直播链接，支持 B站 / 抖音 混排，最多 100 条。自动去重（含已存在房间与批内重复）。
+          每行一个直播链接，支持 B站 / 抖音 混排，最多 100
+          条。自动去重（含已存在直播间与批内重复）。
         </Typography.Paragraph>
         <Input.TextArea
           rows={6}
-          placeholder={'https://live.bilibili.com/...\nhttps://live.douyin.com/...'}
+          placeholder={
+            "https://live.bilibili.com/...\nhttps://live.douyin.com/..."
+          }
           value={batchText}
           onChange={(e) => setBatchText(e.target.value)}
         />
@@ -522,23 +670,33 @@ export default function Rooms() {
                     dataSource={batchResult.failed}
                     renderItem={(f) => (
                       <List.Item>
-                        <Typography.Text type="secondary" ellipsis style={{ maxWidth: 260 }}>
+                        <Typography.Text
+                          type="secondary"
+                          ellipsis
+                          style={{ maxWidth: 260 }}
+                        >
                           {f.url}
                         </Typography.Text>
-                        <Typography.Text type="danger">{f.reason}</Typography.Text>
+                        <Typography.Text type="danger">
+                          {f.reason}
+                        </Typography.Text>
                       </List.Item>
                     )}
                   />
                 }
               />
             ) : (
-              <Alert type="success" showIcon message={`全部成功（${batchResult.succeeded.length} 条）`} />
+              <Alert
+                type="success"
+                showIcon
+                message={`全部成功（${batchResult.succeeded.length} 条）`}
+              />
             )}
           </div>
         ) : null}
       </Modal>
-    <Drawer
-        title={`定时计划：${scheduleRoom?.displayName ?? ''}`}
+      <Drawer
+        title={`定时计划：${scheduleRoom?.displayName ?? ""}`}
         open={scheduleRoom !== null}
         size={720}
         onClose={() => setScheduleRoom(null)}

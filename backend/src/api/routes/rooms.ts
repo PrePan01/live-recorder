@@ -4,12 +4,89 @@ import type { Platform } from '../../types/index.js';
 import type { Services } from '../../core/services.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
+const INSIGHT_CACHE_TTL_MS = 30_000;
+
+export interface RoomInsight {
+  totalRecordings: number;
+  totalBytes: number;
+  successRate: number;
+  completed: number;
+  failed: number;
+  prediction: { startAt: string | null; endAt: string | null; confidence: 'high' | 'medium' | 'low' | null; basedOnDays: number; notice: string | null };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
+}
+
+function hhmm(ms: number): string {
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
 
 export function registerRoomRoutes(app: FastifyInstance, services: Services): void {
   const enrich = (room: import('../../types/index.js').Room) => services.manager.enrichRoom(room);
+  let insightCache: { key: string; expiresAt: number; body: unknown } | undefined;
+  services.events.on((event) => {
+    if (event.type === 'room:updated' || event.type === 'recording:updated') insightCache = undefined;
+  });
 
   app.get('/api/v1/rooms', async (_req, reply) => {
     return reply.send({ rooms: services.rooms.list().map(enrich) });
+  });
+
+  /** Bounded aggregate query for the monitor's health and live prediction cards. */
+  app.post('/api/v1/rooms/insights/batch', async (req, reply) => {
+    const body = (req.body ?? {}) as { roomIds?: unknown };
+    if (!Array.isArray(body.roomIds) || body.roomIds.length === 0 || body.roomIds.length > 100 || body.roomIds.some((id) => typeof id !== 'string' || !id)) {
+      throw new AppError('ROOM_LINK_INVALID', 'roomIds 必须是 1-100 个非空房间 ID');
+    }
+    const roomIds = [...new Set(body.roomIds as string[])];
+    const key = [...roomIds].sort().join(',');
+    const now = services.clock.now();
+    if (insightCache?.key === key && insightCache.expiresAt > now) return reply.send(insightCache.body);
+    const from30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const from7 = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const placeholders = roomIds.map(() => '?').join(',');
+    const rows = services.db.prepare(
+      `SELECT room_id, state, file_size_bytes, started_at, ended_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
+    ).all(...roomIds, from30) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null }>;
+    const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
+    for (const row of rows) grouped.get(row.room_id)?.push(row);
+    const insights: Record<string, RoomInsight> = {};
+    for (const id of roomIds) {
+      const records = grouped.get(id) ?? [];
+      const week = records.filter((record) => record.started_at >= from7);
+      const completed = week.filter((record) => record.state === 'completed').length;
+      const failed = week.filter((record) => record.state === 'failed').length;
+      const byDay = new Map<string, { start: number; end: number }>();
+      for (const record of records) {
+        if (!record.ended_at) continue;
+        const start = Date.parse(record.started_at);
+        const end = Date.parse(record.ended_at);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        const day = record.started_at.slice(0, 10);
+        const current = byDay.get(day);
+        byDay.set(day, current ? { start: Math.min(current.start, start), end: Math.max(current.end, end) } : { start, end });
+      }
+      const days = [...byDay.values()];
+      const basedOnDays = days.length;
+      insights[id] = {
+        totalRecordings: week.length,
+        totalBytes: week.reduce((sum, record) => sum + (record.file_size_bytes ?? 0), 0),
+        completed,
+        failed,
+        successRate: completed + failed === 0 ? 100 : Math.round((completed / (completed + failed)) * 100),
+        prediction: basedOnDays < 3
+          ? { startAt: null, endAt: null, confidence: null, basedOnDays, notice: '近 30 天样本不足，暂无开播预测' }
+          : { startAt: hhmm(median(days.map((day) => day.start))), endAt: hhmm(median(days.map((day) => day.end))), confidence: basedOnDays >= 10 ? 'high' : basedOnDays >= 5 ? 'medium' : 'low', basedOnDays, notice: null },
+      };
+    }
+    const response = { insights, generatedAt: services.clock.iso() };
+    insightCache = { key, expiresAt: now + INSIGHT_CACHE_TTL_MS, body: response };
+    return reply.send(response);
   });
 
   // 监控总览刷新时使用：对所有启用的直播间立即执行一次开播检测。

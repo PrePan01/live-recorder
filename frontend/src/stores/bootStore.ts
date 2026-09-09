@@ -3,6 +3,7 @@ import type { AppInstance, BootState, DiagnosticItem } from '../types/desktop';
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
 import { EndpointResolver } from '../api/endpoint';
+import { setErrorDiagnosticContext } from '../utils/errorDiagnostics';
 
 export const bridge = detectBridge();
 
@@ -41,6 +42,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           });
         }
         EndpointResolver.set(event.instance);
+        setErrorDiagnosticContext({ instanceId: event.instance.instanceId, appVersion: event.instance.apiVersion });
       }
       set({
         state: event.state,
@@ -80,6 +82,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           });
         }
         EndpointResolver.set(event.instance);
+        setErrorDiagnosticContext({ instanceId: event.instance.instanceId, appVersion: event.instance.apiVersion });
       }
       set({
         state: event.state,
@@ -128,6 +131,20 @@ export function subscribeBridgeEvents() {
       if (state === 'existing-instance') {
         setState('existing-instance');
       } else if (state === 'ready' || state === 'degraded') {
+        // Automatic backend recovery can allocate a new local port/instance.
+        // Resolve it before the next SSE/API request so the recovered process
+        // is actually used instead of leaving the UI on a stale endpoint.
+        if (state === 'ready') {
+          void bridge.getAppInstance().then((instance) => {
+            if (!instance) return;
+            if (EndpointResolver.instanceId !== instance.instanceId) {
+              useServiceStore.setState({ status: null, loading: false, error: null });
+            }
+            EndpointResolver.set(instance);
+            setErrorDiagnosticContext({ instanceId: instance.instanceId, appVersion: instance.apiVersion });
+            useBootStore.getState().setInstance(instance);
+          });
+        }
         void useBootStore.getState().refreshDiagnostics();
       } else if (state !== 'booting') {
         // 启动命令的返回值负责完成状态切换，延迟的原生 booting 事件不能倒退已完成的启动。

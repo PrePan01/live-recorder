@@ -12,6 +12,9 @@
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "check:runtime": "node --expose-gc scripts/check-runtime.mjs",
+    "perf:baseline": "npm run build && node scripts/perf-baseline.mjs",
+    "perf:soak": "npm run build && node scripts/soak.mjs",
+    "perf:csv-100k": "npm run build && node scripts/csv-100k.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

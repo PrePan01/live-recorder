@@ -1,4 +1,5 @@
-import { Layout, Menu } from "antd";
+import { Suspense, useEffect, useState, useTransition } from "react";
+import { Layout, Menu, Spin } from "antd";
 import {
   DashboardOutlined,
   HistoryOutlined,
@@ -8,10 +9,12 @@ import {
   BarChartOutlined,
   AppstoreOutlined,
 } from "@ant-design/icons";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import StatusBar from "./StatusBar";
 import { useAppTheme } from "../theme";
 import { useServiceStore } from "../stores/serviceStore.ts";
+import LazyRouteErrorBoundary from "./LazyRouteErrorBoundary";
+import { preloadRoute } from "../routes/preload";
 
 const { Sider, Content, Footer } = Layout;
 
@@ -19,44 +22,62 @@ const ITEMS = [
   {
     key: "/monitor",
     icon: <DashboardOutlined />,
-    label: <NavLink to="/monitor">监控总览</NavLink>,
+    label: (
+      <span onPointerEnter={() => preloadRoute("/monitor")}>监控总览</span>
+    ),
   },
   {
     key: "/rooms",
     icon: <VideoCameraOutlined />,
-    label: <NavLink to="/rooms">直播间</NavLink>,
+    label: <span onPointerEnter={() => preloadRoute("/rooms")}>直播间</span>,
   },
   {
     key: "/history",
     icon: <HistoryOutlined />,
-    label: <NavLink to="/history">录制历史</NavLink>,
+    label: (
+      <span onPointerEnter={() => preloadRoute("/history")}>录制历史</span>
+    ),
   },
   {
     key: "/wall",
     icon: <AppstoreOutlined />,
-    label: <NavLink to="/wall">直播墙</NavLink>,
+    label: <span onPointerEnter={() => preloadRoute("/wall")}>直播墙</span>,
   },
   {
     key: "/stats",
     icon: <BarChartOutlined />,
-    label: <NavLink to="/stats">统计看板</NavLink>,
+    label: <span onPointerEnter={() => preloadRoute("/stats")}>统计看板</span>,
   },
   {
     key: "/recovery",
     icon: <ToolOutlined />,
-    label: <NavLink to="/recovery">自愈工作台</NavLink>,
+    label: (
+      <span onPointerEnter={() => preloadRoute("/recovery")}>自愈工作台</span>
+    ),
   },
   {
     key: "/settings",
     icon: <SettingOutlined />,
-    label: <NavLink to="/settings">设置</NavLink>,
+    label: <span onPointerEnter={() => preloadRoute("/settings")}>设置</span>,
   },
 ];
 
 export default function AppLayout() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  // Keep the clicked item responsive while the next route is rendering. The
+  // route update is intentionally lower priority so a heavy page cannot make
+  // the navigation surface feel stuck.
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
   const { mode } = useAppTheme();
   const status = useServiceStore((s) => s.status);
+
+  useEffect(() => {
+    setPendingPath(null);
+  }, [pathname]);
+
+  const selectedPath = pendingPath ?? pathname;
 
   return (
     <Layout
@@ -80,9 +101,16 @@ export default function AppLayout() {
           <Menu
             mode="inline"
             selectedKeys={[
-              ITEMS.find((i) => pathname.startsWith(i.key))?.key ?? "",
+              ITEMS.find((i) => selectedPath.startsWith(i.key))?.key ?? "",
             ]}
             items={ITEMS}
+            onClick={({ key }) => {
+              const destination = String(key);
+              if (destination !== pathname) {
+                setPendingPath(destination);
+                startTransition(() => navigate(destination));
+              }
+            }}
             style={{ paddingTop: 4 }}
           />
           <div className="lr-app-version">{status?.version ?? ""}</div>
@@ -93,9 +121,44 @@ export default function AppLayout() {
             padding: "clamp(12px, 2vw, 24px)",
             overflow: "auto",
             minWidth: 0,
+            position: "relative",
           }}
         >
-          <Outlet />
+          {/* Keep navigation and the status bar alive when one page fails. */}
+          <LazyRouteErrorBoundary key={pathname}>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    minHeight: 180,
+                    display: "grid",
+                    placeItems: "center",
+                    background: "#fff",
+                  }}
+                ></div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </LazyRouteErrorBoundary>
+          {isPending ? (
+            <div
+              role="status"
+              aria-label="正在加载页面"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "grid",
+                placeItems: "center",
+                background:
+                  "color-mix(in srgb, var(--lr-surface) 0%, transparent)",
+                pointerEvents: "none",
+                zIndex: 2,
+              }}
+            >
+              <Spin />
+            </div>
+          ) : null}
         </Content>
       </Layout>
       <Footer

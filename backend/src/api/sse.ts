@@ -3,6 +3,8 @@ import type { ServerResponse } from 'node:http';
 import type { Services } from '../core/services.js';
 import type { AppEvent } from '../core/events.js';
 
+const SSE_MAX_PENDING_BYTES = 1024 * 1024;
+
 export class SSEBroadcaster {
   private clients = new Set<ServerResponse>();
   private unsubscribe: (() => void) | null = null;
@@ -35,6 +37,14 @@ export class SSEBroadcaster {
     const frame = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
     for (const client of this.clients) {
       try {
+        // Node's writableLength is the unsent application-side backlog. A slow
+        // client must reconnect for an authoritative snapshot instead of
+        // retaining an unbounded event queue in the recorder process.
+        if (client.writableLength + Buffer.byteLength(frame) > SSE_MAX_PENDING_BYTES) {
+          client.end();
+          this.clients.delete(client);
+          continue;
+        }
         client.write(frame);
       } catch {
         this.clients.delete(client);
