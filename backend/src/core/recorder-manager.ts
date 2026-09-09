@@ -108,7 +108,7 @@ export class RecorderManager {
     return this.previewSessions.has(roomId);
   }
 
-  async enableHighlightBuffer(roomId: string): Promise<{ availableSeconds: number; maxSeconds: number }> {
+  async enableHighlightBuffer(roomId: string): Promise<{ availableSeconds: number; maxSeconds: number; accepting: boolean; disabledReason?: string }> {
     if (this.active.has(roomId)) throw new AppError('RECORDING_NOT_AVAILABLE', '实时录制中无需使用精彩时刻', { roomId });
     const room = this.services.rooms.get(roomId);
     if (!room || room.lastLiveStatus !== 'live') throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法启用精彩时刻', { roomId });
@@ -116,6 +116,11 @@ export class RecorderManager {
     if (settings.highlightEnabled === false) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻功能未开启', { roomId });
     if (!settings.recordingDirectory) throw new AppError('DIRECTORY_NOT_WRITABLE', '请先配置录像保存目录', { roomId });
     let buffer = this.highlightBuffers.get(roomId);
+    if (buffer && !buffer.isAccepting) {
+      await buffer.clear();
+      this.highlightBuffers.delete(roomId);
+      buffer = undefined;
+    }
     if (!buffer) {
       const dir = path.join(settings.recordingDirectory, '.live-recorder-cache', roomId);
       buffer = new HighlightBuffer(dir, settings.highlightBufferSeconds ?? 300);
@@ -124,7 +129,7 @@ export class RecorderManager {
     } else {
       buffer.setRetainSeconds(settings.highlightBufferSeconds ?? 300);
     }
-    return { availableSeconds: buffer.availableSeconds(), maxSeconds: settings.highlightBufferSeconds ?? 300 };
+    return { availableSeconds: buffer.availableSeconds(), maxSeconds: settings.highlightBufferSeconds ?? 300, accepting: buffer.isAccepting, ...(buffer.backpressureReason ? { disabledReason: buffer.backpressureReason } : {}) };
   }
 
   async disableHighlightBuffer(roomId: string): Promise<void> {
@@ -145,9 +150,15 @@ export class RecorderManager {
     await Promise.all([...this.highlightBuffers.keys()].map((id) => this.disableHighlightBuffer(id)));
   }
 
-  highlightStatus(roomId: string): { enabled: boolean; availableSeconds: number; maxSeconds: number } {
+  highlightStatus(roomId: string): { enabled: boolean; availableSeconds: number; maxSeconds: number; accepting: boolean; disabledReason?: string } {
     const buffer = this.highlightBuffers.get(roomId);
-    return { enabled: Boolean(buffer), availableSeconds: buffer?.availableSeconds() ?? 0, maxSeconds: this.settings().highlightBufferSeconds ?? 300 };
+    return {
+      enabled: Boolean(buffer),
+      availableSeconds: buffer?.availableSeconds() ?? 0,
+      maxSeconds: this.settings().highlightBufferSeconds ?? 300,
+      accepting: buffer?.isAccepting ?? false,
+      ...(buffer?.backpressureReason ? { disabledReason: buffer.backpressureReason } : {}),
+    };
   }
 
   async exportHighlight(roomId: string, lookbackSeconds: number): Promise<{ recordingId: string; availableSeconds: number }> {
@@ -168,7 +179,13 @@ export class RecorderManager {
     void (async () => {
       try {
         const result = await buffer.exportTo(filePath, Math.min(lookbackSeconds, availableSeconds));
-        const completed = this.services.recordings.update(recording.id, { state: 'completed', filePath, fileSizeBytes: result.bytes, endedAt: this.services.clock.iso() });
+        // A highlight is copied from an already-buffered stream, so export
+        // itself takes only milliseconds.  Persist the clip's media interval
+        // rather than that copy interval; history, stats and CSV all derive
+        // duration from startedAt/endedAt.
+        const endedAt = this.services.clock.iso();
+        const startedAt = new Date(new Date(endedAt).getTime() - result.actualSeconds * 1_000).toISOString();
+        const completed = this.services.recordings.update(recording.id, { state: 'completed', filePath, fileSizeBytes: result.bytes, startedAt, endedAt });
         if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: completed });
         this.finishOrConfirm(recording.id);
       } catch (error) {

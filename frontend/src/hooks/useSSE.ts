@@ -12,6 +12,7 @@ import type { UploadJob } from '../api/openlist';
 import { applyServerEvent } from '../stores/applyEvent';
 import { useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
+import { useRoomStore } from '../stores/roomStore';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
 
@@ -51,10 +52,16 @@ export function useSSE() {
     let es: EventSource | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
+    let applyingSnapshot = false;
+    const buffered: Array<{ type: ServerEvent['type']; raw: string }> = [];
 
     const setConnected = (v: boolean) => useServiceStore.getState().setSseConnected(v);
 
     const handle = (type: ServerEvent['type'], raw: string) => {
+      if (applyingSnapshot) {
+        buffered.push({ type, raw });
+        return;
+      }
       try {
         const payload = JSON.parse(raw) as Record<string, unknown>;
         applyServerEvent(toServerEvent(type, payload));
@@ -70,7 +77,20 @@ export function useSSE() {
       es.onopen = () => {
         attempt = 0;
         setConnected(true);
-        void useServiceStore.getState().fetchStatus();
+        // Apply an authoritative room/status snapshot first. Events arriving
+        // while either request is in flight are retained and then replayed in
+        // receive order, so reconnect cannot regress to an older state.
+        applyingSnapshot = true;
+        void Promise.all([
+          // Reconnect requires an authoritative snapshot; navigation cache
+          // must never hide state that changed while SSE was disconnected.
+          useRoomStore.getState().fetchRooms(true),
+          useServiceStore.getState().fetchStatus(),
+        ]).catch(() => undefined).finally(() => {
+          if (disposed) return;
+          applyingSnapshot = false;
+          for (const event of buffered.splice(0)) handle(event.type, event.raw);
+        });
       };
       for (const name of SSE_EVENT_NAMES) {
         es.addEventListener(name, (msg) => handle(name, (msg as MessageEvent<string>).data));

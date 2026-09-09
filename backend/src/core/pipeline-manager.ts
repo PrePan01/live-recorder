@@ -70,7 +70,11 @@ export class PipelineManager {
   private pump(): void {
     let maxConcurrency = 2;
     try {
-      maxConcurrency = this.pipelineConfig().maxConcurrency;
+      const configured = this.pipelineConfig().maxConcurrency;
+      // ffmpeg/post-processing competes with the recorder for disk and CPU.
+      // Do not interrupt existing runs; simply stop dispatching additional work
+      // while any live recording is active.
+      maxConcurrency = this.services.manager.activeRoomIds().length > 0 ? 1 : configured;
     } catch {
       // 服务关闭中：不再派发新任务。
       return;

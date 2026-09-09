@@ -84,6 +84,8 @@ export interface RecordingListQuery {
   dateTo?: string | undefined;
 }
 
+export interface RecordingExportCursor { startedAt: string; id: string }
+
 export class RecordingRepository {
   constructor(private db: DB) {}
 
@@ -169,6 +171,25 @@ export class RecordingRepository {
     }
     this.attachUploadSnapshots(rows);
     return { items: rows.map(rowToRecording), total, page, pageSize };
+  }
+
+  /** Stable keyset page used by CSV export: no OFFSET scan and no 100-row cap. */
+  listExportPage(query: Omit<RecordingListQuery, 'page' | 'pageSize' | 'groupBy'>, cursor?: RecordingExportCursor, pageSize = 500): Recording[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (query.roomId) { where.push('room_id = ?'); params.push(query.roomId); }
+    if (query.state) { where.push('state = ?'); params.push(query.state); }
+    if (query.sessionId) { where.push('stream_session_id = ?'); params.push(query.sessionId); }
+    if (query.dateFrom) { where.push('started_at >= ?'); params.push(query.dateFrom); }
+    if (query.dateTo) { where.push('started_at <= ?'); params.push(query.dateTo); }
+    if (cursor) {
+      where.push('(started_at < ? OR (started_at = ? AND id < ?))');
+      params.push(cursor.startedAt, cursor.startedAt, cursor.id);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT * FROM recordings ${whereSql} ORDER BY started_at DESC, id DESC LIMIT ?`)
+      .all(...params, Math.min(500, Math.max(1, pageSize))) as RecordingRow[];
+    return rows.map(rowToRecording);
   }
 
   /** 批量附最近上传任务快照（#190）：单次窗口函数查询取每录制最新任务，避免 N+1。 */

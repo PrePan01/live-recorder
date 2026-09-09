@@ -2,8 +2,13 @@ import { spawn } from 'node:child_process';
 import { resolveBin } from '../utils/ffmpeg.js';
 import { mkdir, stat, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { availableParallelism } from 'node:os';
 
 const FFMPEG_TIMEOUT_MS = 180_000;
+
+export function ffmpegThreadCount(logicalCores = availableParallelism()): number {
+  return Math.max(1, Math.min(4, Math.floor(Math.max(1, logicalCores) / 2)));
+}
 
 interface FfmpegResult {
   ok: boolean;
@@ -75,7 +80,7 @@ export async function compressOrRemux(inputPath: string, crf: number | null): Pr
   if (outPath === inputPath) return null;
   const args = crf === null
     ? ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outPath]
-    : ['-y', '-i', inputPath, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', outPath];
+    : ['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', outPath];
   const res = await runFfmpeg(args, 300_000);
   if (!res.ok) return null;
   const st = await stat(outPath).catch(() => null);

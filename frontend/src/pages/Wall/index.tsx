@@ -140,6 +140,18 @@ export default function Wall() {
     setPickedIds([]);
   };
 
+  const handleGridChange = (value: string | number) => {
+    const nextGrid = value as "2x2" | "3x3";
+    // Keep preview bookkeeping in sync with rooms removed when 3x3 is
+    // reduced to 2x2. The grid store performs the actual slot truncation.
+    if (nextGrid === "2x2") {
+      wallRoomIds.slice(getWallCapacity(nextGrid)).forEach((roomId) => {
+        if (roomId) closePreview(roomId);
+      });
+    }
+    setGrid(nextGrid);
+  };
+
   return (
     <div className="lr-page">
       <Space className="lr-page-header" wrap>
@@ -150,7 +162,7 @@ export default function Wall() {
           <Segmented
             options={["2x2", "3x3"]}
             value={grid}
-            onChange={(v) => setGrid(v as "2x2" | "3x3")}
+            onChange={handleGridChange}
           />
           <Button
             icon={<FullscreenOutlined />}

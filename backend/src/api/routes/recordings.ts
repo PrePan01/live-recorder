@@ -1,16 +1,51 @@
 import type { FastifyInstance } from 'fastify';
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { open, stat } from 'node:fs/promises';
 import { dirname, basename, join } from 'node:path';
 import { rename, unlink } from 'node:fs/promises';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import type { RecordingState } from '../../types/index.js';
+import { CsvExportWorkerPool } from '../csv-export-worker-pool.js';
 
 const STATES: RecordingState[] = ['pending', 'recording', 'reconnecting', 'awaiting_confirmation', 'completed', 'failed'];
 
+function parseSingleRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | null {
+  if (!header || header.includes(',')) return null; // Multi-range deliberately falls back to a complete stream.
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return 'invalid';
+  if (!rawStart) {
+    const length = Number(rawEnd);
+    if (!Number.isSafeInteger(length) || length <= 0) return 'invalid';
+    return { start: Math.max(0, size - length), end: size - 1 };
+  }
+  const start = Number(rawStart);
+  const end = rawEnd ? Number(rawEnd) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) return 'invalid';
+  return { start, end: Math.min(end, size - 1) };
+}
+
+async function mediaType(filePath: string): Promise<string> {
+  const file = await open(filePath, 'r');
+  try {
+    const head = Buffer.alloc(12);
+    const { bytesRead } = await file.read(head, 0, head.length, 0);
+    if (bytesRead >= 3 && head.subarray(0, 3).toString('ascii') === 'FLV') return 'video/x-flv';
+    if (bytesRead >= 8 && head.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4';
+    return 'application/octet-stream';
+  } finally {
+    await file.close();
+  }
+}
+
 export function registerRecordingRoutes(app: FastifyInstance, services: Services): void {
+  // A file database can be safely opened read-only by the exporter. In-memory
+  // test databases are connection-local, so retain the direct implementation.
+  const csvWorkers = services.db.name === ':memory:' ? null : new CsvExportWorkerPool(services.db.name);
   app.get('/api/v1/recordings', async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const page = Number(q.page ?? '1');
@@ -76,7 +111,19 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
     if (size <= 0) {
       throw new AppError('RECORDING_FILE_CORRUPTED', '录制文件为空或不可读', { recordingId: id, retryable: false });
     }
-    reply.header('Content-Type', 'video/x-flv');
+    const range = parseSingleRange(req.headers.range, size);
+    if (range === 'invalid') {
+      reply.header('Content-Range', `bytes */${size}`);
+      return reply.status(416).send();
+    }
+    reply.header('Content-Type', await mediaType(rec.filePath));
+    reply.header('Accept-Ranges', 'bytes');
+    if (range) {
+      const length = range.end - range.start + 1;
+      reply.header('Content-Length', String(length));
+      reply.header('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
+      return reply.status(206).send(createReadStream(rec.filePath, range));
+    }
     reply.header('Content-Length', String(size));
     return reply.send(createReadStream(rec.filePath));
   });
@@ -220,30 +267,65 @@ export function registerRecordingRoutes(app: FastifyInstance, services: Services
         });
       }
     }
-    const result = services.recordings.list({
-      page: 1,
-      pageSize: 100,
+    if (q.state && !STATES.includes(q.state as RecordingState)) {
+      throw new AppError('CONFIG_INVALID', 'state 过滤值非法');
+    }
+    const filters = {
       roomId: q.roomId,
       state: q.state as RecordingState | undefined,
       sessionId: q.sessionId,
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
-    });
-    const rows = result.items;
+    };
+    let lease: import('../csv-export-worker-pool.js').CsvExportLease | null = null;
+    if (csvWorkers) {
+      try {
+        lease = await csvWorkers.acquire(filters);
+        await lease.start();
+      } catch (error) {
+        if ((error as Error).message === 'CSV_QUEUE_FULL') {
+          throw new AppError('SERVICE_UNAVAILABLE', 'CSV 导出队列繁忙，请稍后重试', { retryable: true });
+        }
+        throw new AppError('SERVICE_UNAVAILABLE', 'CSV 导出工作线程不可用，请稍后重试', { retryable: true });
+      }
+    }
     const header = ['id', 'roomId', 'platform', 'streamTitle', 'state', 'startedAt', 'endedAt', 'durationSec', 'fileSizeBytes', 'quality', 'integrity'];
-    const lines = rows.map((r) => {
-      const durationSec = r.startedAt && r.endedAt ? Math.max(0, Math.round((new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)) : '';
-      return [
-        r.id, r.roomId, r.platform, r.streamTitle, r.state, r.startedAt, r.endedAt ?? '', String(durationSec), String(r.fileSizeBytes), r.quality ?? '', r.integrity ?? '',
-      ].map(csvCell).join(',');
-    });
-    const totalSeconds = rows.reduce((acc, r) => acc + (r.startedAt && r.endedAt ? Math.max(0, (new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime()) / 1000) : 0), 0);
-    lines.push(`totalRecordings,${rows.length}`);
-    lines.push(`totalDurationSec,${Math.round(totalSeconds)}`);
-    const csv = '\uFEFF' + [header.join(','), ...lines].join('\r\n');
     reply.header('Content-Type', 'text/csv; charset=utf-8');
     reply.header('Content-Disposition', 'attachment; filename="recordings.csv"');
-    return reply.send(csv);
+    // Fastify's async generator finalizer handles normal completion; this
+    // additionally releases a long-lived read transaction as soon as a client
+    // cancels a download before consuming the first/next batch.
+    if (lease) reply.raw.once('close', () => { void lease?.release(); });
+    async function* rows(): AsyncGenerator<string> {
+      let cursor: import('../../db/repositories/recording.repo.js').RecordingExportCursor | undefined;
+      let count = 0;
+      let totalSeconds = 0;
+      try {
+        yield `\uFEFF${header.join(',')}\r\n`;
+        for (;;) {
+          const page = lease
+            ? await lease.next(cursor).then((items) => items.map((r) => ({
+              id: r.id, roomId: r.room_id, platform: r.platform, streamTitle: r.stream_title,
+              state: r.state, startedAt: r.started_at, endedAt: r.ended_at,
+              fileSizeBytes: r.file_size_bytes ?? 0, quality: r.quality ?? undefined, integrity: r.integrity ?? undefined,
+            })))
+            : services.recordings.listExportPage(filters, cursor, 500);
+          if (page.length === 0) break;
+          for (const r of page) {
+            const durationSec = r.startedAt && r.endedAt ? Math.max(0, Math.round((new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)) : 0;
+            totalSeconds += durationSec;
+            count += 1;
+            yield [r.id, r.roomId, r.platform, r.streamTitle, r.state, r.startedAt, r.endedAt ?? '', String(durationSec), String(r.fileSizeBytes), r.quality ?? '', r.integrity ?? ''].map(csvCell).join(',') + '\r\n';
+          }
+          const last = page.at(-1)!;
+          cursor = { startedAt: last.startedAt, id: last.id };
+        }
+        yield `totalRecordings,${count}\r\ntotalDurationSec,${Math.round(totalSeconds)}\r\n`;
+      } finally {
+        await lease?.release();
+      }
+    }
+    return reply.send(Readable.from(rows()));
   });
 }
 

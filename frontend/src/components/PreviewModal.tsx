@@ -75,6 +75,9 @@ export default function PreviewModal({
   const [highlightSeconds, setHighlightSeconds] = useState(30);
   const [highlightMaxSeconds, setHighlightMaxSeconds] = useState(300);
   const [highlightAvailableSeconds, setHighlightAvailableSeconds] = useState(0);
+  const [highlightDisabledReason, setHighlightDisabledReason] = useState<
+    string | null
+  >(null);
   const [exporting, setExporting] = useState(false);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
@@ -94,6 +97,7 @@ export default function PreviewModal({
   useEffect(() => {
     if (!enableHighlights || !highlightEnabled || recording || !onAir) {
       setHighlightAvailableSeconds(0);
+      setHighlightDisabledReason(null);
       return;
     }
     let alive = true;
@@ -103,6 +107,9 @@ export default function PreviewModal({
           if (!alive) return;
           setHighlightMaxSeconds(status.maxSeconds);
           setHighlightAvailableSeconds(status.availableSeconds);
+          setHighlightDisabledReason(
+            status.accepting ? null : (status.disabledReason ?? null),
+          );
         })
         .catch(() => alive && setHighlightAvailableSeconds(0));
     void enableHighlightBuffer(room.id)
@@ -121,16 +128,12 @@ export default function PreviewModal({
     seconds = Math.max(1, Math.min(Math.floor(seconds), highlightMaxSeconds));
     setExporting(true);
     void exportHighlight(room.id, seconds)
-      .then(() =>
-        message.success(
-          `已开始导出前 ${formatSeconds(seconds)}精彩时刻`,
-        ),
-      )
+      .then(() => message.success(`${formatSeconds(seconds)}精彩时刻录制完成`))
       .catch((e) =>
         message.error(
           e instanceof ApiError
             ? describeError(e.code, e.message)
-            : "精彩时刻导出失败",
+            : "精彩时刻录制失败",
         ),
       )
       .finally(() => setExporting(false));
@@ -140,6 +143,7 @@ export default function PreviewModal({
     void clearHighlightBuffer(room.id)
       .then(() => {
         setHighlightAvailableSeconds(0);
+        setHighlightDisabledReason(null);
       })
       .catch(() => message.error("清空精彩时刻缓存失败"));
   };
@@ -318,6 +322,11 @@ export default function PreviewModal({
                         {highlightAvailableSeconds > 0
                           ? `缓存上限 ${formatSeconds(highlightMaxSeconds)}`
                           : "正在接收直播帧，稍后即可保存"}
+                        {highlightDisabledReason === "slow_disk"
+                          ? "；磁盘写入过慢，已暂停继续缓存（已完成片段仍可导出）"
+                          : highlightDisabledReason === "write_error"
+                            ? "；缓存写入失败，已暂停继续缓存（已完成片段仍可导出）"
+                            : ""}
                       </Typography.Text>
                       <div
                         style={{
@@ -379,7 +388,11 @@ export default function PreviewModal({
                             highlightMaxSeconds,
                           )}
                           changeOnWheel
-                          onChange={(v) => setHighlightSeconds(Math.max(1, Math.round(Number(v ?? 30))))}
+                          onChange={(v) =>
+                            setHighlightSeconds(
+                              Math.max(1, Math.round(Number(v ?? 30))),
+                            )
+                          }
                           style={{ flex: 1 }}
                           addonAfter="秒"
                         />

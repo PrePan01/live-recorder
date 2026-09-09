@@ -32,6 +32,7 @@ const PREVIEW_HEADER_MAX = 64 * 1024;
 
 /** 近期尾部滚动缓冲上限：接近实时位置的最近媒体（含近期关键帧），让重开预览可从实时附近起播且时间戳连续。 */
 const PREVIEW_TAIL_MAX = 1024 * 1024;
+const PREVIEW_SOCKET_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 
 /** 是否为视频关键帧 FLV 标签：type=9（视频）且 data[0] 高 4 位 FrameType==1。 */
 function isKeyframeTag(tag: Buffer): boolean {
@@ -215,6 +216,12 @@ export class PreviewManager {
     for (const ws of room.sockets) {
       if (ws.readyState === WebSocket.OPEN) {
         try {
+          // ws buffers writes in user memory. Close slow clients so they can
+          // reconnect from init + keyframe instead of growing without bound.
+          if (ws.bufferedAmount + chunk.length > PREVIEW_SOCKET_MAX_PENDING_BYTES) {
+            ws.close(WS_CLOSE.INTERNAL, 'preview backlog exceeded');
+            continue;
+          }
           ws.send(chunk);
         } catch {
           // 写失败由 close 事件回收

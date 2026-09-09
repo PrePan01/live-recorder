@@ -6,10 +6,12 @@ import type { Services } from './services.js';
 import { dueSchedules } from '../api/routes/schedules.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
+const PLATFORM_CHECK_CONCURRENCY = 2;
 
 export class Scheduler {
   private running = false;
   private handles = new Map<Platform, unknown>();
+  private dueByPlatform = new Map<Platform, string[]>();
   /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
   private checking = new Map<string, Promise<void>>();
 
@@ -56,24 +58,47 @@ export class Scheduler {
   private async runPlatform(platform: Platform): Promise<void> {
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
-    for (const { roomId } of this.dueScheduleChecks(now)) {
-      if (!this.running) return;
-      const room = this.services.rooms.get(roomId);
-      if (!room || room.platform !== platform) continue;
-      if (this.manager.isRoomActive(room.id)) continue;
-      await this.checkRoom(room, { scheduled: true }).catch(() => undefined);
-    }
+    const scheduledRooms = this.dueScheduleChecks(now, platform)
+      .map((roomId) => this.services.rooms.get(roomId))
+      .filter((room): room is Room => room !== null && !this.manager.isRoomActive(room.id));
+    // Due schedules run before ordinary polling, but both retain per-room
+    // de-duplication in checkRoom and a bounded per-platform concurrency.
+    await this.runChecks(scheduledRooms, { scheduled: true });
     const rooms = this.services.rooms.listEnabled().filter((r) => r.platform === platform);
-    for (const room of rooms) {
-      if (!this.running) return;
-      if (this.manager.isRoomActive(room.id)) continue;
-      await this.checkRoom(room).catch(() => undefined);
-    }
+    await this.runChecks(rooms.filter((room) => !this.manager.isRoomActive(room.id)));
+  }
+
+  private async runChecks(rooms: Room[], opts: { scheduled?: boolean } = {}): Promise<void> {
+    let cursor = 0;
+    const worker = async () => {
+      while (this.running) {
+        const room = rooms[cursor++];
+        if (!room) return;
+        await this.checkRoom(room, opts).catch(() => undefined);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) }, worker));
   }
 
   /** 到期计划清单 + 推进 nextRunAt（幂等：重复调用同 now 不会重复触发）。 */
-  private dueScheduleChecks(nowMs: number): Array<{ roomId: string }> {
-    return dueSchedules(this.services, nowMs);
+  private dueScheduleChecks(nowMs: number, platform: Platform): string[] {
+    // Every platform timer may enter this method at a slightly different
+    // millisecond.  Do not key a shared claim to that timestamp: doing so can
+    // replace the other platform's already-claimed queue before it consumes
+    // it.  Claim all due schedules atomically through dueSchedules, append
+    // them to their platform queues, then consume only this platform's queue.
+    // dueSchedules advances nextRunAt, so a later scan cannot duplicate a
+    // successfully claimed item.
+    for (const { roomId } of dueSchedules(this.services, nowMs)) {
+      const room = this.services.rooms.get(roomId);
+      if (!room) continue;
+      const list = this.dueByPlatform.get(room.platform) ?? [];
+      if (!list.includes(roomId)) list.push(roomId);
+      this.dueByPlatform.set(room.platform, list);
+    }
+    const result = this.dueByPlatform.get(platform) ?? [];
+    this.dueByPlatform.delete(platform);
+    return result;
   }
 
   async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {

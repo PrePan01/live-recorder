@@ -7,6 +7,7 @@ export interface SearchQuery {
   tagId?: string;
   page?: number;
   pageSize?: number;
+  signal?: AbortSignal;
 }
 
 export async function searchGlobal(q: SearchQuery): Promise<SearchResult> {
@@ -18,6 +19,6 @@ export async function searchGlobal(q: SearchQuery): Promise<SearchResult> {
     page: q.page,
     pageSize: q.pageSize,
   };
-  const { data } = await http.get<SearchResult>('/search', { params });
+  const { data } = await http.get<SearchResult>('/search', { params, signal: q.signal });
   return data;
 }

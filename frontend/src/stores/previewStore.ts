@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
-const MAX_PREVIEWS = 9;
+/** Preview decoding sessions are deliberately capped independently of recording. */
+const MAX_PREVIEWS = 4;
 
 interface PreviewState {
   openRoomIds: string[];

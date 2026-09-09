@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(19);
+    expect(runMigrations(db)).toBe(20);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(19);
+    expect(currentSchemaVersion(db)).toBe(20);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -47,11 +47,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(17);
+    expect(runMigrations(db)).toBe(18);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(19);
+    expect(currentSchemaVersion(db)).toBe(20);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -80,8 +80,8 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('title_fallback_used');
     expect(roomsCols).not.toContain('upload_enabled');
 
-    // 仅 v16/v17/v18/v19 未应用：补齐缺失列并可用 repo 正常读写（此前 setTitleInfo 会 no such column）
-    expect(runMigrations(db)).toBe(4);
+    // 仅 v16-v20 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
+    expect(runMigrations(db)).toBe(5);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -93,7 +93,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(19);
+    expect(currentSchemaVersion(db)).toBe(20);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -114,8 +114,8 @@ describe('migrations', () => {
     const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsBefore).not.toContain('expected_quality');
 
-    // 仅 v19 未应用：幂等 ensure-column 补上 expected_quality。
-    expect(runMigrations(db)).toBe(1);
+    // v19 补列，v20 追加索引。
+    expect(runMigrations(db)).toBe(2);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -127,7 +127,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(19);
+    expect(currentSchemaVersion(db)).toBe(20);
     expect(runMigrations(db)).toBe(0);
   });
 });

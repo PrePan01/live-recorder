@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 import {
   fetchRecordings,
   openRecordingDirectory,
@@ -6,12 +6,18 @@ import {
   deleteRecording,
   batchDeleteRecordings,
   exportRecordingsCsv,
-} from '../api/recordings';
-import type { Recording, RecordingQuery, UploadSnapshot } from '../types/recording';
+} from "../api/recordings";
+import type {
+  Recording,
+  RecordingQuery,
+  UploadSnapshot,
+} from "../types/recording";
 
 function normalizeRecording(rec: Recording): Recording {
   return { ...rec, integrity: rec.integrity ?? null };
 }
+
+const TERMINAL_STATES = new Set<Recording["state"]>(["completed", "failed"]);
 
 interface RecordingState {
   items: Recording[];
@@ -24,13 +30,21 @@ interface RecordingState {
   openDirectory: (id: string) => Promise<void>;
   renameRecording: (id: string, streamTitle: string) => Promise<void>;
   removeRecording: (id: string) => Promise<void>;
-  batchRemove: (ids: string[]) => Promise<{ deleted: string[]; failed: Array<{ id: string; reason: string }> }>;
+  batchRemove: (
+    ids: string[],
+  ) => Promise<{
+    deleted: string[];
+    failed: Array<{ id: string; reason: string }>;
+  }>;
   exportCsv: () => Promise<string>;
   upsertRecording: (rec: Recording) => void;
   /** 仅由 SSE 写入，用于避免打开历史页时把旧记录误报成刚完成。 */
   upsertRecordingFromEvent: (rec: Recording) => void;
   /** SSE upload:updated 按 recordingId 更新对应录制的上传快照（#191）。 */
-  patchRecordingUpload: (recordingId: string, upload: UploadSnapshot | null) => void;
+  patchRecordingUpload: (
+    recordingId: string,
+    upload: UploadSnapshot | null,
+  ) => void;
   completionNotice: Recording | null;
   /** #220/#221：录制完成进入「待确认保留」态的录制（SSE recording:updated 到 awaiting_confirmation 时设置）。 */
   pendingConfirm: Recording | null;
@@ -52,7 +66,13 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set({ loading: true, query });
     try {
       const res = await fetchRecordings(query);
-      set({ items: res.items.map(normalizeRecording), total: res.total, page: res.page, pageSize: res.pageSize, loading: false });
+      set({
+        items: res.items.map(normalizeRecording),
+        total: res.total,
+        page: res.page,
+        pageSize: res.pageSize,
+        loading: false,
+      });
     } catch {
       set({ loading: false });
     }
@@ -66,12 +86,18 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   },
   async removeRecording(id) {
     await deleteRecording(id);
-    set((s) => ({ items: s.items.filter((r) => r.id !== id), total: Math.max(s.total - 1, 0) }));
+    set((s) => ({
+      items: s.items.filter((r) => r.id !== id),
+      total: Math.max(s.total - 1, 0),
+    }));
   },
   async batchRemove(ids) {
     const res = await batchDeleteRecordings(ids);
     const del = new Set(res.deleted);
-    set((s) => ({ items: s.items.filter((r) => !del.has(r.id)), total: Math.max(s.total - del.size, 0) }));
+    set((s) => ({
+      items: s.items.filter((r) => !del.has(r.id)),
+      total: Math.max(s.total - del.size, 0),
+    }));
     return res;
   },
   async exportCsv() {
@@ -90,21 +116,40 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   upsertRecordingFromEvent(rec) {
     set((s) => {
       const previous = s.items.find((item) => item.id === rec.id);
+      // SSE may reconnect after a slow client was dropped. A delayed progress
+      // frame must never turn a terminal recording back into recording/pending.
+      if (
+        previous &&
+        TERMINAL_STATES.has(previous.state) &&
+        !TERMINAL_STATES.has(rec.state)
+      )
+        return {};
       const idx = s.items.findIndex((item) => item.id === rec.id);
-      const items = idx === -1
-        ? s.items
-        : s.items.map((item, index) => (
-            index === idx
-              ? { ...normalizeRecording(rec), upload: rec.upload ?? item.upload ?? null }
-              : item
-          ));
-      const justCompleted = rec.state === 'completed' && previous?.state !== 'completed';
+      const items =
+        idx === -1
+          ? s.items
+          : s.items.map((item, index) =>
+              index === idx
+                ? {
+                    ...normalizeRecording(rec),
+                    upload: rec.upload ?? item.upload ?? null,
+                  }
+                : item,
+            );
+      const justCompleted =
+        rec.state === "completed" && previous?.state !== "completed";
       // #220/#221：进入「待确认保留」态时提示用户（挂起管线/上传，等用户决策保留/删除）。
-      const justAwaiting = rec.state === 'awaiting_confirmation' && previous?.state !== 'awaiting_confirmation';
+      const justAwaiting =
+        rec.state === "awaiting_confirmation" &&
+        previous?.state !== "awaiting_confirmation";
       return {
         items,
-        completionNotice: justCompleted ? normalizeRecording(rec) : s.completionNotice,
-        pendingConfirm: justAwaiting ? normalizeRecording(rec) : s.pendingConfirm,
+        completionNotice: justCompleted
+          ? normalizeRecording(rec)
+          : s.completionNotice,
+        pendingConfirm: justAwaiting
+          ? normalizeRecording(rec)
+          : s.pendingConfirm,
       };
     });
   },

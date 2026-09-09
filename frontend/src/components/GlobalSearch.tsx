@@ -35,6 +35,8 @@ export default function GlobalSearch() {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<InputRef>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const searchVersion = useRef(0);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -46,6 +48,7 @@ export default function GlobalSearch() {
 
   useEffect(() => {
     if (!open) return;
+    requestRef.current?.abort();
     const kw = q.trim();
     if (kw.length < 1) {
       setResults([]);
@@ -53,23 +56,28 @@ export default function GlobalSearch() {
       return;
     }
     setLoading(true);
+    const version = ++searchVersion.current;
     const timer = setTimeout(() => {
-      void searchGlobal({ q: kw, type, page: 1, pageSize: 10 })
+      const controller = new AbortController();
+      requestRef.current = controller;
+      void searchGlobal({ q: kw, type, page: 1, pageSize: 10, signal: controller.signal })
         .then((res) => {
+          if (version !== searchVersion.current) return;
           setResults(res.items);
           setTotal(res.total);
           setActiveIdx(0);
         })
-        .catch((e) =>
+        .catch((e) => {
+          if (controller.signal.aborted || version !== searchVersion.current) return;
           message.error(
             e instanceof ApiError
               ? describeError(e.code, e.message)
               : "搜索失败",
-          ),
-        )
-        .finally(() => setLoading(false));
+          );
+        })
+        .finally(() => { if (version === searchVersion.current) setLoading(false); });
     }, 250);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); requestRef.current?.abort(); };
   }, [q, type, open, message]);
 
   const goTo = (item: SearchItem) => {

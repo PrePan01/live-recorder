@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react';
 import { Button, Result } from 'antd';
+import { reportError } from '../utils/errorDiagnostics';
 
 interface Props {
   children: ReactNode;
@@ -34,6 +35,7 @@ export default class LazyRouteErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: unknown): void {
     console.error('[LazyRoute] 页面加载或渲染失败', error);
+    reportError('react.page', error);
   }
 
   render(): ReactNode {
@@ -43,11 +45,10 @@ export default class LazyRouteErrorBoundary extends Component<Props, State> {
           status="error"
           title={this.state.isChunkError ? '页面加载失败' : '页面渲染出错'}
           subTitle={this.state.isChunkError ? '本地页面资源加载中断，请重试。' : '页面发生异常，请重试；若持续出现请反馈。'}
-          extra={
-            <Button type="primary" onClick={this.retry}>
-              重试
-            </Button>
-          }
+          extra={[
+            <Button key="retry" type="primary" onClick={this.retry}>重试</Button>,
+            ...(this.state.isChunkError ? [<Button key="reload" onClick={() => window.location.reload()}>重新加载界面</Button>] : []),
+          ]}
         />
       );
     }

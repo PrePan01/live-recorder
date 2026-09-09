@@ -26,7 +26,15 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
   const selected = tags.filter((t) => value.includes(t.id));
 
   const onCreate = async () => {
-    const values = await form.validateFields();
+    // `validateFields` rejects for ordinary field errors.  Handle that local
+    // UI outcome before the asynchronous create flow so it cannot reach the
+    // global unhandled-rejection fatal-error handler.
+    let values: { name: string; color: string };
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
     setCreating(true);
     try {
       const tag = await create({ name: values.name.trim(), color: values.color });
@@ -44,7 +52,7 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
     <div style={{ width: 260 }}>
       <Form form={form} layout="vertical" size="small">
         <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name="name" noStyle rules={[{ required: true, message: '必填' }, { max: 30, message: '≤30 字符' }]}>
+          <Form.Item name="name" noStyle rules={[{ required: true, whitespace: true, message: '必填' }, { max: 30, message: '≤30 字符' }]}>
             <Input placeholder="新标签名" />
           </Form.Item>
           <Form.Item name="color" initialValue={PRESET_COLORS[0]} noStyle>
@@ -57,11 +65,32 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
         {tags.length === 0 ? (
           <Typography.Text type="secondary">暂无标签</Typography.Text>
         ) : (
-          tags.map((t) => (
-            <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <AntTag color={t.color} style={{ marginInlineEnd: 0 }}>
+          tags.map((t) => {
+            const isSelected = value.includes(t.id);
+            const addExisting = () => {
+              if (!isSelected) onChange([...value, t.id]);
+            };
+            return (
+            <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, marginBottom: 4 }}>
+              <AntTag
+                color={t.color}
+                role="button"
+                tabIndex={isSelected ? -1 : 0}
+                aria-label={isSelected ? `${t.name} 已添加` : `添加标签 ${t.name}`}
+                style={{ cursor: isSelected ? 'default' : 'pointer', marginInlineEnd: 0, opacity: isSelected ? 0.6 : 1 }}
+                onClick={addExisting}
+                onKeyDown={(event) => {
+                  if (!isSelected && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    addExisting();
+                  }
+                }}
+              >
                 {t.name}
               </AntTag>
+              <span style={{ color: 'var(--lr-text-secondary)', fontSize: 12, flex: 1 }}>
+                {isSelected ? '已添加' : '点击添加'}
+              </span>
               <Button
                 type="text"
                 size="small"
@@ -78,7 +107,8 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
                 删除
               </Button>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

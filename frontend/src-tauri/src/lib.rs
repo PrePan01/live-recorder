@@ -25,6 +25,17 @@ impl ShellState {
 }
 
 const BOOT_EVENT: &str = "boot:state";
+const WINDOW_VISIBILITY_EVENT: &str = "window:visibility";
+
+fn main_window_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .map(|window| window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false))
+        .unwrap_or(false)
+}
+
+fn emit_window_visibility(app: &AppHandle) {
+    let _ = app.emit(WINDOW_VISIBILITY_EVENT, main_window_visible(app));
+}
 
 /// 唤起主窗口（托盘 open / 单实例恢复 / macOS Dock Reopen 共用）：
 /// macOS 上 show() 不会取消最小化（miniaturize），需 unminimize() 后再 set_focus，
@@ -35,7 +46,11 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+    emit_window_visibility(app);
 }
+
+#[tauri::command]
+fn get_window_visible(app: AppHandle) -> bool { main_window_visible(&app) }
 
 #[tauri::command]
 async fn get_app_instance() -> Option<contract::AppInstance> {
@@ -189,7 +204,11 @@ pub fn run() {
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
+                    emit_window_visibility(&window.app_handle());
                 }
+            }
+            if matches!(event, tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)) {
+                emit_window_visibility(&window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -199,10 +218,28 @@ pub fn run() {
             stop_service,
             restart_service,
             get_diagnostics,
+            get_window_visible,
             quit_app,
         ])
         .setup(|app| {
             setup_tray(app)?;
+            // Observe the child independently of UI health polling. It never
+            // kills a slow process: BackendManager only returns a recovery
+            // result after try_wait confirms the child actually exited.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let state = handle.state::<ShellState>();
+                if let Some(result) = state.backend.recover_if_exited() {
+                    match result {
+                        Ok(instance) => {
+                            state.set_boot(&handle, BootState::Ready);
+                            let _ = handle.emit("boot:recovered", instance);
+                        }
+                        Err(_) => state.set_boot(&handle, BootState::Degraded),
+                    }
+                }
+            });
             // 由前端 start_service 统一启动并接收结果，避免两条启动链交错发出状态事件。
             Ok(())
         })
