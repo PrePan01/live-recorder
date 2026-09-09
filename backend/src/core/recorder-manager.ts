@@ -194,6 +194,12 @@ export class RecorderManager {
     if (!Number.isInteger(lookbackSeconds) || lookbackSeconds < 1 || lookbackSeconds > maxSeconds) throw new AppError('CONFIG_INVALID', `回溯时长需为 1 秒至 ${maxSeconds} 秒`, { roomId });
     const availableSeconds = buffer.availableSeconds();
     if (availableSeconds < 1) throw new AppError('RECORDING_NOT_AVAILABLE', '精彩时刻缓存尚未就绪', { roomId });
+    // The client refreshes this value periodically, so it can be stale when a
+    // cache pauses or is reset. Never silently shorten a requested highlight:
+    // that would make history claim the requested duration for a short file.
+    if (lookbackSeconds > availableSeconds) {
+      throw new AppError('RECORDING_NOT_AVAILABLE', `精彩时刻缓存仅有 ${availableSeconds} 秒，请稍后再试`, { roomId });
+    }
     const settings = this.settings();
     const recording = this.services.recordings.create({ roomId, roomName: room.displayName, platform: room.platform, streamSessionId: null, streamTitle: `精彩时刻｜${room.displayName}`, quality: settings.quality, expectedQuality: settings.quality });
     const base = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, recording.startedAt, settings.recordingFormat, settings.namingRule, settings.quality, room.id);
@@ -201,7 +207,7 @@ export class RecorderManager {
     const filePath = path.join(parsed.dir, `${parsed.name}_highlight_${recording.id}${parsed.ext}`);
     void (async () => {
       try {
-        const result = await buffer.exportTo(filePath, Math.min(lookbackSeconds, availableSeconds));
+        const result = await buffer.exportTo(filePath, lookbackSeconds);
         // A highlight is copied from an already-buffered stream, so export
         // itself takes only milliseconds.  Persist the clip's media interval
         // rather than that copy interval; history, stats and CSV all derive
