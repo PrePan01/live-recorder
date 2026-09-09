@@ -10,7 +10,7 @@ interface ResetSettingsCardProps {
 }
 
 function finishReset() {
-  for (const key of ['lr-wall-store', 'lr-monitor-view', 'lr-fatal-error', 'lr-react-mounted', 'live-recorder-theme']) {
+  for (const key of ['lr-wall-store', 'lr-monitor-view', 'lr-error-diagnostics', 'lr-react-mounted', 'live-recorder-theme']) {
     localStorage.removeItem(key);
   }
   window.location.reload();

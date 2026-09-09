@@ -14,6 +14,7 @@ export interface NativeBridge {
   stopService(): Promise<void>;
   restartService(): Promise<BootEvent>;
   getDiagnostics(): Promise<DiagnosticItem[]>;
+  getWindowVisible(): Promise<boolean>;
   quit(): Promise<void>;
   notify(title: string, body: string): Promise<void>;
   pickDirectory(): Promise<string | null>;
@@ -21,6 +22,7 @@ export interface NativeBridge {
   onBootState(cb: (state: BootState) => void): () => void;
   onTray(cb: (action: 'restart' | 'diagnostics' | 'quit') => void): () => void;
   onExistingInstance(cb: () => void): () => void;
+  onWindowVisibility(cb: (visible: boolean) => void): () => void;
 }
 
 const isTauriRuntime = (): boolean =>
@@ -68,6 +70,10 @@ class TauriBridge implements NativeBridge {
 
   async getDiagnostics(): Promise<DiagnosticItem[]> {
     return this.invoke<DiagnosticItem[]>('get_diagnostics');
+  }
+
+  async getWindowVisible(): Promise<boolean> {
+    try { return await this.invoke<boolean>('get_window_visible'); } catch { return true; }
   }
 
   async quit(): Promise<void> {
@@ -130,6 +136,16 @@ class TauriBridge implements NativeBridge {
       const off = await listen<void>('boot:existing-instance', () => { if (!disposed) cb(); });
       if (disposed) off();
       else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }
+
+  onWindowVisibility(cb: (visible: boolean) => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<boolean>('window:visibility', (e) => { if (!disposed) cb(e.payload); });
+      if (disposed) off(); else unlisten = off;
     });
     return () => { disposed = true; unlisten?.(); };
   }
@@ -206,6 +222,8 @@ class BrowserBridge implements NativeBridge {
     return [{ key: 'service', message: '本地服务未就绪', detail: '浏览器模式需先启动后端服务' }];
   }
 
+  async getWindowVisible(): Promise<boolean> { return !document.hidden; }
+
   async quit(): Promise<void> {
     /* 浏览器模式忽略 */
   }
@@ -241,6 +259,8 @@ class BrowserBridge implements NativeBridge {
   onExistingInstance(_cb: () => void): () => void {
     return () => {};
   }
+
+  onWindowVisibility(_cb: (visible: boolean) => void): () => void { return () => {}; }
 }
 
 declare global {

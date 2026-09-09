@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
+import { SearchWorkerPool } from '../search-worker-pool.js';
 
 export type SearchType = 'room' | 'recording' | 'alert';
 
@@ -39,6 +40,9 @@ export function searchAll(services: Services, opts: { q: string; type?: SearchTy
   const type = opts.type;
   const page = Math.max(1, opts.page ?? 1);
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.pageSize ?? DEFAULT_PAGE_SIZE));
+  // Fetch enough candidates for the requested global page, then sort across
+  // types. Per-type OFFSET pagination cannot produce a stable cross-type page.
+  const candidateSize = Math.min(MAX_PAGE_SIZE * 100, page * pageSize);
   const started = services.clock.now();
 
   const like = `%${q.replace(/[%_]/g, (m) => '\\' + m)}%`;
@@ -47,7 +51,7 @@ export function searchAll(services: Services, opts: { q: string; type?: SearchTy
   const time: TimeFilter = { from: opts.from ?? null, to: opts.to ?? null };
 
   if (!type || type === 'room') {
-    const { items: roomItems, total } = searchRooms(services, q, like, time, opts.tagId, page, pageSize);
+    const { items: roomItems, total } = searchRooms(services, q, like, time, opts.tagId, 1, candidateSize);
     items.push(...roomItems);
     totals.push(['room', total]);
   }
@@ -57,7 +61,7 @@ export function searchAll(services: Services, opts: { q: string; type?: SearchTy
   }
 
   if (!type || type === 'recording') {
-    const { items: recItems, total } = searchRecordings(services, q, like, time, page, pageSize);
+    const { items: recItems, total } = searchRecordings(services, q, like, time, 1, candidateSize);
     items.push(...recItems);
     totals.push(['recording', total]);
   }
@@ -67,16 +71,24 @@ export function searchAll(services: Services, opts: { q: string; type?: SearchTy
   }
 
   if (!type || type === 'alert') {
-    const { items: alertItems, total } = searchAlerts(services, like, page, pageSize);
+    const { items: alertItems, total } = searchAlerts(services, like, 1, candidateSize);
     items.push(...alertItems);
     totals.push(['alert', total]);
   }
 
-  // M5（QA 指派）：type=all 聚合多类型分页后 items 可能超出 pageSize（各类型各自 LIMIT pageSize），
-  // 契约分页上限要求 items 严格 ≤ pageSize；total 仍为跨类型总命中数，不随截断变化。
-  if (items.length > pageSize) items.length = pageSize;
+  // Stable global order required by the UI: most recent match first, followed
+  // by deterministic type/ID tie breakers. This keeps a page from reshuffling
+  // when SQLite happens to return equal timestamps in another order.
+  items.sort((a, b) => {
+    const timeCompare = (b.occurredAt ?? '').localeCompare(a.occurredAt ?? '');
+    if (timeCompare !== 0) return timeCompare;
+    const typeCompare = a.type.localeCompare(b.type);
+    return typeCompare !== 0 ? typeCompare : a.id.localeCompare(b.id);
+  });
+  const offset = (page - 1) * pageSize;
+  const pageItems = items.slice(offset, offset + pageSize);
 
-  return { items, total: sumTotals(totals), page, pageSize, timeout: false };
+  return { items: pageItems, total: sumTotals(totals), page, pageSize, timeout: false };
 }
 
 interface RoomSearchRow {
@@ -198,7 +210,13 @@ function sumTotals(totals: Array<[SearchType, number]>): number {
 }
 
 export function registerSearchRoutes(app: FastifyInstance, services: Services): void {
+  // :memory: databases are private to their creating connection, so tests and
+  // ephemeral development sessions retain the synchronous implementation.
+  const workers = services.db.name === ':memory:' ? null : new SearchWorkerPool(services.db.name);
+  app.addHook('onClose', async () => workers?.close());
   app.get('/api/v1/search', async (req, reply) => {
+    const cancellation = new AbortController();
+    req.raw.once('aborted', () => cancellation.abort());
     const qs = req.query as Record<string, string | undefined>;
     const q = typeof qs.q === 'string' ? qs.q.trim() : '';
     if (q.length < MIN_QUERY || q.length > MAX_QUERY) {
@@ -214,7 +232,7 @@ export function registerSearchRoutes(app: FastifyInstance, services: Services): 
       throw new AppError('SEARCH_QUERY_INVALID', '分页参数非法');
     }
     try {
-      const result = searchAll(services, {
+      const options = {
         q,
         ...(type !== undefined ? { type } : {}),
         ...(qs.tagId !== undefined ? { tagId: qs.tagId } : {}),
@@ -222,7 +240,8 @@ export function registerSearchRoutes(app: FastifyInstance, services: Services): 
         ...(qs.to !== undefined ? { to: qs.to } : {}),
         page,
         pageSize,
-      });
+      };
+      const result = workers ? await workers.search(options, cancellation.signal) : searchAll(services, options);
       return reply.send({
         query: q,
         type: type ?? 'all',
@@ -237,6 +256,7 @@ export function registerSearchRoutes(app: FastifyInstance, services: Services): 
       });
     } catch (err) {
       if (err instanceof AppError) throw err;
+      if ((err as Error).message === 'SEARCH_CANCELLED') return reply;
       throw new AppError('SEARCH_TIMEOUT', '搜索超时，请缩小范围后重试', { retryable: true });
     }
   });

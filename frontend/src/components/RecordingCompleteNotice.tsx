@@ -55,9 +55,6 @@ export default function RecordingCompleteNotice() {
     setConfirming(true);
     try {
       await confirmRecordingKeep(pendingConfirm.id, keep, fileName);
-      message.success(
-        keep ? `已保留：${confirmName}` : `已删除：${confirmName}`,
-      );
     } catch {
       message.error("决策提交失败，请重试");
     } finally {
@@ -70,9 +67,9 @@ export default function RecordingCompleteNotice() {
     <Modal
       open={!!pendingConfirm}
       title="录制完成"
-    closable={false}
-    maskClosable={false}
-    zIndex={1200}
+      closable={false}
+      maskClosable={false}
+      zIndex={1200}
       footer={null}
       onCancel={() => clearPendingConfirm()}
     >

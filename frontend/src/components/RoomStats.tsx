@@ -1,19 +1,19 @@
-import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
 import StatCard from './StatCard';
+import { useDisplayClock, useElementVisible } from '../hooks/useDisplayClock';
 
-function agoValue(iso: string | null): string {
+function agoValue(iso: string | null, now: number): string {
   if (!iso) return '—';
-  const diff = Math.max(dayjs().diff(dayjs(iso), 'second'), 0);
+  const diff = Math.max(dayjs(now).diff(dayjs(iso), 'second'), 0);
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 86400)}d`;
 }
 
-function durationValue(startedAt: string | null): string {
+function durationValue(startedAt: string | null, now: number): string {
   if (!startedAt) return '—';
-  const sec = Math.max(dayjs().diff(dayjs(startedAt), 'second'), 0);
+  const sec = Math.max(dayjs(now).diff(dayjs(startedAt), 'second'), 0);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
@@ -29,19 +29,16 @@ export default function RoomStats({
   startedAt: string | null;
   state: 'recording' | 'reconnecting' | 'checking' | 'failed' | 'idle' | 'completed' | 'disabled';
 }) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const [ref, visible] = useElementVisible<HTMLDivElement>();
+  const now = useDisplayClock(visible);
 
   const recording = state === 'recording' || state === 'reconnecting';
   const tone = state === 'failed' ? 'failed' : recording ? 'recording' : state === 'checking' ? 'checking' : 'default';
 
   return (
-    <div style={{ display: 'flex', gap: 8, width: '100%' }}>
-      <StatCard label="最近检测" value={agoValue(lastCheckedAt)} tone={tone} />
-      <StatCard label="已录制" value={durationValue(startedAt)} tone={recording ? 'recording' : 'default'} />
+    <div ref={ref} style={{ display: 'flex', gap: 8, width: '100%' }}>
+      <StatCard label="最近检测" value={agoValue(lastCheckedAt, now)} tone={tone} />
+      <StatCard label="已录制" value={durationValue(startedAt, now)} tone={recording ? 'recording' : 'default'} />
     </div>
   );
 }

@@ -19,6 +19,7 @@ import { createExport, cancelExport, fetchExports } from '../../api/export';
 import { fetchUploads, retryUpload, uploadRecording } from '../../api/openlist';
 import { uploadPhaseLabel, uploadPhaseText } from '../../utils/uploadProgress';
 import { describeUploadError, classifyUploadError } from '../../utils/uploadError';
+import { useUploadStore } from '../../stores/uploadStore';
 import type { ExportJob } from '../../types/export';
 import type { Recording } from '../../types/recording';
 
@@ -43,6 +44,7 @@ export default function History() {
     useRecordingStore();
   const rooms = useRoomStore((s) => s.rooms);
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
+  const upsertUpload = useUploadStore((s) => s.upsert);
   const [grouped, setGrouped] = useState(false);
   const [roomId, setRoomId] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
@@ -157,13 +159,21 @@ export default function History() {
           message.warning('未找到该录制的上传任务');
           return;
         }
-        await retryUpload(job.id);
-        message.success('已触发重试');
+        const retried = await retryUpload(job.id);
+        // Retry may return an immediate 2FA-required failure. Update the
+        // root-owned upload store directly so its global OTP modal never
+        // depends on an asynchronous SSE delivery race.
+        upsertUpload(retried);
+        if ((retried.error ?? '').includes('OpenList 需要 2FA 验证')) {
+          message.info('需要完成 2FA 验证后才能继续上传');
+        } else {
+          message.success('已触发重试');
+        }
       } catch (e) {
         message.error(e instanceof ApiError ? describeError(e.code, e.message) : '重试失败');
       }
     },
-    [message],
+    [message, upsertUpload],
   );
 
   // #18②：手动上传未自动上传的录制（无上传任务时 History 提供「上传」按钮）。

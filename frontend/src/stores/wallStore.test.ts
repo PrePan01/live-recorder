@@ -31,7 +31,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('uses the selected grid capacity and preserves rooms when switching back', () => {
+it('uses the selected grid capacity and removes off-grid rooms when reducing the layout', () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   useWallStore.setState({ roomIds: ['1', '2', '3', '4'], grid: '2x2' });
   expect(useWallStore.getState().addRooms(['5']).added).toEqual([]);
@@ -43,6 +43,9 @@ it('uses the selected grid capacity and preserves rooms when switching back', ()
   expect(useWallStore.getState().roomIds).toHaveLength(9);
 
   useWallStore.getState().setGrid('2x2');
-  expect(useWallStore.getState().roomIds).toHaveLength(9);
+  expect(useWallStore.getState().roomIds).toEqual(['1', '2', '3', '4']);
   expect(useWallStore.getState().addRooms(['10']).added).toEqual([]);
+
+  useWallStore.getState().setGrid('3x3');
+  expect(useWallStore.getState().roomIds).toEqual(['1', '2', '3', '4']);
 });

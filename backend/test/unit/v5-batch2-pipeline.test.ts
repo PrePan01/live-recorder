@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
-import { UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
+import { OPENLIST_2FA_REQUIRED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
 
 async function waitFor(fn: () => boolean, timeoutMs = 8000): Promise<void> {
   const start = Date.now();
@@ -886,6 +886,31 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     }
   });
 
+  it('put: 远端目录被删除后再次上传会重新执行 MKCOL（避免资源不存在）', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mkcol-recreate-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    let mkcolAttempts = 0;
+    globalThis.fetch = (async (_input, init) => {
+      if (init?.method === 'MKCOL') {
+        mkcolAttempts += 1;
+        return new Response('', { status: 201 });
+      }
+      if (init?.method === 'PUT') return new Response('', { status: 201 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    try {
+      await client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive');
+      // 模拟用户在 DAV 端删除 archive；下一次上传必须重新确认/创建目录。
+      await client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive');
+      expect(mkcolAttempts).toBe(2);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('run(): 配置或文件缺失（rec/config 缺失）→ 明确标「配置或文件缺失」', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
@@ -968,6 +993,63 @@ describe('V5 Batch2 email simplification (#117)', () => {
 });
 
 describe('V5 OpenList 2FA (#13)', () => {
+  it('2FA 验证成功后会自动恢复待验证的上传任务', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa-resume', displayName: '2FA resume' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: '2fa-resume', streamTitle: '2FA' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-2fa-resume-'));
+    const file = path.join(dir, 'x.flv');
+    await writeFile(file, 'dummy');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    let putCalls = 0;
+    let authPending = true;
+    const client: ConstructorParameters<typeof UploadManager>[1] = {
+      put: async () => { putCalls += 1; },
+      needs2fa: () => authPending,
+      submit2fa: async () => { authPending = false; return { ok: true }; },
+    };
+    const uploader = new UploadManager(services, client);
+    const job = uploader.uploadRepo.create({ recordingId: rec.id, idempotencyKey: `rec_${rec.id}` })!;
+    uploader.uploadRepo.update(job.id, { status: 'failed', error: OPENLIST_2FA_REQUIRED });
+    await uploader.retry(job.id);
+    const result = await uploader.submit2fa('123456');
+
+    expect(result.ok).toBe(true);
+    await waitFor(() => putCalls === 1);
+    expect(uploader.uploadRepo.get(job.id)?.status).toBe('ok');
+
+    // 验证成功后再次点击其他历史任务（仍带旧 2FA 错误标记）无需再次验证。
+    uploader.uploadRepo.update(job.id, { status: 'failed', error: OPENLIST_2FA_REQUIRED });
+    await uploader.retry(job.id);
+    await waitFor(() => putCalls === 2);
+    expect(uploader.uploadRepo.get(job.id)?.status).toBe('ok');
+  });
+
+  it('retry keeps a known 2FA challenge visible instead of clearing it into queued', async () => {
+    const services = newServices();
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    await services.secretStore.set('openlist.token', 'tok');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa', displayName: '2FA' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: '2fa', streamTitle: '2FA' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/2fa.flv' });
+    const client: ConstructorParameters<typeof UploadManager>[1] = {
+      put: async () => {},
+      needs2fa: () => true,
+    };
+    const uploader = new UploadManager(services, client);
+    const job = uploader.uploadRepo.create({ recordingId: rec.id, idempotencyKey: `rec_${rec.id}` })!;
+    uploader.uploadRepo.update(job.id, { status: 'failed', error: OPENLIST_2FA_REQUIRED });
+
+    const retried = await uploader.retry(job.id);
+    expect(retried?.status).toBe('failed');
+    expect(retried?.error).toContain(OPENLIST_2FA_REQUIRED);
+  });
+
   it('RealWebDavClient.apiToken: 登录 402 标记 pending2fa，put 抛「需要 2FA 验证」而非回退 405', async () => {
     const orig = globalThis.fetch;
     let loginCalls = 0;
