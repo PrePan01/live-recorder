@@ -71,7 +71,7 @@ export default function OpenList2faModal() {
 
   return (
     <Modal
-      title="OpenList 需要 2FA 验证"
+      title="OpenList 自动上传需要两步验证"
       open={open}
       onCancel={() => setOpen(false)}
       onOk={() => void handleSubmit(code)}

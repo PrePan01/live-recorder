@@ -23,39 +23,15 @@ export default function VideoPlayer({
   platform,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"loading" | "playing" | "ended" | "error" | "paused">(
+  const [state, setState] = useState<"loading" | "playing" | "ended" | "error">(
     "loading",
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
-  const [backgrounded, setBackgrounded] = useState(() => document.hidden);
-
-  useEffect(() => {
-    let desktopVisible = true;
-    let disposed = false;
-    let off = () => {};
-    const update = () => setBackgrounded(document.hidden || !desktopVisible);
-    // The desktop bridge pulls Tauri plugins into the bundle, so only load it
-    // after a player is actually mounted instead of penalising first paint.
-    void import("../bridge/nativeBridge").then(({ detectBridge }) => {
-      if (disposed) return;
-      const bridge = detectBridge();
-      void bridge.getWindowVisible().then((visible) => {
-        if (!disposed) { desktopVisible = visible; update(); }
-      });
-      off = bridge.onWindowVisibility((visible) => { desktopVisible = visible; update(); });
-    });
-    document.addEventListener("visibilitychange", update);
-    return () => { disposed = true; off(); document.removeEventListener("visibilitychange", update); };
-  }, []);
 
   useEffect(() => {
     setState("loading");
     setErrorMsg("");
-    if (backgrounded) {
-      setState("paused");
-      return;
-    }
     if (!mpegts.isSupported()) {
       setState("error");
       setErrorMsg("当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看");
@@ -158,7 +134,7 @@ export default function VideoPlayer({
       if (watchdogTimer) clearInterval(watchdogTimer);
       destroyPlayer();
     };
-  }, [roomId, platform, reloadToken, backgrounded]);
+  }, [roomId, platform, reloadToken]);
 
   return (
     <div
@@ -194,11 +170,6 @@ export default function VideoPlayer({
           <Alert type="info" showIcon message="本场录制已结束" />
         </div>
       )}
-      {state === "paused" && (
-        <div style={{ padding: 24 }}>
-          <Alert type="info" showIcon message="预览已在后台暂停" description="回到应用后会自动继续播放；录制和检测仍在运行。" />
-        </div>
-      )}
       <video
         ref={videoRef}
         controls
@@ -211,7 +182,7 @@ export default function VideoPlayer({
         style={{
           width: "100%",
           aspectRatio: "16 / 9",
-          display: state === "error" || state === "ended" || state === "paused" ? "none" : "block",
+          display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />
     </div>
