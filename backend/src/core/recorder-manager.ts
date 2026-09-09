@@ -1,4 +1,6 @@
+import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
+import { once } from 'node:events';
 import path from 'node:path';
 import { AppError } from '../types/error.js';
 import type { AppSettings, ErrorObject, Room } from '../types/index.js';
@@ -6,6 +8,7 @@ import { recordingFilePath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
 import { remuxFlvToMp4 } from '../recorder/remux.js';
 import type { RecordingEvent } from '../recorder/engine.js';
+import { FlvTimestampNormalizer } from '../recorder/stream-recorder.js';
 import { HighlightBuffer } from '../recorder/highlight-buffer.js';
 import type { Notifier } from './notifier.js';
 import type { Services } from './services.js';
@@ -16,10 +19,14 @@ export interface PreviewSink {
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void;
   /** 新录制/新分段开始时清空该房间预览头缓冲，确保下一段流的 FLV 头被重新捕获。 */
   resetRoom(roomId: string): void;
+  /** 获取可从关键帧开始写入录制文件的预览数据，不中断已连接的预览客户端。 */
+  recordingBootstrap?(roomId: string): Buffer | null;
 }
 
 /** 录制完成「询问是否保留」待确认超时（#220）：超时未决策默认保留（PM 方案 10 分钟）。 */
 export const KEEP_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+/** 共享录制写盘不得反压预览流；达到上限时停止该录制而非卡住观看。 */
+const MAX_SHARED_RECORDING_PENDING_BYTES = 8 * 1024 * 1024;
 
 interface ActiveSession {
   recordingId: string;
@@ -38,7 +45,19 @@ interface ActiveSession {
 interface PreviewSession {
   engine: import('../recorder/engine.js').RecordingEngine;
   done: Promise<void>;
+  recording: SharedPreviewRecording | null;
+  /** 仅供没有可复用 bootstrap 时走旧交接路径。 */
   transitioningToRecording: boolean;
+}
+
+interface SharedPreviewRecording {
+  session: ActiveSession;
+  writer: WriteStream;
+  normalizer: FlvTimestampNormalizer;
+  pendingWrites: Buffer[];
+  pendingWriteBytes: number;
+  writePump: Promise<void> | null;
+  writeError: Error | null;
 }
 
 export class RecorderManager {
@@ -126,6 +145,10 @@ export class RecorderManager {
       buffer = new HighlightBuffer(dir, settings.highlightBufferSeconds ?? 300);
       await buffer.start();
       this.highlightBuffers.set(roomId, buffer);
+      // 共享预览流在停止录制后不会重新发送 FLV 文件头。用预览缓存的初始化段和
+      // 关键帧播种精彩时刻缓存，否则新缓存会永远等待一个不会再出现的文件头。
+      const bootstrap = this.preview?.recordingBootstrap?.(roomId);
+      if (bootstrap) buffer.append(bootstrap);
     } else {
       buffer.setRetainSeconds(settings.highlightBufferSeconds ?? 300);
     }
@@ -217,6 +240,7 @@ export class RecorderManager {
       const session: PreviewSession = {
         engine,
         done: Promise.resolve(),
+        recording: null,
         transitioningToRecording: false,
       };
       this.previewSessions.set(roomId, session);
@@ -225,6 +249,17 @@ export class RecorderManager {
           const input = { url: stream.url, format: stream.format, ...(stream.headers ? { headers: stream.headers } : {}) };
           for await (const event of engine.start(input, null)) {
             if (event.type === 'data') {
+              const sharedRecording = session.recording;
+              if (sharedRecording) {
+                try {
+                  await this.appendSharedPreviewRecording(sharedRecording, event.chunk);
+                } catch (error) {
+                  session.recording = null;
+                  sharedRecording.writer.destroy();
+                  const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: sharedRecording.session.recordingId });
+                  await this.failRecording(room, sharedRecording.session.recordingId, err.toObject(), 'recorder', true);
+                }
+              }
               if (this.settings().highlightEnabled !== false) this.highlightBuffers.get(roomId)?.append(event.chunk);
               this.preview?.broadcastFrame(roomId, event.chunk);
             }
@@ -235,12 +270,23 @@ export class RecorderManager {
         } finally {
           // 只允许当前会话清理自己，避免旧拉流的 finally 误删后来创建的新会话。
           if (this.previewSessions.get(roomId) === session) this.previewSessions.delete(roomId);
-          if (session.transitioningToRecording) {
-            // 录制会建立一条全新的 FLV 时间线，前端需重连并重建 MSE。
-            this.preview?.closeRoom(roomId, 1012);
-          } else {
-            this.preview?.closeRoom(roomId, 4004, 'stream_lost');
+          const sharedRecording = session.recording;
+          if (sharedRecording) {
+            session.recording = null;
+            try {
+              await this.closeSharedPreviewRecording(sharedRecording);
+              await this.completeRecording(room, sharedRecording.session.recordingId, sharedRecording.session.size, 'stream_lost');
+            } catch (error) {
+              sharedRecording.writer.destroy();
+              const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: sharedRecording.session.recordingId });
+              await this.failRecording(room, sharedRecording.session.recordingId, err.toObject(), 'recorder');
+            }
           }
+          this.preview?.closeRoom(
+            roomId,
+            session.transitioningToRecording ? 1012 : 4004,
+            session.transitioningToRecording ? undefined : 'stream_lost',
+          );
         }
       })();
     } catch {
@@ -254,11 +300,144 @@ export class RecorderManager {
     if (!session) return;
     if (transitioningToRecording) session.transitioningToRecording = true;
     await session.engine.stop().catch(() => undefined);
-    // 旧拉流完全退出之后才能启动录制，否则两套 FLV 数据会交错写入同一个预览连接。
     await session.done.catch(() => undefined);
     // WebSocket 可能因 mpegts.js 的短暂重连而一度变成“最后一个客户端断开”。
     // 不能在这里清理精彩时刻缓存，否则播放器重连成功后缓存已丢失且前端不会重新启用。
     // 普通观看窗口卸载、关闭总开关、开始实时录制和服务重置会显式清理它。
+  }
+
+  private appendSharedPreviewRecording(recording: SharedPreviewRecording, chunk: Buffer): void {
+    if (recording.writeError) throw recording.writeError;
+    // FlvTimestampNormalizer 会原地改写时间戳；写盘必须处理副本，不能污染仍要
+    // 广播给 mpegts 的原始预览帧，否则预览时间轴会在开始录制时跳回 0。
+    for (const part of recording.normalizer.push(Buffer.from(chunk))) {
+      if (recording.pendingWriteBytes + part.length > MAX_SHARED_RECORDING_PENDING_BYTES) {
+        throw new Error('录制磁盘写入过慢');
+      }
+      recording.session.size += part.length;
+      recording.pendingWrites.push(part);
+      recording.pendingWriteBytes += part.length;
+    }
+    this.startSharedWritePump(recording);
+  }
+
+  private startSharedWritePump(recording: SharedPreviewRecording): void {
+    if (recording.writePump || recording.writeError) return;
+    recording.writePump = (async () => {
+      while (recording.pendingWrites.length > 0) {
+        const part = recording.pendingWrites.shift()!;
+        if (!recording.writer.write(part)) await once(recording.writer, 'drain');
+        recording.pendingWriteBytes -= part.length;
+      }
+    })().catch((error) => {
+      recording.writeError = error instanceof Error ? error : new Error('录制文件写入失败');
+    }).finally(() => {
+      recording.writePump = null;
+      if (recording.pendingWrites.length > 0 && !recording.writeError) {
+        this.startSharedWritePump(recording);
+      }
+    });
+  }
+
+  private async closeSharedPreviewRecording(recording: SharedPreviewRecording): Promise<void> {
+    if (recording.writeError) throw recording.writeError;
+    const remaining = recording.normalizer.remaining();
+    if (remaining.length > 0) {
+      if (recording.pendingWriteBytes + remaining.length > MAX_SHARED_RECORDING_PENDING_BYTES) {
+        throw new Error('录制磁盘写入过慢');
+      }
+      recording.session.size += remaining.length;
+      recording.pendingWrites.push(remaining);
+      recording.pendingWriteBytes += remaining.length;
+    }
+    this.startSharedWritePump(recording);
+    while (recording.writePump) await recording.writePump;
+    if (recording.writeError) throw recording.writeError;
+    await new Promise<void>((resolve, reject) => {
+      recording.writer.once('error', reject);
+      recording.writer.end(() => resolve());
+    });
+  }
+
+  /**
+   * 观看中的房间开始录制时复用当前上游流：只新增文件写入器，绝不关闭预览 WebSocket。
+   * 返回 false 表示尚未积累足够的 FLV 初始化段/关键帧，调用方回退到既有录制路径。
+   */
+  private async startSharedPreviewRecording(
+    room: Room,
+    status: { streamSessionId?: string; streamTitle?: string },
+    actualQuality: string,
+    settings: AppSettings,
+  ): Promise<boolean> {
+    const previewSession = this.previewSessions.get(room.id);
+    const bootstrap = this.preview?.recordingBootstrap?.(room.id);
+    // 共享写入器目前复用 FLV 标签及其时间戳归零逻辑；非 FLV 流沿用原有独立录制路径。
+    if (!previewSession || previewSession.recording || !bootstrap || bootstrap.subarray(0, 3).toString() !== 'FLV') return false;
+
+    const recording = this.services.recordings.create({
+      roomId: room.id,
+      roomName: room.displayName,
+      platform: room.platform,
+      streamSessionId: status.streamSessionId ?? null,
+      streamTitle: status.streamTitle ?? room.displayName,
+      quality: actualQuality,
+      expectedQuality: settings.quality,
+    });
+    const filePath = recordingFilePath(
+      settings.recordingDirectory,
+      room.platform,
+      room.displayName || room.id,
+      recording.startedAt,
+      settings.recordingFormat,
+      settings.namingRule,
+      actualQuality,
+      room.id,
+    );
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const writer = createWriteStream(filePath);
+    const session: ActiveSession = {
+      recordingId: recording.id,
+      roomId: room.id,
+      streamSessionId: status.streamSessionId ?? null,
+      stopRequested: false,
+      size: 0,
+      startedAt: recording.startedAt,
+      engine: null,
+    };
+    let resolveDone!: () => void;
+    session.done = new Promise<void>((resolve) => { resolveDone = resolve; });
+    session.resolveDone = resolveDone;
+    const sharedRecording: SharedPreviewRecording = {
+      session,
+      writer,
+      // 预览流的时间戳从打开观看起计算；录制文件须在本次开始处重新归零。
+      normalizer: new FlvTimestampNormalizer(true),
+      pendingWrites: [],
+      pendingWriteBytes: 0,
+      writePump: null,
+      writeError: null,
+    };
+
+    try {
+      this.appendSharedPreviewRecording(sharedRecording, bootstrap);
+    } catch (error) {
+      writer.destroy();
+      await unlink(filePath).catch(() => undefined);
+      const err = new AppError('RECORDING_START_FAILED', `录制文件初始化失败: ${(error as Error).message}`, { roomId: room.id, recordingId: recording.id });
+      const failed = this.services.recordings.update(recording.id, { state: 'failed', endedAt: this.services.clock.iso(), failureReason: err.toObject() });
+      this.services.events.emit({ type: 'recording:updated', data: failed });
+      throw err;
+    }
+
+    previewSession.recording = sharedRecording;
+    this.active.set(room.id, session);
+    this.services.recordings.update(recording.id, { state: 'recording', filePath });
+    this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+    this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
+    this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recording.id)! });
+    this.emitServiceStatus();
+    await this.notifier.notify('recording_started', room.id, { title: room.displayName });
+    return true;
   }
 
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
@@ -298,9 +477,11 @@ export class RecorderManager {
 
     const cookie = await this.services.platformCookie(room.platform);
     const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
+    // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
+    if (await this.startSharedPreviewRecording(room, status, stream.actualQuality, settings)) return;
     this.previewTransitions.add(room.id);
     try {
-      // “仅预览”与“录制+预览”不能同时向一个房间广播。先完成旧流交接，旧 WS 会重连到录制流。
+      // 无观看预览时维持原有独立录制路径。
       await this.stopPreviewStream(room.id, true);
       const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       const recording = this.services.recordings.create({
@@ -441,6 +622,21 @@ export class RecorderManager {
     const session = this.active.get(roomId);
     if (!session) return;
     session.stopRequested = true;
+    const previewSession = this.previewSessions.get(roomId);
+    const sharedRecording = previewSession?.recording;
+    if (previewSession && sharedRecording?.session === session) {
+      previewSession.recording = null;
+      const room = this.services.rooms.get(roomId)!;
+      try {
+        await this.closeSharedPreviewRecording(sharedRecording);
+        await this.completeRecording(room, session.recordingId, session.size, 'ended', true);
+      } catch (error) {
+        sharedRecording.writer.destroy();
+        const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: session.recordingId });
+        await this.failRecording(room, session.recordingId, err.toObject(), 'recorder', true);
+      }
+      return;
+    }
     await session.engine?.stop();
     await session.done;
   }
@@ -494,7 +690,7 @@ export class RecorderManager {
     }
   }
 
-  private async completeRecording(room: Room, recordingId: string, size: number, endReason: 'ended' | 'stream_lost'): Promise<void> {
+  private async completeRecording(room: Room, recordingId: string, size: number, endReason: 'ended' | 'stream_lost', preservePreview = false): Promise<void> {
     // 0 字节录制（流连接后无数据/立即关闭）应标 failed 而非 completed 空文件（QA #165 边界）。
     if (size <= 0) {
       const rec = this.services.recordings.get(recordingId);
@@ -502,7 +698,7 @@ export class RecorderManager {
         await unlink(rec.filePath).catch(() => undefined);
       }
       const err = new AppError('RECORDING_EMPTY', '录制文件为空（未获取到流数据）', { roomId: room.id, recordingId, retryable: true });
-      await this.failRecording(room, recordingId, err.toObject(), 'recorder');
+      await this.failRecording(room, recordingId, err.toObject(), 'recorder', preservePreview);
       return;
     }
     const session = this.active.get(room.id);
@@ -511,7 +707,7 @@ export class RecorderManager {
       endedAt: this.services.clock.iso(),
       fileSizeBytes: size,
     });
-    this.preview?.closeRoom(room.id, 1000, endReason);
+    if (!preservePreview) this.preview?.closeRoom(room.id, 1000, endReason);
     this.active.delete(room.id);
     this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -656,14 +852,14 @@ export class RecorderManager {
     })().finally(() => { this.backgroundTasks -= 1; });
   }
 
-  private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string): Promise<void> {
+  private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string, preservePreview = false): Promise<void> {
     const session = this.active.get(room.id);
     const rec = this.services.recordings.update(recordingId, {
       state: 'failed',
       endedAt: this.services.clock.iso(),
       failureReason: err,
     });
-    this.preview?.closeRoom(room.id, 4004, 'stream_lost');
+    if (!preservePreview) this.preview?.closeRoom(room.id, 4004, 'stream_lost');
     this.active.delete(room.id);
     this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });

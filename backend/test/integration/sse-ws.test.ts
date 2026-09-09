@@ -207,7 +207,7 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
-  it('reconnects onto a clean FLV stream when recording starts from preview modal', async () => {
+  it('keeps the preview WebSocket open when recording starts and stops from preview modal', async () => {
     const step = <T>(name: string, promise: Promise<T>) => Promise.race<T>([
       promise,
       new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`handoff step timed out: ${name}`)), 2_000)),
@@ -217,26 +217,28 @@ describe('WebSocket preview', () => {
     server.services.rooms.setLiveStatus(room.id, 'live');
 
     const before = connect(server.url, room.id);
+    const firstPreviewFrame = new Promise<Buffer>((resolve) =>
+      before.ws.once('message', (data: Buffer) => resolve(Buffer.from(data))),
+    );
     await step('before open', before.opened);
     for (let i = 0; i < 20 && !server.services.manager.isPreviewStreaming(room.id); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+    await step('first preview frame', firstPreviewFrame);
+    expect((server.preview as typeof server.preview & { recordingBootstrap: (roomId: string) => Buffer | null }).recordingBootstrap(room.id)).not.toBeNull();
     await step('start recording', server.services.manager.maybeStartRecording(room, { streamSessionId: 's151', streamTitle: 'handoff' }, { manual: true }));
 
-    // 旧 preview-only 时间线必须明确关闭；前端据此销毁旧 MSE，而非把新 FLV header 接到旧流后面。
-    expect(await step('before close', before.closed)).toBe(1012);
-    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(false);
+    // 录制文件复用现有上游预览流；观看中的 WebSocket 不应关闭或重连。
+    expect(before.ws.readyState).toBe(WebSocket.OPEN);
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
     expect(server.services.manager.isRoomActive(room.id)).toBe(true);
 
-    const after = connect(server.url, room.id);
-    const firstPromise = new Promise<Buffer>((resolve) => after.ws.once('message', (data: Buffer) => resolve(Buffer.from(data))));
-    await step('after open', after.opened);
-    const first = await step('after bootstrap', firstPromise);
-    expect(first.subarray(0, 3).toString()).toBe('FLV');
-    after.ws.close();
-    await step('after close', after.closed);
     await step('stop recording', server.services.manager.stopRecording(room.id));
+    expect(before.ws.readyState).toBe(WebSocket.OPEN);
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+    before.ws.close();
+    await step('before close', before.closed);
     await step('server close', server.close());
   });
 

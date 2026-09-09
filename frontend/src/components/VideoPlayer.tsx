@@ -23,13 +23,41 @@ export default function VideoPlayer({
   platform,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 重连时保留同一个 video 元素，避免清空用户已调整的音量和当前画面。
+  const hasEverPlayedRef = useRef(false);
+  const currentRoomIdRef = useRef(roomId);
+  const audioPreferenceRef = useRef({ muted, volume: 1 });
+  const temporarilyMutedRef = useRef(false);
   const [state, setState] = useState<"loading" | "playing" | "ended" | "error">(
     "loading",
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
 
+  // 记录用户通过原生控件调整的音量。流切换时必须先静音才能通过浏览器的
+  // 自动播放策略，进入 playing 后再恢复这个偏好。
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const rememberAudioPreference = () => {
+      if (!temporarilyMutedRef.current) {
+        audioPreferenceRef.current = {
+          muted: video.muted,
+          volume: video.volume,
+        };
+      }
+    };
+    rememberAudioPreference();
+    video.addEventListener("volumechange", rememberAudioPreference);
+    return () =>
+      video.removeEventListener("volumechange", rememberAudioPreference);
+  }, []);
+
+  useEffect(() => {
+    if (currentRoomIdRef.current !== roomId) {
+      currentRoomIdRef.current = roomId;
+      hasEverPlayedRef.current = false;
+    }
     setState("loading");
     setErrorMsg("");
     if (!mpegts.isSupported()) {
@@ -48,6 +76,24 @@ export default function VideoPlayer({
     let playingListener: (() => void) | null = null;
 
     const video = videoRef.current;
+    const startMutedForAutoplay = () => {
+      if (!video) return;
+      if (!temporarilyMutedRef.current) {
+        audioPreferenceRef.current = {
+          muted: video.muted,
+          volume: video.volume,
+        };
+      }
+      temporarilyMutedRef.current = true;
+      video.muted = true;
+    };
+    const restoreAudioPreference = () => {
+      if (!video || !temporarilyMutedRef.current) return;
+      const { muted: preferredMuted, volume } = audioPreferenceRef.current;
+      temporarilyMutedRef.current = false;
+      video.volume = volume;
+      video.muted = preferredMuted;
+    };
     const destroyPlayer = (deferred = false) => {
       if (playingListener && video)
         video.removeEventListener("playing", playingListener);
@@ -96,6 +142,8 @@ export default function VideoPlayer({
       instance.attachMediaElement(videoRef.current);
       playingListener = () => {
         hasPlayed = true;
+        hasEverPlayedRef.current = true;
+        restoreAudioPreference();
         lastProgressAt = Date.now();
         retry = 0;
       };
@@ -105,6 +153,9 @@ export default function VideoPlayer({
         if (player !== instance || disposed) return;
         scheduleReconnect();
       });
+      // 切换纯预览/录制流后，play() 已不在原始点击手势中。先静音启动，
+      // 避免用户此前取消静音时被浏览器拦截自动播放而卡在 0 秒。
+      startMutedForAutoplay();
       instance.load();
       // A synchronous load error may already have scheduled a reconnect.
       if (player !== instance || disposed) return;
@@ -140,7 +191,7 @@ export default function VideoPlayer({
     <div
       style={{ position: "relative", background: "#000", overflow: "hidden" }}
     >
-      {state === "loading" && (
+      {state === "loading" && !hasEverPlayedRef.current && (
         <div
           style={{
             position: "absolute",

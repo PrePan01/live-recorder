@@ -51,6 +51,7 @@ class FlvInitExtractor {
   private seenVideoSeq = false;
   private seenAudioSeq = false;
   private firstMediaSeen = false;
+  private initialMedia = Buffer.alloc(0);
 
   get complete(): boolean {
     return this.done;
@@ -64,6 +65,13 @@ class FlvInitExtractor {
         ? this.pending
         : Buffer.concat([this.captured, this.pending]);
     return value.length > 0 ? value.subarray(0, PREVIEW_HEADER_MAX) : null;
+  }
+
+  /** 初始化捕获完成时被分离出的首批媒体帧（从关键帧缓存逻辑继续处理）。 */
+  takeInitialMedia(): Buffer {
+    const media = this.initialMedia;
+    this.initialMedia = Buffer.alloc(0);
+    return media;
   }
 
   /** 喂入流块；初始化段捕获完成时返回该段（非空），否则返回 null。 */
@@ -121,6 +129,7 @@ class FlvInitExtractor {
     }
     if (this.seenVideoSeq && (this.seenAudioSeq || this.firstMediaSeen)) {
       this.done = true;
+      this.initialMedia = Buffer.from(this.pending);
       this.pending = Buffer.alloc(0);
       return this.captured;
     }
@@ -141,6 +150,7 @@ class FlvInitExtractor {
     this.seenVideoSeq = false;
     this.seenAudioSeq = false;
     this.firstMediaSeen = false;
+    this.initialMedia = Buffer.alloc(0);
   }
 }
 
@@ -196,7 +206,14 @@ export class PreviewManager {
     }
     if (room.header === null) {
       const header = room.extractor.push(chunk);
-      if (header) room.header = header;
+      if (header) {
+        room.header = header;
+        const initialMedia = room.extractor.takeInitialMedia();
+        if (initialMedia.length > 0) {
+          room.tail.push(initialMedia);
+          room.tailBytes += initialMedia.length;
+        }
+      }
     } else {
       // 初始化段之后：追加到近期尾部（每个 chunk 为完整 FLV 标签）。
       room.tail.push(chunk);
@@ -255,6 +272,21 @@ export class PreviewManager {
     room.extractor = new FlvInitExtractor();
     room.tail = [];
     room.tailBytes = 0;
+  }
+
+  /**
+   * 返回 FLV 初始化段和最近一个关键帧起的尾部数据，供同一上游流的录制写入器接管。
+   * 不触碰 socket 或缓存，因此观看中的客户端不会中断。
+   */
+  recordingBootstrap(roomId: string): Buffer | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    if (room.header && room.tail.length > 0 && isKeyframeTag(room.tail[0]!)) {
+      return Buffer.concat([room.header, ...room.tail]);
+    }
+    // 初始化尚未完成时仍可交给写入器：它会保留当前连续 FLV 前缀并继续接收后续帧。
+    // 这覆盖刚打开观看就点击录制的场景，避免为了等待关键帧而回退到断开重连。
+    return room.extractor.snapshot();
   }
 
   closeRoomWithError(roomId: string, code: number): void {

@@ -19,6 +19,7 @@ import {
 import type { Room } from "../types/room";
 import { useRoomStore } from "../stores/roomStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useDisplayClock } from "../hooks/useDisplayClock";
 import { describeError } from "../utils/errorMap";
 import { ApiError } from "../types/error";
 import VideoPlayer from "./VideoPlayer";
@@ -84,6 +85,7 @@ export default function PreviewModal({
   const live = rooms.find((r) => r.id === room.id) ?? room;
   const recording =
     live.monitorState === "recording" || live.monitorState === "reconnecting";
+  const now = useDisplayClock(recording);
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
 
@@ -152,6 +154,17 @@ export default function PreviewModal({
     seconds >= 60
       ? `${Math.floor(seconds / 60)} 分 ${seconds % 60 ? `${seconds % 60} 秒` : ""}`
       : `${seconds} 秒`;
+  const formatRecordingElapsed = (startedAt: string | undefined) => {
+    const startedAtMs = startedAt ? Date.parse(startedAt) : Number.NaN;
+    const seconds = Number.isNaN(startedAtMs)
+      ? 0
+      : Math.max(0, Math.floor((now - startedAtMs) / 1_000));
+    const hours = Math.floor(seconds / 3_600);
+    const minutes = Math.floor((seconds % 3_600) / 60);
+    const remainingSeconds = seconds % 60;
+    const clock = `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+    return hours > 0 ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+  };
   const quickSeconds = [30, 60, 120, 300].map((seconds) =>
     Math.min(seconds, highlightMaxSeconds),
   );
@@ -210,6 +223,7 @@ export default function PreviewModal({
       width={width}
       centered
       destroyOnHidden
+      styles={{ container: { padding: "14px 20px" } }}
       onCancel={handleClose}
     >
       <div>
@@ -222,8 +236,6 @@ export default function PreviewModal({
           }}
         >
           <VideoPlayer
-            // preview-only → recording 会切换到全新 FLV 时间线；强制重建播放器，不能复用旧 MSE。
-            key={`${room.id}:${recording ? "recording" : "preview"}`}
             roomId={room.id}
             platform={room.platform}
           />
@@ -254,7 +266,7 @@ export default function PreviewModal({
                 icon={<StopOutlined />}
                 loading={busy && actingAction === "stop"}
               >
-                停止录制
+                停止录制（{formatRecordingElapsed(live.activeRecording?.startedAt)}）
               </Button>
             </Popconfirm>
           ) : (
