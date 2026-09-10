@@ -27,6 +27,7 @@ import {
   QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
@@ -79,6 +80,8 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
+  const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
+  const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
   const { preference, setPreference } = useAppTheme();
   const {
     preferences,
@@ -383,6 +386,16 @@ export default function SettingsPage() {
                     onChange={(e) =>
                       setPreference(e.target.value as ThemePreference)
                     }
+                  />
+                </Form.Item>
+                <Form.Item
+                  label="显示底部全局搜索"
+                >
+                  <Switch
+                    aria-label="显示底部全局搜索"
+                    checked={showGlobalSearch}
+                    onChange={setShowGlobalSearch}
+                    disabled={false}
                   />
                 </Form.Item>
                 <Form.Item label="保存目录">

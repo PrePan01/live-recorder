@@ -12,6 +12,7 @@ import {
 import { CloudServerOutlined, WarningOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useServiceStore } from "../stores/serviceStore";
+import { useAppearanceStore } from "../stores/appearanceStore";
 import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
 import { formatBytes, formatRelative } from "../utils/format";
 import GlobalSearch from "./GlobalSearch";
@@ -20,6 +21,7 @@ export default function StatusBar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const status = useServiceStore((s) => s.status);
+  const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const sseConnected = useServiceStore((s) => s.sseConnected);
   const alerts = useAlertStore((s) => s.alerts);
   const unread = useAlertStore(selectUnreadCount);
@@ -77,9 +79,11 @@ export default function StatusBar() {
           {status ? `录制中 ${status.activeRecordings}` : "录制中 -"}
         </Tag>
       </Space>
-      <div className="lr-statusbar__search" style={{ marginLeft: "auto" }}>
-        <GlobalSearch />
-      </div>
+      {showGlobalSearch ? (
+        <div className="lr-statusbar__search" style={{ marginLeft: "auto" }}>
+          <GlobalSearch />
+        </div>
+      ) : null}
       <div
         style={{
           display: "inline-flex",
