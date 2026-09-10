@@ -1,12 +1,12 @@
 mod backend;
 mod contract;
 
-use std::sync::Mutex;
+use std::{fs, sync::Mutex};
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, State,
+    AppHandle, Emitter, LogicalSize, Manager, State,
 };
 
 use backend::BackendManager;
@@ -26,6 +26,87 @@ impl ShellState {
 
 const BOOT_EVENT: &str = "boot:state";
 const WINDOW_VISIBILITY_EVENT: &str = "window:visibility";
+
+// Store logical pixels so the window keeps a sensible size when the display's
+// scale factor changes (for example, moving between Retina and non-Retina
+// displays). Position is deliberately not restored: a previously disconnected
+// monitor must never leave the main window inaccessible.
+const WINDOW_STATE_FILE: &str = "window-state.json";
+const MIN_WINDOW_WIDTH: f64 = 720.0;
+const MIN_WINDOW_HEIGHT: f64 = 480.0;
+const MAX_WINDOW_DIMENSION: f64 = 10_000.0;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WindowSize {
+    width: f64,
+    height: f64,
+}
+
+impl WindowSize {
+    fn is_valid(&self) -> bool {
+        self.width.is_finite()
+            && self.height.is_finite()
+            && (MIN_WINDOW_WIDTH..=MAX_WINDOW_DIMENSION).contains(&self.width)
+            && (MIN_WINDOW_HEIGHT..=MAX_WINDOW_DIMENSION).contains(&self.height)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn window_state_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join(WINDOW_STATE_FILE))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn restore_main_window_size(app: &AppHandle) {
+    let Some(path) = window_state_path(app) else {
+        return;
+    };
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(size) = serde_json::from_str::<WindowSize>(&contents) else {
+        return;
+    };
+
+    if size.is_valid() {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_size(LogicalSize::new(size.width, size.height));
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn save_main_window_size(app: &AppHandle, physical_size: tauri::PhysicalSize<u32>) {
+    let Some(path) = window_state_path(app) else {
+        return;
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(scale_factor) = window.scale_factor() else {
+        return;
+    };
+    let logical_size = physical_size.to_logical::<f64>(scale_factor);
+    let size = WindowSize {
+        width: logical_size.width,
+        height: logical_size.height,
+    };
+
+    if !size.is_valid() {
+        return;
+    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_ok() {
+        if let Ok(json) = serde_json::to_vec(&size) {
+            let _ = fs::write(path, json);
+        }
+    }
+}
 
 fn main_window_visible(app: &AppHandle) -> bool {
     app.get_webview_window("main")
@@ -207,7 +288,14 @@ pub fn run() {
                     emit_window_visibility(&window.app_handle());
                 }
             }
-            if matches!(event, tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)) {
+            if let tauri::WindowEvent::Resized(size) = event {
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                if window.label() == "main" {
+                    save_main_window_size(&window.app_handle(), *size);
+                }
+                emit_window_visibility(&window.app_handle());
+            }
+            if matches!(event, tauri::WindowEvent::Focused(_)) {
                 emit_window_visibility(&window.app_handle());
             }
         })
@@ -222,6 +310,10 @@ pub fn run() {
             quit_app,
         ])
         .setup(|app| {
+            // This runs before the event loop begins, so the saved dimensions
+            // are applied as the native window is being brought up.
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            restore_main_window_size(&app.handle());
             setup_tray(app)?;
             // Observe the child independently of UI health polling. It never
             // kills a slow process: BackendManager only returns a recovery

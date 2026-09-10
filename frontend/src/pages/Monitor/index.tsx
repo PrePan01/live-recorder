@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -77,6 +77,36 @@ function SortableRoomCardItem({
   /* oxlint-enable react/refs */
 }
 
+const EXPANDED_CARD_ACTION_WIDTH = 96;
+const compactActionTooltipStyles = {
+  container: {
+    display: "flex",
+    justifyContent: "center",
+    textAlign: "center" as const,
+  },
+};
+
+function useCompactRoomCardActions(actionCount: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const expandedWidth =
+    actionCount * EXPANDED_CARD_ACTION_WIDTH + (actionCount - 1) * 2;
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const update = () => {
+      setCompact(element.clientWidth < expandedWidth);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    update();
+    return () => observer.disconnect();
+  }, [expandedWidth]);
+
+  return { ref, compact };
+}
+
 const RoomCard = memo(function RoomCard({
   room,
   onWatch,
@@ -107,7 +137,12 @@ const RoomCard = memo(function RoomCard({
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
+  // 离线时只有「检测、直播间」；开播或录制中再出现「观看、录制/停止」。
+  // 每张卡片按自己的按钮数切换，不能让两按钮卡片沿用四按钮的紧凑阈值。
+  const actionCount = onAir || recording ? 4 : 2;
+  const { ref, compact } = useCompactRoomCardActions(actionCount);
   return (
+    <div ref={ref} className="lr-room-card__container">
     <Card
       className={`lr-room-card ${onAir ? "lr-room-card--live" : "lr-room-card--offline"} ${layout === "list" ? "lr-room-card--list" : ""}`}
       styles={{ body: { padding: 14 } }}
@@ -190,61 +225,94 @@ const RoomCard = memo(function RoomCard({
           {room.lastError.message}
         </Typography.Paragraph>
       ) : null}
-      <div className="lr-room-card__actions">
-        <Button
-          size="middle"
-          icon={<ReloadOutlined />}
-          loading={acting && actingAction === "check"}
-          disabled={acting || room.monitorState === "checking" || recording}
-          onClick={() => onCheck(room)}
+      <div
+        className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""}`}
+      >
+        <Tooltip
+          title={compact ? "检测" : undefined}
+          styles={compactActionTooltipStyles}
         >
-          检测
-        </Button>
-        {onAir || recording ? (
           <Button
             size="middle"
-            type={recording ? "primary" : "default"}
-            icon={<EyeOutlined />}
-            onClick={() => onWatch(room)}
+            aria-label="检测"
+            icon={<ReloadOutlined />}
+            loading={acting && actingAction === "check"}
+            disabled={acting || room.monitorState === "checking" || recording}
+            onClick={() => onCheck(room)}
           >
-            观看
+            <span className="lr-room-card__action-label">检测</span>
           </Button>
+        </Tooltip>
+        <Tooltip
+          title={compact ? "打开直播间" : undefined}
+          styles={compactActionTooltipStyles}
+        >
+          <Button
+            size="middle"
+            aria-label="打开直播间"
+            icon={<LinkOutlined />}
+            href={room.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span className="lr-room-card__action-label">直播间</span>
+          </Button>
+        </Tooltip>
+        {onAir || recording ? (
+          <Tooltip
+            title={compact ? "观看" : undefined}
+            styles={compactActionTooltipStyles}
+          >
+            <Button
+              size="middle"
+              type={recording ? "primary" : "default"}
+              aria-label="观看"
+              icon={<EyeOutlined />}
+              onClick={() => onWatch(room)}
+            >
+              <span className="lr-room-card__action-label">观看</span>
+            </Button>
+          </Tooltip>
         ) : null}
         {room.monitorState === "recording" ||
         room.monitorState === "reconnecting" ? (
           <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
-            <Button
-              size="middle"
-              danger
-              loading={acting && actingAction === "stop"}
-              icon={<StopOutlined />}
+            <Tooltip
+              title={compact ? "停止录制" : undefined}
+              styles={compactActionTooltipStyles}
             >
-              停止
-            </Button>
+              <Button
+                size="middle"
+                danger
+                aria-label="停止录制"
+                loading={acting && actingAction === "stop"}
+                icon={<StopOutlined />}
+              >
+                <span className="lr-room-card__action-label">停止</span>
+              </Button>
+            </Tooltip>
           </Popconfirm>
         ) : onAir ? (
-          <Button
-            size="middle"
-            type="primary"
-            icon={<VideoCameraAddOutlined />}
-            loading={acting && actingAction === "record"}
-            disabled={acting || recentlyStopped || !onAir}
-            onClick={() => onRecord(room)}
+          <Tooltip
+            title={compact ? "录制" : undefined}
+            styles={compactActionTooltipStyles}
           >
-            录制
-          </Button>
+            <Button
+              size="middle"
+              type="primary"
+              aria-label="录制"
+              icon={<VideoCameraAddOutlined />}
+              loading={acting && actingAction === "record"}
+              disabled={acting || recentlyStopped || !onAir}
+              onClick={() => onRecord(room)}
+            >
+              <span className="lr-room-card__action-label">录制</span>
+            </Button>
+          </Tooltip>
         ) : null}
-        <Button
-          size="middle"
-          icon={<LinkOutlined />}
-          href={room.url}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          直播间
-        </Button>
       </div>
     </Card>
+    </div>
   );
 });
 
@@ -643,9 +711,7 @@ export default function Monitor() {
             icon={<ReloadOutlined />}
             loading={loading || refreshing}
             onClick={() => void handleRefresh()}
-          >
-            刷新
-          </Button>
+          ></Button>
         </Space>
       </Space>
       {monitorRooms.length === 0 && !loading ? (
