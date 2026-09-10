@@ -423,6 +423,19 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_started_id ON recordings(started_at DESC, id DESC);`);
     },
   },
+  {
+    // 直播间全局手动顺序。按升级前管理页的 created_at DESC 顺序回填，
+    // 相同时间用 id 稳定排序；新房间可用更小的值插入顶部。
+    version: 21,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'sort_order'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN sort_order INTEGER`);
+      const rows = db.prepare(`SELECT id FROM rooms ORDER BY created_at DESC, id DESC`).all() as Array<{ id: string }>;
+      const update = db.prepare(`UPDATE rooms SET sort_order = ? WHERE id = ? AND sort_order IS NULL`);
+      rows.forEach((row, index) => update.run(index, row.id));
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_rooms_sort_order ON rooms(sort_order, created_at DESC, id DESC)`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

@@ -38,6 +38,10 @@ import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import { formatRelative } from "../../utils/format";
+import {
+  RoomSortableProvider,
+  SortableRoomTableRow,
+} from "../../components/RoomSortable";
 
 function guessPlatform(url: string): Room["platform"] | null {
   if (/live\.douyin\.com|douyin\.com/.test(url)) return "douyin";
@@ -65,6 +69,8 @@ export default function Rooms() {
     setAutoRecord,
     updateRoomTags,
     checkRoomNow,
+    reorderRooms,
+    reorderBusy,
   } = useRoomStore();
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
@@ -121,6 +127,14 @@ export default function Rooms() {
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
     [filtered, page, pageSize],
   );
+
+  const commitRoomOrder = async (roomIds: string[]) => {
+    try {
+      await reorderRooms(roomIds);
+    } catch {
+      message.error("排序保存失败，已恢复服务端顺序");
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -568,34 +582,45 @@ export default function Rooms() {
           </Typography.Text>
         ) : null}
       </Space>
-      <Table
-        rowKey="id"
-        columns={resizedColumns}
-        components={resizableComponents}
-        dataSource={paginated}
-        loading={loading}
-        sticky={{ offsetScroll: 8 }}
-        scroll={{ x: 1500 }}
-        onRow={(r) =>
-          ({ "data-room-id": r.id }) as React.HTMLAttributes<HTMLElement>
-        }
-        rowSelection={{
-          selectedRowKeys: selectedKeys,
-          onChange: setSelectedKeys,
-        }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: filtered.length,
-          showSizeChanger: true,
-          pageSizeOptions: [10, 20, 50],
-          showTotal: (t) => `共 ${t} 个直播间`,
-          onChange: (p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          },
-        }}
-      />
+      <RoomSortableProvider
+        allRooms={rooms}
+        visibleRooms={paginated}
+        mode="table"
+        disabled={reorderBusy}
+        onReorder={commitRoomOrder}
+      >
+        <Table
+          rowKey="id"
+          columns={resizedColumns}
+          components={{
+            ...resizableComponents,
+            body: { row: SortableRoomTableRow },
+          }}
+          dataSource={paginated}
+          loading={loading}
+          sticky={{ offsetScroll: 8 }}
+          scroll={{ x: 1500 }}
+          onRow={(room) =>
+            ({ "data-room-id": room.id }) as React.HTMLAttributes<HTMLElement>
+          }
+          rowSelection={{
+            selectedRowKeys: selectedKeys,
+            onChange: setSelectedKeys,
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: filtered.length,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            showTotal: (t) => `共 ${t} 个直播间`,
+            onChange: (p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            },
+          }}
+        />
+      </RoomSortableProvider>
       <Modal
         title={editing ? "编辑直播间" : "添加直播间"}
         open={modalOpen}

@@ -17,9 +17,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(20);
+    expect(runMigrations(db)).toBe(21);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(20);
+    expect(currentSchemaVersion(db)).toBe(21);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -47,11 +47,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(18);
+    expect(runMigrations(db)).toBe(19);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(20);
+    expect(currentSchemaVersion(db)).toBe(21);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -80,8 +80,8 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('title_fallback_used');
     expect(roomsCols).not.toContain('upload_enabled');
 
-    // 仅 v16-v20 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(5);
+    // 仅 v16-v21 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
+    expect(runMigrations(db)).toBe(6);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -93,7 +93,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(20);
+    expect(currentSchemaVersion(db)).toBe(21);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -114,8 +114,8 @@ describe('migrations', () => {
     const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsBefore).not.toContain('expected_quality');
 
-    // v19 补列，v20 追加索引。
-    expect(runMigrations(db)).toBe(2);
+    // v19 补列，v20 追加索引，v21 增加直播间顺序。
+    expect(runMigrations(db)).toBe(3);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -127,8 +127,23 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(20);
+    expect(currentSchemaVersion(db)).toBe(21);
     expect(runMigrations(db)).toBe(0);
+  });
+
+  it('v21 backfills the previous created-desc room order', () => {
+    const db = openDatabase(':memory:');
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 20)) {
+      if (migration.up) migration.up(db);
+      else if (migration.sql) db.exec(migration.sql);
+    }
+    db.prepare(`INSERT INTO rooms (id, platform, url, created_at, updated_at) VALUES (?, 'bilibili', ?, ?, ?)`)
+      .run('old', 'https://live.bilibili.com/1', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');
+    db.prepare(`INSERT INTO rooms (id, platform, url, created_at, updated_at) VALUES (?, 'bilibili', ?, ?, ?)`)
+      .run('new', 'https://live.bilibili.com/2', '2025-02-01T00:00:00.000Z', '2025-02-01T00:00:00.000Z');
+    MIGRATIONS.find((item) => item.version === 21)!.up!(db);
+    expect(new RoomRepository(db).list().map((room) => room.id)).toEqual(['new', 'old']);
+    expect((db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_rooms_sort_order'`).get() as { name: string }).name).toBe('idx_rooms_sort_order');
   });
 });
 
@@ -179,6 +194,19 @@ describe('RoomRepository', () => {
     } catch (err) {
       expect((err as AppError).code).toBe('RESOURCE_NOT_FOUND');
     }
+  });
+
+  it('places new rooms first and atomically persists complete custom orders', () => {
+    const rooms = new RoomRepository(freshDb());
+    const first = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/201', displayName: '一' });
+    const second = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/202', displayName: '二' });
+    const third = rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/203', displayName: '三' });
+    expect(rooms.list().map((room) => room.id)).toEqual([third.id, second.id, first.id]);
+
+    rooms.reorder([first.id, third.id, second.id]);
+    expect(rooms.list().map((room) => room.id)).toEqual([first.id, third.id, second.id]);
+    expect(() => rooms.reorder([third.id, third.id, second.id])).toThrowError(AppError);
+    expect(rooms.list().map((room) => room.id)).toEqual([first.id, third.id, second.id]);
   });
 });
 

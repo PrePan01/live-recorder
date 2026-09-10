@@ -1,7 +1,7 @@
-import { create } from 'zustand';
-import * as roomsApi from '../api/rooms';
-import { setRoomTags } from '../api/tags';
-import type { Room, RoomCreateInput, RoomUpdateInput } from '../types/room';
+import { create } from "zustand";
+import * as roomsApi from "../api/rooms";
+import { setRoomTags } from "../api/tags";
+import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
 
 let roomsRequest: Promise<Room[]> | null = null;
 let roomsEpoch = 0;
@@ -24,6 +24,7 @@ function normalizeRoom(room: Room): Room {
     titleSource: room.titleSource ?? null,
     titleUpdatedAt: room.titleUpdatedAt ?? null,
     titleFallbackUsed: room.titleFallbackUsed ?? false,
+    sortOrder: room.sortOrder ?? Number.MAX_SAFE_INTEGER,
   };
 }
 
@@ -33,7 +34,9 @@ function mergeRooms(current: Room[], incoming: Room[]): Room[] {
   return incoming.map((room) => {
     const normalized = normalizeRoom(room);
     const old = previous.get(normalized.id);
-    return old && JSON.stringify(old) === JSON.stringify(normalized) ? old : normalized;
+    return old && JSON.stringify(old) === JSON.stringify(normalized)
+      ? old
+      : normalized;
   });
 }
 
@@ -42,7 +45,8 @@ interface RoomState {
   loading: boolean;
   /** 房间级操作 loading（check/record/stop），键为 roomId */
   actingRoomId: string | null;
-  actingAction: 'check' | 'record' | 'stop' | null;
+  actingAction: "check" | "record" | "stop" | null;
+  reorderBusy: boolean;
   fetchRooms: (force?: boolean) => Promise<void>;
   addRoom: (input: RoomCreateInput) => Promise<Room>;
   batchAddRooms: (urls: string[]) => Promise<roomsApi.BatchRoomResult>;
@@ -55,6 +59,7 @@ interface RoomState {
   startRoomRecording: (id: string) => Promise<void>;
   stopRoomRecording: (id: string) => Promise<void>;
   updateRoomTags: (id: string, tagIds: string[]) => Promise<void>;
+  reorderRooms: (roomIds: string[]) => Promise<void>;
   upsertRoom: (room: Room) => void;
 }
 
@@ -63,8 +68,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   loading: false,
   actingRoomId: null,
   actingAction: null,
+  reorderBusy: false,
   async fetchRooms(force = false) {
-    if (!force && get().rooms.length > 0 && Date.now() - roomsFetchedAt < ROOMS_CACHE_MS) return;
+    if (
+      !force &&
+      get().rooms.length > 0 &&
+      Date.now() - roomsFetchedAt < ROOMS_CACHE_MS
+    )
+      return;
     set({ loading: true });
     const epoch = roomsEpoch;
     try {
@@ -80,12 +91,14 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       // precise room locally. Never overwrite it with an older list response.
       if (epoch === roomsEpoch) {
         roomsFetchedAt = Date.now();
-        set((state) => ({ rooms: mergeRooms(state.rooms, rooms), loading: false }));
-      }
-      else set({ loading: false });
+        set((state) => ({
+          rooms: mergeRooms(state.rooms, rooms),
+          loading: false,
+        }));
+      } else set({ loading: false });
     } catch {
       set({ loading: false });
-      throw new Error('fetchRooms failed');
+      throw new Error("fetchRooms failed");
     }
   },
   async addRoom(input) {
@@ -115,19 +128,27 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
   async favoriteRoom(id, favorited) {
     invalidateRoomsRequest();
-    get().upsertRoom(normalizeRoom(await roomsApi.setRoomFavorite(id, favorited)));
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.setRoomFavorite(id, favorited)),
+    );
   },
   async setAutoRecord(id, value) {
     invalidateRoomsRequest();
-    get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })));
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
+    );
   },
   async checkRoomNow(id) {
     invalidateRoomsRequest();
-    set({ actingRoomId: id, actingAction: 'check' });
+    set({ actingRoomId: id, actingAction: "check" });
     try {
       const room = get().rooms.find((r) => r.id === id);
       if (room) {
-        get().upsertRoom({ ...room, monitorState: 'checking', lastCheckedAt: new Date().toISOString() });
+        get().upsertRoom({
+          ...room,
+          monitorState: "checking",
+          lastCheckedAt: new Date().toISOString(),
+        });
       }
       await roomsApi.checkRoomNow(id);
     } finally {
@@ -136,7 +157,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
   async startRoomRecording(id) {
     invalidateRoomsRequest();
-    set({ actingRoomId: id, actingAction: 'record' });
+    set({ actingRoomId: id, actingAction: "record" });
     try {
       await roomsApi.startRoomRecording(id);
       // 乐观更新：成功后先本地标记录制中，等待 SSE room:updated 校正。
@@ -144,8 +165,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       if (room) {
         get().upsertRoom({
           ...room,
-          monitorState: 'recording',
-          activeRecording: room.activeRecording ?? { recordingId: '', startedAt: new Date().toISOString() },
+          monitorState: "recording",
+          activeRecording: room.activeRecording ?? {
+            recordingId: "",
+            startedAt: new Date().toISOString(),
+          },
         });
       }
     } finally {
@@ -154,7 +178,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
   async stopRoomRecording(id) {
     invalidateRoomsRequest();
-    set({ actingRoomId: id, actingAction: 'stop' });
+    set({ actingRoomId: id, actingAction: "stop" });
     try {
       await roomsApi.stopRecording(id);
     } finally {
@@ -165,11 +189,54 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     invalidateRoomsRequest();
     get().upsertRoom(normalizeRoom(await setRoomTags(id, tagIds)));
   },
+  async reorderRooms(roomIds) {
+    if (get().reorderBusy) return;
+    const current = get().rooms;
+    const byId = new Map(current.map((room) => [room.id, room]));
+    if (
+      roomIds.length !== current.length ||
+      new Set(roomIds).size !== roomIds.length ||
+      roomIds.some((id) => !byId.has(id))
+    ) {
+      throw new Error("invalid room order");
+    }
+    invalidateRoomsRequest();
+    set({
+      rooms: roomIds.map((id, index) => ({
+        ...byId.get(id)!,
+        sortOrder: index,
+      })),
+      reorderBusy: true,
+    });
+    try {
+      const authoritative = await roomsApi.reorderRooms(roomIds);
+      roomsFetchedAt = Date.now();
+      set((state) => ({ rooms: mergeRooms(state.rooms, authoritative) }));
+    } catch (error) {
+      try {
+        const authoritative = await roomsApi.fetchRooms();
+        roomsFetchedAt = Date.now();
+        set((state) => ({ rooms: mergeRooms(state.rooms, authoritative) }));
+      } catch {
+        // Keep the optimistic order when recovery itself cannot reach the service.
+      }
+      throw error;
+    } finally {
+      set({ reorderBusy: false });
+    }
+  },
   upsertRoom(room) {
     set((s) => {
-      const norm = normalizeRoom(room);
+      let norm = normalizeRoom(room);
       const idx = s.rooms.findIndex((r) => r.id === norm.id);
-      if (idx === -1) return { rooms: [...s.rooms, norm] };
+      if (idx === -1)
+        return {
+          rooms: [...s.rooms, norm].sort((a, b) => a.sortOrder - b.sortOrder),
+        };
+      // Room-level SSE updates can have been produced just before a reorder
+      // committed. Preserve the store's authoritative array position/order
+      // metadata so a late status frame cannot undo the user's sorting.
+      norm = { ...norm, sortOrder: s.rooms[idx]!.sortOrder };
       if (JSON.stringify(s.rooms[idx]) === JSON.stringify(norm)) return s;
       const next = [...s.rooms];
       next[idx] = norm;

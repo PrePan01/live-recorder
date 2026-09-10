@@ -37,6 +37,15 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     return reply.send({ rooms: services.rooms.list().map(enrich) });
   });
 
+  app.put('/api/v1/rooms/order', async (req, reply) => {
+    const body = (req.body ?? {}) as { roomIds?: unknown };
+    if (!Array.isArray(body.roomIds) || body.roomIds.some((id) => typeof id !== 'string' || !id)) {
+      throw new AppError('CONFIG_INVALID', 'roomIds 必须是直播间 ID 数组');
+    }
+    const rooms = services.rooms.reorder(body.roomIds as string[]).map(enrich);
+    return reply.send({ rooms });
+  });
+
   /** Bounded aggregate query for the monitor's health and live prediction cards. */
   app.post('/api/v1/rooms/insights/batch', async (req, reply) => {
     const body = (req.body ?? {}) as { roomIds?: unknown };
@@ -136,7 +145,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', '单次批量最多 100 条');
     }
     // 批内+现库去重，按规范化链接识别。
-    const existing = new Set(services.rooms.list().map((r) => `${r.platform}|${r.url}`));
+    const existingRooms = services.rooms.list();
+    const existing = new Set(existingRooms.map((r) => `${r.platform}|${r.url}`));
     const seen = new Set<string>();
     const succeeded: Array<import('../../types/index.js').Room> = [];
     const failed: Array<{ url: string; reason: string }> = [];
@@ -165,8 +175,12 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       // #162：批量添加同样即时触发检测，让显示名尽快自动解析。
       void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
     }
-    for (const room of succeeded) services.events.emit({ type: 'room:updated', data: enrich(room) });
-    return reply.send({ succeeded: succeeded.map(enrich), failed });
+    if (succeeded.length > 0) {
+      services.rooms.reorder([...succeeded.map((room) => room.id), ...existingRooms.map((room) => room.id)]);
+    }
+    const orderedSucceeded = succeeded.map((room) => services.rooms.get(room.id)!);
+    for (const room of orderedSucceeded) services.events.emit({ type: 'room:updated', data: enrich(room) });
+    return reply.send({ succeeded: orderedSucceeded.map(enrich), failed });
   });
 
   app.patch('/api/v1/rooms/:id', async (req, reply) => {

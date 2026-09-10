@@ -44,6 +44,38 @@ import PreviewModal from "../../components/PreviewModal";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import type { Room } from "../../types/room";
+import {
+  RoomSortableProvider,
+  SortableRoomTableRow,
+  useRoomSortableItem,
+} from "../../components/RoomSortable";
+
+function SortableRoomCardItem({
+  roomId,
+  children,
+}: {
+  roomId: string;
+  children: React.ReactNode;
+}) {
+  const sortable = useRoomSortableItem(roomId, "card");
+  /* oxlint-disable react/refs -- dnd-kit exposes callback refs and reactive sortable values */
+  return (
+    <Col
+      xs={24}
+      sm={12}
+      lg={8}
+      xxl={6}
+      ref={sortable.setNodeRef}
+      style={sortable.style}
+      className={`lr-sortable-card ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
+      {...sortable.attributes}
+      {...sortable.listeners}
+    >
+      {children}
+    </Col>
+  );
+  /* oxlint-enable react/refs */
+}
 
 const RoomCard = memo(function RoomCard({
   room,
@@ -228,6 +260,8 @@ export default function Monitor() {
     startRoomRecording,
     stopRoomRecording,
     favoriteRoom,
+    reorderRooms,
+    reorderBusy,
   } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
@@ -317,8 +351,18 @@ export default function Monitor() {
         r.displayName.toLowerCase().includes(kw) ||
         r.url.toLowerCase().includes(kw)
       );
-    })
-    .sort((a, b) => Number(b.favorited) - Number(a.favorited));
+    });
+
+  const commitRoomOrder = useCallback(
+    async (roomIds: string[]) => {
+      try {
+        await reorderRooms(roomIds);
+      } catch {
+        message.error("排序保存失败，已恢复服务端顺序");
+      }
+    },
+    [message, reorderRooms],
+  );
 
   const enabledRooms = rooms.filter((r) => r.enabled);
   const liveCount = enabledRooms.filter(
@@ -607,43 +651,60 @@ export default function Monitor() {
       {monitorRooms.length === 0 && !loading ? (
         <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
       ) : view === "列表" ? (
-        <Table
-          rowKey="id"
-          columns={listColumns}
-          dataSource={monitorRooms}
-          loading={loading}
-          sticky={{ offsetScroll: 8 }}
-          scroll={{ x: 1100 }}
-          pagination={false}
-          size="middle"
-        />
+        <RoomSortableProvider
+          allRooms={rooms}
+          visibleRooms={monitorRooms}
+          mode="table"
+          disabled={reorderBusy}
+          onReorder={commitRoomOrder}
+        >
+          <Table
+            rowKey="id"
+            columns={listColumns}
+            components={{ body: { row: SortableRoomTableRow } }}
+            dataSource={monitorRooms}
+            loading={loading}
+            sticky={{ offsetScroll: 8 }}
+            scroll={{ x: 1100 }}
+            pagination={false}
+            size="middle"
+          />
+        </RoomSortableProvider>
       ) : (
-        <Row gutter={[16, 16]}>
-          {monitorRooms.map((room) => (
-            <Col key={room.id} xs={24} sm={12} lg={8} xxl={6}>
-              <RoomCard
-                room={room}
-                acting={actingRoomId === room.id}
-                actingAction={
-                  actingRoomId === room.id
-                    ? (actingAction ?? undefined)
-                    : undefined
-                }
-                onWatch={handleWatch}
-                onCheck={onCheckRoom}
-                onStop={onStopRoom}
-                recentlyStopped={recentStop[room.id] !== undefined}
-                autoRecordEnabled={
-                  room.autoRecord ?? settings?.autoRecord ?? true
-                }
-                insight={insights[room.id]}
-                onRecord={onRecordRoom}
-                onFavorite={onFavoriteRoom}
-                layout="card"
-              />
-            </Col>
-          ))}
-        </Row>
+        <RoomSortableProvider
+          allRooms={rooms}
+          visibleRooms={monitorRooms}
+          mode="card"
+          disabled={reorderBusy}
+          onReorder={commitRoomOrder}
+        >
+          <Row gutter={[16, 16]}>
+            {monitorRooms.map((room) => (
+              <SortableRoomCardItem key={room.id} roomId={room.id}>
+                <RoomCard
+                  room={room}
+                  acting={actingRoomId === room.id}
+                  actingAction={
+                    actingRoomId === room.id
+                      ? (actingAction ?? undefined)
+                      : undefined
+                  }
+                  onWatch={handleWatch}
+                  onCheck={onCheckRoom}
+                  onStop={onStopRoom}
+                  recentlyStopped={recentStop[room.id] !== undefined}
+                  autoRecordEnabled={
+                    room.autoRecord ?? settings?.autoRecord ?? true
+                  }
+                  insight={insights[room.id]}
+                  onRecord={onRecordRoom}
+                  onFavorite={onFavoriteRoom}
+                  layout="card"
+                />
+              </SortableRoomCardItem>
+            ))}
+          </Row>
+        </RoomSortableProvider>
       )}
       {watching ? (
         <PreviewModal
