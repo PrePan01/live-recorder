@@ -273,3 +273,34 @@
     padding-inline: 18px;
   }
 }
+
+.lr-version-button {
+  position: relative;
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.lr-version-button:focus-visible {
+  outline: 2px solid var(--lr-muted);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.lr-version-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  background: color-mix(in srgb, currentColor 20%, transparent);
+}
+.lr-version-track > span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transition: width 100ms linear;
+}

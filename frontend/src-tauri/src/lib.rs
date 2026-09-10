@@ -1,5 +1,6 @@
 mod backend;
 mod contract;
+mod updates;
 
 use std::{fs, sync::Mutex};
 
@@ -273,6 +274,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .manage(updates::UpdateManager::default())
         .manage(ShellState {
             backend: BackendManager::new(),
             boot: Mutex::new(BootState::Booting),
@@ -300,6 +302,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            updates::get_update_state,
+            updates::check_update,
+            updates::download_update,
+            updates::open_update,
             get_app_instance,
             get_health,
             start_service,
