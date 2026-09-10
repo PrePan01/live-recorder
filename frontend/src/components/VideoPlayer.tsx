@@ -23,39 +23,43 @@ export default function VideoPlayer({
   platform,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"loading" | "playing" | "ended" | "error" | "paused">(
+  // 重连时保留同一个 video 元素，避免清空用户已调整的音量和当前画面。
+  const hasEverPlayedRef = useRef(false);
+  const currentRoomIdRef = useRef(roomId);
+  const audioPreferenceRef = useRef({ muted, volume: 1 });
+  const temporarilyMutedRef = useRef(false);
+  const [state, setState] = useState<"loading" | "playing" | "ended" | "error">(
     "loading",
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
-  const [backgrounded, setBackgrounded] = useState(() => document.hidden);
 
+  // 记录用户通过原生控件调整的音量。流切换时必须先静音才能通过浏览器的
+  // 自动播放策略，进入 playing 后再恢复这个偏好。
   useEffect(() => {
-    let desktopVisible = true;
-    let disposed = false;
-    let off = () => {};
-    const update = () => setBackgrounded(document.hidden || !desktopVisible);
-    // The desktop bridge pulls Tauri plugins into the bundle, so only load it
-    // after a player is actually mounted instead of penalising first paint.
-    void import("../bridge/nativeBridge").then(({ detectBridge }) => {
-      if (disposed) return;
-      const bridge = detectBridge();
-      void bridge.getWindowVisible().then((visible) => {
-        if (!disposed) { desktopVisible = visible; update(); }
-      });
-      off = bridge.onWindowVisibility((visible) => { desktopVisible = visible; update(); });
-    });
-    document.addEventListener("visibilitychange", update);
-    return () => { disposed = true; off(); document.removeEventListener("visibilitychange", update); };
+    const video = videoRef.current;
+    if (!video) return;
+    const rememberAudioPreference = () => {
+      if (!temporarilyMutedRef.current) {
+        audioPreferenceRef.current = {
+          muted: video.muted,
+          volume: video.volume,
+        };
+      }
+    };
+    rememberAudioPreference();
+    video.addEventListener("volumechange", rememberAudioPreference);
+    return () =>
+      video.removeEventListener("volumechange", rememberAudioPreference);
   }, []);
 
   useEffect(() => {
+    if (currentRoomIdRef.current !== roomId) {
+      currentRoomIdRef.current = roomId;
+      hasEverPlayedRef.current = false;
+    }
     setState("loading");
     setErrorMsg("");
-    if (backgrounded) {
-      setState("paused");
-      return;
-    }
     if (!mpegts.isSupported()) {
       setState("error");
       setErrorMsg("当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看");
@@ -72,6 +76,24 @@ export default function VideoPlayer({
     let playingListener: (() => void) | null = null;
 
     const video = videoRef.current;
+    const startMutedForAutoplay = () => {
+      if (!video) return;
+      if (!temporarilyMutedRef.current) {
+        audioPreferenceRef.current = {
+          muted: video.muted,
+          volume: video.volume,
+        };
+      }
+      temporarilyMutedRef.current = true;
+      video.muted = true;
+    };
+    const restoreAudioPreference = () => {
+      if (!video || !temporarilyMutedRef.current) return;
+      const { muted: preferredMuted, volume } = audioPreferenceRef.current;
+      temporarilyMutedRef.current = false;
+      video.volume = volume;
+      video.muted = preferredMuted;
+    };
     const destroyPlayer = (deferred = false) => {
       if (playingListener && video)
         video.removeEventListener("playing", playingListener);
@@ -120,6 +142,8 @@ export default function VideoPlayer({
       instance.attachMediaElement(videoRef.current);
       playingListener = () => {
         hasPlayed = true;
+        hasEverPlayedRef.current = true;
+        restoreAudioPreference();
         lastProgressAt = Date.now();
         retry = 0;
       };
@@ -129,6 +153,9 @@ export default function VideoPlayer({
         if (player !== instance || disposed) return;
         scheduleReconnect();
       });
+      // 切换纯预览/录制流后，play() 已不在原始点击手势中。先静音启动，
+      // 避免用户此前取消静音时被浏览器拦截自动播放而卡在 0 秒。
+      startMutedForAutoplay();
       instance.load();
       // A synchronous load error may already have scheduled a reconnect.
       if (player !== instance || disposed) return;
@@ -158,13 +185,13 @@ export default function VideoPlayer({
       if (watchdogTimer) clearInterval(watchdogTimer);
       destroyPlayer();
     };
-  }, [roomId, platform, reloadToken, backgrounded]);
+  }, [roomId, platform, reloadToken]);
 
   return (
     <div
       style={{ position: "relative", background: "#000", overflow: "hidden" }}
     >
-      {state === "loading" && (
+      {state === "loading" && !hasEverPlayedRef.current && (
         <div
           style={{
             position: "absolute",
@@ -194,11 +221,6 @@ export default function VideoPlayer({
           <Alert type="info" showIcon message="本场录制已结束" />
         </div>
       )}
-      {state === "paused" && (
-        <div style={{ padding: 24 }}>
-          <Alert type="info" showIcon message="预览已在后台暂停" description="回到应用后会自动继续播放；录制和检测仍在运行。" />
-        </div>
-      )}
       <video
         ref={videoRef}
         controls
@@ -211,7 +233,7 @@ export default function VideoPlayer({
         style={{
           width: "100%",
           aspectRatio: "16 / 9",
-          display: state === "error" || state === "ended" || state === "paused" ? "none" : "block",
+          display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />
     </div>

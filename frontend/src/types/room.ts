@@ -1,20 +1,20 @@
-import type { ApiErrorEnvelope } from './error';
-import type { Tag } from './tag';
+import type { ApiErrorEnvelope } from "./error";
+import type { Tag } from "./tag";
 
-export type Platform = 'bilibili' | 'douyin';
+export type Platform = "bilibili" | "douyin";
 
-export type LiveStatus = 'live' | 'offline' | 'restricted';
+export type LiveStatus = "live" | "offline" | "restricted";
 
 export type MonitorState =
-  | 'idle'
-  | 'checking'
-  | 'recording'
-  | 'reconnecting'
-  | 'completed'
-  | 'failed'
-  | 'disabled';
+  | "idle"
+  | "checking"
+  | "recording"
+  | "reconnecting"
+  | "completed"
+  | "failed"
+  | "disabled";
 
-export type TitleSource = 'adapter' | 'fallback' | 'manual';
+export type TitleSource = "adapter" | "fallback" | "manual";
 
 export interface Room {
   id: string;
@@ -34,6 +34,7 @@ export interface Room {
   titleSource: TitleSource | null;
   titleUpdatedAt: string | null;
   titleFallbackUsed: boolean;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

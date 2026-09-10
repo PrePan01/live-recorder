@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Modal, Segmented, Select, Space, Typography } from "antd";
+import { App, Button, Modal, Select, Space, Typography } from "antd";
 import {
   FullscreenOutlined,
   FullscreenExitOutlined,
@@ -10,6 +10,7 @@ import { usePreviewStore } from "../../stores/previewStore";
 import { getWallCapacity, useWallStore } from "../../stores/wallStore";
 import PreviewModal from "../../components/PreviewModal";
 import WallGrid from "../../components/WallGrid";
+import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import type { Room } from "../../types/room";
 import styles from "./index.module.css";
 import { enterWallFullscreen as requestWallFullscreen } from "./fullscreen";
@@ -159,10 +160,10 @@ export default function Wall() {
           多路直播墙
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
-          <Segmented
+          <MemphisRadioGroup
             options={["2x2", "3x3"]}
             value={grid}
-            onChange={handleGridChange}
+            onChange={(event) => handleGridChange(event.target.value)}
           />
           <Button
             icon={<FullscreenOutlined />}

@@ -24,6 +24,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   const [loading, setLoading] = useState(false);
   const liveJobs = useUploadStore(useShallow((s) => s.jobs.filter((j) => j.recordingId === recordingId)));
   const upsertUpload = useUploadStore((s) => s.upsert);
+  const requestTwoFactorPrompt = useUploadStore((s) => s.requestTwoFactorPrompt);
 
   const load = async () => {
     setLoading(true);
@@ -99,7 +100,11 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
             </Typography.Text>
             {j.status === 'failed' ? (
               <Space size={4}>
-                <Button size="small" onClick={() => void retryUpload(j.id).then((updated) => { upsertUpload(updated); return load(); }).catch((e) => message.error(describeError(e.code, e.message)))}>
+                <Button size="small" onClick={() => void retryUpload(j.id).then((updated) => {
+                  upsertUpload(updated);
+                  if ((updated.error ?? '').includes('OpenList 需要 2FA 验证')) requestTwoFactorPrompt();
+                  return load();
+                }).catch((e) => message.error(describeError(e.code, e.message)))}>
                   重试
                 </Button>
                 <Popconfirm title="取消上传？本地文件不受影响" onConfirm={() => void cancelUpload(j.id).then(() => void load()).catch((e) => message.error(describeError(e.code, e.message)))}>

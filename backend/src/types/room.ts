@@ -42,6 +42,8 @@ export interface Room {
   titleSource: TitleSource | null;
   titleUpdatedAt: string | null;
   titleFallbackUsed: boolean;
+  /** 用户维护的全局展示顺序，数值越小越靠前。 */
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

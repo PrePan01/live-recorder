@@ -14,6 +14,7 @@ export default function OpenList2faModal() {
   const { message } = App.useApp();
   const jobs = useUploadStore((s) => s.jobs);
   const setJobs = useUploadStore((s) => s.setJobs);
+  const twoFactorPromptVersion = useUploadStore((s) => s.twoFactorPromptVersion);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState("");
@@ -39,10 +40,11 @@ export default function OpenList2faModal() {
     };
   }, [setJobs]);
 
-  // 任一任务出现 2FA 标记 → 弹窗（全局，仅弹一次）。
+  // 任一任务出现 2FA 标记 → 弹窗。关闭后，重试同一个任务不会改变
+  // 其 2FA 错误，因此还要监听显式的重试提示版本以再次打开弹窗。
   useEffect(() => {
     if (hasPending2fa) setOpen(true);
-  }, [hasPending2fa]);
+  }, [hasPending2fa, twoFactorPromptVersion]);
 
   const handleSubmit = useCallback(
     async (otpCode: string) => {
@@ -71,7 +73,7 @@ export default function OpenList2faModal() {
 
   return (
     <Modal
-      title="OpenList 需要 2FA 验证"
+      title="OpenList 自动上传需要两步验证"
       open={open}
       onCancel={() => setOpen(false)}
       onOk={() => void handleSubmit(code)}

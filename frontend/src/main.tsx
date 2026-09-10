@@ -8,7 +8,11 @@ import dayjs from 'dayjs';
 import App from './App';
 import { AppThemeProvider } from './theme';
 import AppErrorBoundary from './components/AppErrorBoundary';
-import './index.css';
+import './styles/tokens.css';
+import './styles/layout.css';
+import './styles/antd-overrides.css';
+import './styles/patterns.css';
+import './styles/motion.css';
 
 dayjs.locale('zh-cn');
 

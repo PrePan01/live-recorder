@@ -16,6 +16,7 @@ interface RoomRow {
   title_source: string | null;
   title_updated_at: string | null;
   title_fallback_used: number;
+  sort_order: number | null;
   monitor_state: string;
   last_checked_at: string | null;
   last_error: string | null;
@@ -46,6 +47,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     titleSource: (row.title_source as TitleSource) ?? null,
     titleUpdatedAt: row.title_updated_at,
     titleFallbackUsed: row.title_fallback_used === 1,
+    sortOrder: row.sort_order ?? 0,
     monitorState: row.monitor_state as MonitorState,
     lastCheckedAt: row.last_checked_at,
     lastError: parseError(row.last_error),
@@ -73,7 +75,7 @@ export class RoomRepository {
   }
 
   list(): Room[] {
-    const rows = this.db.prepare('SELECT * FROM rooms ORDER BY created_at DESC').all() as RoomRow[];
+    const rows = this.db.prepare('SELECT * FROM rooms ORDER BY sort_order ASC, created_at DESC, id DESC').all() as RoomRow[];
     return rows.map((r) => this.enrich(r));
   }
 
@@ -89,6 +91,7 @@ export class RoomRepository {
 
   create(input: NewRoomInput): Room {
     const now = nowIso();
+    const first = this.db.prepare('SELECT MIN(sort_order) AS value FROM rooms').get() as { value: number | null };
     const room: Room = {
       id: newId('room'),
       platform: input.platform,
@@ -102,6 +105,7 @@ export class RoomRepository {
       titleSource: null,
       titleUpdatedAt: null,
       titleFallbackUsed: false,
+      sortOrder: (first.value ?? 0) - 1,
       monitorState: input.enabled === false ? 'disabled' : 'idle',
       lastCheckedAt: null,
       lastError: null,
@@ -113,10 +117,10 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, sort_order, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
         )
-        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.monitorState, now, now);
+        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.sortOrder, room.monitorState, now, now);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: this.findIdByPlatformUrl(room.platform, room.url) });
@@ -170,6 +174,23 @@ export class RoomRepository {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     return this.update(id, { favorited });
+  }
+
+  reorder(roomIds: string[]): Room[] {
+    return this.db.transaction(() => {
+      const current = this.list().map((room) => room.id);
+      const requested = new Set(roomIds);
+      if (
+        roomIds.length !== current.length ||
+        requested.size !== roomIds.length ||
+        current.some((id) => !requested.has(id))
+      ) {
+        throw new AppError('CONFIG_INVALID', 'roomIds 必须是当前全部直播间 ID 的无重复完整排列');
+      }
+      const update = this.db.prepare('UPDATE rooms SET sort_order = ? WHERE id = ?');
+      roomIds.forEach((id, index) => update.run(index, id));
+      return this.list();
+    })();
   }
 
   setState(id: string, state: MonitorState, opts: { lastCheckedAt?: string; lastError?: ErrorObject | null } = {}): void {

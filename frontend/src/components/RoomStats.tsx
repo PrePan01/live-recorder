@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
 import StatCard from './StatCard';
 import { useDisplayClock, useElementVisible } from '../hooks/useDisplayClock';
@@ -20,6 +21,57 @@ function durationValue(startedAt: string | null, now: number): string {
   return h > 0 ? `${h}h${m}m` : m > 0 ? `${m}m${s}s` : `${s}s`;
 }
 
+function RollingDigit({ value }: { value: string }) {
+  const [rolling, setRolling] = useState<{ current: string; previous: string | null }>({
+    current: value,
+    previous: null,
+  });
+
+  useEffect(() => {
+    setRolling((state) =>
+      state.current === value
+        ? state
+        : { current: value, previous: state.current },
+    );
+    const timer = window.setTimeout(() => {
+      setRolling((state) => ({ current: state.current, previous: null }));
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [value]);
+
+  return (
+    <span className="lr-stat__rolling-digit">
+      {rolling.previous ? <span className="lr-stat__value--rolling-old">{rolling.previous}</span> : null}
+      <span className={rolling.previous ? "lr-stat__value--rolling-new" : undefined}>{rolling.current}</span>
+    </span>
+  );
+}
+
+function RollingNumber({ value }: { value: string }) {
+  return (
+    <span className="lr-stat__rolling-number">
+      {[...value].map((digit, index) => (
+        <RollingDigit key={index} value={digit} />
+      ))}
+    </span>
+  );
+}
+
+function RollingDuration({ value }: { value: string }) {
+  const parts = value.match(/\d+|[^\d]+/g) ?? [value];
+  return (
+    <div className="lr-stat__value lr-stat__value--recording lr-stat__value--rolling">
+      {parts.map((part, index) =>
+        /^\d+$/.test(part) ? (
+          <RollingNumber key={`number-${index}`} value={part} />
+        ) : (
+          <span key={`unit-${index}`}>{part}</span>
+        ),
+      )}
+    </div>
+  );
+}
+
 export default function RoomStats({
   lastCheckedAt,
   startedAt,
@@ -38,7 +90,14 @@ export default function RoomStats({
   return (
     <div ref={ref} style={{ display: 'flex', gap: 8, width: '100%' }}>
       <StatCard label="最近检测" value={agoValue(lastCheckedAt, now)} tone={tone} />
-      <StatCard label="已录制" value={durationValue(startedAt, now)} tone={recording ? 'recording' : 'default'} />
+      {recording ? (
+        <div className="lr-stat">
+          <div className="lr-stat__label">已录制</div>
+          <RollingDuration value={durationValue(startedAt, now)} />
+        </div>
+      ) : (
+        <StatCard label="已录制" value={durationValue(startedAt, now)} />
+      )}
     </div>
   );
 }

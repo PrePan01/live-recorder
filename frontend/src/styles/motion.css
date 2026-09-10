@@ -1,0 +1,87 @@
+:focus-visible {
+  outline: 3px solid var(--lr-primary) !important;
+  outline-offset: 3px;
+}
+@keyframes lr-page-in {
+  from {
+    opacity: 0.01;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes lr-recording {
+  50% {
+    transform: rotate(-2deg) scale(1.06);
+  }
+}
+@keyframes lr-value-roll-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes lr-value-roll-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-100%);
+  }
+}
+@keyframes lr-status-ripple {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.55);
+  }
+  65% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (max-width: 720px) {
+  .lr-app-content {
+    padding: 12px !important;
+  }
+  .lr-page-header {
+    align-items: stretch;
+  }
+  .lr-page-header::after {
+    left: 120px;
+  }
+  .lr-page-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .lr-page-actions .ant-select,
+  .lr-page-actions .ant-picker,
+  .lr-filter-bar .ant-select {
+    width: 100% !important;
+  }
+  .lr-statusbar__disk {
+    display: none !important;
+  }
+  .lr-globalsearch {
+    width: min(42vw, 220px) !important;
+  }
+  .lr-room-card:hover {
+    transform: translateY(-2px);
+  }
+}
+
