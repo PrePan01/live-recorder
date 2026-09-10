@@ -208,3 +208,69 @@
 .lr-settings-card {
   margin-top: 16px;
 }
+
+/* First-run setup is intentionally independent from the application shell. */
+.lr-setup-page {
+  box-sizing: border-box;
+  display: flex;
+  min-height: 100dvh;
+  padding: clamp(28px, 7vh, 88px) clamp(16px, 4vw, 64px);
+  flex-direction: column;
+  align-items: center;
+  background: var(--lr-bg);
+}
+.lr-setup-brand {
+  display: flex;
+  width: 70vw;
+  margin-bottom: 18px;
+  gap: 12px;
+  align-items: center;
+  color: var(--lr-text);
+  font-family: var(--lr-display);
+  font-size: clamp(24px, 2.4vw, 34px);
+  font-weight: 900;
+  line-height: 1.1;
+}
+.lr-setup-brand img {
+  display: block;
+  width: clamp(36px, 3.2vw, 48px);
+  height: clamp(36px, 3.2vw, 48px);
+  object-fit: contain;
+}
+.lr-setup-card.ant-card {
+  width: 70vw;
+  border: 3px solid var(--lr-ink);
+  background: var(--lr-surface);
+}
+.lr-setup-card .ant-card-head {
+  min-height: 58px;
+  padding-inline: 24px;
+  border-bottom: 3px solid var(--lr-ink);
+  background: var(--lr-surface-alt);
+}
+.lr-setup-card .ant-card-head-title {
+  color: var(--lr-text);
+  font-family: var(--lr-display);
+  font-size: 20px;
+  font-weight: 900;
+}
+.lr-setup-card .ant-card-body {
+  padding: clamp(20px, 3vw, 36px);
+}
+.lr-setup-actions {
+  display: flex;
+  margin-top: 32px;
+  justify-content: space-between;
+}
+@media (max-width: 760px) {
+  .lr-setup-page {
+    padding: 28px 16px;
+  }
+  .lr-setup-brand,
+  .lr-setup-card.ant-card {
+    width: 100%;
+  }
+  .lr-setup-card .ant-card-head {
+    padding-inline: 18px;
+  }
+}

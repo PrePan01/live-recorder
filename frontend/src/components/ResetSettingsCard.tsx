@@ -90,7 +90,6 @@ export default function ResetSettingsCard({
           </Typography.Text>
           <Button
             danger
-            type="link"
             icon={<ReloadOutlined />}
             onClick={() => {
               setKeepRecordings(true);

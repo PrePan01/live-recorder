@@ -625,6 +625,10 @@ export default function SettingsPage() {
                       }}
                       title={
                         <img
+                          style={{
+                            width: "100%",
+                            maxWidth: "none",
+                          }}
                           alt="从网络面板保存 Cookie 的教程"
                           className="lr-cookie-tutorial-image"
                           src={saveCookieTutorial}

@@ -9,8 +9,7 @@
 .ant-message-notice-content,
 .ant-notification-notice,
 .ant-alert,
-.ant-result,
-.ant-empty {
+.ant-result {
   color: var(--lr-text) !important;
   border: 2px solid var(--lr-ink) !important;
   border-radius: 0 !important;
@@ -94,7 +93,7 @@
   transform: scale(0.94);
 }
 .ant-btn-primary,
-.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link) {
+.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link):not(.ant-btn-dangerous) {
   border: 2px solid var(--lr-ink) !important;
   background: var(--lr-surface) !important;
 }
