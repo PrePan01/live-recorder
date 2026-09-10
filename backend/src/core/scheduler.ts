@@ -212,6 +212,17 @@ export class Scheduler {
     this.services.events.emit({ type: 'alert:created', data: alert });
   }
 
+  /** 开启自动录制后使用最新配置检测；已有录制无需探测，避免改变其状态或停录。 */
+  async triggerAutoRecordCheck(roomId: string): Promise<void> {
+    if (this.manager.isRoomActive(roomId)) return;
+    // 正在进行的检测可能使用旧配置，或仅用于解析名称；完成后重新判断。
+    await this.checking.get(roomId);
+    const room = this.services.rooms.get(roomId);
+    if (!room || this.manager.isRoomActive(roomId)) return;
+    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? true)) return;
+    await this.checkRoom(room, { manual: true });
+  }
+
   async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;

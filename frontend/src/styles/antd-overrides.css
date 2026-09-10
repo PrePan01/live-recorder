@@ -93,9 +93,7 @@
   transform: scale(0.94);
 }
 .ant-btn-primary,
-.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link):not(
-    .ant-btn-dangerous
-  ):not(.ant-btn-icon-only):not(.ant-btn-variant-outlined) {
+.ant-btn-default {
   border: 2px solid var(--lr-ink) !important;
   background: var(--lr-surface) !important;
 }

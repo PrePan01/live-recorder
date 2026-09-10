@@ -187,12 +187,19 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download installers
         uses: actions/download-artifact@v8
         with:
           pattern: live-recorder-*-${{ needs.prepare.outputs.version }}
           path: release-assets
           merge-multiple: true
+
+      - name: Generate update manifest
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION"
 
       - name: Generate checksums
         working-directory: release-assets
@@ -207,4 +214,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
-            --generate-notes
+            --generate-notes \
+            --draft
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

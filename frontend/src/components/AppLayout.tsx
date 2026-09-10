@@ -12,7 +12,7 @@ import {
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import StatusBar from "./StatusBar";
 import { useAppTheme } from "../theme";
-import { useServiceStore } from "../stores/serviceStore.ts";
+import AppVersion from "./AppVersion";
 import LazyRouteErrorBoundary from "./LazyRouteErrorBoundary";
 import { preloadRoute } from "../routes/preload";
 
@@ -82,7 +82,6 @@ export default function AppLayout() {
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const { mode } = useAppTheme();
-  const status = useServiceStore((s) => s.status);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [sidebarBelowBreakpoint, setSidebarBelowBreakpoint] = useState(false);
 
@@ -150,7 +149,7 @@ export default function AppLayout() {
             }}
             style={{ paddingTop: 4 }}
           />
-          <div className="lr-app-version">{status?.version ?? ""}</div>
+          <AppVersion />
         </Sider>
         <Content
           className="lr-app-content"

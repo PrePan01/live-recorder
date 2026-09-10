@@ -41,6 +41,35 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('checks with the enabled autoRecord setting after an older check finishes', async () => {
+    const { services } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-pending-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/90', displayName: 'Pending' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    adapter.checkLiveStatus = async () => {
+      calls += 1;
+      if (calls === 1) await gate;
+      return { status: 'live', streamSessionId: 'pending-session' };
+    };
+    const pending = services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => calls === 1);
+    services.rooms.update(room.id, { autoRecord: true });
+    const enabling = services.scheduler.triggerAutoRecordCheck(room.id);
+    release();
+    try {
+      await Promise.all([pending, enabling]);
+      expect(calls).toBe(2);
+      expect(services.manager.isRoomActive(room.id)).toBe(true);
+      expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    } finally {
+      await services.manager.stopRecording(room.id);
+    }
+  });
+
   it('keeps a due schedule claimed by one platform timer until the other platform consumes it', () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/99', displayName: 'D' });
