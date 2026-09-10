@@ -15,11 +15,13 @@ import type { RecordingEngine, RecordingEvent, StreamInput } from './engine.js';
  * 时间戳严格按 FLV 规范读写：3 字节大端（byte4 为高位），byte7 为扩展高字节（>0xFFFFFF 时置 0xFFFFFF+高位）。
  * 兼容任意 chunk 边界（标签可能跨块），可流式处理。
  */
-class FlvTimestampNormalizer {
+export class FlvTimestampNormalizer {
   private baseA: number | null = null;
   private baseV: number | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private headerEmitted = false;
+
+  constructor(private readonly rebaseFromFirstMedia = false) {}
 
   private static readTs(buf: Buffer, off: number): number {
     return (buf[off + 4]! << 16) | (buf[off + 5]! << 8) | buf[off + 6]! | ((buf[off + 7]! & 0xff) << 24);
@@ -63,7 +65,7 @@ class FlvTimestampNormalizer {
     const key: 'baseA' | 'baseV' = tagType === 8 ? 'baseA' : 'baseV';
     let base = baseRef;
     if (base === null) {
-      base = rawTs > 60_000 ? rawTs : 0;
+      base = this.rebaseFromFirstMedia || rawTs > 60_000 ? rawTs : 0;
       this[key] = base;
     }
     if (base > 0) FlvTimestampNormalizer.writeTs(this.buffer, offset, rawTs - base);

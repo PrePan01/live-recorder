@@ -15,7 +15,7 @@ export default class AppErrorBoundary extends Component<{ children: ReactNode },
   }
 
   render(): ReactNode {
-    if (this.state.failed) return <Result status="error" title="界面无法继续渲染" subTitle="后台录制服务仍会继续运行。重新加载仅重建界面。" extra={<Button type="primary" onClick={() => window.location.reload()}>重新加载界面</Button>} />;
+    if (this.state.failed) return <div className="lr-startup-page lr-memphis-pattern lr-system-result"><Result status="error" title="界面无法继续渲染" subTitle="后台录制服务仍会继续运行。重新加载仅重建界面。" extra={<Button type="primary" onClick={() => window.location.reload()}>重新加载界面</Button>} /></div>;
     return this.props.children;
   }
 }

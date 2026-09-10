@@ -40,10 +40,8 @@ export function PlatformIcon({
 
 export function PlatformLogoTag({
   platform,
-  isShowName,
 }: {
   platform: Platform;
-  isShowName?: boolean;
 }) {
   const style = PLATFORM_STYLE[platform];
   return (
@@ -52,20 +50,9 @@ export function PlatformLogoTag({
       style={{
         background: style.bg,
         borderColor: "transparent",
-        borderRadius: 4,
       }}
     >
       <PlatformIcon platform={platform} size={16} />
-      <span
-        className="lr-platform-logo-tag__label"
-        style={{
-          color: style.color,
-          fontWeight: 600,
-          display: isShowName ? "block" : "none",
-        }}
-      >
-        {style.label}
-      </span>
     </Tag>
   );
 }

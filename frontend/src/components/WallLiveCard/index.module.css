@@ -1,26 +1,43 @@
 .card {
-    position: relative;
-    box-sizing: border-box;
-    min-width: 0;
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .title {
-    position: absolute;
-    right: 0;
-    top: 0;
-    z-index: 100;
-    background: rgba(13,13,13,.8);
-    padding-left: 8px;
-    color: white;
-    display: inline-flex;
-    align-items: center;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 100;
+  background: #000;
+  padding-left: 8px;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+}
+
+.title :global(.lr-platform-logo-tag) {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.title :global(.lr-platform-icon) {
+    filter: none;
 }
 
 .textButton {
-    color: white;
+  color: #fff !important;
+  border-radius: 0;
+}
+
+.textButton :global(.anticon),
+.textButton :global(.anticon svg) {
+  color: #fff !important;
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 :global(:fullscreen) .fullscreenButton,
 :global([data-wall-fullscreen]) .fullscreenButton {
-    display: none;
+  display: none;
 }

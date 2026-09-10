@@ -6,7 +6,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import type { PreviewSink } from '../../src/core/recorder-manager.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
-import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
+import { buildMinimalFlv, FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import { FakeRecordingEngine, type FakeEngineScript } from '../../src/recorder/fake-engine.js';
 import type { RecordingEngine } from '../../src/recorder/engine.js';
 import { FakeDiskGuard } from '../../src/storage/disk-guard.js';
@@ -54,6 +54,9 @@ class FakePreview implements PreviewSink {
   }
   resetRoom(roomId: string): void {
     this.resets.push(roomId);
+  }
+  recordingBootstrap(): Buffer {
+    return buildMinimalFlv();
   }
 }
 
@@ -148,7 +151,7 @@ describe('RecorderManager', () => {
     expect(preview.resets).toContain(room.id);
   });
 
-  it('hands preview-only stream off before recording so FLV streams never interleave', async () => {
+  it('keeps the preview stream open while recording starts and stops', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-handoff-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -162,10 +165,15 @@ describe('RecorderManager', () => {
     await waitFor(() => services.manager.isPreviewStreaming(room.id));
     await services.manager.maybeStartRecording(room, { streamSessionId: 'handoff-1' }, { manual: true });
 
-    expect(services.manager.isPreviewStreaming(room.id)).toBe(false);
+    expect(services.manager.isPreviewStreaming(room.id)).toBe(true);
     expect(services.manager.isRoomActive(room.id)).toBe(true);
-    expect(preview.closed).toContainEqual({ roomId: room.id, code: 1012, reason: undefined });
-    expect(preview.resets).toContain(room.id);
+    expect(preview.closed).toEqual([]);
+    expect(preview.resets).not.toContain(room.id);
+
+    await services.manager.stopRecording(room.id);
+    expect(services.manager.isPreviewStreaming(room.id)).toBe(true);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+    expect(preview.closed).toEqual([]);
   });
 
   it('marks a 0-byte recording as failed and removes the empty file, not completed (#165 空文件)', async () => {

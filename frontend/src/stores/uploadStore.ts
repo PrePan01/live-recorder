@@ -8,12 +8,16 @@ function latest(current: UploadJob | undefined, incoming: UploadJob): UploadJob 
 
 interface UploadState {
   jobs: UploadJob[];
+  /** Explicitly re-open the global 2FA prompt after a user retries a blocked job. */
+  twoFactorPromptVersion: number;
   upsert: (job: UploadJob) => void;
   setJobs: (jobs: UploadJob[]) => void;
+  requestTwoFactorPrompt: () => void;
 }
 
 export const useUploadStore = create<UploadState>((set) => ({
   jobs: [],
+  twoFactorPromptVersion: 0,
   upsert(job) {
     set((s) => {
       const idx = s.jobs.findIndex((x) => x.id === job.id);
@@ -32,5 +36,10 @@ export const useUploadStore = create<UploadState>((set) => ({
       const listed = new Set(jobs.map((job) => job.id));
       return { jobs: [...merged, ...state.jobs.filter((job) => !listed.has(job.id))] };
     });
+  },
+  requestTwoFactorPrompt() {
+    // Retrying a 2FA-blocked job intentionally leaves its error unchanged, so
+    // the modal needs an event separate from the job's status/error fields.
+    set((state) => ({ twoFactorPromptVersion: state.twoFactorPromptVersion + 1 }));
   },
 }));

@@ -1,34 +1,25 @@
 import type { LiveStatus } from '../types/room';
 
-const META: Record<LiveStatus, { color: string; text: string; icon: string }> = {
-  live: { color: 'var(--lr-success)', text: '直播中', icon: '●' },
-  offline: { color: 'var(--lr-text-tertiary)', text: '未开播', icon: '○' },
-  restricted: { color: 'var(--lr-warning)', text: '受限', icon: '◐' },
+const META: Record<LiveStatus, { colorClass: string; text: string }> = {
+  live: { colorClass: 'lr-live-status-text--live', text: '直播中' },
+  offline: { colorClass: 'lr-live-status-text--offline', text: '未开播' },
+  restricted: { colorClass: 'lr-live-status-text--restricted', text: '受限' },
 };
 
 export default function LiveStatusTag({ status }: { status: LiveStatus | null }) {
   if (!status) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--lr-text-tertiary)' }} />
-        <span style={{ fontSize: 12, color: 'var(--lr-text-secondary)' }}>未检测</span>
+      <span className="lr-live-status-tag">
+        <span className="lr-live-status-dot lr-live-status-dot--offline" />
+        <span className="lr-live-status-text lr-live-status-text--offline">未检测</span>
       </span>
     );
   }
   const meta = META[status];
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <span
-        className={status === 'live' ? 'lr-live-dot' : undefined}
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: meta.color,
-          boxShadow: status === 'live' ? `0 0 0 3px ${meta.color}33` : undefined,
-        }}
-      />
-      <span style={{ fontSize: 12, color: meta.color, fontWeight: status === 'live' ? 600 : 400 }}>{meta.text}</span>
+    <span className="lr-live-status-tag">
+      <span className={`lr-live-status-dot lr-live-status-dot--${status}`} />
+      <span className={`lr-live-status-text ${meta.colorClass}`}>{meta.text}</span>
     </span>
   );
 }

@@ -9,7 +9,6 @@ import {
   Input,
   InputNumber,
   List,
-  Radio,
   Row,
   Select,
   Space,
@@ -42,6 +41,7 @@ import {
   type SelfCheckStatus,
 } from "../../api/service";
 import DirectoryPicker from "../../components/DirectoryPicker";
+import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import PipelineConfigCard from "../../components/PipelineConfigCard";
 import NamingRuleCard from "../../components/NamingRuleCard";
 import OpenListConfigCard from "../../components/OpenListConfigCard";
@@ -377,10 +377,9 @@ export default function SettingsPage() {
                   外观与存储
                 </Typography.Title>
                 <Form.Item label="主题" name="theme">
-                  <Radio.Group
+                  <MemphisRadioGroup
                     options={THEME_OPTIONS}
-                    optionType="button"
-                    buttonStyle="solid"
+                    value={preference}
                     onChange={(e) =>
                       setPreference(e.target.value as ThemePreference)
                     }
@@ -626,6 +625,10 @@ export default function SettingsPage() {
                       }}
                       title={
                         <img
+                          style={{
+                            width: "100%",
+                            maxWidth: "none",
+                          }}
                           alt="从网络面板保存 Cookie 的教程"
                           className="lr-cookie-tutorial-image"
                           src={saveCookieTutorial}
@@ -696,34 +699,28 @@ export default function SettingsPage() {
               }}
             />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="后处理管线"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="后处理管线">
             <PipelineConfigCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="录制文件命名规则"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="OpenList 自动上传"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="OpenList 自动上传">
             <OpenListConfigCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="邮件通知（服务商预设）"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="邮件通知（服务商预设）">
             <EmailConfigCard />
           </Card>
+          <ResetSettingsCard
+            onExport={onExport}
+            exporting={exporting}
+            beforeReset={() => {
+              if (debounceRef.current) {
+                clearTimeout(debounceRef.current);
+                debounceRef.current = null;
+              }
+            }}
+          />
         </Col>
         <Col xs={24} lg={10}>
           <Card
@@ -1001,16 +998,6 @@ export default function SettingsPage() {
           </Card>
         </Col>
       </Row>
-      <ResetSettingsCard
-        onExport={onExport}
-        exporting={exporting}
-        beforeReset={() => {
-          if (debounceRef.current) {
-            clearTimeout(debounceRef.current);
-            debounceRef.current = null;
-          }
-        }}
-      />
     </div>
   );
 }

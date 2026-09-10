@@ -18,6 +18,17 @@ import { preloadRoute } from "../routes/preload";
 
 const { Sider, Content, Footer } = Layout;
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "lr-sidebar-collapsed";
+
+function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  } catch {
+    // Storage can be unavailable in restricted WebViews; keep the default UI.
+    return false;
+  }
+}
+
 const ITEMS = [
   {
     key: "/monitor",
@@ -72,12 +83,32 @@ export default function AppLayout() {
   const [isPending, startTransition] = useTransition();
   const { mode } = useAppTheme();
   const status = useServiceStore((s) => s.status);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [sidebarBelowBreakpoint, setSidebarBelowBreakpoint] = useState(false);
 
   useEffect(() => {
     setPendingPath(null);
   }, [pathname]);
 
   const selectedPath = pendingPath ?? pathname;
+
+  const handleSidebarCollapse = (
+    collapsed: boolean,
+    type: "clickTrigger" | "responsive",
+  ) => {
+    // Sider emits a responsive event while it mounts. It reflects the current
+    // viewport rather than a user choice, so saving it would overwrite the
+    // remembered state on every refresh.
+    if (type !== "clickTrigger") return;
+
+    setSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
+    } catch {
+      // Storage can be unavailable in restricted WebViews; state still works
+      // for the current session.
+    }
+  };
 
   return (
     <Layout
@@ -92,12 +123,18 @@ export default function AppLayout() {
           collapsible
           breakpoint="md"
           collapsedWidth={48}
+          collapsed={sidebarBelowBreakpoint || sidebarCollapsed}
+          onCollapse={handleSidebarCollapse}
+          onBreakpoint={setSidebarBelowBreakpoint}
           style={{
             borderRight: "1px solid var(--lr-border)",
             overflow: "hidden",
           }}
         >
-          <div className="lr-app-brand">直播录制台</div>
+          <div className="lr-app-brand">
+            <img src="/icon1.png" alt="直播录制台" draggable={false} />
+            <span>直播录制台</span>
+          </div>
           <Menu
             mode="inline"
             selectedKeys={[

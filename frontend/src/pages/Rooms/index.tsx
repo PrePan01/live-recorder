@@ -24,6 +24,7 @@ import {
   StarOutlined,
   ScheduleOutlined,
   DeleteOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { useRoomStore } from "../../stores/roomStore";
@@ -37,6 +38,10 @@ import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import { formatRelative } from "../../utils/format";
+import {
+  RoomSortableProvider,
+  SortableRoomTableRow,
+} from "../../components/RoomSortable";
 
 function guessPlatform(url: string): Room["platform"] | null {
   if (/live\.douyin\.com|douyin\.com/.test(url)) return "douyin";
@@ -64,6 +69,8 @@ export default function Rooms() {
     setAutoRecord,
     updateRoomTags,
     checkRoomNow,
+    reorderRooms,
+    reorderBusy,
   } = useRoomStore();
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
@@ -120,6 +127,14 @@ export default function Rooms() {
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
     [filtered, page, pageSize],
   );
+
+  const commitRoomOrder = async (roomIds: string[]) => {
+    try {
+      await reorderRooms(roomIds);
+    } catch {
+      message.error("排序保存失败，已恢复服务端顺序");
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -288,7 +303,7 @@ export default function Rooms() {
     {
       title: "收藏",
       dataIndex: "favorited",
-      width: 70,
+      width: 60,
       render: (v: boolean, room) => (
         <Button
           type="text"
@@ -311,18 +326,18 @@ export default function Rooms() {
     {
       title: "平台",
       dataIndex: "platform",
-      width: 90,
+      width: 60,
       render: (p) => <PlatformLogoTag platform={p} />,
     },
     {
       title: "自动录制",
       dataIndex: "autoRecord",
-      width: 130,
+      width: 120,
       render: (v: boolean | null, room) => (
         <Select
           size="small"
           value={v === null ? "inherit" : v ? "on" : "off"}
-          style={{ width: 112 }}
+          style={{ width: 100 }}
           onChange={(val) =>
             void setAutoRecord(room.id, val === "inherit" ? null : val === "on")
               .then(() =>
@@ -369,7 +384,7 @@ export default function Rooms() {
     {
       title: "标签",
       dataIndex: "tags",
-      width: 160,
+      width: 120,
       render: (ts: Room["tags"]) =>
         ts.length === 0 ? (
           <Typography.Text type="secondary">-</Typography.Text>
@@ -386,7 +401,7 @@ export default function Rooms() {
     {
       title: "链接",
       dataIndex: "url",
-      width: 220,
+      width: 300,
       ellipsis: true,
       render: (u: string) => (
         <Typography.Link copyable={{ text: u }} href={u} target="_blank">
@@ -438,8 +453,13 @@ export default function Rooms() {
       width: 220,
       fixed: "right" as const,
       render: (_, room) => (
-        <Space>
-          <Button size="small" type="link" onClick={() => openEdit(room)}>
+        <Space size={0}>
+          <Button
+            size="small"
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(room)}
+          >
             编辑
           </Button>
           <Button
@@ -562,34 +582,45 @@ export default function Rooms() {
           </Typography.Text>
         ) : null}
       </Space>
-      <Table
-        rowKey="id"
-        columns={resizedColumns}
-        components={resizableComponents}
-        dataSource={paginated}
-        loading={loading}
-        sticky={{ offsetScroll: 8 }}
-        scroll={{ x: 1500 }}
-        onRow={(r) =>
-          ({ "data-room-id": r.id }) as React.HTMLAttributes<HTMLElement>
-        }
-        rowSelection={{
-          selectedRowKeys: selectedKeys,
-          onChange: setSelectedKeys,
-        }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: filtered.length,
-          showSizeChanger: true,
-          pageSizeOptions: [10, 20, 50],
-          showTotal: (t) => `共 ${t} 个直播间`,
-          onChange: (p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          },
-        }}
-      />
+      <RoomSortableProvider
+        allRooms={rooms}
+        visibleRooms={paginated}
+        mode="table"
+        disabled={reorderBusy}
+        onReorder={commitRoomOrder}
+      >
+        <Table
+          rowKey="id"
+          columns={resizedColumns}
+          components={{
+            ...resizableComponents,
+            body: { row: SortableRoomTableRow },
+          }}
+          dataSource={paginated}
+          loading={loading}
+          sticky={{ offsetScroll: 8 }}
+          scroll={{ x: 1500 }}
+          onRow={(room) =>
+            ({ "data-room-id": room.id }) as React.HTMLAttributes<HTMLElement>
+          }
+          rowSelection={{
+            selectedRowKeys: selectedKeys,
+            onChange: setSelectedKeys,
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: filtered.length,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            showTotal: (t) => `共 ${t} 个直播间`,
+            onChange: (p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            },
+          }}
+        />
+      </RoomSortableProvider>
       <Modal
         title={editing ? "编辑直播间" : "添加直播间"}
         open={modalOpen}

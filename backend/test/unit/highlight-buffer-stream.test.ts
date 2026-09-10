@@ -32,6 +32,41 @@ describe('highlight buffer export', () => {
     expect(bytes.length).toBeGreaterThan(flvHeader().length);
   });
 
+  it('continues caching into a new segment after export', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-continue-'));
+    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+    await buffer.start();
+    const at = Date.now();
+    buffer.append(flvHeader(), at);
+    buffer.append(keyframe(), at);
+    const firstOutput = path.join(base, 'first.flv');
+    await buffer.exportTo(firstOutput, 30);
+
+    // This arrives within the old segment's five-second window. Previously it
+    // was queued against the stream just closed by export and silently lost.
+    buffer.append(keyframe(), at + 1_000);
+    const secondOutput = path.join(base, 'second.flv');
+    await buffer.exportTo(secondOutput, 30);
+
+    expect(buffer.isAccepting).toBe(true);
+    expect(buffer.availableSeconds()).toBe(1);
+    expect((await readFile(secondOutput)).length).toBeGreaterThan((await readFile(firstOutput)).length);
+  });
+
+  it('reports only the interval covered by successfully written frames', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-stalled-'));
+    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+    await buffer.start();
+    const at = Date.now() - 180_000;
+    buffer.append(flvHeader(), at);
+    buffer.append(keyframe(), at);
+    const result = await buffer.exportTo(path.join(base, 'out.flv'), 180);
+
+    // A stopped cache must not turn elapsed wall-clock time into fake footage.
+    expect(buffer.availableSeconds()).toBe(0);
+    expect(result.actualSeconds).toBe(0);
+  });
+
   it('stops only this cache when the pending disk-write queue exceeds 8 MiB', async () => {
     const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-slow-'));
     const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);

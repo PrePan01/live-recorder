@@ -1,0 +1,585 @@
+/* Major surfaces */
+.ant-card,
+.ant-modal-content,
+.ant-drawer-content,
+.ant-popover-inner,
+.ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-picker-dropdown,
+.ant-message-notice-content,
+.ant-notification-notice,
+.ant-alert,
+.ant-result {
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+.ant-card {
+  overflow: visible;
+  border-top-width: 5px !important;
+}
+.ant-card-head {
+  min-height: 45px !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid var(--lr-ink) !important;
+  background: transparent !important;
+}
+.ant-card-head-title {
+  padding: 10px 0 !important;
+  color: var(--lr-text) !important;
+  font-family: var(--lr-display);
+  font-weight: 900 !important;
+}
+.ant-card-body {
+  padding: 15px !important;
+}
+.ant-card:nth-of-type(4n + 1) {
+  border-top-color: var(--lr-pink) !important;
+}
+.ant-card:nth-of-type(4n + 2) {
+  border-top-color: var(--lr-yellow) !important;
+}
+.ant-card:nth-of-type(4n + 3) {
+  border-top-color: var(--lr-teal) !important;
+}
+.ant-card:nth-of-type(4n) {
+  border-top-color: var(--lr-primary) !important;
+}
+
+/* Buttons */
+.ant-btn {
+  display: inline-flex !important;
+  height: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  color: var(--lr-text) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-family: var(--lr-body);
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  transition:
+    transform var(--lr-motion) var(--lr-bounce),
+    background var(--lr-motion) !important;
+}
+.ant-btn > .ant-btn-icon,
+.ant-btn > .anticon,
+.ant-btn .ant-btn-icon .anticon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.ant-btn > .ant-btn-icon > svg,
+.ant-btn > .anticon > svg,
+.ant-btn .ant-btn-icon .anticon > svg {
+  display: block;
+}
+.ant-btn:hover:not(:disabled),
+.ant-btn:focus-visible:not(:disabled) {
+  color: #000 !important;
+  background: var(--lr-surface-alt) !important;
+  transform: translateY(-2px) rotate(-0.6deg);
+}
+:root[data-theme="dark"] .ant-btn:hover:not(:disabled),
+:root[data-theme="dark"] .ant-btn:focus-visible:not(:disabled) {
+  color: var(--lr-text) !important;
+}
+.ant-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.ant-btn-primary,
+.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link):not(.ant-btn-dangerous) {
+  border: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface) !important;
+}
+.ant-btn-dangerous {
+  border: 2px solid var(--lr-ink) !important;
+  color: #fff !important;
+  background: var(--lr-danger) !important;
+}
+.ant-btn-primary {
+  color: #000 !important;
+  background: var(--lr-pink) !important;
+}
+.ant-btn:disabled {
+  color: var(--lr-muted) !important;
+  opacity: 0.7;
+}
+
+/* Form controls: one frame per semantic control. */
+.ant-input:not(textarea),
+.ant-input-affix-wrapper,
+.ant-input-number,
+.ant-picker,
+.ant-select:not(.ant-select-customize-input):not(.ant-select-multiple) {
+  display: inline-flex;
+  height: 36px;
+  min-height: 36px;
+  align-items: center;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+textarea.ant-input,
+.ant-select-multiple:not(.ant-select-customize-input) {
+  min-height: 36px;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+.ant-input,
+.ant-input-number-input,
+.ant-select-selection-item,
+.ant-picker-input > input {
+  font-family: var(--lr-body) !important;
+}
+.ant-input:not(textarea),
+.ant-input-number-input,
+.ant-picker-input > input {
+  height: 100%;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1.5 !important;
+}
+.ant-input-affix-wrapper .ant-input,
+.ant-input-number .ant-input-number-input-wrap,
+.ant-input-number .ant-input-number-input,
+.ant-picker .ant-picker-input > input,
+.ant-select .ant-select-content,
+.ant-select .ant-select-selection-search-input {
+  min-height: 0;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.ant-input-affix-wrapper {
+  padding-block: 0 !important;
+}
+.ant-input-affix-wrapper .ant-input-suffix,
+.ant-input-affix-wrapper .ant-input-prefix,
+.ant-input-affix-wrapper .ant-input-clear-icon,
+.ant-input-number .ant-input-number-handler-wrap,
+.ant-picker .ant-picker-suffix,
+.ant-picker .ant-picker-prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.ant-input-affix-wrapper .ant-input-clear-icon {
+  width: 20px;
+  height: 20px;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.ant-input-affix-wrapper .ant-input-clear-icon > svg,
+.ant-input-affix-wrapper .ant-input-clear-icon > * {
+  display: block;
+}
+.ant-input:hover,
+.ant-input:focus,
+.ant-input-affix-wrapper:hover,
+.ant-input-affix-wrapper:focus-within,
+.ant-input-number:hover,
+.ant-input-number-focused,
+.ant-select-focused,
+.ant-picker-focused {
+  border-color: var(--lr-primary) !important;
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 1px;
+}
+
+/* AntD 6 composes inputs with actions using Space.Compact. Keep one shared
+   cross-axis center for the input, clear affordance, and action icon. */
+.ant-space-compact:has(
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  )
+) {
+  display: inline-flex;
+  overflow: hidden;
+  height: 36px;
+  min-height: 36px;
+  align-items: stretch;
+  border: 2px solid var(--lr-ink);
+  border-radius: 0;
+  background: var(--lr-surface);
+}
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  ):focus-within {
+  border-color: var(--lr-primary);
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 1px;
+}
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  ) {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto !important;
+  min-height: 0;
+  margin: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+}
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > .ant-btn {
+  align-self: stretch;
+  min-width: 42px;
+  height: auto !important;
+  min-height: 0;
+  margin: 0 !important;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface) !important;
+  display: grid;
+  place-items: center;
+  transition: background var(--lr-motion) !important;
+}
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > .ant-btn:is(:hover, :focus-visible, :active) {
+  background: var(--lr-yellow) !important;
+  transform: none !important;
+}
+.ant-select-dropdown,
+.ant-picker-dropdown {
+  overflow: hidden;
+}
+.ant-select-item-option-active,
+.ant-select-item-option-selected,
+.ant-picker-cell-selected .ant-picker-cell-inner {
+  color: #000 !important;
+  background: var(--lr-yellow) !important;
+}
+.lr-tag-color-select {
+  flex: 0 0 112px !important;
+  width: 112px !important;
+}
+.lr-tag-color-option {
+  display: inline-flex;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+/* Switch */
+.ant-switch {
+  min-width: 44px !important;
+  height: 24px !important;
+  padding: 2px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 999px !important;
+  background: #bdb4ca !important;
+}
+.ant-switch.ant-switch-checked {
+  background: var(--lr-teal) !important;
+}
+.ant-switch .ant-switch-handle,
+.ant-switch.ant-switch-checked .ant-switch-handle {
+  top: 2px !important;
+  left: 2px !important;
+  width: 16px !important;
+  height: 16px !important;
+  transition: transform var(--lr-motion) var(--lr-bounce) !important;
+}
+.ant-switch.ant-switch-checked .ant-switch-handle {
+  transform: translateX(20px) !important;
+}
+.ant-switch .ant-switch-handle::before {
+  border: 1px solid var(--lr-ink);
+  border-radius: 50% !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+
+/* Reusable segmented radio: its fill is themed, immediate and always centered. */
+.lr-memphis-radio-group {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(var(--lr-radio-count), minmax(0, 1fr));
+  isolation: isolate;
+  height: 36px;
+  min-height: 36px;
+  padding: 2px;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+.lr-memphis-radio-group::before {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--lr-radio-count));
+  background: var(--lr-primary);
+  content: "";
+  transform: translateX(calc(var(--lr-radio-index) * 100%));
+  transition: transform 180ms var(--lr-bounce);
+}
+.lr-memphis-radio-group .ant-radio-button-wrapper,
+.lr-memphis-radio-group .ant-radio-button-wrapper-checked {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 78px;
+  min-height: 30px;
+  height: 30px;
+  padding: 0 14px !important;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--lr-text) !important;
+  line-height: 1 !important;
+  transition: color 100ms linear !important;
+}
+.lr-memphis-radio-group .ant-radio-button-wrapper-checked {
+  color: #000 !important;
+  font-weight: 900;
+}
+.lr-memphis-radio-group .ant-radio-button-wrapper::before {
+  display: none !important;
+}
+
+/* Tags, tables and status */
+.lr-live-status-tag {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.lr-live-status-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+.lr-live-status-dot--live {
+  background: var(--lr-success);
+  color: var(--lr-success);
+}
+.lr-live-status-dot--live::before {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  content: "";
+  opacity: 0.7;
+  animation: lr-status-ripple 2.4s ease-out infinite;
+}
+.lr-live-status-dot--live::after {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  content: "";
+  opacity: 0.7;
+  animation: lr-status-ripple 2.4s 1.2s ease-out infinite;
+}
+.lr-live-status-dot--restricted {
+  background: #c98a00;
+}
+.lr-live-status-text {
+  font-size: 12px;
+  font-weight: 400;
+}
+.lr-live-status-text--live {
+  color: var(--lr-success);
+  font-weight: 600;
+}
+.lr-live-status-text--offline {
+  color: var(--lr-muted);
+}
+.lr-live-status-text--restricted {
+  color: #c98a00;
+}
+.ant-tag {
+  margin-inline-end: 0;
+  padding: 2px 6px;
+  color: #000;
+  border: 0;
+  border-radius: 0;
+  background: var(--lr-yellow);
+  font-weight: 800;
+}
+.ant-tag-blue,
+.ant-tag-geekblue,
+.ant-tag-green {
+  background: var(--lr-teal);
+}
+.ant-tag-red,
+.ant-tag-error {
+  background: var(--lr-pink);
+}
+.lr-platform-logo-tag {
+  display: inline-grid !important;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 !important;
+  place-items: center;
+  border-radius: 0 !important;
+  line-height: 0 !important;
+  vertical-align: middle;
+}
+.lr-platform-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+.ant-table-wrapper {
+  border: 0 !important;
+  background: transparent !important;
+}
+.ant-table,
+.ant-table-container,
+.ant-table-content,
+.ant-table-thead > tr > th,
+.ant-table-tbody > tr > td {
+  color: var(--lr-text) !important;
+  background: var(--lr-surface) !important;
+}
+.ant-table-thead > tr > th {
+  border-bottom: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface-alt) !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid color-mix(in srgb, var(--lr-ink) 42%, transparent) !important;
+}
+.lr-history-page .ant-table-tbody > tr {
+  height: 70px;
+}
+.lr-history-page .ant-table-tbody > tr > td {
+  height: 70px;
+  padding-block: 6px !important;
+  vertical-align: middle;
+}
+.lr-history-page .ant-table-tbody .ant-btn.ant-btn-sm {
+  height: 24px;
+  min-height: 24px;
+  padding-block: 0;
+}
+.lr-history-title-cell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+  align-items: center;
+}
+.lr-history-title-cell > .ant-typography {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-history-title-cell > .ant-btn {
+  flex: 0 0 auto;
+}
+.ant-table-tbody > tr:last-child > td {
+  border-bottom: 0 !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background: #fff4a7 !important;
+}
+:root[data-theme="dark"] .ant-table-tbody > tr:hover > td {
+  background: #3b3152 !important;
+}
+.ant-progress-inner {
+  border: 2px solid var(--lr-ink);
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+.ant-progress-bg {
+  border-radius: 0 !important;
+  background: var(--lr-pink) !important;
+}
+.ant-modal-header,
+.ant-drawer-header {
+  border-bottom: 3px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-yellow) !important;
+}
+.ant-modal-title,
+.ant-drawer-title {
+  color: #000 !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+.ant-modal-footer {
+  border-top: 1px solid var(--lr-ink);
+  padding-top: 14px;
+}
+.ant-alert {
+  color: #000 !important;
+  background: var(--lr-yellow) !important;
+}
+.ant-alert-error {
+  background: var(--lr-pink) !important;
+}
+.ant-typography,
+.ant-typography-secondary,
+.ant-form-item-label > label {
+  color: var(--lr-text) !important;
+}
+.ant-form-item-label > label {
+  font-weight: 800;
+}

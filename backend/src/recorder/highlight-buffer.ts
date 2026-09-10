@@ -7,13 +7,15 @@ const SEGMENT_MS = 5_000;
 /** A preview cache must never turn a slow disk into unbounded process memory. */
 const MAX_PENDING_WRITE_BYTES = 8 * 1024 * 1024;
 
-type Entry = { offset: number; length: number; at: number; keyframe: boolean };
+/** An entry becomes exportable only after its bytes have reached the cache file. */
+type Entry = { offset: number; length: number; at: number; keyframe: boolean; written: boolean };
 type Segment = {
   path: string; startedAt: number; endedAt: number; bytes: number; entries: Entry[];
   stream: ReturnType<typeof createWriteStream> | null; closing: Promise<void> | null;
   resolveClosing?: () => void;
 };
-type WriteOperation = { kind: 'write'; segment: Segment; stream: ReturnType<typeof createWriteStream>; chunk: Buffer } | { kind: 'close'; segment: Segment; stream: ReturnType<typeof createWriteStream> };
+type WriteOperation = { kind: 'write'; segment: Segment; stream: ReturnType<typeof createWriteStream>; chunk: Buffer; entry: Entry } | { kind: 'close'; segment: Segment; stream: ReturnType<typeof createWriteStream> };
+type SealedSnapshot = { segments: Segment[]; done: Promise<void> };
 
 function isMedia(chunk: Buffer): boolean {
   if (chunk.length < 13 || (chunk[0] !== 8 && chunk[0] !== 9)) return false;
@@ -43,6 +45,8 @@ export class HighlightBuffer {
   private queuedWriteBytes = 0;
   private writePump: Promise<void> | null = null;
   private disabledReason: 'slow_disk' | 'write_error' | null = null;
+  /** Reset temporarily drops preview frames so it cannot delete a newly-rotated segment. */
+  private resetting = false;
 
   constructor(private readonly directory: string, private retainSeconds = 300) {}
 
@@ -50,7 +54,7 @@ export class HighlightBuffer {
 
   setRetainSeconds(seconds: number): void { this.retainSeconds = seconds; this.evict(Date.now()); }
 
-  get isAccepting(): boolean { return !this.cleared && this.disabledReason === null; }
+  get isAccepting(): boolean { return !this.cleared && !this.resetting && this.disabledReason === null; }
   get backpressureReason(): 'slow_disk' | 'write_error' | null { return this.disabledReason; }
 
   append(chunk: Buffer, at = Date.now()): void {
@@ -88,32 +92,42 @@ export class HighlightBuffer {
     const offset = segment.bytes;
     segment.bytes += chunk.length;
     segment.endedAt = at;
-    segment.entries.push({ offset, length: chunk.length, at, keyframe: isKeyframe(chunk) });
+    const entry: Entry = { offset, length: chunk.length, at, keyframe: isKeyframe(chunk), written: false };
+    segment.entries.push(entry);
     this.totalBytes += chunk.length;
     this.queuedWriteBytes += chunk.length;
-    this.writeQueue.push({ kind: 'write', segment, stream: segment.stream!, chunk: Buffer.from(chunk) });
+    this.writeQueue.push({ kind: 'write', segment, stream: segment.stream!, chunk: Buffer.from(chunk), entry });
     this.startWritePump();
     this.evict(at);
   }
 
-  availableSeconds(now = Date.now()): number {
-    const first = this.segments.flatMap((s) => s.entries).at(0);
-    return first ? Math.max(0, Math.floor((now - first.at) / 1000)) : 0;
+  availableSeconds(): number {
+    const entries = this.segments.flatMap((segment) => segment.entries).filter((entry) => entry.written);
+    const first = entries[0];
+    const last = entries.at(-1);
+    // Do not use wall-clock time here. After a disk failure a cache can stop
+    // receiving frames, while wall-clock time would misleadingly keep growing.
+    return first && last ? Math.max(0, Math.floor((last.at - first.at) / 1000)) : 0;
   }
 
   async exportTo(output: string, seconds: number): Promise<{ bytes: number; actualSeconds: number }> {
-    await this.sealCurrent();
-    const all = this.segments.flatMap((segment) => segment.entries.map((entry) => ({ segment, entry })));
-    const target = Date.now() - seconds * 1000;
+    // Rotate synchronously before awaiting I/O. New live frames then flow into
+    // a new segment, while this export reads an immutable, pinned snapshot.
+    const snapshot = this.sealCurrent();
+    const pinned = new Set(snapshot.segments);
+    for (const segment of pinned) this.pinned.add(segment);
+    await snapshot.done;
+    const all = snapshot.segments.flatMap((segment) => segment.entries.filter((entry) => entry.written).map((entry) => ({ segment, entry })));
+    const last = all.at(-1);
+    if (!last || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
+    const target = last.entry.at - seconds * 1000;
     let start = all.findIndex((v) => v.entry.at >= target);
     if (start < 0) start = 0;
     while (start > 0 && !all[start]!.entry.keyframe) start -= 1;
     while (start < all.length && !all[start]!.entry.keyframe) start += 1;
-    if (start >= all.length || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
+    if (start >= all.length) throw new Error('缓存尚未收到可导出的关键帧');
     await mkdir(path.dirname(output), { recursive: true });
     const selected = all.slice(start);
-    const pinned = new Set(selected.map((item) => item.segment));
-    for (const segment of pinned) this.pinned.add(segment);
     let bytes = this.init.reduce((sum, part) => sum + part.length, 0);
     const stream = createWriteStream(output);
     try {
@@ -144,12 +158,12 @@ export class HighlightBuffer {
     } finally {
       for (const segment of pinned) this.pinned.delete(segment);
     }
-    return { bytes, actualSeconds: Math.max(0, Math.round((Date.now() - all[start]!.entry.at) / 1000)) };
+    return { bytes, actualSeconds: Math.max(0, Math.round((last.entry.at - all[start]!.entry.at) / 1000)) };
   }
 
   async clear(): Promise<void> {
     this.cleared = true;
-    await this.sealCurrent();
+    await this.sealCurrent().done;
     await rm(this.directory, { recursive: true, force: true });
     this.segments = []; this.current = null; this.init = []; this.totalBytes = 0; this.pending = Buffer.alloc(0);
     this.writeQueue = []; this.queuedWriteBytes = 0;
@@ -160,16 +174,20 @@ export class HighlightBuffer {
    * 因此“清空后重新开始”不能等同于销毁并新建整个缓存实例。
    */
   async reset(): Promise<void> {
-    await this.sealCurrent();
-    const oldSegments = this.segments;
-    this.segments = [];
-    this.current = null;
-    this.totalBytes = 0;
-    this.pending = Buffer.alloc(0);
-    this.disabledReason = null;
-    // mediaStarted/headerCaptured/init 保留，新到的媒体标签可立即落入新的分段。
-    await Promise.all(oldSegments.map((segment) => segment.closing));
-    await Promise.all(oldSegments.map((segment) => rm(segment.path, { force: true })));
+    this.resetting = true;
+    try {
+      const snapshot = this.sealCurrent();
+      await snapshot.done;
+      this.segments = [];
+      this.current = null;
+      this.totalBytes = 0;
+      this.pending = Buffer.alloc(0);
+      this.disabledReason = null;
+      // mediaStarted/headerCaptured/init 保留，新到的媒体标签可立即落入新的分段。
+      await Promise.all(snapshot.segments.map((segment) => rm(segment.path, { force: true })));
+    } finally {
+      this.resetting = false;
+    }
   }
 
   private rotate(at: number): void {
@@ -191,10 +209,19 @@ export class HighlightBuffer {
     }
   }
 
-  private async sealCurrent(): Promise<void> {
+  /**
+   * Close the active segment and return a stable export boundary. Setting
+   * current to null is deliberate: data arriving while the close drains must
+   * rotate into a fresh writable segment instead of targeting a closed stream.
+   */
+  private sealCurrent(): SealedSnapshot {
+    const segments = [...this.segments];
     if (this.current?.stream) this.enqueueClose(this.current);
-    await this.waitForWrites();
-    await Promise.all(this.segments.map((segment) => segment.closing));
+    this.current = null;
+    return {
+      segments,
+      done: Promise.all(segments.map((segment) => segment.closing)).then(() => undefined),
+    };
   }
 
   private enqueueClose(segment: Segment): void {
@@ -214,16 +241,13 @@ export class HighlightBuffer {
     });
   }
 
-  private async waitForWrites(): Promise<void> {
-    while (this.writePump) await this.writePump;
-  }
-
   private async drainWrites(): Promise<void> {
     while (this.writeQueue.length > 0) {
       const operation = this.writeQueue.shift()!;
       try {
         if (operation.kind === 'write') {
           if (!operation.stream.write(operation.chunk)) await once(operation.stream, 'drain');
+          operation.entry.written = true;
           this.queuedWriteBytes -= operation.chunk.length;
         } else {
           operation.stream.end();

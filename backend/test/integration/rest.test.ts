@@ -153,6 +153,18 @@ describe('REST contract v1.1 (fake stack)', () => {
 
     const list = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
     expect(list.json().rooms).toHaveLength(3);
+    const orderedIds = list.json().rooms.map((item: { id: string }) => item.id).reverse();
+    const reordered = await app.inject({
+      method: 'PUT', url: '/api/v1/rooms/order', headers: { host: '127.0.0.1:43120' }, payload: { roomIds: orderedIds },
+    });
+    expect(reordered.statusCode).toBe(200);
+    expect(reordered.json().rooms.map((item: { id: string }) => item.id)).toEqual(orderedIds);
+    const invalidOrder = await app.inject({
+      method: 'PUT', url: '/api/v1/rooms/order', headers: { host: '127.0.0.1:43120' }, payload: { roomIds: orderedIds.slice(1) },
+    });
+    expect(invalidOrder.statusCode).toBe(422);
+    const afterInvalid = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
+    expect(afterInvalid.json().rooms.map((item: { id: string }) => item.id)).toEqual(orderedIds);
 
     const off = await app.inject({
       method: 'PATCH', url: `/api/v1/rooms/${room.id}/enable`, headers: { host: '127.0.0.1:43120' },
@@ -283,6 +295,10 @@ describe('REST contract v1.1 (fake stack)', () => {
     // 批量后现库共 3 个（1 已有 + 2 新增）。
     const list = await app.inject({ method: 'GET', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' } });
     expect(list.json().rooms).toHaveLength(3);
+    expect(list.json().rooms.slice(0, 2).map((room: { url: string }) => room.url)).toEqual([
+      'https://live.bilibili.com/778',
+      'https://live.douyin.com/100',
+    ]);
 
     const badReq = await app.inject({
       method: 'POST', url: '/api/v1/rooms/batch', headers: { host: '127.0.0.1:43120' },

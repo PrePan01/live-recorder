@@ -1,0 +1,83 @@
+:root {
+  color-scheme: light;
+  --lr-bg: #ffffff;
+  --lr-surface: #ffffff;
+  --lr-surface-alt: #f4f0ff;
+  --lr-ink: #000000;
+  --lr-text: #000000;
+  --lr-muted: #65616c;
+  --lr-text-secondary: #65616c;
+  --lr-border: #000000;
+  --lr-hover-bg: #fff4a7;
+  --lr-shadow: none;
+  --lr-primary: #607ae3;
+  --lr-pink: #ff5fa2;
+  --lr-yellow: #ffd500;
+  --lr-teal: #2ec4b6;
+  --lr-success: #168c72;
+  --lr-error: #c92955;
+  --lr-danger: #b20061;
+  --lr-motion: 180ms;
+  --lr-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --lr-display: "Noto Sans SC", "PingFang SC", sans-serif;
+  --lr-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --lr-bg: #171321;
+  --lr-surface: #211b2d;
+  --lr-surface-alt: #2c2440;
+  --lr-ink: #ffffff;
+  --lr-text: #ffffff;
+  --lr-muted: #c5bbd2;
+  --lr-text-secondary: #c5bbd2;
+  --lr-border: #ffffff;
+  --lr-hover-bg: #3b3152;
+  --lr-shadow: none;
+  --lr-primary: #c3b5ff;
+  --lr-pink: #ff75b0;
+  --lr-yellow: #ffdf3a;
+  --lr-teal: #55d8cb;
+  --lr-success: #62dfb8;
+  --lr-error: #ff91b5;
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("/fonts/NotoSansSC-400.ttf") format("truetype");
+  font-display: swap;
+  font-weight: 100 700;
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("/fonts/NotoSansSC-900.ttf") format("truetype");
+  font-display: swap;
+  font-weight: 800 900;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--lr-bg);
+  color: var(--lr-text);
+  font-family: var(--lr-body), serif;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+::selection {
+  color: #000;
+  background: var(--lr-yellow);
+}
