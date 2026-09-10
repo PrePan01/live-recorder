@@ -116,6 +116,8 @@ body {
   height: 30px;
   flex: 0 0 30px;
   object-fit: contain;
+  transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
+  will-change: transform;
 }
 .lr-app-brand::after {
   position: absolute;
@@ -126,23 +128,34 @@ body {
   content: "";
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='7'%3E%3Cpath d='M0 4q3-6 7 0t7 0t7 0t7 0' fill='none' stroke='%23ff5fa2' stroke-width='2.5'/%3E%3C/svg%3E")
     repeat-x;
+  transition: opacity 160ms ease-out;
 }
 .lr-app-sider .ant-menu {
-  padding: 5px 7px !important;
+  padding: 5px 0 !important;
   color: var(--lr-text);
   font-weight: 800;
 }
 .lr-app-sider .ant-menu-item {
   width: auto !important;
-  height: 45px !important;
+  height: 52px !important;
   margin: 5px 0 !important;
-  padding-inline: 12px !important;
+  padding-inline: 13px !important;
   border: 0 !important;
   border-radius: 0 !important;
-  line-height: 45px !important;
+  line-height: 1 !important;
+  display: flex !important;
+  align-items: center;
   transition:
     transform var(--lr-motion) var(--lr-bounce),
     background var(--lr-motion) !important;
+}
+.lr-app-sider .ant-menu-item .ant-menu-item-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  margin-inline: 0 10px !important;
+  font-size: 22px;
+  line-height: 1;
 }
 .lr-app-sider .ant-menu-item:hover {
   color: #000 !important;
@@ -180,41 +193,21 @@ body {
   font-weight: 700;
   text-align: center;
 }
-.ant-layout-sider-collapsed .lr-app-brand {
-  display: grid;
-  height: 70px;
-  padding: 0;
-  place-items: center;
-}
-.ant-layout-sider-collapsed .lr-app-brand img {
-  width: 30px;
-  height: 30px;
+.lr-app-sider.ant-layout-sider-collapsed .lr-app-brand img {
+  /* Keep the flex layout and glide from its expanded anchor to center. */
+  transform: translateX(-7px);
 }
 .ant-layout-sider-collapsed .lr-app-brand span {
   display: none;
 }
 .ant-layout-sider-collapsed .lr-app-brand::after {
-  display: none;
+  opacity: 0;
 }
-.ant-layout-sider-collapsed .ant-menu {
-  padding-inline: 0 !important;
-}
-.ant-layout-sider-collapsed .ant-menu-item {
-  display: flex !important;
+.lr-app-sider.ant-layout-sider-collapsed .ant-menu-item {
   width: 100% !important;
-  height: 52px !important;
-  margin: 5px 0 !important;
-  padding: 0 !important;
-  align-items: center;
-  justify-content: center;
-  line-height: 1 !important;
 }
-.ant-layout-sider-collapsed .ant-menu-item .ant-menu-item-icon {
-  width: 22px;
-  height: 22px;
-  margin-inline: 0 !important;
-  font-size: 22px;
-  line-height: 1;
+.lr-app-sider.ant-layout-sider-collapsed .ant-menu-item .ant-menu-item-icon {
+  margin-inline-end: 0 !important;
 }
 .ant-layout-sider-collapsed .ant-menu-item .ant-menu-title-content {
   display: none;
