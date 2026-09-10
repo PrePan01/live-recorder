@@ -94,18 +94,18 @@
   transform: scale(0.94);
 }
 .ant-btn-primary,
-.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link),
-.ant-btn-dangerous {
+.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link) {
   border: 2px solid var(--lr-ink) !important;
   background: var(--lr-surface) !important;
+}
+.ant-btn-dangerous {
+  border: 2px solid var(--lr-ink) !important;
+  color: #fff !important;
+  background: var(--lr-danger) !important;
 }
 .ant-btn-primary {
   color: #000 !important;
   background: var(--lr-pink) !important;
-}
-.ant-btn-dangerous {
-  color: #000 !important;
-  background: var(--lr-yellow) !important;
 }
 .ant-btn:disabled {
   color: var(--lr-muted) !important;
@@ -584,4 +584,3 @@ textarea.ant-input,
 .ant-form-item-label > label {
   font-weight: 800;
 }
-

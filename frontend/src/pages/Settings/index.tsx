@@ -695,34 +695,28 @@ export default function SettingsPage() {
               }}
             />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="后处理管线"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="后处理管线">
             <PipelineConfigCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="录制文件命名规则"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="OpenList 自动上传"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="OpenList 自动上传">
             <OpenListConfigCard />
           </Card>
-          <Card
-            className="lr-settings-card"
-            title="邮件通知（服务商预设）"
-            style={{ marginTop: 16 }}
-          >
+          <Card className="lr-settings-card" title="邮件通知（服务商预设）">
             <EmailConfigCard />
           </Card>
+          <ResetSettingsCard
+            onExport={onExport}
+            exporting={exporting}
+            beforeReset={() => {
+              if (debounceRef.current) {
+                clearTimeout(debounceRef.current);
+                debounceRef.current = null;
+              }
+            }}
+          />
         </Col>
         <Col xs={24} lg={10}>
           <Card
@@ -1000,16 +994,6 @@ export default function SettingsPage() {
           </Card>
         </Col>
       </Row>
-      <ResetSettingsCard
-        onExport={onExport}
-        exporting={exporting}
-        beforeReset={() => {
-          if (debounceRef.current) {
-            clearTimeout(debounceRef.current);
-            debounceRef.current = null;
-          }
-        }}
-      />
     </div>
   );
 }

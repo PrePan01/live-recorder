@@ -16,6 +16,7 @@
   --lr-teal: #2ec4b6;
   --lr-success: #168c72;
   --lr-error: #c92955;
+  --lr-danger: #b20061;
   --lr-motion: 180ms;
   --lr-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --lr-display: "Noto Sans SC", "PingFang SC", sans-serif;
