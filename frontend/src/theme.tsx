@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { ConfigProvider, theme as antdTheme } from 'antd';
-import type { ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { ConfigProvider, theme as antdTheme } from "antd";
+import type { ReactNode } from "react";
 
-export type ThemePreference = 'light' | 'dark' | 'system';
-export type AppThemeMode = 'light' | 'dark';
+export type ThemePreference = "light" | "dark" | "system";
+export type AppThemeMode = "light" | "dark";
 
 interface ThemeContextValue {
   preference: ThemePreference;
@@ -11,44 +11,45 @@ interface ThemeContextValue {
   setPreference: (p: ThemePreference) => void;
 }
 
-const STORAGE_KEY = 'live-recorder-theme';
+const STORAGE_KEY = "live-recorder-theme";
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export const baseToken = {
   // The component library retains its behavioral primitives, while its visual
   // language is supplied by the Memphis token layer in index.css.
-  colorPrimary: '#7b61ff',
-  colorInfo: '#2ec4b6',
-  colorSuccess: '#168c72',
-  colorWarning: '#c98a00',
-  colorError: '#d62f62',
+  colorPrimary: "#607ae3",
+  colorInfo: "#2ec4b6",
+  colorSuccess: "#168c72",
+  colorWarning: "#c98a00",
+  colorError: "#d62f62",
   borderRadius: 0,
   controlHeight: 38,
   fontSize: 14,
   wireframe: true,
-  motionDurationMid: '0.28s',
-  motionDurationSlow: '0.4s',
+  motionDurationMid: "0.28s",
+  motionDurationSlow: "0.4s",
 };
 
 const componentTokens = {
   Card: { paddingLG: 20 },
-  Button: { fontWeight: 700, primaryShadow: 'none', defaultShadow: 'none' },
+  Button: { fontWeight: 700, primaryShadow: "none", defaultShadow: "none" },
   Menu: { itemHeight: 46, itemBorderRadius: 0, itemMarginInline: 6 },
-  Table: { headerBg: 'transparent', headerBorderRadius: 0 },
+  Table: { headerBg: "transparent", headerBorderRadius: 0 },
 };
 
 export function initialPreference(): ThemePreference {
   const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
-  return 'system';
+  if (saved === "light" || saved === "dark" || saved === "system") return saved;
+  return "system";
 }
 
 export function systemPrefersDark(): boolean {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 export function AppThemeProvider({ children }: { children: ReactNode }) {
-  const [preference, setPreference] = useState<ThemePreference>(initialPreference);
+  const [preference, setPreference] =
+    useState<ThemePreference>(initialPreference);
   const [systemDark, setSystemDark] = useState<boolean>(systemPrefersDark);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
   }, [preference]);
 
   const mode = useMemo<AppThemeMode>(() => {
-    if (preference === 'system') return systemDark ? 'dark' : 'light';
+    if (preference === "system") return systemDark ? "dark" : "light";
     return preference;
   }, [preference, systemDark]);
 
@@ -67,23 +68,29 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
   }, [mode]);
 
   useEffect(() => {
-    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
     setSystemDark(mql.matches);
     const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  const value = useMemo(() => ({ preference, mode, setPreference }), [preference, mode]);
+  const value = useMemo(
+    () => ({ preference, mode, setPreference }),
+    [preference, mode],
+  );
 
   return (
     <ThemeContext.Provider value={value}>
       <ConfigProvider
         theme={{
-          algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+          algorithm:
+            mode === "dark"
+              ? antdTheme.darkAlgorithm
+              : antdTheme.defaultAlgorithm,
           token: baseToken,
           components: componentTokens,
-          cssVar: { key: 'lr' },
+          cssVar: { key: "lr" },
         }}
       >
         {children}
@@ -94,6 +101,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
 
 export function useAppTheme() {
   const value = useContext(ThemeContext);
-  if (!value) throw new Error('useAppTheme must be used inside AppThemeProvider');
+  if (!value)
+    throw new Error("useAppTheme must be used inside AppThemeProvider");
   return value;
 }

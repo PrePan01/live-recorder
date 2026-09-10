@@ -24,6 +24,7 @@ import {
   StarOutlined,
   ScheduleOutlined,
   DeleteOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { useRoomStore } from "../../stores/roomStore";
@@ -288,7 +289,7 @@ export default function Rooms() {
     {
       title: "收藏",
       dataIndex: "favorited",
-      width: 70,
+      width: 60,
       render: (v: boolean, room) => (
         <Button
           type="text"
@@ -311,18 +312,18 @@ export default function Rooms() {
     {
       title: "平台",
       dataIndex: "platform",
-      width: 90,
+      width: 60,
       render: (p) => <PlatformLogoTag platform={p} />,
     },
     {
       title: "自动录制",
       dataIndex: "autoRecord",
-      width: 130,
+      width: 120,
       render: (v: boolean | null, room) => (
         <Select
           size="small"
           value={v === null ? "inherit" : v ? "on" : "off"}
-          style={{ width: 112 }}
+          style={{ width: 100 }}
           onChange={(val) =>
             void setAutoRecord(room.id, val === "inherit" ? null : val === "on")
               .then(() =>
@@ -369,7 +370,7 @@ export default function Rooms() {
     {
       title: "标签",
       dataIndex: "tags",
-      width: 160,
+      width: 120,
       render: (ts: Room["tags"]) =>
         ts.length === 0 ? (
           <Typography.Text type="secondary">-</Typography.Text>
@@ -438,8 +439,13 @@ export default function Rooms() {
       width: 220,
       fixed: "right" as const,
       render: (_, room) => (
-        <Space>
-          <Button size="small" type="link" onClick={() => openEdit(room)}>
+        <Space size={0}>
+          <Button
+            size="small"
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(room)}
+          >
             编辑
           </Button>
           <Button

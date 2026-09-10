@@ -9,7 +9,7 @@
   --lr-ink: #000000;
   --lr-text: #000000;
   --lr-muted: #65616c;
-  --lr-primary: #7b61ff;
+  --lr-primary: #607ae3;
   --lr-pink: #ff5fa2;
   --lr-yellow: #ffd500;
   --lr-teal: #2ec4b6;
@@ -213,7 +213,11 @@ body {
   display: none;
 }
 .ant-layout-sider-collapsed .ant-menu-item-selected {
-  background: linear-gradient(to right, #000 5px, var(--lr-yellow) 5px) !important;
+  background: linear-gradient(
+    to right,
+    #000 5px,
+    var(--lr-yellow) 5px
+  ) !important;
 }
 .lr-app-content {
   background: var(--lr-bg);
@@ -472,7 +476,15 @@ body {
 
 /* AntD 6 composes inputs with actions using Space.Compact. Keep one shared
    cross-axis center for the input, clear affordance, and action icon. */
-.ant-space-compact:has(> :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker)) {
+.ant-space-compact:has(
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  )
+) {
   display: inline-flex;
   overflow: hidden;
   height: 36px;
@@ -482,13 +494,35 @@ body {
   border-radius: 0;
   background: var(--lr-surface);
 }
-.ant-space-compact:has(> :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker)):focus-within {
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  ):focus-within {
   border-color: var(--lr-primary);
   outline: 2px solid var(--lr-primary);
   outline-offset: 1px;
 }
-.ant-space-compact:has(> :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker))
-  > :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker) {
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  ) {
   flex: 1 1 auto;
   min-width: 0;
   height: auto !important;
@@ -498,7 +532,15 @@ body {
   outline: 0 !important;
   background: transparent !important;
 }
-.ant-space-compact:has(> :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker))
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
   > .ant-btn {
   align-self: stretch;
   min-width: 42px;
@@ -512,7 +554,15 @@ body {
   place-items: center;
   transition: background var(--lr-motion) !important;
 }
-.ant-space-compact:has(> :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select, .ant-picker))
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
   > .ant-btn:is(:hover, :focus-visible, :active) {
   background: var(--lr-yellow) !important;
   transform: none !important;
@@ -848,7 +898,7 @@ body {
 }
 .lr-stat:nth-child(2) {
   padding-left: 12px;
-  border-left: 3px solid var(--lr-ink);
+  border-left: 2px solid var(--lr-ink);
 }
 .lr-stat__value {
   font-family: var(--lr-display);

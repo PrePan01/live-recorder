@@ -632,46 +632,46 @@ export default function History() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           录制历史
         </Typography.Title>
-        <Space className="lr-page-actions" wrap>
-          <Select
-            allowClear
-            placeholder="按房间筛选"
-            style={{ width: 200 }}
-            value={roomId}
-            onChange={setRoomId}
-            options={rooms.map((r) => ({ value: r.id, label: r.displayName }))}
-          />
-          <DatePicker.RangePicker
-            value={dateRange}
-            onChange={(v) =>
-              setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)
-            }
-          />
-          <Button loading={exporting} onClick={() => void handleExportCsv()}>
-            导出 CSV
-          </Button>
-          <Button
-            icon={<ExportOutlined />}
-            disabled={batchBusy || selectedKeys.length === 0}
-            onClick={() => setExportModalOpen(true)}
-          >
-            备份导出{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
-          </Button>
-          <Popconfirm
-            title={`确定删除所选 ${selectedKeys.length} 条录制？将连带删除文件且不可恢复。`}
-            onConfirm={() => void handleBatchDelete()}
-            disabled={selectedKeys.length === 0}
-          >
-            <Button danger disabled={batchBusy || selectedKeys.length === 0}>
-              批量删除
-              {selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
-            </Button>
-          </Popconfirm>
-          <Space>
-            <Typography.Text type="secondary">按场次分组</Typography.Text>
-            <Switch checked={grouped} onChange={setGrouped} />
-          </Space>
+        <Space>
+          <Typography.Text type="secondary">按场次分组</Typography.Text>
+          <Switch checked={grouped} onChange={setGrouped} />
         </Space>
+      </Space>
+      <Space className="lr-filter-bar" wrap>
+        <Select
+          allowClear
+          placeholder="按房间筛选"
+          style={{ width: 200 }}
+          value={roomId}
+          onChange={setRoomId}
+          options={rooms.map((r) => ({ value: r.id, label: r.displayName }))}
+        />
+        <DatePicker.RangePicker
+          value={dateRange}
+          onChange={(v) =>
+            setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)
+          }
+        />
+        <Button loading={exporting} onClick={() => void handleExportCsv()}>
+          导出 CSV
+        </Button>
+        <Button
+          icon={<ExportOutlined />}
+          disabled={batchBusy || selectedKeys.length === 0}
+          onClick={() => setExportModalOpen(true)}
+        >
+          备份导出{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
+        </Button>
+        <Popconfirm
+          title={`确定删除所选 ${selectedKeys.length} 条录制？将连带删除文件且不可恢复。`}
+          onConfirm={() => void handleBatchDelete()}
+          disabled={selectedKeys.length === 0}
+        >
+          <Button danger disabled={batchBusy || selectedKeys.length === 0}>
+            批量删除
+            {selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
+          </Button>
+        </Popconfirm>
       </Space>
       {grouped ? (
         <Collapse
