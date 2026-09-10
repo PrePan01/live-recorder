@@ -93,7 +93,9 @@
   transform: scale(0.94);
 }
 .ant-btn-primary,
-.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link):not(.ant-btn-dangerous) {
+.ant-btn-default:not(.ant-btn-text):not(.ant-btn-link):not(
+    .ant-btn-dangerous
+  ):not(.ant-btn-icon-only):not(.ant-btn-variant-outlined) {
   border: 2px solid var(--lr-ink) !important;
   background: var(--lr-surface) !important;
 }
@@ -278,6 +280,36 @@ textarea.ant-input,
   display: grid;
   place-items: center;
   transition: background var(--lr-motion) !important;
+}
+/* Search actions are icon-only controls: keep their painted box square even
+   when AntD's default button padding or the compact group adds width. */
+.ant-input-search.ant-space-compact > .ant-input-search-btn {
+  flex: 0 0 36px;
+  display: grid !important;
+  position: relative;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px !important;
+  padding-inline: 0 !important;
+  line-height: 0 !important;
+  box-sizing: border-box;
+}
+.ant-input-search.ant-space-compact > .ant-input-search-btn > .ant-btn-icon,
+.ant-input-search.ant-space-compact
+  > .ant-input-search-btn
+  > .ant-btn-loading-icon {
+  position: absolute;
+  inset: 0;
+  display: grid !important;
+  margin: 0 !important;
+  place-items: center;
+  transform: translateY(-1px);
+}
+.ant-input-search.ant-space-compact > .ant-input-search-btn .anticon,
+.ant-input-search.ant-space-compact > .ant-input-search-btn .anticon > svg {
+  display: block;
+  margin: 0 !important;
 }
 .ant-space-compact:has(
     > :is(
@@ -579,6 +611,9 @@ textarea.ant-input,
 .ant-typography-secondary,
 .ant-form-item-label > label {
   color: var(--lr-text) !important;
+}
+.ant-typography.ant-typography-danger {
+  color: var(--lr-danger) !important;
 }
 .ant-form-item-label > label {
   font-weight: 800;
