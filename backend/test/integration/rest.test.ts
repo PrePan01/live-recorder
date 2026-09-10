@@ -1,7 +1,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
@@ -646,6 +646,66 @@ describe('REST contract v1.1 (fake stack)', () => {
     });
     expect(bad.statusCode).toBe(422);
     await app.close();
+  });
+
+  it.each([
+    { previous: false, globalAuto: true, live: true, active: false },
+    { previous: null, globalAuto: false, live: true, active: false },
+    { previous: false, globalAuto: true, live: false, active: false },
+    { previous: null, globalAuto: false, live: false, active: false },
+    { previous: false, globalAuto: false, live: false, active: true },
+    { previous: null, globalAuto: false, live: false, active: true },
+    { previous: true, globalAuto: true, live: true, active: false },
+    { previous: null, globalAuto: true, live: true, active: false },
+  ])('enabling autoRecord handles $previous / global=$globalAuto / live=$live / active=$active', async ({ previous, globalAuto, live, active }) => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-rec-'));
+    const services = newServices();
+    services.settings.save({
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      recordingFormat: 'source_flv',
+      autoRecord: globalAuto,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/223', displayName: 'auto' });
+    services.rooms.update(room.id, { autoRecord: previous });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    if (active) {
+      await services.manager.maybeStartRecording(room, { streamSessionId: 'existing' }, { manual: true });
+    }
+    const existingRecording = services.manager.activeRecordingFor(room.id);
+    const existingState = services.rooms.get(room.id)!.monitorState;
+    adapter.setScript([{ status: live ? 'live' : 'offline', streamSessionId: 'new-session' }]);
+    const check = vi.spyOn(adapter, 'checkLiveStatus');
+    try {
+      const response = await app.inject({
+        method: 'PATCH', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' },
+        payload: { autoRecord: true },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().room.autoRecord).toBe(true);
+      const shouldCheck = !active && !(previous ?? globalAuto);
+      expect(check).toHaveBeenCalledTimes(shouldCheck ? 1 : 0);
+      expect(services.manager.isRoomActive(room.id)).toBe(active || (shouldCheck && live));
+      if (active) {
+        expect(services.manager.activeRecordingFor(room.id)).toEqual(existingRecording);
+        expect(response.json().room.monitorState).toBe(existingState);
+      } else if (shouldCheck) {
+        expect(response.json().room.lastLiveStatus).toBe(live ? 'live' : 'offline');
+        expect(response.json().room.monitorState).toBe(live ? 'recording' : 'idle');
+      }
+    } finally {
+      check.mockRestore();
+      await services.manager.stopRecording(room.id);
+      await app.close();
+    }
   });
 
   it('POST /rooms/:id/start-recording forces manual recording when live (#79)', async () => {

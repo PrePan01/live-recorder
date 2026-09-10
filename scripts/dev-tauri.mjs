@@ -15,6 +15,8 @@ const env = {
   LIVE_RECORDER_DATA_DIR: devDataDir,
   LIVE_RECORDER_PORT: devPort,
   RECORDING_ADAPTER: adapter,
+  // 开发端使用刚构建的后端，避免优先命中 target/debug 内残留的打包资源。
+  LR_BACKEND_CWD: path.join(root, 'backend'),
 };
 
 function run(args, cwd) {

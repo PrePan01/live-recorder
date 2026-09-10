@@ -1,3 +1,4 @@
+import type { UpdateState } from '../types/update';
 import type {
   AppInstance,
   BootEvent,
@@ -8,6 +9,11 @@ import type {
 
 export interface NativeBridge {
   readonly isDesktop: boolean;
+  getUpdateState(): Promise<UpdateState>;
+  checkUpdate(): Promise<UpdateState>;
+  downloadUpdate(): Promise<UpdateState>;
+  openUpdate(): Promise<void>;
+  onUpdateState(cb: (state: UpdateState) => void): Promise<() => void>;
   getAppInstance(): Promise<AppInstance | null>;
   getHealth(): Promise<Health | null>;
   startService(): Promise<BootEvent>;
@@ -34,6 +40,14 @@ export function detectBridge(): NativeBridge {
 
 class TauriBridge implements NativeBridge {
   readonly isDesktop = true;
+  getUpdateState(): Promise<UpdateState> { return this.invoke('get_update_state'); }
+  checkUpdate(): Promise<UpdateState> { return this.invoke('check_update'); }
+  downloadUpdate(): Promise<UpdateState> { return this.invoke('download_update'); }
+  openUpdate(): Promise<void> { return this.invoke('open_update'); }
+  async onUpdateState(cb: (state: UpdateState) => void): Promise<() => void> {
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<UpdateState>('update:state', (event) => cb(event.payload));
+  }
 
   private async invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -153,6 +167,11 @@ class TauriBridge implements NativeBridge {
 
 class BrowserBridge implements NativeBridge {
   readonly isDesktop = false;
+  async getUpdateState(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
+  async checkUpdate(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
+  async downloadUpdate(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
+  async openUpdate(): Promise<void> { throw new Error('更新功能仅限桌面客户端'); }
+  async onUpdateState(_cb: (state: UpdateState) => void): Promise<() => void> { return () => {}; }
 
   private apiBase(): string {
     return (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:43120/api/v1';

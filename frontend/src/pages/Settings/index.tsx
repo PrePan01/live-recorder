@@ -27,6 +27,7 @@ import {
   QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
@@ -79,6 +80,8 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { settings, load, save } = useSettingsStore();
+  const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
+  const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
   const { preference, setPreference } = useAppTheme();
   const {
     preferences,
@@ -385,6 +388,14 @@ export default function SettingsPage() {
                     }
                   />
                 </Form.Item>
+                <Form.Item label="显示底部全局搜索">
+                  <Switch
+                    aria-label="显示底部全局搜索"
+                    checked={showGlobalSearch}
+                    onChange={setShowGlobalSearch}
+                    disabled={false}
+                  />
+                </Form.Item>
                 <Form.Item label="保存目录">
                   <Space.Compact style={{ width: "100%" }}>
                     <Form.Item
@@ -551,11 +562,16 @@ export default function SettingsPage() {
                   >
                     精彩时刻
                   </Typography.Title>
+                  <Typography.Paragraph
+                    className="lr-settings-section__hint"
+                    type="secondary"
+                  >
+                    录制当前时刻之前的片段。
+                  </Typography.Paragraph>
                   <Form.Item
                     label="开启精彩时刻"
                     name="highlightEnabled"
                     valuePropName="checked"
-                    extra="开启后，支持保存当前时刻前的片段。"
                   >
                     <Switch />
                   </Form.Item>

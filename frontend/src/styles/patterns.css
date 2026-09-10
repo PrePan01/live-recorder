@@ -38,6 +38,21 @@
   padding-left: 12px;
   border-left: 2px solid var(--lr-ink);
 }
+.lr-stat--duration {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(4px);
+  transition:
+    opacity 240ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 280ms;
+}
+.lr-stat--duration-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition-delay: 0s;
+}
 .lr-stat__value {
   font-family: var(--lr-display);
   font-size: 25px;
@@ -164,13 +179,25 @@
 .lr-room-card__actions {
   display: flex;
   gap: 2px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .lr-room-card__actions > * {
-  flex: 1 1 64px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .lr-room-card__actions .ant-btn {
+  min-width: 0;
   width: 100%;
+  white-space: nowrap;
+}
+.lr-room-card__actions--compact .ant-btn {
+  padding-inline: 8px;
+}
+.lr-room-card__actions--compact .ant-btn .anticon + .lr-room-card__action-label {
+  margin-inline-start: 0;
+}
+.lr-room-card__actions--compact .lr-room-card__action-label {
+  display: none;
 }
 .lr-room-card__actions .ant-btn-primary,
 .lr-room-card__actions .ant-btn-dangerous {

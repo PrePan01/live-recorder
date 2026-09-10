@@ -86,18 +86,24 @@ export default function RoomStats({
 
   const recording = state === 'recording' || state === 'reconnecting';
   const tone = state === 'failed' ? 'failed' : recording ? 'recording' : state === 'checking' ? 'checking' : 'default';
+  const duration = durationValue(startedAt, now);
+  const [lastDuration, setLastDuration] = useState(duration);
+
+  // Keep the final time visible during fade-out when activeRecording is cleared.
+  if (recording && lastDuration !== duration) {
+    setLastDuration(duration);
+  }
 
   return (
     <div ref={ref} style={{ display: 'flex', gap: 8, width: '100%' }}>
       <StatCard label="最近检测" value={agoValue(lastCheckedAt, now)} tone={tone} />
-      {recording ? (
-        <div className="lr-stat">
-          <div className="lr-stat__label">已录制</div>
-          <RollingDuration value={durationValue(startedAt, now)} />
-        </div>
-      ) : (
-        <StatCard label="已录制" value={durationValue(startedAt, now)} />
-      )}
+      <div
+        className={`lr-stat lr-stat--duration${recording ? ' lr-stat--duration-visible' : ''}`}
+        aria-hidden={!recording}
+      >
+        <div className="lr-stat__label">已录制</div>
+        <RollingDuration value={recording ? duration : lastDuration} />
+      </div>
     </div>
   );
 }
