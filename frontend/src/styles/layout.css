@@ -100,7 +100,6 @@
   width: 100% !important;
   height: 32px !important;
   place-items: center;
-  border-top: 2px solid var(--lr-ink);
   background: var(--lr-surface) !important;
   color: var(--lr-text);
 }
