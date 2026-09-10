@@ -388,9 +388,7 @@ export default function SettingsPage() {
                     }
                   />
                 </Form.Item>
-                <Form.Item
-                  label="显示底部全局搜索"
-                >
+                <Form.Item label="显示底部全局搜索">
                   <Switch
                     aria-label="显示底部全局搜索"
                     checked={showGlobalSearch}
@@ -564,11 +562,16 @@ export default function SettingsPage() {
                   >
                     精彩时刻
                   </Typography.Title>
+                  <Typography.Paragraph
+                    className="lr-settings-section__hint"
+                    type="secondary"
+                  >
+                    录制当前时刻之前的片段。
+                  </Typography.Paragraph>
                   <Form.Item
                     label="开启精彩时刻"
                     name="highlightEnabled"
                     valuePropName="checked"
-                    extra="开启后，支持保存当前时刻前的片段。"
                   >
                     <Switch />
                   </Form.Item>
