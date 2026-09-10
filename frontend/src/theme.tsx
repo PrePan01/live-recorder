@@ -16,7 +16,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export const baseToken = {
   // The component library retains its behavioral primitives, while its visual
-  // language is supplied by the Memphis token layer in index.css.
+  // language is supplied by the Memphis token layer in styles/tokens.css.
   colorPrimary: "#607ae3",
   colorInfo: "#2ec4b6",
   colorSuccess: "#168c72",
