@@ -77,7 +77,7 @@ export default function StatusBar() {
           {status ? `录制中 ${status.activeRecordings}` : "录制中 -"}
         </Tag>
       </Space>
-      <div style={{ marginLeft: "auto" }}>
+      <div className="lr-statusbar__search" style={{ marginLeft: "auto" }}>
         <GlobalSearch />
       </div>
       <div

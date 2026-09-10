@@ -177,8 +177,8 @@
   border: 2px solid var(--lr-ink) !important;
 }
 .lr-statusbar {
-  display: flex;
-  height: 38px;
+  display: inline-flex;
+  height: 36px;
   min-width: 0;
   padding: 0 clamp(10px, 2vw, 22px);
   gap: 14px;
@@ -191,29 +191,34 @@
   align-items: center;
   margin-right: 10px;
 }
+.lr-statusbar__search {
+  display: flex;
+  align-self: stretch;
+  height: 100%;
+  min-width: 0;
+}
 .lr-globalsearch {
   position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
   border: 0 !important;
   background: transparent !important;
 }
 .lr-statusbar .lr-globalsearch .ant-input-search.ant-space-compact {
   position: relative;
-  min-height: 30px;
-  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  min-height: 0;
+  height: 100%;
   width: 100%;
-}
-/* The divider belongs to the compact control, not to the button. This keeps it
-   continuous even when AntD adjusts the button's own line box. */
-.lr-statusbar .lr-globalsearch .ant-input-search.ant-space-compact::after {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 30px;
-  bottom: 0;
-  width: 2px;
-  background: var(--lr-ink);
-  content: "";
-  pointer-events: none;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  border-right: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
 }
 .lr-statusbar .lr-globalsearch .ant-input-search.ant-space-compact > .ant-input,
 .lr-statusbar
@@ -222,15 +227,28 @@
   > .ant-input-affix-wrapper {
   height: auto !important;
   min-height: 0 !important;
+  align-self: stretch;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 .lr-statusbar .lr-globalsearch .ant-input-search-btn {
-  flex: 0 0 30px !important;
-  width: 30px !important;
-  min-width: 30px !important;
-  height: auto !important;
+  flex: 0 0 36px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: 100% !important;
   min-height: 0 !important;
   padding-inline: 0 !important;
-  border-left: 0 !important;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
 }
 
 /* Wall is always a real grid, both in normal and fullscreen mode. */

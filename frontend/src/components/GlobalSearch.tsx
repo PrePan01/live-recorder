@@ -60,7 +60,13 @@ export default function GlobalSearch() {
     const timer = setTimeout(() => {
       const controller = new AbortController();
       requestRef.current = controller;
-      void searchGlobal({ q: kw, type, page: 1, pageSize: 10, signal: controller.signal })
+      void searchGlobal({
+        q: kw,
+        type,
+        page: 1,
+        pageSize: 10,
+        signal: controller.signal,
+      })
         .then((res) => {
           if (version !== searchVersion.current) return;
           setResults(res.items);
@@ -68,16 +74,22 @@ export default function GlobalSearch() {
           setActiveIdx(0);
         })
         .catch((e) => {
-          if (controller.signal.aborted || version !== searchVersion.current) return;
+          if (controller.signal.aborted || version !== searchVersion.current)
+            return;
           message.error(
             e instanceof ApiError
               ? describeError(e.code, e.message)
               : "搜索失败",
           );
         })
-        .finally(() => { if (version === searchVersion.current) setLoading(false); });
+        .finally(() => {
+          if (version === searchVersion.current) setLoading(false);
+        });
     }, 250);
-    return () => { clearTimeout(timer); requestRef.current?.abort(); };
+    return () => {
+      clearTimeout(timer);
+      requestRef.current?.abort();
+    };
   }, [q, type, open, message]);
 
   const goTo = (item: SearchItem) => {
