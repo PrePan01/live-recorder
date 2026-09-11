@@ -14,6 +14,10 @@ export async function generateUpdateManifest(directory, version) {
     const candidates = files.filter((name) => name.endsWith(suffix) && name.includes(`_${version}_`));
     if (candidates.length !== 1) throw new Error(`Expected exactly one ${platform} installer for ${version}`);
     const filename = candidates[0];
+    // GitHub rewrites whitespace in release-asset names. Refuse to produce a
+    // manifest for an unnormalized staging directory, otherwise its URL would
+    // not match the uploaded asset and clients would receive a 404.
+    if (/\s/.test(filename)) throw new Error(`Release asset filename must not contain whitespace: ${filename}`);
     const path = join(directory, filename);
     const info = await stat(path);
     if (!info.isFile() || info.size === 0) throw new Error(`Empty installer: ${filename}`);

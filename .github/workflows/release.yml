@@ -196,6 +196,21 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      # GitHub converts spaces in release-asset filenames to dots on upload.
+      # Normalize the staging names first, so latest.json records the exact
+      # public URL that will be served by the release.
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for asset in release-assets/*; do
+            name="${asset##*/}"
+            normalized="${name// /.}"
+            if [ "$name" != "$normalized" ]; then
+              mv -- "$asset" "release-assets/$normalized"
+            fi
+          done
+
       - name: Generate update manifest
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
