@@ -46,6 +46,9 @@ class FakePreview implements PreviewSink {
   canAccept(): boolean {
     return true;
   }
+  hasClients(): boolean {
+    return true;
+  }
   broadcastFrame(roomId: string): void {
     this.frames.set(roomId, (this.frames.get(roomId) ?? 0) + 1);
   }
@@ -174,6 +177,27 @@ describe('RecorderManager', () => {
     expect(services.manager.isPreviewStreaming(room.id)).toBe(true);
     expect(services.manager.isRoomActive(room.id)).toBe(false);
     expect(preview.closed).toEqual([]);
+  });
+
+  it('keeps a shared recording running when its last preview client closes', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-close-recording-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/82', displayName: 'Close while recording' });
+    services.rooms.setLiveStatus(room.id, 'live');
+
+    await services.manager.ensurePreviewStream(room.id);
+    await waitFor(() => services.manager.isPreviewStreaming(room.id));
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'close-while-recording' }, { manual: true });
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+
+    // 与最后一个预览 WebSocket 断开时 server.ts 调用的路径一致。
+    await services.manager.stopPreviewStream(room.id);
+
+    expect(services.manager.isPreviewStreaming(room.id)).toBe(true);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
   });
 
   it('marks a 0-byte recording as failed and removes the empty file, not completed (#165 空文件)', async () => {

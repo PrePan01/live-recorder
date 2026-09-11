@@ -170,6 +170,10 @@ export class PreviewManager {
     return (roomId !== undefined && this.rooms.has(roomId)) || this.rooms.size < this.maxSessions;
   }
 
+  hasClients(roomId: string): boolean {
+    return (this.rooms.get(roomId)?.sockets.size ?? 0) > 0;
+  }
+
   addClient(roomId: string, ws: WebSocket): void {
     let room = this.rooms.get(roomId);
     if (!room) {
