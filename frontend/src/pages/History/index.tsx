@@ -9,6 +9,7 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Popover,
   Select,
   Space,
   Switch,
@@ -32,6 +33,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useRecordingStore } from "../../stores/recordingStore";
 import { useRoomStore } from "../../stores/roomStore";
+import { bridge } from "../../stores/bootStore";
 import { useResizableColumns } from "../../hooks/useResizableColumns";
 import { RecordingStateTag, IntegrityTag } from "../../components/StatusTags";
 import { PlatformLogoTag } from "../../components/PlatformLogo";
@@ -72,6 +74,13 @@ const EXPORT_STATUS_COLOR: Record<string, string> = {
   failed: "red",
   cancelled: "default",
 };
+
+/** 打开外部远端链接：Tauri webview 不能靠 <a target=_blank>，用原生 shell；浏览器降级 window.open。 */
+function openExternalUrl(url: string): void {
+  void bridge.openPath(url).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
+}
 
 export default function History() {
   const { message } = App.useApp();
@@ -514,6 +523,28 @@ export default function History() {
                       : "排队"}
               </Tag>
             );
+          if (u.status === "ok" && u.remotePath) {
+            return (
+              <Popover
+                trigger="hover"
+                content={
+                  <Typography.Link
+                    href={u.remotePath}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (u.remotePath) openExternalUrl(u.remotePath);
+                    }}
+                  >
+                    {u.remotePath}
+                  </Typography.Link>
+                }
+              >
+                <span style={{ cursor: "pointer" }}>{node}</span>
+              </Popover>
+            );
+          }
           return detail ? (
             <Tooltip title={detail}>
               <span style={{ cursor: "help" }}>{node}</span>
