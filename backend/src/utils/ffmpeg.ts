@@ -6,13 +6,26 @@ import path from 'node:path';
  * homebrew 等安装路径不在 PATH 中导致 mp4_after 转封装/管线 ffmpeg 步骤静默失败。
  * 解析顺序：PATH → 打包内置 Resources/ffmpeg → 常见安装路径。
  */
-const COMMON_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+const COMMON_DIRS = process.platform === 'win32'
+  ? [
+      'C:\\ffmpeg\\bin',
+      path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'ffmpeg', 'bin'),
+      'C:\\Program Files (x86)\\ffmpeg\\bin',
+      path.join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links'),
+    ]
+  : ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+
+function executableNames(cmd: string): string[] {
+  return process.platform === 'win32' ? [cmd, `${cmd}.exe`] : [cmd];
+}
 
 function inPath(cmd: string): string | null {
   for (const d of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!d) continue;
-    const p = path.join(d, cmd);
-    if (existsSync(p)) return p;
+    for (const name of executableNames(cmd)) {
+      const p = path.join(d, name);
+      if (existsSync(p)) return p;
+    }
   }
   return null;
 }
@@ -33,12 +46,16 @@ export function resolveBin(name: 'ffmpeg' | 'ffprobe'): string {
   if (hit) return hit;
   const bundled = bundledBinDir();
   if (bundled) {
-    const p = path.join(bundled, name);
-    if (existsSync(p)) return p;
+    for (const executable of executableNames(name)) {
+      const p = path.join(bundled, executable);
+      if (existsSync(p)) return p;
+    }
   }
   for (const d of COMMON_DIRS) {
-    const p = path.join(d, name);
-    if (existsSync(p)) return p;
+    for (const executable of executableNames(name)) {
+      const p = path.join(d, executable);
+      if (existsSync(p)) return p;
+    }
   }
   return name;
 }
