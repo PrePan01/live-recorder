@@ -76,4 +76,46 @@ describe('highlight buffer export', () => {
     expect(buffer.isAccepting).toBe(false);
     expect(buffer.backpressureReason).toBe('slow_disk');
   });
+
+  // #32：导出进行中触发 clear()，不得删除正在读取的分段（否则 copyRange ENOENT）。
+  it('clear() waits for an in-flight export instead of deleting its segments (#32)', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-clear-'));
+    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+    await buffer.start();
+    const at = Date.now();
+    buffer.append(flvHeader(), at);
+    buffer.append(keyframe(), at + 10);
+    for (let i = 0; i < 20; i += 1) buffer.append(mediaTag(256), at + 20 + i);
+    buffer.append(keyframe(), at + 5_100);
+    const output = path.join(base, 'out.flv');
+    const exporting = buffer.exportTo(output, 30);
+    const clearing = buffer.clear();
+    await expect(exporting).resolves.toBeTruthy();
+    await clearing;
+    const bytes = await readFile(output);
+    expect(bytes.subarray(0, 3).toString()).toBe('FLV');
+    expect(buffer.isAccepting).toBe(false);
+  });
+
+  // #32：导出进行中触发 reset()，同样等待导出读取完 pinned 分段后再清理。
+  it('reset() waits for an in-flight export instead of deleting its segments (#32)', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-reset-'));
+    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+    await buffer.start();
+    const at = Date.now();
+    buffer.append(flvHeader(), at);
+    buffer.append(keyframe(), at + 10);
+    for (let i = 0; i < 20; i += 1) buffer.append(mediaTag(256), at + 20 + i);
+    buffer.append(keyframe(), at + 5_100);
+    const output = path.join(base, 'out.flv');
+    const exporting = buffer.exportTo(output, 30);
+    const resetting = buffer.reset();
+    await expect(exporting).resolves.toBeTruthy();
+    await resetting;
+    const bytes = await readFile(output);
+    expect(bytes.subarray(0, 3).toString()).toBe('FLV');
+    // reset 后仍接受新分段（保留 init）。
+    buffer.append(keyframe(), at + 10_000);
+    expect(buffer.isAccepting).toBe(true);
+  });
 });
