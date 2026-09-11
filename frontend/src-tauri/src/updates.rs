@@ -20,9 +20,10 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
-/// #28 大陆加速镜像（用于安装包下载提速）：七牛 CDN 域名（HTTPS，匿名可读）。
-/// 完整性由 HTTPS 清单内的 SHA256 保证；CDN 不可达自动回退 GitHub。
+/// #28 大陆加速镜像（HTTPS，匿名可读）：优先用于检查清单与下载安装包，失败自动回退 GitHub。
+/// 清单由 CI 以 no-cache 上传（#43），SHA256 校验安装包完整性。
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
+const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -216,12 +217,12 @@ fn download_client(timeout: Duration) -> Result<Client, String> {
         .build()
         .map_err(|e| e.to_string())
 }
-/// #28：清单检查弱网鲁棒性——清单始终走 GitHub HTTPS（可信锚点），网络类失败按指数退避重试。
-fn fetch_manifest() -> Result<Vec<u8>, String> {
+/// 拉取指定清单 URL（网络类失败按指数退避重试）。
+fn fetch_manifest_bytes(source: &str, attempts: usize) -> Result<Vec<u8>, String> {
     let mut last = String::new();
-    for attempt in 0..CHECK_ATTEMPTS {
+    for attempt in 0..attempts {
         let fetched = client(Duration::from_secs(30)).and_then(|http| {
-            http.get(MANIFEST_URL)
+            http.get(source)
                 .send()
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string())
@@ -241,7 +242,7 @@ fn fetch_manifest() -> Result<Vec<u8>, String> {
             }
             Err(e) => last = e,
         }
-        if attempt + 1 < CHECK_ATTEMPTS {
+        if attempt + 1 < attempts {
             std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
         }
     }
@@ -300,16 +301,43 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     let Ok(_guard) = manager.operation.try_lock() else {
         return Ok(manager.state.lock().unwrap().clone());
     };
+    let current = app.package_info().version.to_string();
     let result = (|| -> Result<Option<Update>, String> {
-        let bytes = fetch_manifest()?;
-        let manifest =
-            serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效".to_string())?;
-        // 清单来自 HTTPS GitHub，asset.url 为可信 GitHub 地址；镜像候选在下载阶段派生。
-        select(
-            manifest,
-            &app.package_info().version.to_string(),
-            &platform(),
-        )
+        // 候选清单：CDN（大陆快）优先，GitHub 兜底。
+        // CDN 返回「无更新」时仍查 GitHub，防止 CDN 缓存滞后漏掉新版本（#43）。
+        let mut last_error: Option<String> = None;
+        let mut reached_any = false;
+        for (source, attempts) in [(MIRROR_MANIFEST_URL, 1usize), (MANIFEST_URL, CHECK_ATTEMPTS)] {
+            let bytes = match fetch_manifest_bytes(source, attempts) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    last_error = Some(e);
+                    continue;
+                }
+            };
+            reached_any = true;
+            let manifest = match serde_json::from_slice::<Manifest>(&bytes) {
+                Ok(manifest) => manifest,
+                Err(_) => {
+                    last_error = Some("更新清单格式无效".to_string());
+                    continue;
+                }
+            };
+            match select(manifest, &current, &platform()) {
+                Ok(Some(update)) => return Ok(Some(update)),
+                // 该源无更新版本：可能确已最新，或 CDN 滞后 → 继续查下一源。
+                Ok(None) => continue,
+                Err(e) => {
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+        if reached_any {
+            Ok(None)
+        } else {
+            Err(last_error.unwrap_or_else(|| "检查更新失败，请检查网络后重试".to_string()))
+        }
     })();
     match result {
         Ok(update) => Ok(publish(&app, |s| {
