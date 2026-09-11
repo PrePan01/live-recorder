@@ -9,6 +9,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useUploadStore } from '../stores/uploadStore';
 import { describeUploadError, classifyUploadError } from '../utils/uploadError';
 import { uploadPhaseLabel, uploadPhaseText } from '../utils/uploadProgress';
+import { bridge } from '../stores/bootStore';
 
 const STATUS_COLOR: Record<string, string> = {
   queued: 'default',
@@ -91,7 +92,21 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
               </Typography.Text>
             ) : null}
             {j.status === 'ok' && j.remotePath ? (
-              <Typography.Link href={j.remotePath} target="_blank" ellipsis>
+              <Typography.Link
+                href={j.remotePath}
+                target="_blank"
+                rel="noopener noreferrer"
+                ellipsis
+                onClick={(e) => {
+                  // Tauri webview 内 <a target=_blank> 不会打开外部浏览器，改由原生 shell 打开。
+                  e.preventDefault();
+                  const url = j.remotePath;
+                  if (!url) return;
+                  void bridge.openPath(url).catch(() => {
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                  });
+                }}
+              >
                 {j.remotePath}
               </Typography.Link>
             ) : null}
