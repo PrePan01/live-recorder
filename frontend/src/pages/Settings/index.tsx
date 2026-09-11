@@ -952,7 +952,12 @@ export default function SettingsPage() {
             className="lr-alerts-card lr-settings-card"
             title="告警"
             extra={
-              <Button size="small" onClick={() => void markAllRead()}>
+              <Button
+                size="small"
+                onClick={() => {
+                  void markAllRead().catch(() => undefined);
+                }}
+              >
                 全部已读
               </Button>
             }
@@ -991,7 +996,9 @@ export default function SettingsPage() {
                             key="read"
                             size="small"
                             type="link"
-                            onClick={() => void markRead(a.id)}
+                            onClick={() => {
+                              void markRead(a.id).catch(() => undefined);
+                            }}
                           >
                             标记已读
                           </Button>,

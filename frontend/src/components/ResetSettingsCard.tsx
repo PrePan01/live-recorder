@@ -25,6 +25,8 @@ function finishReset() {
     "lr-error-diagnostics",
     "lr-react-mounted",
     "live-recorder-theme",
+    "live-recorder-appearance",
+    "lr-sidebar-collapsed",
   ]) {
     localStorage.removeItem(key);
   }

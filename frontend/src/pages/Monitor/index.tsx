@@ -739,9 +739,12 @@ export default function Monitor() {
             onChange={(e) => setKeyword(e.target.value)}
           />
           <Button
+            aria-label="刷新"
             icon={<ReloadOutlined />}
             loading={loading || refreshing}
-            onClick={() => void handleRefresh()}
+            onClick={() => {
+              void handleRefresh().catch(() => undefined);
+            }}
           ></Button>
         </Space>
       </Space>
