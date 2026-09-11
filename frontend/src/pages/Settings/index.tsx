@@ -105,7 +105,6 @@ export default function SettingsPage() {
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(
     null,
   );
-  const [clearCookie, setClearCookie] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -242,7 +241,7 @@ export default function SettingsPage() {
     }
   };
 
-  const persist = async (values: SettingsInput) => {
+  const persist = async (values: SettingsInput, clearDouyinCookie = false) => {
     const { mail, douyinCookie, ...rest } = values as SettingsInput & {
       mail?: Record<string, unknown> & {
         recipients?: string;
@@ -253,7 +252,7 @@ export default function SettingsPage() {
     try {
       await save({
         ...rest,
-        ...(clearCookie
+        ...(clearDouyinCookie
           ? { douyinCookie: "" }
           : typeof douyinCookie === "string" && douyinCookie.length > 0
             ? { douyinCookie }
@@ -269,7 +268,6 @@ export default function SettingsPage() {
             }
           : undefined,
       });
-      setClearCookie(false);
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
@@ -704,7 +702,10 @@ export default function SettingsPage() {
                   disabled={!settings?.douyinCookie.hasCookie}
                   onClick={() => {
                     form.setFieldValue("douyinCookie", "");
-                    setClearCookie(true);
+                    void persist(
+                      form.getFieldsValue() as SettingsInput,
+                      true,
+                    );
                   }}
                 >
                   清除已存 Cookie
