@@ -186,8 +186,9 @@ jobs:
     permissions:
       contents: write
     env:
-      # 对象存储加速（#28）：清单内安装包 URL 指向公开读桶；对象存储不可达时客户端回退 GitHub。
-      UPDATE_BASE_URL: https://live-recorder.s3.cn-south-1.qiniucs.com
+      # 对象存储加速（#28）：清单内安装包 URL 指向公开可匿名读取的 CDN 域名（当前仅 HTTP，
+      # 完整性由清单 HTTPS 内的 SHA256 保证）；CDN 不可达时客户端回退 GitHub。
+      UPDATE_BASE_URL: http://cdn.live-rec.bspartner.top
       QINIU_AK: ${{ secrets.QINIU_AK }}
       QINIU_SK: ${{ secrets.QINIU_SK }}
       QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || 'live-recorder' }}
@@ -227,8 +228,8 @@ jobs:
         working-directory: release-assets
         run: sha256sum -- * > SHA256SUMS.txt
 
-      # 上传安装包 + 清单到对象存储（公开读），供客户端加速下载（#28）。
-      # 未配置 Secrets（QINIU_AK/QINIU_SK）时跳过：此时清单 URL 仍指向对象存储但会 404，
+      # 上传安装包 + 清单到对象存储（bucket，经 S3 API 签名上传）；客户端从 CDN 域名匿名下载（#28）。
+      # 未配置 Secrets（QINIU_AK/QINIU_SK）时跳过：此时清单 URL 指向 CDN 但对象不存在，
       # 客户端自动回退 GitHub release（清单自身的 SHA256 兜底完整性）。
       - name: Publish installers to object storage
         if: env.QINIU_AK != '' && env.QINIU_SK != ''
