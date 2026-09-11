@@ -24,3 +24,20 @@ test('release manifest requires both platforms and describes real bytes', async 
     await assert.rejects(generateUpdateManifest(dir, '0.5.114'), /must not contain whitespace/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('manifest points asset urls at the mirror base when provided (#28)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lr-manifest-mirror-'));
+  try {
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64.msi'), 'abcd');
+    const result = await generateUpdateManifest(dir, '0.5.112', 'https://live-recorder.s3.cn-south-1.qiniucs.com/');
+    assert.equal(
+      result.platforms['macos-aarch64'].url,
+      'https://live-recorder.s3.cn-south-1.qiniucs.com/Live.Recorder_0.5.112_aarch64.dmg',
+    );
+    assert.equal(
+      result.platforms['windows-x86_64'].url,
+      'https://live-recorder.s3.cn-south-1.qiniucs.com/Live.Recorder_0.5.112_x64.msi',
+    );
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

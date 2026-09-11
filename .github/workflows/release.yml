@@ -185,6 +185,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # 对象存储加速（#28）：清单内安装包 URL 指向公开读桶；对象存储不可达时客户端回退 GitHub。
+      UPDATE_BASE_URL: https://live-recorder.s3.cn-south-1.qiniucs.com
+      QINIU_AK: ${{ secrets.QINIU_AK }}
+      QINIU_SK: ${{ secrets.QINIU_SK }}
+      QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || 'live-recorder' }}
+      QINIU_ENDPOINT: ${{ secrets.QINIU_ENDPOINT || 'https://s3.cn-south-1.qiniucs.com' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -219,6 +226,19 @@ jobs:
       - name: Generate checksums
         working-directory: release-assets
         run: sha256sum -- * > SHA256SUMS.txt
+
+      # 上传安装包 + 清单到对象存储（公开读），供客户端加速下载（#28）。
+      # 未配置 Secrets（QINIU_AK/QINIU_SK）时跳过：此时清单 URL 仍指向对象存储但会 404，
+      # 客户端自动回退 GitHub release（清单自身的 SHA256 兜底完整性）。
+      - name: Publish installers to object storage
+        if: env.QINIU_AK != '' && env.QINIU_SK != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
+          AWS_DEFAULT_REGION: cn-south-1
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive
 
       - name: Create GitHub Release
         env:
