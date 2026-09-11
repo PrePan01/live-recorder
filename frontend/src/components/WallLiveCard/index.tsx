@@ -89,6 +89,7 @@ export default function Index({
             className={styles.textButton}
             type="text"
             size="small"
+            aria-label={muted ? "取消静音" : "静音"}
             icon={muted ? <MutedOutlined /> : <SoundOutlined />}
             onClick={() => setMuted((value) => !value)}
           ></Button>
@@ -96,6 +97,7 @@ export default function Index({
             className={`${styles.textButton} ${styles.fullscreenButton}`}
             type="text"
             size="small"
+            aria-label="全屏"
             icon={<FullscreenOutlined />}
             onClick={() => onFullscreen(room)}
           />
@@ -103,6 +105,7 @@ export default function Index({
             className={styles.textButton}
             type="text"
             size="small"
+            aria-label="重新加载"
             icon={<ReloadOutlined />}
             onClick={() => setReloadTick((value) => value + 1)}
           />
@@ -114,6 +117,7 @@ export default function Index({
               className={styles.textButton}
               type="text"
               size="small"
+              aria-label="移除"
               icon={<CloseOutlined />}
             />
           </Popconfirm>

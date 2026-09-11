@@ -34,7 +34,10 @@ export default function RecordingCompleteNotice() {
           <span>
             <a
               onClick={() => {
-                void useRecordingStore.getState().openDirectory(latest.id);
+                void useRecordingStore
+                  .getState()
+                  .openDirectory(latest.id)
+                  .catch(() => undefined);
                 notification.destroy(`rec-complete-${latest.id}`);
               }}
             >

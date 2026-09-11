@@ -28,7 +28,7 @@ export interface ReportedError {
 let entries: ErrorDiagnostic[] = load();
 const notifiedAt = new Map<string, number>();
 const context: ErrorDiagnosticContext = {
-  appVersion: (import.meta.env.VITE_APP_VERSION as string | undefined) ?? '0.5.100',
+  appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
   runtime: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent.slice(0, 512),
   instanceId: null,
   recentAction: null,
