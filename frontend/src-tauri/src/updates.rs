@@ -20,11 +20,16 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
-/// #28 大陆加速镜像（用于安装包下载提速）：七牛 CDN 域名（HTTPS，匿名可读）。
-/// 完整性由 HTTPS 清单内的 SHA256 保证；CDN 不可达自动回退 GitHub。
+/// #28 大陆加速镜像（HTTPS，匿名可读）：优先用于检查清单与下载安装包，失败自动回退 GitHub。
+/// 清单由 CI 以 no-cache 上传（#43），SHA256 校验安装包完整性。
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
+const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
-const CHECK_ATTEMPTS: usize = 3;
+/// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（2 次、8s，大陆被墙时快速失败）。
+const CDN_MANIFEST_ATTEMPTS: usize = 1;
+const GITHUB_MANIFEST_ATTEMPTS: usize = 2;
+const CDN_MANIFEST_TIMEOUT_SECS: u64 = 20;
+const GITHUB_MANIFEST_TIMEOUT_SECS: u64 = 8;
 const DOWNLOAD_ATTEMPTS: usize = 3;
 /// 大文件启用多连接分片下载（#28 提速）；小文件或服务器不支持 Range 时回退单连接。
 const PARALLEL_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
@@ -216,12 +221,12 @@ fn download_client(timeout: Duration) -> Result<Client, String> {
         .build()
         .map_err(|e| e.to_string())
 }
-/// #28：清单检查弱网鲁棒性——清单始终走 GitHub HTTPS（可信锚点），网络类失败按指数退避重试。
-fn fetch_manifest() -> Result<Vec<u8>, String> {
+/// 拉取指定清单 URL（网络类失败按指数退避重试）。
+fn fetch_manifest_bytes(source: &str, attempts: usize, timeout: Duration) -> Result<Vec<u8>, String> {
     let mut last = String::new();
-    for attempt in 0..CHECK_ATTEMPTS {
-        let fetched = client(Duration::from_secs(30)).and_then(|http| {
-            http.get(MANIFEST_URL)
+    for attempt in 0..attempts {
+        let fetched = client(timeout).and_then(|http| {
+            http.get(source)
                 .send()
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string())
@@ -241,11 +246,54 @@ fn fetch_manifest() -> Result<Vec<u8>, String> {
             }
             Err(e) => last = e,
         }
-        if attempt + 1 < CHECK_ATTEMPTS {
+        if attempt + 1 < attempts {
             std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
         }
     }
     Err(format!("检查更新失败，请检查网络后重试：{last}"))
+}
+
+/// #44：多源清单解析与选择（纯函数，便于测试）。
+/// 依序解析各源；任一源给出可更新项即返回（CDN 优先）。若所有可达源都判定「无更新」返回 None；
+/// 若没有任何源成功解析出有效清单则返回错误（避免「源返回坏数据 + 另一源不可达」被误判为已最新）。
+fn resolve_updates(
+    current: &str,
+    key: &str,
+    sources: Vec<Result<Vec<u8>, String>>,
+) -> Result<Option<Update>, String> {
+    let mut last_error: Option<String> = None;
+    let mut parsed_any = false;
+    for result in sources {
+        let bytes = match result {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        };
+        let manifest = match serde_json::from_slice::<Manifest>(&bytes) {
+            Ok(manifest) => manifest,
+            Err(_) => {
+                last_error = Some("更新清单格式无效".to_string());
+                continue;
+            }
+        };
+        parsed_any = true;
+        match select(manifest, current, key) {
+            Ok(Some(update)) => return Ok(Some(update)),
+            // 该源无更新版本：可能确已最新，或 CDN 滞后 → 继续查下一源（freshness 保护）。
+            Ok(None) => continue,
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        }
+    }
+    if parsed_any {
+        Ok(None)
+    } else {
+        Err(last_error.unwrap_or_else(|| "检查更新失败，请检查网络后重试".to_string()))
+    }
 }
 
 /// 由安装包文件名构造 CDN 镜像平坦路径（`{MIRROR_ORIGIN}/{filename}`）。
@@ -300,17 +348,17 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     let Ok(_guard) = manager.operation.try_lock() else {
         return Ok(manager.state.lock().unwrap().clone());
     };
-    let result = (|| -> Result<Option<Update>, String> {
-        let bytes = fetch_manifest()?;
-        let manifest =
-            serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效".to_string())?;
-        // 清单来自 HTTPS GitHub，asset.url 为可信 GitHub 地址；镜像候选在下载阶段派生。
-        select(
-            manifest,
-            &app.package_info().version.to_string(),
-            &platform(),
-        )
-    })();
+    let current = app.package_info().version.to_string();
+    let key = platform();
+    // 候选清单：CDN（大陆快）优先，GitHub 兜底。
+    let sources: Vec<Result<Vec<u8>, String>> = [
+        (MIRROR_MANIFEST_URL, CDN_MANIFEST_ATTEMPTS, Duration::from_secs(CDN_MANIFEST_TIMEOUT_SECS)),
+        (MANIFEST_URL, GITHUB_MANIFEST_ATTEMPTS, Duration::from_secs(GITHUB_MANIFEST_TIMEOUT_SECS)),
+    ]
+    .into_iter()
+    .map(|(source, attempts, timeout)| fetch_manifest_bytes(source, attempts, timeout))
+    .collect();
+    let result = resolve_updates(&current, &key, sources);
     match result {
         Ok(update) => Ok(publish(&app, |s| {
             // Keep a verified installer available even when a newer release appears.
@@ -684,6 +732,54 @@ mod tests {
         );
         assert!(select(manifest("0.5.112"), "0.5.111", "macos-x86_64").is_err());
         assert!(select(manifest("broken"), "0.5.111", "windows-x86_64").is_err());
+    }
+
+    #[test]
+    fn stale_cdn_manifest_yields_no_update_so_github_is_consulted() {
+        // #44 freshness 保护的关键性质：CDN 清单若滞后（版本 <= 当前），select 必须返回 None，
+        // 这样调用方才会继续核验 GitHub（避免「CDN 旧清单静默漏更新」）。
+        assert!(select(manifest("0.5.120"), "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_none());
+        assert!(select(manifest("0.5.119"), "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_none());
+        // CDN 有新版本 → 直接可用（无需 GitHub）。
+        let mut fresh = manifest("0.5.121");
+        if let Some(a) = fresh.platforms.get_mut("windows-x86_64") {
+            a.url = format!("{RELEASE_PREFIX}v0.5.121/Live%20Recorder.msi");
+        }
+        assert!(select(fresh, "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn resolve_updates_handles_stale_cdn_invalid_and_unreachable() {
+        let key = "windows-x86_64";
+        let bytes = |v: &str| {
+            let mut m = manifest(v);
+            if let Some(a) = m.platforms.get_mut(key) {
+                a.url = format!("{RELEASE_PREFIX}v{v}/Live%20Recorder.msi");
+            }
+            serde_json::to_vec(&m).unwrap()
+        };
+        // CDN 旧版 + GitHub 更高版 → 取 GitHub（不漏更新）。
+        let got = resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.121"))])
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.version, "0.5.121");
+        // CDN 有更高版本 → 直接用 CDN（GitHub 不可达也不影响）。
+        let got = resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.121")), Err("down".to_string())])
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.version, "0.5.121");
+        // CDN 无效 + GitHub 不可达 → Err（不得假阴性 Ok(None)）。
+        assert!(resolve_updates("0.5.120", key, vec![Ok(b"<html>".to_vec()), Err("down".to_string())]).is_err());
+        // 两源均有效但都无更新 → Ok(None)。
+        assert!(resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.120"))])
+            .unwrap()
+            .is_none());
     }
     #[test]
     fn rejects_unsafe_asset() {
