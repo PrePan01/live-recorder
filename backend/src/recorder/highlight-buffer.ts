@@ -47,6 +47,10 @@ export class HighlightBuffer {
   private disabledReason: 'slow_disk' | 'write_error' | null = null;
   /** Reset temporarily drops preview frames so it cannot delete a newly-rotated segment. */
   private resetting = false;
+  /** #32：进行中的导出计数——clear/reset 必须等导出读取完 pinned 分段再删除文件，避免 copyRange ENOENT。 */
+  private exportsInFlight = 0;
+  private exportsIdle: Promise<void> = Promise.resolve();
+  private resolveExportsIdle: (() => void) | null = null;
 
   constructor(private readonly directory: string, private retainSeconds = 300) {}
 
@@ -111,59 +115,87 @@ export class HighlightBuffer {
   }
 
   async exportTo(output: string, seconds: number): Promise<{ bytes: number; actualSeconds: number }> {
+    if (this.cleared) throw new Error('缓存已清空，无法导出');
     // Rotate synchronously before awaiting I/O. New live frames then flow into
     // a new segment, while this export reads an immutable, pinned snapshot.
     const snapshot = this.sealCurrent();
     const pinned = new Set(snapshot.segments);
     for (const segment of pinned) this.pinned.add(segment);
-    await snapshot.done;
-    const all = snapshot.segments.flatMap((segment) => segment.entries.filter((entry) => entry.written).map((entry) => ({ segment, entry })));
-    const last = all.at(-1);
-    if (!last || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
-    const target = last.entry.at - seconds * 1000;
-    let start = all.findIndex((v) => v.entry.at >= target);
-    if (start < 0) start = 0;
-    while (start > 0 && !all[start]!.entry.keyframe) start -= 1;
-    while (start < all.length && !all[start]!.entry.keyframe) start += 1;
-    if (start >= all.length) throw new Error('缓存尚未收到可导出的关键帧');
-    await mkdir(path.dirname(output), { recursive: true });
-    const selected = all.slice(start);
-    let bytes = this.init.reduce((sum, part) => sum + part.length, 0);
-    const stream = createWriteStream(output);
+    this.beginExport();
     try {
-      for (const part of this.init) await writeChunk(stream, part);
-      // Entries in one segment are appended sequentially. Coalesce contiguous
-      // tag offsets so a large export issues range reads, not one read per tag.
-      for (const [segment, entries] of groupEntries(selected)) {
-        let rangeStart = entries[0]!.offset;
-        let rangeEnd = rangeStart + entries[0]!.length - 1;
-        for (const entry of entries.slice(1)) {
-          if (entry.offset === rangeEnd + 1) {
-            rangeEnd += entry.length;
-            continue;
+      await snapshot.done;
+      const all = snapshot.segments.flatMap((segment) => segment.entries.filter((entry) => entry.written).map((entry) => ({ segment, entry })));
+      const last = all.at(-1);
+      if (!last || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
+      const target = last.entry.at - seconds * 1000;
+      let start = all.findIndex((v) => v.entry.at >= target);
+      if (start < 0) start = 0;
+      while (start > 0 && !all[start]!.entry.keyframe) start -= 1;
+      while (start < all.length && !all[start]!.entry.keyframe) start += 1;
+      if (start >= all.length) throw new Error('缓存尚未收到可导出的关键帧');
+      await mkdir(path.dirname(output), { recursive: true });
+      const selected = all.slice(start);
+      let bytes = this.init.reduce((sum, part) => sum + part.length, 0);
+      const stream = createWriteStream(output);
+      try {
+        for (const part of this.init) await writeChunk(stream, part);
+        // Entries in one segment are appended sequentially. Coalesce contiguous
+        // tag offsets so a large export issues range reads, not one read per tag.
+        for (const [segment, entries] of groupEntries(selected)) {
+          let rangeStart = entries[0]!.offset;
+          let rangeEnd = rangeStart + entries[0]!.length - 1;
+          for (const entry of entries.slice(1)) {
+            if (entry.offset === rangeEnd + 1) {
+              rangeEnd += entry.length;
+              continue;
+            }
+            await copyRange(segment.path, rangeStart, rangeEnd, stream);
+            bytes += rangeEnd - rangeStart + 1;
+            rangeStart = entry.offset;
+            rangeEnd = rangeStart + entry.length - 1;
           }
           await copyRange(segment.path, rangeStart, rangeEnd, stream);
           bytes += rangeEnd - rangeStart + 1;
-          rangeStart = entry.offset;
-          rangeEnd = rangeStart + entry.length - 1;
         }
-        await copyRange(segment.path, rangeStart, rangeEnd, stream);
-        bytes += rangeEnd - rangeStart + 1;
+        stream.end();
+        await once(stream, 'finish');
+      } catch (error) {
+        stream.destroy();
+        throw error;
       }
-      stream.end();
-      await once(stream, 'finish');
-    } catch (error) {
-      stream.destroy();
-      throw error;
+      return { bytes, actualSeconds: Math.max(0, Math.round((last.entry.at - all[start]!.entry.at) / 1000)) };
     } finally {
       for (const segment of pinned) this.pinned.delete(segment);
+      this.endExport();
     }
-    return { bytes, actualSeconds: Math.max(0, Math.round((last.entry.at - all[start]!.entry.at) / 1000)) };
+  }
+
+  /** #32：导出开始时登记，供 clear/reset 等待。 */
+  private beginExport(): void {
+    this.exportsInFlight += 1;
+    if (this.exportsInFlight === 1) {
+      this.exportsIdle = new Promise<void>((resolve) => { this.resolveExportsIdle = resolve; });
+    }
+  }
+
+  private endExport(): void {
+    this.exportsInFlight = Math.max(0, this.exportsInFlight - 1);
+    if (this.exportsInFlight === 0) {
+      this.resolveExportsIdle?.();
+      this.resolveExportsIdle = null;
+    }
+  }
+
+  /** 等待所有进行中的导出读取完毕；无导出时立即返回。 */
+  private waitForExports(): Promise<void> {
+    return this.exportsInFlight === 0 ? Promise.resolve() : this.exportsIdle;
   }
 
   async clear(): Promise<void> {
     this.cleared = true;
     await this.sealCurrent().done;
+    // #32：等待进行中的导出读完 pinned 分段，避免并发删除正在读取的缓存文件（copyRange ENOENT）。
+    await this.waitForExports();
     await rm(this.directory, { recursive: true, force: true });
     this.segments = []; this.current = null; this.init = []; this.totalBytes = 0; this.pending = Buffer.alloc(0);
     this.writeQueue = []; this.queuedWriteBytes = 0;
@@ -184,6 +216,8 @@ export class HighlightBuffer {
       this.pending = Buffer.alloc(0);
       this.disabledReason = null;
       // mediaStarted/headerCaptured/init 保留，新到的媒体标签可立即落入新的分段。
+      // #32：先等进行中的导出读完 pinned 分段，再删除缓存文件，避免 copyRange ENOENT。
+      await this.waitForExports();
       await Promise.all(snapshot.segments.map((segment) => rm(segment.path, { force: true })));
     } finally {
       this.resetting = false;

@@ -47,12 +47,16 @@ export default function GlobalSearch() {
   }, [q]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setLoading(false);
+      return;
+    }
     requestRef.current?.abort();
     const kw = q.trim();
     if (kw.length < 1) {
       setResults([]);
       setTotal(0);
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -94,12 +98,18 @@ export default function GlobalSearch() {
 
   const goTo = (item: SearchItem) => {
     setQ("");
+    setOpen(false);
     if (item.type === "room") navigate(`/rooms?focus=${item.id}`);
     else if (item.type === "recording") navigate(`/history?focus=${item.id}`);
     else navigate("/settings");
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      setOpen(false);
+      setQ("");
+      return;
+    }
     if (results.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -110,9 +120,6 @@ export default function GlobalSearch() {
     } else if (e.key === "Enter" && results[activeIdx]) {
       e.preventDefault();
       goTo(results[activeIdx]);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-      setQ("");
     }
   };
 

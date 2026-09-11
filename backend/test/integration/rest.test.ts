@@ -425,6 +425,42 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings: douyin cookie validation rejects incomplete cookies (missing ttwid/sessionid) (#30)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cookie-val-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original' as const,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+    };
+    const put = (douyinCookie: string) => app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: { ...base, douyinCookie },
+    });
+
+    // 方式一 document.cookie 取不到 HttpOnly 的 ttwid → 缺少关键字段被拒。
+    const noTtwid = await put('passport_csrf_token=t;odin_tt=x');
+    expect(noTtwid.statusCode).toBe(422);
+    expect(noTtwid.json().error.code).toBe('CONFIG_INVALID');
+    expect(noTtwid.json().error.message).toContain('ttwid');
+
+    // 有 ttwid 但未登录（缺 sessionid）→ 拒绝并提示登录。
+    const noSession = await put('ttwid=xyz;odin_tt=x');
+    expect(noSession.statusCode).toBe(422);
+    expect(noSession.json().error.message).toContain('sessionid');
+
+    // 完整 Cookie（含 ttwid + sessionid）→ 接受。
+    const ok = await put('ttwid=xyz;sessionid=abc123;odin_tt=x');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().settings.douyinCookie.hasCookie).toBe(true);
+    await app.close();
+  });
+
   it('recordings pagination + open, alerts flow', async () => {
     const services = newServices();
     const { app } = buildApp(services);

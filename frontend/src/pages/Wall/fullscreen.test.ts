@@ -1,32 +1,19 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { enterWallFullscreen } from './fullscreen';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: vi.fn() }));
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }));
 afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
-it('uses native fullscreen without requiring the WebView DOM API, then restores the window', async () => {
+it('Tauri: enters in-app fullscreen via a root class (not OS window fullscreen), then restores', async () => {
   vi.mocked(isTauri).mockReturnValue(true);
-  const setFullscreen = vi.fn().mockResolvedValue(undefined);
-  vi.mocked(getCurrentWindow).mockReturnValue({
-    isFullscreen: vi.fn().mockResolvedValue(false), setFullscreen,
-  } as unknown as ReturnType<typeof getCurrentWindow>);
+  const add = vi.fn();
+  const remove = vi.fn();
+  vi.stubGlobal('document', { documentElement: { classList: { add, remove } } });
   const restore = await enterWallFullscreen({} as HTMLElement);
-  expect(setFullscreen).toHaveBeenCalledWith(true);
+  expect(add).toHaveBeenCalledWith('lr-wall-fullscreen');
   await restore();
-  expect(setFullscreen.mock.calls).toEqual([[true], [false]]);
-});
-
-it('preserves a window that was already fullscreen', async () => {
-  vi.mocked(isTauri).mockReturnValue(true);
-  const setFullscreen = vi.fn();
-  vi.mocked(getCurrentWindow).mockReturnValue({
-    isFullscreen: vi.fn().mockResolvedValue(true), setFullscreen,
-  } as unknown as ReturnType<typeof getCurrentWindow>);
-  await (await enterWallFullscreen({} as HTMLElement))();
-  expect(setFullscreen).not.toHaveBeenCalled();
+  expect(remove).toHaveBeenCalledWith('lr-wall-fullscreen');
 });
 
 it('keeps browser element fullscreen and tolerates an external exit', async () => {
@@ -42,14 +29,16 @@ it('keeps browser element fullscreen and tolerates an external exit', async () =
   documentMock.fullscreenElement = null;
   await restore();
   expect(exitFullscreen).toHaveBeenCalledOnce();
-  expect(getCurrentWindow).not.toHaveBeenCalled();
 });
 
-it('propagates native permission failures without reporting a successful entry', async () => {
+it('browser: throws when the element fullscreen API is unavailable', async () => {
+  vi.mocked(isTauri).mockReturnValue(false);
+  vi.stubGlobal('document', {});
+  await expect(enterWallFullscreen({} as HTMLElement)).rejects.toThrow('当前环境不支持视频区域全屏');
+});
+
+it('Tauri: does not require a video element reference', async () => {
   vi.mocked(isTauri).mockReturnValue(true);
-  vi.mocked(getCurrentWindow).mockReturnValue({
-    isFullscreen: vi.fn().mockResolvedValue(false),
-    setFullscreen: vi.fn().mockRejectedValue(new Error('denied')),
-  } as unknown as ReturnType<typeof getCurrentWindow>);
-  await expect(enterWallFullscreen({} as HTMLElement)).rejects.toThrow('denied');
+  vi.stubGlobal('document', { documentElement: { classList: { add: vi.fn(), remove: vi.fn() } } });
+  await expect(enterWallFullscreen(undefined as unknown as HTMLElement)).resolves.toBeTypeOf('function');
 });

@@ -1,5 +1,10 @@
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
+
+const pkg = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
+) as { version: string }
 
 // 单一开关：RECORDING_ADAPTER=real 时前端强制直连真实后端（关闭 mock），
 // 未设或非 real 时走 .env.development 的 mock 默认。前后端只需控制这一个变量。
@@ -8,6 +13,8 @@ if (process.env.RECORDING_ADAPTER === 'real') {
 }
 
 export default defineConfig({
+  // 注入真实应用版本（#31：错误诊断上下文需要真实版本号，而非 API 契约版本）。
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   // Tauri WebView 用 tauri://localhost 加载，绝对路径 /assets 无法解析，
   // 需用相对路径（#138 QA 定位白屏根因）。
   base: './',

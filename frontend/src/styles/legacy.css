@@ -1,0 +1,196 @@
+/*
+ * #35 样式重组遗留：以下 lr-* 类仍被 JSX 使用，但对应的 CSS 在样式拆分时丢失，
+ * 导致设置/监控/错误页等出现布局与间距回归。此处按当前 token 扁平化恢复最小必要规则。
+ */
+
+/* 设置页：告警列表可滚动，避免无限拉长 */
+.lr-alerts-card .ant-card-body {
+  max-height: min(680px, 72vh);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.lr-alerts-card .ant-list-item {
+  padding-block: 12px;
+}
+
+/* 设置页：自检列表间距 */
+.lr-self-check-card .ant-list-item {
+  padding-block: 12px;
+}
+.lr-self-check-card .ant-list-item:first-child {
+  padding-top: 0;
+}
+
+/* 设置页：表单间距 */
+.lr-settings-form .ant-form-item {
+  margin-bottom: 18px;
+}
+.lr-settings-form .ant-form-item-label {
+  padding-bottom: 6px;
+}
+.lr-settings-form .ant-form-item-label > label {
+  font-size: 13px;
+}
+.lr-settings-form .ant-form-item-extra {
+  padding-top: 5px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* 设置页：卡片纵向间距 */
+.lr-settings-grid > .ant-col > .ant-card + .ant-card {
+  margin-top: 20px;
+}
+
+/* 设置页：辅助文案 */
+.lr-settings-directory-status.ant-typography {
+  margin: -7px 0 14px;
+  font-size: 12px;
+}
+.lr-settings-section__hint.ant-typography {
+  margin: 0 0 18px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* 设置页：通知设置分隔线 */
+.lr-notification-settings > .ant-space-item:last-child {
+  padding-top: 4px;
+  border-top: 1px solid var(--lr-border);
+}
+
+/* 行内图标按钮 + 网络帮助 */
+.lr-network-help {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.lr-inline-icon-button.ant-btn {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  color: var(--lr-text-secondary);
+  vertical-align: -0.3em;
+}
+.lr-inline-icon-button.ant-btn:hover,
+.lr-inline-icon-button.ant-btn:focus-visible {
+  color: var(--lr-primary);
+  background: var(--lr-hover-bg);
+}
+.lr-network-help .lr-inline-icon-button.ant-btn {
+  vertical-align: baseline;
+}
+
+/* 抖音 Cookie 教程图 */
+.lr-cookie-tutorial-image {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: auto;
+}
+
+/* 诊断页布局 */
+.lr-diagnostics-page {
+  min-height: 100dvh;
+  padding: clamp(12px, 3vw, 32px);
+  overflow: auto;
+  background: var(--lr-bg);
+}
+.lr-diagnostics-page > .ant-card {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  border-color: var(--lr-border);
+}
+.lr-diagnostics-page .ant-card-head-wrapper {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.lr-diagnostics-page .ant-card-extra {
+  width: 100%;
+  margin-inline-start: 0;
+}
+
+/* 启动 / 错误兜底页：居中布局 */
+.lr-startup-page {
+  min-height: 100dvh;
+  padding: 24px;
+  background: var(--lr-bg);
+}
+.lr-system-result {
+  display: grid;
+  place-items: center;
+}
+
+/* 监控页：页面操作栏窄屏自适应 */
+@media (max-width: 520px) {
+  .lr-monitor-page .lr-page-actions > .ant-space-item:first-child {
+    flex: 1 1 100%;
+  }
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(2) {
+    flex: 2 1 150px;
+  }
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(3) {
+    flex: 1 1 108px;
+  }
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(4) {
+    flex: 0 1 76px;
+  }
+}
+
+/* 监控页：列表布局的房间卡片（lr-room-card--list 等） */
+.lr-room-card:not(.lr-room-card--list) .lr-room-card__actions {
+  margin: 0 -14px -14px;
+  padding-top: 0;
+}
+.lr-room-card--list .ant-card-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 8px;
+}
+.lr-room-card--list .lr-room-card__status,
+.lr-room-card--list .lr-room-card__stats,
+.lr-room-card--list .lr-room-card__health {
+  margin-bottom: 0 !important;
+}
+.lr-room-card--list .lr-room-card__actions {
+  margin-left: auto;
+  justify-content: flex-end;
+  border-top: 0;
+  border-left: 1px solid var(--lr-border);
+  padding: 0 0 0 16px;
+}
+.lr-room-card--list .lr-room-card__actions > * {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.lr-room-card--list .lr-room-card__actions .ant-btn {
+  width: auto;
+  padding-inline: 8px;
+}
+.lr-room-card--list .lr-room-card__error,
+.lr-room-card--list .lr-room-card__warning {
+  flex-basis: 100%;
+}
+.lr-room-card--list .lr-room-card__error {
+  margin-top: 10px;
+}
+@media (max-width: 768px) {
+  .lr-room-card--list .ant-card-body {
+    flex-direction: column;
+    align-items: stretch;
+    row-gap: 10px;
+  }
+  .lr-room-card--list .lr-room-card__actions {
+    margin-left: 0;
+    justify-content: flex-start;
+    border-left: 0;
+    border-top: 1px solid var(--lr-border);
+    padding: 10px 0 0;
+  }
+}

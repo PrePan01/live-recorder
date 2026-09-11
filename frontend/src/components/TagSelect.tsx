@@ -66,7 +66,14 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
               }))}
             />
           </Form.Item>
-          <Button icon={<PlusOutlined />} loading={creating} onClick={() => void onCreate()} />
+          <Button
+            aria-label="新增标签"
+            icon={<PlusOutlined />}
+            loading={creating}
+            onClick={() => {
+              void onCreate().catch(() => undefined);
+            }}
+          />
         </Space.Compact>
       </Form>
       <div style={{ maxHeight: 220, overflow: 'auto', marginTop: 8 }}>

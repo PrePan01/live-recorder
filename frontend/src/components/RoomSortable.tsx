@@ -113,7 +113,7 @@ export function useRoomSortableItem(id: string, mode: SortMode) {
     const interactive = origin.closest(INTERACTIVE_SELECTOR);
     if (interactive && interactive !== event.currentTarget) return;
     if (mode === "card" && !origin.closest(".ant-card-head")) return;
-    if (mode === "table" && !origin.matches("tr, td")) return;
+    if (mode === "table" && !origin.closest("tr, td")) return;
     listeners?.onPointerDown?.(event);
   };
 
@@ -144,6 +144,7 @@ export function SortableRoomTableRow(
     <tr
       {...props}
       {...sortable.attributes}
+      role="row"
       {...sortable.listeners}
       ref={sortable.setNodeRef}
       style={{ ...props.style, ...sortable.style }}

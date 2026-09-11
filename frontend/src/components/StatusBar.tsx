@@ -117,7 +117,9 @@ export default function StatusBar() {
                   <Button
                     size="small"
                     disabled={isSettingsPage}
-                    onClick={() => void markAllRead()}
+                    onClick={() => {
+                      void markAllRead().catch(() => undefined);
+                    }}
                   >
                     全部已读
                   </Button>
@@ -157,7 +159,9 @@ export default function StatusBar() {
                             key="read"
                             size="small"
                             type="link"
-                            onClick={() => void markRead(a.id)}
+                            onClick={() => {
+                              void markRead(a.id).catch(() => undefined);
+                            }}
                           >
                             已读
                           </Button>,
@@ -187,6 +191,7 @@ export default function StatusBar() {
           <Badge count={unread} size="small" offset={[-4, 4]}>
             <Button
               type="text"
+              aria-label="告警"
               icon={<WarningOutlined style={{ fontSize: 18 }} />}
             />
           </Badge>
