@@ -276,6 +276,15 @@ export default function PreviewModal({
     onClose();
   };
 
+  // 页面卸载/切换导致弹窗被销毁时，同样要关闭精彩时刻缓存，避免泄漏。
+  useEffect(
+    () => () => {
+      if (enableHighlights)
+        void disableHighlightBuffer(room.id).catch(() => undefined);
+    },
+    [disableHighlightBuffer, enableHighlights, room.id],
+  );
+
   const enterPictureInPicture = () => {
     setPreviewPlayerVisible(false);
     setPicturePosition({

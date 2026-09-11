@@ -21,6 +21,10 @@ export default function Wall() {
   const openPreview = usePreviewStore((s) => s.open);
   const closePreview = usePreviewStore((s) => s.close);
   const wallRoomIds = useWallStore((s) => s.roomIds);
+  const wallRoomIdsRef = useRef(wallRoomIds);
+  useEffect(() => {
+    wallRoomIdsRef.current = wallRoomIds;
+  }, [wallRoomIds]);
   const grid = useWallStore((s) => s.grid);
   const setGrid = useWallStore((s) => s.setGrid);
   const addRooms = useWallStore((s) => s.addRooms);
@@ -77,8 +81,12 @@ export default function Wall() {
       mounted.current = false;
       void restoreFullscreen.current?.().catch(() => {});
       restoreFullscreen.current = null;
+      // 离开直播墙时释放本页打开的预览，避免 openRoomIds 泄漏。
+      wallRoomIdsRef.current.forEach((rid) => {
+        if (rid) closePreview(rid);
+      });
     };
-  }, []);
+  }, [closePreview]);
 
   useEffect(() => {
     if (!wallFullscreen) return;
