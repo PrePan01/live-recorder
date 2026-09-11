@@ -20,9 +20,10 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
-/// #28 对象存储加速镜像（七牛 S3 兼容，HTTPS，公开读；用于安装包下载提速）。
-/// 清单始终走 GitHub HTTPS（可信锚点，含 SHA256）；安装包优先走 S3，失败回退 GitHub。
-const MIRROR_ORIGIN: &str = "https://live-recorder.s3.cn-south-1.qiniucs.com";
+/// #28 大陆加速镜像（用于安装包下载提速）：七牛 CDN 域名（匿名可读；当前仅 HTTP，
+/// 二进制走 HTTP 由「HTTPS 清单内的 SHA256」保完整性）。S3 API 端点要求签名，客户端不可匿名直取，
+/// 故下载走 CDN 域名，上传才走 S3 API。清单始终走 GitHub HTTPS（可信锚点）。
+const MIRROR_ORIGIN: &str = "http://cdn.live-rec.bspartner.top";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -247,7 +248,7 @@ fn fetch_manifest() -> Result<Vec<u8>, String> {
     Err(format!("检查更新失败，请检查网络后重试：{last}"))
 }
 
-/// 由安装包文件名构造 S3 镜像平坦路径（`{MIRROR_ORIGIN}/{filename}`）。
+/// 由安装包文件名构造 CDN 镜像平坦路径（`{MIRROR_ORIGIN}/{filename}`）。
 /// 镜像仅用于**下载提速**；完整性由 HTTPS 清单中的 SHA256 保证。文件名含版本号，平坦存放不冲突。
 fn mirror_asset_url(filename: &str) -> Option<String> {
     if filename.is_empty() || filename.contains(['/', '\\']) {
@@ -701,7 +702,7 @@ mod tests {
         a.url = format!("{MIRROR_ORIGIN}/Live.Recorder_0.5.112_aarch64.dmg");
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_ok());
         // 同前缀但不同域名（前缀欺骗）必须拒绝。
-        a.url = "https://live-recorder.s3.cn-south-1.qiniucs.com.evil.com/x.dmg".into();
+        a.url = "http://cdn.live-rec.bspartner.top.evil.com/x.dmg".into();
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
         a.url = "https://evil.example.com/x.dmg".into();
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
