@@ -112,6 +112,7 @@ export default function SettingsPage() {
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
   const showFfmpegWarning =
     recordingFormat === "mp4_after" &&
@@ -203,12 +204,16 @@ export default function SettingsPage() {
 
   // 选择「完成后转 MP4」时自动检测 ffmpeg：缺失则自动切回「源 FLV 直写」并提示（PrePan 反馈）。
   useEffect(() => {
-    if (recordingFormat !== "mp4_after") return;
+    if (recordingFormat !== "mp4_after") {
+      ffmpegPromptedRef.current = false;
+      return;
+    }
     if (!checks) {
       void runSelfCheck();
       return;
     }
-    if (ffmpegCheck && ffmpegCheck.status !== "ok") {
+    if (ffmpegCheck && ffmpegCheck.status !== "ok" && !ffmpegPromptedRef.current) {
+      ffmpegPromptedRef.current = true;
       Modal.warning({
         title: "需要安装 ffmpeg",
         content: (
