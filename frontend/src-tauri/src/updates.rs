@@ -20,6 +20,11 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
+/// #28 大陆加速镜像：优先尝试（弱网/大陆更快），失败自动回退 GitHub。
+/// 约定：镜像目录托管与 GitHub 同构的 `latest.json`，其 `platforms[*].url` 指向同域已上传安装包。
+/// 按 PrePan 决定使用 HTTP（仅用于下载；安装包仍以清单内 SHA256 校验完整性）。
+const MIRROR_ORIGIN: &str = "http://cdn.live-rec.bspartner.top";
+const MIRROR_MANIFEST_URL: &str = "http://cdn.live-rec.bspartner.top/live-recorder/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -78,12 +83,14 @@ fn validate_asset(version: &str, key: &str, asset: &Asset) -> Result<(), String>
         _ => return Err("暂无对应系统和架构的安装包".into()),
     };
     let expected = format!("{RELEASE_PREFIX}v{version}/");
+    let mirror_prefix = format!("{MIRROR_ORIGIN}/");
     let url = reqwest::Url::parse(&asset.url).map_err(|_| "更新下载地址无效")?;
     let encoded_name = url.path_segments().and_then(|s| s.last()).unwrap_or("");
+    let trusted_source = asset.url.starts_with(&expected) || asset.url.starts_with(&mirror_prefix);
     if asset.filename.contains(['/', '\\', ':'])
         || asset.filename.starts_with('.')
         || !asset.filename.ends_with(extension)
-        || !asset.url.starts_with(&expected)
+        || !trusted_source
         || url.query().is_some()
         || url.fragment().is_some()
         || encoded_name.is_empty()
@@ -199,36 +206,55 @@ fn client(timeout: Duration) -> Result<Client, String> {
         .build()
         .map_err(|e| e.to_string())
 }
-/// #28：清单检查弱网鲁棒性——网络类失败按指数退避重试，避免弱网下偶发「获取新版本失败」。
-fn fetch_manifest() -> Result<Vec<u8>, String> {
+/// #28：清单检查弱网鲁棒性——先试大陆镜像，失败再回退 GitHub；每个源网络类失败按指数退避重试。
+/// 返回 (清单字节, 是否来自镜像)。
+fn fetch_manifest() -> Result<(Vec<u8>, bool), String> {
     let mut last = String::new();
-    for attempt in 0..CHECK_ATTEMPTS {
-        let fetched = client(Duration::from_secs(30)).and_then(|http| {
-            http.get(MANIFEST_URL)
-                .send()
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string())
-        });
-        match fetched {
-            Ok(response) => {
-                let mut bytes = Vec::new();
-                match response.take(1024 * 1024 + 1).read_to_end(&mut bytes) {
-                    Ok(_) => {
-                        if bytes.len() > 1024 * 1024 {
-                            return Err("更新清单过大".into());
+    // 镜像仅试 1 次（快速回退；镜像故障时不拖慢检查），GitHub 保留指数退避重试。
+    for (source, from_mirror, attempts) in [
+        (MIRROR_MANIFEST_URL, true, 1usize),
+        (MANIFEST_URL, false, CHECK_ATTEMPTS),
+    ] {
+        for attempt in 0..attempts {
+            let fetched = client(Duration::from_secs(30)).and_then(|http| {
+                http.get(source)
+                    .send()
+                    .and_then(|r| r.error_for_status())
+                    .map_err(|e| e.to_string())
+            });
+            match fetched {
+                Ok(response) => {
+                    let mut bytes = Vec::new();
+                    match response.take(1024 * 1024 + 1).read_to_end(&mut bytes) {
+                        Ok(_) => {
+                            if bytes.len() > 1024 * 1024 {
+                                return Err("更新清单过大".into());
+                            }
+                            return Ok((bytes, from_mirror));
                         }
-                        return Ok(bytes);
+                        Err(e) => last = e.to_string(),
                     }
-                    Err(e) => last = e.to_string(),
                 }
+                Err(e) => last = e,
             }
-            Err(e) => last = e,
-        }
-        if attempt + 1 < CHECK_ATTEMPTS {
-            std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
+            if attempt + 1 < attempts {
+                std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
+            }
         }
     }
     Err(format!("检查更新失败，请检查网络后重试：{last}"))
+}
+
+/// 将 GitHub release 安装包 URL 重写为镜像平坦路径（`{MIRROR_ORIGIN}/live-recorder/{filename}`）。
+/// 便于镜像直接托管 CI 产出的 `latest.json`（其 URL 指向 GitHub）而无需改动清单内容；
+/// 安装包文件名已含版本号，平坦存放不会跨版本冲突。
+fn mirror_asset_url(github_url: &str) -> Option<String> {
+    let rest = github_url.strip_prefix(RELEASE_PREFIX)?;
+    let filename = rest.rsplit('/').next()?;
+    if filename.is_empty() {
+        return None;
+    }
+    Some(format!("{MIRROR_ORIGIN}/live-recorder/{filename}"))
 }
 
 fn check(app: AppHandle) -> Result<Snapshot, String> {
@@ -237,15 +263,24 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     let Ok(_guard) = manager.operation.try_lock() else {
         return Ok(manager.state.lock().unwrap().clone());
     };
-    let result = (|| {
-        let bytes = fetch_manifest()?;
+    let result = (|| -> Result<Option<Update>, String> {
+        let (bytes, from_mirror) = fetch_manifest()?;
         let manifest =
             serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效".to_string())?;
-        select(
+        let mut selected = select(
             manifest,
             &app.package_info().version.to_string(),
             &platform(),
-        )
+        )?;
+        // 清单来自镜像：把 GitHub 安装包 URL 重写为镜像同构路径（若已经是镜像 URL 则保持）。
+        if from_mirror {
+            if let Some(update) = selected.as_mut() {
+                if let Some(mirrored) = mirror_asset_url(&update.asset.url) {
+                    update.asset.url = mirrored;
+                }
+            }
+        }
+        Ok(selected)
     })();
     match result {
         Ok(update) => Ok(publish(&app, |s| {
@@ -621,6 +656,28 @@ mod tests {
         a = asset();
         a.url = "https://example.com/evil.msi".into();
         assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
+    }
+
+    #[test]
+    fn accepts_cdn_mirror_asset_but_rejects_other_origins() {
+        let mut a = asset();
+        a.url = format!("{MIRROR_ORIGIN}/live-recorder/v0.5.112/Live%20Recorder.msi");
+        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_ok());
+        // 同前缀但不同域名（前缀欺骗）必须拒绝。
+        a.url = "https://cdn.live-rec.bspartner.top.evil.com/x/Live%20Recorder.msi".into();
+        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
+        a.url = "https://evil.example.com/Live%20Recorder.msi".into();
+        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
+    }
+
+    #[test]
+    fn rewrites_github_asset_to_mirror_path() {
+        let github = format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_aarch64.dmg");
+        assert_eq!(
+            mirror_asset_url(&github),
+            Some(format!("{MIRROR_ORIGIN}/live-recorder/Live.Recorder_0.5.112_aarch64.dmg")),
+        );
+        assert!(mirror_asset_url("https://example.com/x.msi").is_none());
     }
     #[test]
     fn verifies_download_and_detects_truncation_and_corruption() {
