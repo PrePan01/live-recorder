@@ -616,3 +616,23 @@ textarea.ant-input,
 .ant-form-item-label > label {
   font-weight: 800;
 }
+
+/* OTP（6 位验证码）输入：与其它表单控件一致的黑描边、零圆角、无投影 */
+.ant-otp {
+  gap: 8px !important;
+  width: 100%;
+}
+.ant-otp .ant-otp-input {
+  height: 44px;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+.ant-otp .ant-otp-input:focus,
+.ant-otp .ant-otp-input-focused {
+  border-color: var(--lr-primary) !important;
+}
