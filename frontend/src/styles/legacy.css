@@ -142,10 +142,6 @@
 }
 
 /* 监控页：列表布局的房间卡片（lr-room-card--list 等） */
-.lr-room-card:not(.lr-room-card--list) .lr-room-card__actions {
-  margin: 0 -14px -14px;
-  padding-top: 0;
-}
 .lr-room-card--list .ant-card-body {
   display: flex;
   flex-wrap: wrap;
