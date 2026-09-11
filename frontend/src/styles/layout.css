@@ -208,7 +208,52 @@
   margin-top: 16px;
 }
 
-/* First-run setup is intentionally independent from the application shell. */
+/* Startup-only states stay isolated from shell, error, and guard layouts. */
+.lr-startup-page--loading {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  width: min(100%, 480px);
+  margin: 0 auto;
+  padding: clamp(24px, 6vh, 64px) clamp(20px, 5vw, 72px);
+  gap: 18px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--lr-text);
+  background: var(--lr-bg);
+  text-align: center;
+}
+
+.lr-startup-page--loading .ant-typography {
+  margin: 0;
+}
+
+.lr-startup-page--loading .ant-typography:first-child {
+  color: var(--lr-text);
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+
+.lr-startup-page--loading .ant-steps {
+  width: min(100%, 320px);
+  margin-top: 8px;
+  text-align: left;
+}
+
+.lr-startup-page--centered {
+  display: grid;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding: clamp(24px, 6vh, 64px) clamp(20px, 5vw, 72px);
+  place-items: center;
+  background: var(--lr-bg);
+}
+
+.lr-startup-page--centered .ant-result {
+  max-width: 560px;
+}
+
 .lr-setup-page {
   box-sizing: border-box;
   display: flex;
