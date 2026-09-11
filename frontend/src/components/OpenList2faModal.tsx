@@ -75,6 +75,7 @@ export default function OpenList2faModal() {
     <Modal
       title="OpenList 自动上传需要两步验证"
       open={open}
+      zIndex={1200}
       onCancel={() => setOpen(false)}
       onOk={() => void handleSubmit(code)}
       confirmLoading={busy}
