@@ -10,6 +10,7 @@ import {
   Input,
   InputNumber,
   List,
+  Modal,
   Row,
   Select,
   Space,
@@ -208,7 +209,22 @@ export default function SettingsPage() {
       return;
     }
     if (ffmpegCheck && ffmpegCheck.status !== "ok") {
-      message.warning("未检测到 ffmpeg，录制格式已自动切回「源 FLV 直写」");
+      Modal.warning({
+        title: "需要安装 ffmpeg",
+        content: (
+          <Space direction="vertical">
+            <Typography.Text>
+              “完成后转 MP4”依赖 ffmpeg。当前未检测到 ffmpeg，已自动切回“源 FLV
+              直写”。
+            </Typography.Text>
+            <Typography.Text>
+              安装完成后重启 Live Recorder，再点击“一键自检”。
+            </Typography.Text>
+            <Typography.Text code>{ffmpegInstallCmd}</Typography.Text>
+          </Space>
+        ),
+        okText: "知道了",
+      });
       form.setFieldValue("recordingFormat", "source_flv");
     }
   }, [recordingFormat, checks, ffmpegCheck]);
@@ -450,7 +466,7 @@ export default function SettingsPage() {
                     <Form.Item
                       label="默认清晰度"
                       name="quality"
-                      extra="若直播间未提供所选画质，将按实际可用画质录制（历史中会标注）"
+                      extra="若直播间未提供所选画质，将按实际可用画质录制"
                     >
                       <Select
                         options={[
@@ -466,12 +482,12 @@ export default function SettingsPage() {
                     <Form.Item
                       label="录制格式"
                       name="recordingFormat"
-                      extra="源 FLV 直写（无损最快）；完成后转 MP4（ffmpeg 转封装）"
+                      extra="FLV：无损最快；MP4：录制完成后自动转换，依赖FFmpeg"
                     >
                       <Select
                         options={[
-                          { value: "source_flv", label: "源 FLV 直写" },
-                          { value: "mp4_after", label: "完成后转 MP4" },
+                          { value: "source_flv", label: "FLV" },
+                          { value: "mp4_after", label: "MP4" },
                         ]}
                       />
                     </Form.Item>
@@ -702,10 +718,7 @@ export default function SettingsPage() {
                   disabled={!settings?.douyinCookie.hasCookie}
                   onClick={() => {
                     form.setFieldValue("douyinCookie", "");
-                    void persist(
-                      form.getFieldsValue() as SettingsInput,
-                      true,
-                    );
+                    void persist(form.getFieldsValue() as SettingsInput, true);
                   }}
                 >
                   清除已存 Cookie
