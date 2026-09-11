@@ -1,14 +1,14 @@
 import { isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 
-/** Returns a cleanup that restores the window's original fullscreen state. */
+/** Returns a cleanup that restores the original fullscreen state. */
 export async function enterWallFullscreen(element: HTMLElement): Promise<() => Promise<void>> {
   if (isTauri()) {
-    const window = getCurrentWindow();
-    const wasFullscreen = await window.isFullscreen();
-    if (!wasFullscreen) await window.setFullscreen(true);
+    // 客户端：只在「应用窗口内」把视频网格铺满，不触发整个 OS 窗口全屏。
+    // 同时用根类消除祖先 .lr-page 的 transform 动画产生的 fixed 包含块，
+    // 否则 position:fixed 的网格会相对 .lr-page 定位而塌成一小行。
+    document.documentElement.classList.add('lr-wall-fullscreen');
     return async () => {
-      if (!wasFullscreen) await window.setFullscreen(false);
+      document.documentElement.classList.remove('lr-wall-fullscreen');
     };
   }
   if (!element.requestFullscreen) throw new Error('当前环境不支持视频区域全屏');
