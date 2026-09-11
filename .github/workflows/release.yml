@@ -186,9 +186,9 @@ jobs:
     permissions:
       contents: write
     env:
-      # 对象存储加速（#28）：清单内安装包 URL 指向公开可匿名读取的 CDN 域名（当前仅 HTTP，
-      # 完整性由清单 HTTPS 内的 SHA256 保证）；CDN 不可达时客户端回退 GitHub。
-      UPDATE_BASE_URL: http://cdn.live-rec.bspartner.top
+      # 对象存储加速（#28）：清单内安装包 URL 指向 CDN 域名（HTTPS，匿名可读）；
+      # 完整性由清单 HTTPS 内的 SHA256 保证；CDN 不可达时客户端回退 GitHub。
+      UPDATE_BASE_URL: https://cdn.live-rec.bspartner.top
       QINIU_AK: ${{ secrets.QINIU_AK }}
       QINIU_SK: ${{ secrets.QINIU_SK }}
       QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || 'live-recorder' }}
