@@ -18,6 +18,7 @@ export default function OpenList2faModal() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const hasPending2fa = jobs.some(
     (j) =>
@@ -46,29 +47,43 @@ export default function OpenList2faModal() {
     if (hasPending2fa) setOpen(true);
   }, [hasPending2fa, twoFactorPromptVersion]);
 
+  // 每次打开重置输入与错误，避免残留上次失败状态。
+  useEffect(() => {
+    if (open) {
+      setCode("");
+      setError(null);
+    }
+  }, [open]);
+
   const handleSubmit = useCallback(
     async (otpCode: string) => {
-      if (!otpCode.trim()) {
-        message.warning("请输入 2FA 一次性验证码");
+      if (busy) return;
+      const value = otpCode.trim();
+      if (!/^\d{6}$/.test(value)) {
+        setError("请输入 6 位数字验证码");
         return;
       }
       setBusy(true);
+      setError(null);
       try {
-        await submitOpenList2fa(otpCode.trim());
+        await submitOpenList2fa(value);
         setOpen(false);
         setCode("");
         message.success("2FA 验证成功，正在恢复上传任务");
       } catch (e) {
-        message.error(
+        // 验证失败：不关闭弹窗，框内提示并清空以便重输。
+        const reason =
           e instanceof ApiError
             ? describeError(e.code, e.message)
-            : "2FA 验证失败",
-        );
+            : "2FA 验证失败";
+        setError(reason);
+        setCode("");
+        message.error(reason);
       } finally {
         setBusy(false);
       }
     },
-    [message],
+    [busy, message],
   );
 
   return (
@@ -78,6 +93,7 @@ export default function OpenList2faModal() {
       zIndex={1200}
       onCancel={() => setOpen(false)}
       onOk={() => void handleSubmit(code)}
+      okButtonProps={{ disabled: code.length !== 6 || busy }}
       confirmLoading={busy}
       okText="验证并恢复上传"
       cancelText="取消"
@@ -87,14 +103,22 @@ export default function OpenList2faModal() {
         <Typography.Text type="secondary">
           OpenList 账号已开启两步验证（2FA）。请在输入验证器应用中获取的验证码。
         </Typography.Text>
-        <Input.Password
-          placeholder="6 位验证码"
+        <Input.OTP
+          length={6}
           value={code}
-          onChange={(e) => setCode(e.target.value)}
-          onPressEnter={() => void handleSubmit(code)}
+          disabled={busy}
           autoFocus
-          maxLength={12}
+          inputMode="numeric"
+          onChange={(value) => {
+            if (!/^\d*$/.test(value)) return;
+            setCode(value);
+            setError(null);
+            if (value.length === 6) void handleSubmit(value);
+          }}
         />
+        {error ? (
+          <Typography.Text type="danger">{error}</Typography.Text>
+        ) : null}
       </Space>
     </Modal>
   );
