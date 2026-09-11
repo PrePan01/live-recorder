@@ -20,10 +20,9 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
-/// #28 大陆加速镜像（用于安装包下载提速）：七牛 CDN 域名（匿名可读；当前仅 HTTP，
-/// 二进制走 HTTP 由「HTTPS 清单内的 SHA256」保完整性）。S3 API 端点要求签名，客户端不可匿名直取，
-/// 故下载走 CDN 域名，上传才走 S3 API。清单始终走 GitHub HTTPS（可信锚点）。
-const MIRROR_ORIGIN: &str = "http://cdn.live-rec.bspartner.top";
+/// #28 大陆加速镜像（用于安装包下载提速）：七牛 CDN 域名（HTTPS，匿名可读）。
+/// 完整性由 HTTPS 清单内的 SHA256 保证；CDN 不可达自动回退 GitHub。
+const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -207,7 +206,8 @@ fn client(timeout: Duration) -> Result<Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// 安装包下载客户端（#28）：允许 HTTP——大陆镜像为 HTTP CDN，完整性由 HTTPS 清单中的 SHA256 保证。
+/// 安装包下载客户端（#28）：不强制 HTTPS——兼容镜像/代理可能的 http 候选，
+/// 完整性始终由 HTTPS 清单中的 SHA256 保证（篡改会被拒绝）。
 fn download_client(timeout: Duration) -> Result<Client, String> {
     Client::builder()
         .connect_timeout(Duration::from_secs(15))
@@ -702,7 +702,7 @@ mod tests {
         a.url = format!("{MIRROR_ORIGIN}/Live.Recorder_0.5.112_aarch64.dmg");
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_ok());
         // 同前缀但不同域名（前缀欺骗）必须拒绝。
-        a.url = "http://cdn.live-rec.bspartner.top.evil.com/x.dmg".into();
+        a.url = "https://cdn.live-rec.bspartner.top.evil.com/x.dmg".into();
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
         a.url = "https://evil.example.com/x.dmg".into();
         assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
