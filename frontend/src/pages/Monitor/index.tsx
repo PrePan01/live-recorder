@@ -355,6 +355,18 @@ export default function Monitor() {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
   const [watching, setWatching] = useState<Room | null>(null);
+  const watchingRef = useRef(watching);
+  useEffect(() => {
+    watchingRef.current = watching;
+  }, [watching]);
+  // 离开监控页（路由切换/卸载）时释放预览会话，避免 openRoomIds 泄漏。
+  useEffect(
+    () => () => {
+      const w = watchingRef.current;
+      if (w) closePreview(w.id);
+    },
+    [closePreview],
+  );
   const [view, setView] = useState<"卡片" | "列表">(() =>
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
