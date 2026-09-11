@@ -42,7 +42,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           });
         }
         EndpointResolver.set(event.instance);
-        setErrorDiagnosticContext({ instanceId: event.instance.instanceId, appVersion: event.instance.apiVersion });
+        setErrorDiagnosticContext({ instanceId: event.instance.instanceId });
       }
       set({
         state: event.state,
@@ -82,7 +82,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           });
         }
         EndpointResolver.set(event.instance);
-        setErrorDiagnosticContext({ instanceId: event.instance.instanceId, appVersion: event.instance.apiVersion });
+        setErrorDiagnosticContext({ instanceId: event.instance.instanceId });
       }
       set({
         state: event.state,
@@ -141,7 +141,7 @@ export function subscribeBridgeEvents() {
               useServiceStore.setState({ status: null, loading: false, error: null });
             }
             EndpointResolver.set(instance);
-            setErrorDiagnosticContext({ instanceId: instance.instanceId, appVersion: instance.apiVersion });
+            setErrorDiagnosticContext({ instanceId: instance.instanceId });
             useBootStore.getState().setInstance(instance);
           });
         }
