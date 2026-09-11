@@ -121,10 +121,10 @@ describe('QA stage-B exit: security', () => {
     expect(before.json().settings.douyinCookie.hasCookie).toBe(false);
     expect(JSON.stringify(before.json())).not.toContain('sessionid');
 
-    const put = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: HOST, payload: { ...base, douyinCookie: 'sessionid=abc123' } });
+    const put = await app.inject({ method: 'PUT', url: '/api/v1/settings', headers: HOST, payload: { ...base, douyinCookie: 'sessionid=abc123;ttwid=xyz' } });
     expect(put.statusCode).toBe(200);
     expect(put.json().settings.douyinCookie.hasCookie).toBe(true);
-    expect(JSON.stringify(put.json())).not.toContain('sessionid=abc123');
+    expect(JSON.stringify(put.json())).not.toContain('abc123');
 
     const after = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: HOST });
     expect(after.json().settings.douyinCookie.hasCookie).toBe(true);

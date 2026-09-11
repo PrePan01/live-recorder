@@ -6,9 +6,12 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -17,6 +20,12 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
+/// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
+const CHECK_ATTEMPTS: usize = 3;
+const DOWNLOAD_ATTEMPTS: usize = 3;
+/// 大文件启用多连接分片下载（#28 提速）；小文件或服务器不支持 Range 时回退单连接。
+const PARALLEL_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
+const PARALLEL_CONNECTIONS: usize = 4;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -190,6 +199,38 @@ fn client(timeout: Duration) -> Result<Client, String> {
         .build()
         .map_err(|e| e.to_string())
 }
+/// #28：清单检查弱网鲁棒性——网络类失败按指数退避重试，避免弱网下偶发「获取新版本失败」。
+fn fetch_manifest() -> Result<Vec<u8>, String> {
+    let mut last = String::new();
+    for attempt in 0..CHECK_ATTEMPTS {
+        let fetched = client(Duration::from_secs(30)).and_then(|http| {
+            http.get(MANIFEST_URL)
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string())
+        });
+        match fetched {
+            Ok(response) => {
+                let mut bytes = Vec::new();
+                match response.take(1024 * 1024 + 1).read_to_end(&mut bytes) {
+                    Ok(_) => {
+                        if bytes.len() > 1024 * 1024 {
+                            return Err("更新清单过大".into());
+                        }
+                        return Ok(bytes);
+                    }
+                    Err(e) => last = e.to_string(),
+                }
+            }
+            Err(e) => last = e,
+        }
+        if attempt + 1 < CHECK_ATTEMPTS {
+            std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
+        }
+    }
+    Err(format!("检查更新失败，请检查网络后重试：{last}"))
+}
+
 fn check(app: AppHandle) -> Result<Snapshot, String> {
     initialize(&app)?;
     let manager = app.state::<UpdateManager>();
@@ -197,19 +238,7 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
         return Ok(manager.state.lock().unwrap().clone());
     };
     let result = (|| {
-        let response = client(Duration::from_secs(30))?
-            .get(MANIFEST_URL)
-            .send()
-            .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("检查更新失败，请检查网络后重试：{e}"))?;
-        let mut bytes = Vec::new();
-        response
-            .take(1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > 1024 * 1024 {
-            return Err("更新清单过大".into());
-        }
+        let bytes = fetch_manifest()?;
         let manifest =
             serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效".to_string())?;
         select(
@@ -239,6 +268,7 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
         }
     }
 }
+#[cfg(test)]
 fn transfer(
     reader: impl Read,
     path: &Path,
@@ -289,6 +319,153 @@ fn transfer_from(
     drop(file);
     verified(path, asset)
 }
+/// 单连接下载一次尝试（支持断点续传，不 finalize）；失败保留 .part 供下次续传。
+fn download_single(
+    app: &AppHandle,
+    http: &Client,
+    partial: &Path,
+    asset: &Asset,
+) -> Result<(), String> {
+    let existing = fs::metadata(partial).ok().map(|m| m.len()).unwrap_or(0);
+    let resume_at = if existing > 0 && existing < asset.size {
+        existing
+    } else {
+        0
+    };
+    if resume_at == 0 && existing > 0 {
+        let _ = fs::remove_file(partial);
+    }
+    let mut request = http.get(&asset.url);
+    if resume_at > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume_at}-"));
+    }
+    let response = request
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("下载安装包失败，请检查网络：{e}"))?;
+    // A compliant range response resumes; a normal 200 means the server ignored
+    // Range, so overwrite the partial file and download safely from the start.
+    let append = resume_at > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let start = if append { resume_at } else { 0 };
+    publish(app, |s| s.downloaded = start);
+    let mut last = Instant::now();
+    transfer_from(response, partial, asset, start, append, &mut |total| {
+        if last.elapsed() >= Duration::from_millis(100) {
+            publish(app, |s| s.downloaded = total);
+            last = Instant::now();
+        }
+    })
+}
+
+/// #28 提速：多连接分片下载（预分配文件 + Range 并发）。任一分片失败即返回 Err，由调用方回退单连接。
+fn download_parallel<F>(
+    http: &Client,
+    partial: &Path,
+    asset: &Asset,
+    progress: Arc<F>,
+) -> Result<(), String>
+where
+    F: Fn(u64) + Send + Sync + 'static,
+{
+    let size = asset.size;
+    if size == 0 {
+        return Err("安装包大小无效".into());
+    }
+    {
+        let file = File::create(partial).map_err(|e| format!("无法创建安装包文件：{e}"))?;
+        file.set_len(size)
+            .map_err(|e| format!("无法预分配安装包文件：{e}"))?;
+    }
+    let connections = PARALLEL_CONNECTIONS as u64;
+    let chunk = size.div_ceil(connections);
+    let downloaded = Arc::new(AtomicU64::new(0));
+    let last_publish = Arc::new(Mutex::new(Instant::now()));
+    let mut handles = Vec::new();
+    for index in 0..connections {
+        let start = index * chunk;
+        if start >= size {
+            break;
+        }
+        let end = (start + chunk - 1).min(size - 1);
+        let url = asset.url.clone();
+        let path = partial.to_path_buf();
+        let downloaded = downloaded.clone();
+        let last_publish = last_publish.clone();
+        let progress = progress.clone();
+        let http = http.clone();
+        handles.push(std::thread::spawn(move || -> Result<(), String> {
+            let response = http
+                .get(&url)
+                .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| format!("分片下载失败：{e}"))?;
+            if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+                return Err("服务器不支持分片下载".into());
+            }
+            let mut file = File::options()
+                .write(true)
+                .open(&path)
+                .map_err(|e| format!("打开安装包文件失败：{e}"))?;
+            file.seek(SeekFrom::Start(start))
+                .map_err(|e| e.to_string())?;
+            let mut reader = response;
+            let mut buf = [0u8; 65536];
+            loop {
+                let n = reader
+                    .read(&mut buf)
+                    .map_err(|e| format!("下载中断，请重试：{e}"))?;
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n])
+                    .map_err(|e| format!("写入安装包失败，请检查磁盘空间：{e}"))?;
+                let total = downloaded.fetch_add(n as u64, Ordering::Relaxed) + n as u64;
+                if let Ok(mut last) = last_publish.lock() {
+                    if last.elapsed() >= Duration::from_millis(100) {
+                        progress(total);
+                        *last = Instant::now();
+                    }
+                }
+            }
+            file.sync_all()
+                .map_err(|e| format!("保存安装包失败：{e}"))?;
+            Ok(())
+        }));
+    }
+    for handle in handles {
+        handle
+            .join()
+            .map_err(|_| "分片下载线程异常".to_string())??;
+    }
+    verified(partial, asset)
+}
+
+/// 下载成功后落盘：partial → 正式安装包 + 写入 completed.json 元数据。
+fn finalize_download(
+    dir: &Path,
+    partial: &Path,
+    destination: &Path,
+    update: &Update,
+) -> Result<(), String> {
+    if destination.exists() {
+        fs::remove_file(destination).map_err(|e| e.to_string())?;
+    }
+    fs::rename(partial, destination).map_err(|e| e.to_string())?;
+    let metadata_part = dir.join("completed.part");
+    fs::write(
+        &metadata_part,
+        serde_json::to_vec(update).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let metadata = dir.join("completed.json");
+    if metadata.exists() {
+        fs::remove_file(&metadata).map_err(|e| e.to_string())?;
+    }
+    fs::rename(metadata_part, metadata).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn download(app: AppHandle) -> Result<Snapshot, String> {
     initialize(&app)?;
     let manager = app.state::<UpdateManager>();
@@ -308,71 +485,44 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
         s.downloaded = 0;
         s.error = None;
     });
-    let result = (|| {
+    let outcome = (|| -> Result<(), String> {
+        let http = client(Duration::from_secs(30 * 60))?;
         let existing = fs::metadata(&partial).ok().map(|m| m.len()).unwrap_or(0);
-        let resume_at = if existing > 0 && existing < update.asset.size {
-            existing
-        } else {
-            0
-        };
-        if resume_at == 0 && existing > 0 {
+        // #28：全新的大文件优先多连接分片下载提速；失败则清理并回退单连接断点续传。
+        if existing == 0 && update.asset.size >= PARALLEL_THRESHOLD_BYTES {
+            let sink = app.clone();
+            let progress = Arc::new(move |total: u64| {
+                let _ = publish(&sink, |s| s.downloaded = total);
+            });
+            if download_parallel(&http, &partial, &update.asset, progress).is_ok() {
+                return finalize_download(&dir, &partial, &destination, &update);
+            }
             let _ = fs::remove_file(&partial);
         }
-        let http = client(Duration::from_secs(30 * 60))?;
-        let mut request = http.get(&update.asset.url);
-        if resume_at > 0 {
-            request = request.header(reqwest::header::RANGE, format!("bytes={resume_at}-"));
-        }
-        let response = request
-            .send()
-            .and_then(|r| r.error_for_status())
-            .map_err(|e| format!("下载安装包失败，请检查网络：{e}"))?;
-        // A compliant range response resumes; a normal 200 means the server ignored
-        // Range, so overwrite the partial file and download safely from the start.
-        let append = resume_at > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
-        let start = if append { resume_at } else { 0 };
-        publish(&app, |s| s.downloaded = start);
-        let mut last = Instant::now();
-        transfer_from(
-            response,
-            &partial,
-            &update.asset,
-            start,
-            append,
-            &mut |total| {
-                if last.elapsed() >= Duration::from_millis(100) {
-                    publish(&app, |s| s.downloaded = total);
-                    last = Instant::now();
+        // 单连接 + 网络类失败退避重试（保留 .part 续传）。
+        let mut last = String::new();
+        for attempt in 0..DOWNLOAD_ATTEMPTS {
+            match download_single(&app, &http, &partial, &update.asset) {
+                Ok(()) => return finalize_download(&dir, &partial, &destination, &update),
+                Err(e) => {
+                    last = e;
+                    if attempt + 1 < DOWNLOAD_ATTEMPTS {
+                        std::thread::sleep(Duration::from_millis(600 * (attempt as u64 + 1)));
+                    }
                 }
-            },
-        )?;
-        if destination.exists() {
-            fs::remove_file(&destination).map_err(|e| e.to_string())?;
+            }
         }
-        fs::rename(&partial, &destination).map_err(|e| e.to_string())?;
-        let metadata_part = dir.join("completed.part");
-        fs::write(
-            &metadata_part,
-            serde_json::to_vec(&update).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        let metadata = dir.join("completed.json");
-        if metadata.exists() {
-            fs::remove_file(&metadata).map_err(|e| e.to_string())?;
-        }
-        fs::rename(metadata_part, metadata).map_err(|e| e.to_string())?;
-        Ok::<(), String>(())
+        Err(last)
     })();
-    match result {
+    match outcome {
         Ok(()) => Ok(publish(&app, |s| {
             s.phase = "ready".into();
             s.downloaded = update.asset.size;
         })),
         Err(error) => {
-            let _ = fs::remove_file(&partial);
+            // 保留 .part 供下次续传（弱网下不必从 0 重下）。
             publish(&app, |s| {
                 s.phase = "available".into();
-                s.downloaded = 0;
                 s.error = Some(error.clone());
             });
             Err(error)
@@ -550,5 +700,73 @@ mod tests {
         assert!(transfer(response, &path, &asset(), |_| {}).is_err());
         worker.join().unwrap();
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn downloads_in_parallel_range_chunks() {
+        use std::io::BufRead;
+        use std::net::TcpListener;
+        let body: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let sha = format!("{:x}", Sha256::digest(&body));
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let served = Arc::new(AtomicU64::new(0));
+        let served_worker = served.clone();
+        let expected = body.clone();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..PARALLEL_CONNECTIONS {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+                let mut range: Option<(usize, usize)> = None;
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).unwrap() == 0 {
+                        break;
+                    }
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("range: bytes=") {
+                        let spec = rest.trim();
+                        if let Some((s, e)) = spec.split_once('-') {
+                            let start: usize = s.parse().unwrap_or(0);
+                            let end: usize = e.parse().unwrap_or(expected.len() - 1);
+                            range = Some((start, end));
+                        }
+                    }
+                }
+                let (start, end) = range.expect("range header expected");
+                let slice = &expected[start..=end];
+                served_worker.fetch_add(1, Ordering::Relaxed);
+                let header = format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                    slice.len(),
+                    start,
+                    end,
+                    expected.len()
+                );
+                socket.write_all(header.as_bytes()).unwrap();
+                socket.write_all(slice).unwrap();
+            }
+        });
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let path = std::env::temp_dir().join(format!("lr-update-parallel-{}", std::process::id()));
+        let asset = Asset {
+            filename: "x.dmg".into(),
+            url: format!("http://{address}/x.dmg"),
+            size: body.len() as u64,
+            sha256: sha,
+        };
+        let result = download_parallel(&client, &path, &asset, Arc::new(|_| {}));
+        worker.join().unwrap();
+        assert!(result.is_ok(), "parallel download failed: {result:?}");
+        assert_eq!(served.load(Ordering::Relaxed), PARALLEL_CONNECTIONS as u64);
+        assert_eq!(fs::read(&path).unwrap(), body);
+        let _ = fs::remove_file(path);
     }
 }
