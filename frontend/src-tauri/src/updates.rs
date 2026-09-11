@@ -25,7 +25,11 @@ const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
 const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
-const CHECK_ATTEMPTS: usize = 3;
+/// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（2 次、8s，大陆被墙时快速失败）。
+const CDN_MANIFEST_ATTEMPTS: usize = 1;
+const GITHUB_MANIFEST_ATTEMPTS: usize = 2;
+const CDN_MANIFEST_TIMEOUT_SECS: u64 = 20;
+const GITHUB_MANIFEST_TIMEOUT_SECS: u64 = 8;
 const DOWNLOAD_ATTEMPTS: usize = 3;
 /// 大文件启用多连接分片下载（#28 提速）；小文件或服务器不支持 Range 时回退单连接。
 const PARALLEL_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
@@ -218,10 +222,10 @@ fn download_client(timeout: Duration) -> Result<Client, String> {
         .map_err(|e| e.to_string())
 }
 /// 拉取指定清单 URL（网络类失败按指数退避重试）。
-fn fetch_manifest_bytes(source: &str, attempts: usize) -> Result<Vec<u8>, String> {
+fn fetch_manifest_bytes(source: &str, attempts: usize, timeout: Duration) -> Result<Vec<u8>, String> {
     let mut last = String::new();
     for attempt in 0..attempts {
-        let fetched = client(Duration::from_secs(30)).and_then(|http| {
+        let fetched = client(timeout).and_then(|http| {
             http.get(source)
                 .send()
                 .and_then(|r| r.error_for_status())
@@ -307,8 +311,12 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
         // CDN 返回「无更新」时仍查 GitHub，防止 CDN 缓存滞后漏掉新版本（#43）。
         let mut last_error: Option<String> = None;
         let mut reached_any = false;
-        for (source, attempts) in [(MIRROR_MANIFEST_URL, 1usize), (MANIFEST_URL, CHECK_ATTEMPTS)] {
-            let bytes = match fetch_manifest_bytes(source, attempts) {
+        // CDN：快速；GitHub 兜底探测：短超时（大陆被墙时快速失败，避免长时间等待）。
+        for (source, attempts, timeout) in [
+            (MIRROR_MANIFEST_URL, CDN_MANIFEST_ATTEMPTS, Duration::from_secs(CDN_MANIFEST_TIMEOUT_SECS)),
+            (MANIFEST_URL, GITHUB_MANIFEST_ATTEMPTS, Duration::from_secs(GITHUB_MANIFEST_TIMEOUT_SECS)),
+        ] {
+            let bytes = match fetch_manifest_bytes(source, attempts, timeout) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     last_error = Some(e);
