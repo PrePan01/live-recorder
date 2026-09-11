@@ -17,6 +17,12 @@
   z-index: 1000;
 }
 
+/* 应用窗口内全屏：消除 .lr-page 动画 transform 形成的 fixed 包含块 */
+:global(html.lr-wall-fullscreen) :global(.lr-page) {
+  animation: none;
+  transform: none;
+}
+
 .exitFullscreen {
   position: absolute;
   bottom: 12px;
