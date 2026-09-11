@@ -4,8 +4,11 @@ import { readdir, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export async function generateUpdateManifest(directory, version) {
+export async function generateUpdateManifest(directory, version, baseUrl) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('A stable semantic release version is required');
+  // 可选的安装包基址（如七牛 S3 公开读域名）：设置后清单 asset.url 指向对象存储加速下载；
+  // 客户端仍以清单内 SHA256 校验，并在对象存储不可达时回退 GitHub release。
+  const base = typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl.replace(/\/+$/, '') : '';
   const files = await readdir(directory);
   const platforms = {};
   // scripts/package.mjs removes WiX's internal `_en-US` locale suffix before
@@ -23,9 +26,12 @@ export async function generateUpdateManifest(directory, version) {
     if (!info.isFile() || info.size === 0) throw new Error(`Empty installer: ${filename}`);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk);
+    const encoded = encodeURIComponent(filename);
     platforms[platform] = {
       filename: basename(filename),
-      url: `https://github.com/PrePan01/live-recorder/releases/download/v${version}/${encodeURIComponent(filename)}`,
+      url: base
+        ? `${base}/${encoded}`
+        : `https://github.com/PrePan01/live-recorder/releases/download/v${version}/${encoded}`,
       size: info.size,
       sha256: hash.digest('hex'),
     };
@@ -35,5 +41,5 @@ export async function generateUpdateManifest(directory, version) {
   return manifest;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  await generateUpdateManifest(process.argv[2], process.argv[3]);
+  await generateUpdateManifest(process.argv[2], process.argv[3], process.env.UPDATE_BASE_URL);
 }

@@ -20,10 +20,9 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_URL: &str =
     "https://github.com/PrePan01/live-recorder/releases/latest/download/latest.json";
 const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases/download/";
-/// #28 大陆加速镜像：优先尝试（弱网/大陆更快），失败自动回退 GitHub。
-/// 约定：镜像目录托管与 GitHub 同构的 `latest.json`，其 `platforms[*].url` 指向同域已上传安装包。
-/// 按 PrePan 决定使用 HTTP（仅用于下载；安装包仍以清单内 SHA256 校验完整性）。
-const MIRROR_ORIGIN: &str = "http://cdn.live-rec.bspartner.top";
+/// #28 对象存储加速镜像（七牛 S3 兼容，HTTPS，公开读；用于安装包下载提速）。
+/// 清单始终走 GitHub HTTPS（可信锚点，含 SHA256）；安装包优先走 S3，失败回退 GitHub。
+const MIRROR_ORIGIN: &str = "https://live-recorder.s3.cn-south-1.qiniucs.com";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -248,27 +247,50 @@ fn fetch_manifest() -> Result<Vec<u8>, String> {
     Err(format!("检查更新失败，请检查网络后重试：{last}"))
 }
 
-/// 由 GitHub 安装包 URL 推导镜像平坦路径（`{MIRROR_ORIGIN}/live-recorder/{filename}`）。
-/// 镜像仅用于**下载提速**；完整性由 HTTPS 清单中的 SHA256 保证。安装包文件名含版本号，平坦存放不冲突。
-fn mirror_asset_url(github_url: &str) -> Option<String> {
-    let rest = github_url.strip_prefix(RELEASE_PREFIX)?;
-    let filename = rest.rsplit('/').next()?;
-    if filename.is_empty() {
+/// 由安装包文件名构造 S3 镜像平坦路径（`{MIRROR_ORIGIN}/{filename}`）。
+/// 镜像仅用于**下载提速**；完整性由 HTTPS 清单中的 SHA256 保证。文件名含版本号，平坦存放不冲突。
+fn mirror_asset_url(filename: &str) -> Option<String> {
+    if filename.is_empty() || filename.contains(['/', '\\']) {
         return None;
     }
-    Some(format!("{MIRROR_ORIGIN}/live-recorder/{filename}"))
+    Some(format!("{MIRROR_ORIGIN}/{}", encode_uri_component(filename)))
 }
 
-/// 安装包下载候选（#28）：镜像(HTTP CDN) 优先提速，GitHub(HTTPS) 兜底。均以 SHA256 校验。
-fn asset_candidates(asset: &Asset) -> Vec<String> {
+/// 由版本 + 文件名构造 GitHub 兜底地址。
+fn github_asset_url(version: &str, filename: &str) -> Option<String> {
+    if filename.is_empty() || filename.contains(['/', '\\']) {
+        return None;
+    }
+    Some(format!("{RELEASE_PREFIX}v{version}/{}", encode_uri_component(filename)))
+}
+
+/// 安装包下载候选（#28）：S3 镜像(HTTPS) 优先提速，GitHub(HTTPS) 兜底；最后附上清单原始 URL（防御）。
+/// 顺序去重；无论用哪个来源，最终都经 SHA256 校验。
+fn asset_candidates(version: &str, asset: &Asset) -> Vec<String> {
     let mut urls = Vec::new();
-    if let Some(mirror) = mirror_asset_url(&asset.url) {
+    if let Some(mirror) = mirror_asset_url(&asset.filename) {
         urls.push(mirror);
+    }
+    if let Some(github) = github_asset_url(version, &asset.filename) {
+        if !urls.contains(&github) {
+            urls.push(github);
+        }
     }
     if !urls.contains(&asset.url) {
         urls.push(asset.url.clone());
     }
     urls
+}
+
+/// 与 URL 生成一致的百分号编码（文件名可能含空格/中文；GitHub release 资产名已归一为无空格）。
+fn encode_uri_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 fn check(app: AppHandle) -> Result<Snapshot, String> {
@@ -531,7 +553,7 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
     let outcome = (|| -> Result<(), String> {
         let http = download_client(Duration::from_secs(30 * 60))?;
         // #28：安装包候选 = [HTTP CDN 镜像, GitHub]；单源内退避重试+断点续传，源间清理避免跨源续传污染。
-        let candidates = asset_candidates(&update.asset);
+        let candidates = asset_candidates(&update.version, &update.asset);
         let mut last = String::new();
         for (index, url) in candidates.iter().enumerate() {
             let source = if index == 0 { "CDN" } else { "GitHub" };
@@ -673,38 +695,40 @@ mod tests {
     }
 
     #[test]
-    fn accepts_cdn_mirror_asset_but_rejects_other_origins() {
+    fn accepts_mirror_asset_but_rejects_other_origins() {
         let mut a = asset();
-        a.url = format!("{MIRROR_ORIGIN}/live-recorder/v0.5.112/Live%20Recorder.msi");
-        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_ok());
+        a.filename = "Live.Recorder_0.5.112_aarch64.dmg".into();
+        a.url = format!("{MIRROR_ORIGIN}/Live.Recorder_0.5.112_aarch64.dmg");
+        assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_ok());
         // 同前缀但不同域名（前缀欺骗）必须拒绝。
-        a.url = "https://cdn.live-rec.bspartner.top.evil.com/x/Live%20Recorder.msi".into();
-        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
-        a.url = "https://evil.example.com/Live%20Recorder.msi".into();
-        assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
+        a.url = "https://live-recorder.s3.cn-south-1.qiniucs.com.evil.com/x.dmg".into();
+        assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
+        a.url = "https://evil.example.com/x.dmg".into();
+        assert!(validate_asset("0.5.112", "macos-aarch64", &a).is_err());
     }
 
     #[test]
-    fn rewrites_github_asset_to_mirror_path() {
-        let github = format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_aarch64.dmg");
+    fn builds_mirror_and_github_asset_urls() {
         assert_eq!(
-            mirror_asset_url(&github),
-            Some(format!("{MIRROR_ORIGIN}/live-recorder/Live.Recorder_0.5.112_aarch64.dmg")),
+            mirror_asset_url("Live.Recorder_0.5.112_aarch64.dmg"),
+            Some(format!("{MIRROR_ORIGIN}/Live.Recorder_0.5.112_aarch64.dmg")),
         );
-        assert!(mirror_asset_url("https://example.com/x.msi").is_none());
+        assert_eq!(
+            github_asset_url("0.5.112", "Live.Recorder_0.5.112_aarch64.dmg"),
+            Some(format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_aarch64.dmg")),
+        );
+        // 文件名含路径分隔符 → 拒绝（防目录穿越）。
+        assert!(mirror_asset_url("../evil.dmg").is_none());
+        assert!(github_asset_url("0.5.112", "a/b.dmg").is_none());
     }
 
     #[test]
     fn asset_candidates_prefer_mirror_then_github() {
         let a = asset();
-        let candidates = asset_candidates(&a);
+        let candidates = asset_candidates("0.5.112", &a);
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].starts_with(MIRROR_ORIGIN));
         assert_eq!(candidates[1], a.url);
-        // 非 GitHub 来源（无法推导镜像）只保留自身。
-        let mut other = asset();
-        other.url = "http://cdn.live-rec.bspartner.top/live-recorder/x.msi".into();
-        assert_eq!(asset_candidates(&other), vec![other.url.clone()]);
     }
     #[test]
     fn verifies_download_and_detects_truncation_and_corruption() {
