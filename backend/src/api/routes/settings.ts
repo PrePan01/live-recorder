@@ -37,8 +37,12 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
     if (douyinCookie !== null) {
-      if (douyinCookie.length > 0) await services.secretStore.set(DOUYIN_COOKIE_KEY, douyinCookie);
-      else await services.secretStore.delete(DOUYIN_COOKIE_KEY);
+      if (douyinCookie.length > 0) {
+        validateDouyinCookie(douyinCookie);
+        await services.secretStore.set(DOUYIN_COOKIE_KEY, douyinCookie);
+      } else {
+        await services.secretStore.delete(DOUYIN_COOKIE_KEY);
+      }
     }
     const view = await settingsView(services);
     services.events.emit({ type: 'settings:updated', data: view });
@@ -179,6 +183,31 @@ function normalizeDouyinCookie(value: string): string {
     .replace(/^\s*cookie\s*:\s*/i, '')
     .replace(/[\r\n]+/g, ' ')
     .trim();
+}
+
+/**
+ * #30 抖音 Cookie 校验：方式一 `copy(document.cookie)` 只能读取非 HttpOnly 的 Cookie，
+ * 而抖音的 `ttwid`（反爬必需）与 `sessionid`（登录凭证）均标记 HttpOnly，取不到 → 取流「身份验证失败」。
+ * 这里在保存时校验必需字段，缺失即明确报错并引导改用方式二（网络面板复制完整 Cookie），
+ * 避免保存一个永远不可用的 Cookie 后反复困惑。
+ */
+function validateDouyinCookie(cookie: string): void {
+  const hasPair = /(?:^|;\s*)[^=;\s]+=[^;]*/.test(cookie);
+  if (!hasPair) {
+    throw new AppError('CONFIG_INVALID', '抖音 Cookie 格式无效，请粘贴完整 Cookie 字符串（形如 k=v; k2=v2）');
+  }
+  if (!/(?:^|;\s*)ttwid=[^;]+/.test(cookie)) {
+    throw new AppError(
+      'CONFIG_INVALID',
+      'Cookie 缺少 ttwid（抖音 HttpOnly 凭证，方式一 document.cookie 读取不到）。请改用方式二：F12 → 网络(Network) → 点开任意 live.douyin.com 请求 → 在「请求标头」里复制完整 Cookie 整段',
+    );
+  }
+  if (!/(?:^|;\s*)(?:sessionid|sessionid_ss)=[^;]+/.test(cookie)) {
+    throw new AppError(
+      'CONFIG_INVALID',
+      'Cookie 缺少登录凭证 sessionid（HttpOnly）。请确认已在浏览器登录抖音，并用方式二从网络面板复制完整 Cookie',
+    );
+  }
 }
 
 /** V5 管线配置校验：返回 AppError 或 null。 */

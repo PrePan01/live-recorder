@@ -23,7 +23,6 @@ import {
   DownloadOutlined,
   UploadOutlined,
   CheckCircleOutlined,
-  CopyOutlined,
   SyncOutlined,
   NotificationOutlined,
   QuestionCircleOutlined,
@@ -250,15 +249,6 @@ export default function SettingsPage() {
           ? describeError(e.code, e.message)
           : "测试通知失败",
       );
-    }
-  };
-
-  const copyCookieCommand = async () => {
-    try {
-      await navigator.clipboard.writeText("copy(document.cookie)");
-      message.success("命令已复制，可粘贴到 Console 执行");
-    } catch {
-      message.error("复制失败，请手动复制命令");
     }
   };
 
@@ -639,34 +629,14 @@ export default function SettingsPage() {
                   className="lr-settings-section__hint"
                   type="secondary"
                 >
-                  抖音直播间需登录 Cookie 才能取流。需要 douyin.com 的完整
-                  Cookie 字符串。
+                  抖音直播间需登录 Cookie 才能取流，且必须包含{" "}
+                  <b>HttpOnly 的完整 Cookie</b>（关键字段如 ttwid、sessionid）。
                   <br />
-                  获取方式（已登录抖音时）
-                  <br />
-                  方式一：进入抖音任意直播间 → F12 打开开发者工具 → Console
-                  控制台 → 输入{" "}
-                  <span className="lr-cookie-command">
-                    <Typography.Text code>
-                      copy(document.cookie)
-                    </Typography.Text>
-                    <Tooltip title="复制命令">
-                      <Button
-                        aria-label="复制 Cookie 命令"
-                        className="lr-inline-icon-button"
-                        size="small"
-                        type="text"
-                        icon={<CopyOutlined />}
-                        onClick={() => void copyCookieCommand()}
-                      />
-                    </Tooltip>
-                  </span>{" "}
-                  回车 → 已自动复制到剪贴板 → 粘贴到下方输入框。
-                  <br />
-                  方式二：
+                  获取方式（已登录抖音时）：F12 打开开发者工具 → 网络（Network）
+                  面板 → 刷新直播间页面 → 点开任意{" "}
+                  <Typography.Text code>live.douyin.com</Typography.Text>{" "}
+                  请求 → 在「请求标头」中复制 Cookie 整段 → 粘贴到下方输入框。
                   <span className="lr-network-help">
-                    网络（Network）面板任意 live.douyin.com 请求的请求标头中复制
-                    Cookie 整段。
                     <Tooltip
                       styles={{
                         root: {
@@ -696,6 +666,11 @@ export default function SettingsPage() {
                       />
                     </Tooltip>
                   </span>
+                  <br />
+                  <b>
+                    请勿使用控制台 copy(document.cookie)：它取不到 HttpOnly 的
+                    ttwid/sessionid，会导致「身份验证失败」。
+                  </b>
                   <br />
                   <b>
                     Cookie
