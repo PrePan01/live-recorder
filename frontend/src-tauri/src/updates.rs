@@ -24,7 +24,6 @@ const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases
 /// 约定：镜像目录托管与 GitHub 同构的 `latest.json`，其 `platforms[*].url` 指向同域已上传安装包。
 /// 按 PrePan 决定使用 HTTP（仅用于下载；安装包仍以清单内 SHA256 校验完整性）。
 const MIRROR_ORIGIN: &str = "http://cdn.live-rec.bspartner.top";
-const MIRROR_MANIFEST_URL: &str = "http://cdn.live-rec.bspartner.top/live-recorder/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 const CHECK_ATTEMPTS: usize = 3;
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -206,48 +205,40 @@ fn client(timeout: Duration) -> Result<Client, String> {
         .build()
         .map_err(|e| e.to_string())
 }
-/// #28：清单检查弱网鲁棒性——先试大陆镜像，失败再回退 GitHub；每个源网络类失败按指数退避重试。
-/// 返回 (清单字节, 是否来自镜像)。
-fn fetch_manifest() -> Result<(Vec<u8>, bool), String> {
+/// #28：清单检查弱网鲁棒性——清单始终走 GitHub HTTPS（可信锚点），网络类失败按指数退避重试。
+fn fetch_manifest() -> Result<Vec<u8>, String> {
     let mut last = String::new();
-    // 镜像仅试 1 次（快速回退；镜像故障时不拖慢检查），GitHub 保留指数退避重试。
-    for (source, from_mirror, attempts) in [
-        (MIRROR_MANIFEST_URL, true, 1usize),
-        (MANIFEST_URL, false, CHECK_ATTEMPTS),
-    ] {
-        for attempt in 0..attempts {
-            let fetched = client(Duration::from_secs(30)).and_then(|http| {
-                http.get(source)
-                    .send()
-                    .and_then(|r| r.error_for_status())
-                    .map_err(|e| e.to_string())
-            });
-            match fetched {
-                Ok(response) => {
-                    let mut bytes = Vec::new();
-                    match response.take(1024 * 1024 + 1).read_to_end(&mut bytes) {
-                        Ok(_) => {
-                            if bytes.len() > 1024 * 1024 {
-                                return Err("更新清单过大".into());
-                            }
-                            return Ok((bytes, from_mirror));
+    for attempt in 0..CHECK_ATTEMPTS {
+        let fetched = client(Duration::from_secs(30)).and_then(|http| {
+            http.get(MANIFEST_URL)
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string())
+        });
+        match fetched {
+            Ok(response) => {
+                let mut bytes = Vec::new();
+                match response.take(1024 * 1024 + 1).read_to_end(&mut bytes) {
+                    Ok(_) => {
+                        if bytes.len() > 1024 * 1024 {
+                            return Err("更新清单过大".into());
                         }
-                        Err(e) => last = e.to_string(),
+                        return Ok(bytes);
                     }
+                    Err(e) => last = e.to_string(),
                 }
-                Err(e) => last = e,
             }
-            if attempt + 1 < attempts {
-                std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
-            }
+            Err(e) => last = e,
+        }
+        if attempt + 1 < CHECK_ATTEMPTS {
+            std::thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
         }
     }
     Err(format!("检查更新失败，请检查网络后重试：{last}"))
 }
 
-/// 将 GitHub release 安装包 URL 重写为镜像平坦路径（`{MIRROR_ORIGIN}/live-recorder/{filename}`）。
-/// 便于镜像直接托管 CI 产出的 `latest.json`（其 URL 指向 GitHub）而无需改动清单内容；
-/// 安装包文件名已含版本号，平坦存放不会跨版本冲突。
+/// 由 GitHub 安装包 URL 推导镜像平坦路径（`{MIRROR_ORIGIN}/live-recorder/{filename}`）。
+/// 镜像仅用于**下载提速**；完整性由 HTTPS 清单中的 SHA256 保证。安装包文件名含版本号，平坦存放不冲突。
 fn mirror_asset_url(github_url: &str) -> Option<String> {
     let rest = github_url.strip_prefix(RELEASE_PREFIX)?;
     let filename = rest.rsplit('/').next()?;
@@ -257,6 +248,18 @@ fn mirror_asset_url(github_url: &str) -> Option<String> {
     Some(format!("{MIRROR_ORIGIN}/live-recorder/{filename}"))
 }
 
+/// 安装包下载候选（#28）：镜像(HTTP CDN) 优先提速，GitHub(HTTPS) 兜底。均以 SHA256 校验。
+fn asset_candidates(asset: &Asset) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(mirror) = mirror_asset_url(&asset.url) {
+        urls.push(mirror);
+    }
+    if !urls.contains(&asset.url) {
+        urls.push(asset.url.clone());
+    }
+    urls
+}
+
 fn check(app: AppHandle) -> Result<Snapshot, String> {
     initialize(&app)?;
     let manager = app.state::<UpdateManager>();
@@ -264,23 +267,15 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
         return Ok(manager.state.lock().unwrap().clone());
     };
     let result = (|| -> Result<Option<Update>, String> {
-        let (bytes, from_mirror) = fetch_manifest()?;
+        let bytes = fetch_manifest()?;
         let manifest =
             serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效".to_string())?;
-        let mut selected = select(
+        // 清单来自 HTTPS GitHub，asset.url 为可信 GitHub 地址；镜像候选在下载阶段派生。
+        select(
             manifest,
             &app.package_info().version.to_string(),
             &platform(),
-        )?;
-        // 清单来自镜像：把 GitHub 安装包 URL 重写为镜像同构路径（若已经是镜像 URL 则保持）。
-        if from_mirror {
-            if let Some(update) = selected.as_mut() {
-                if let Some(mirrored) = mirror_asset_url(&update.asset.url) {
-                    update.asset.url = mirrored;
-                }
-            }
-        }
-        Ok(selected)
+        )
     })();
     match result {
         Ok(update) => Ok(publish(&app, |s| {
@@ -358,6 +353,7 @@ fn transfer_from(
 fn download_single(
     app: &AppHandle,
     http: &Client,
+    url: &str,
     partial: &Path,
     asset: &Asset,
 ) -> Result<(), String> {
@@ -370,7 +366,7 @@ fn download_single(
     if resume_at == 0 && existing > 0 {
         let _ = fs::remove_file(partial);
     }
-    let mut request = http.get(&asset.url);
+    let mut request = http.get(url);
     if resume_at > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={resume_at}-"));
     }
@@ -395,6 +391,7 @@ fn download_single(
 /// #28 提速：多连接分片下载（预分配文件 + Range 并发）。任一分片失败即返回 Err，由调用方回退单连接。
 fn download_parallel<F>(
     http: &Client,
+    url: &str,
     partial: &Path,
     asset: &Asset,
     progress: Arc<F>,
@@ -422,7 +419,7 @@ where
             break;
         }
         let end = (start + chunk - 1).min(size - 1);
-        let url = asset.url.clone();
+        let url = url.to_string();
         let path = partial.to_path_buf();
         let downloaded = downloaded.clone();
         let last_publish = last_publish.clone();
@@ -522,30 +519,36 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
     });
     let outcome = (|| -> Result<(), String> {
         let http = client(Duration::from_secs(30 * 60))?;
-        let existing = fs::metadata(&partial).ok().map(|m| m.len()).unwrap_or(0);
-        // #28：全新的大文件优先多连接分片下载提速；失败则清理并回退单连接断点续传。
-        if existing == 0 && update.asset.size >= PARALLEL_THRESHOLD_BYTES {
-            let sink = app.clone();
-            let progress = Arc::new(move |total: u64| {
-                let _ = publish(&sink, |s| s.downloaded = total);
-            });
-            if download_parallel(&http, &partial, &update.asset, progress).is_ok() {
-                return finalize_download(&dir, &partial, &destination, &update);
-            }
-            let _ = fs::remove_file(&partial);
-        }
-        // 单连接 + 网络类失败退避重试（保留 .part 续传）。
+        // #28：安装包候选 = [HTTP CDN 镜像, GitHub]；单源内退避重试+断点续传，源间清理避免跨源续传污染。
+        let candidates = asset_candidates(&update.asset);
         let mut last = String::new();
-        for attempt in 0..DOWNLOAD_ATTEMPTS {
-            match download_single(&app, &http, &partial, &update.asset) {
-                Ok(()) => return finalize_download(&dir, &partial, &destination, &update),
-                Err(e) => {
-                    last = e;
-                    if attempt + 1 < DOWNLOAD_ATTEMPTS {
-                        std::thread::sleep(Duration::from_millis(600 * (attempt as u64 + 1)));
+        for (index, url) in candidates.iter().enumerate() {
+            let source = if index == 0 { "CDN" } else { "GitHub" };
+            // 全新的大文件优先多连接分片下载提速；失败则清理并回退单连接断点续传。
+            let existing = fs::metadata(&partial).ok().map(|m| m.len()).unwrap_or(0);
+            if existing == 0 && update.asset.size >= PARALLEL_THRESHOLD_BYTES {
+                let sink = app.clone();
+                let progress = Arc::new(move |total: u64| {
+                    let _ = publish(&sink, |s| s.downloaded = total);
+                });
+                if download_parallel(&http, url, &partial, &update.asset, progress).is_ok() {
+                    return finalize_download(&dir, &partial, &destination, &update);
+                }
+                let _ = fs::remove_file(&partial);
+            }
+            for attempt in 0..DOWNLOAD_ATTEMPTS {
+                match download_single(&app, &http, url, &partial, &update.asset) {
+                    Ok(()) => return finalize_download(&dir, &partial, &destination, &update),
+                    Err(e) => {
+                        last = format!("{e}（来源 {source}）");
+                        if attempt + 1 < DOWNLOAD_ATTEMPTS {
+                            std::thread::sleep(Duration::from_millis(600 * (attempt as u64 + 1)));
+                        }
                     }
                 }
             }
+            // 该来源失败：清理部分文件再试下一候选，避免不同来源字节拼接污染。
+            let _ = fs::remove_file(&partial);
         }
         Err(last)
     })();
@@ -678,6 +681,19 @@ mod tests {
             Some(format!("{MIRROR_ORIGIN}/live-recorder/Live.Recorder_0.5.112_aarch64.dmg")),
         );
         assert!(mirror_asset_url("https://example.com/x.msi").is_none());
+    }
+
+    #[test]
+    fn asset_candidates_prefer_mirror_then_github() {
+        let a = asset();
+        let candidates = asset_candidates(&a);
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0].starts_with(MIRROR_ORIGIN));
+        assert_eq!(candidates[1], a.url);
+        // 非 GitHub 来源（无法推导镜像）只保留自身。
+        let mut other = asset();
+        other.url = "http://cdn.live-rec.bspartner.top/live-recorder/x.msi".into();
+        assert_eq!(asset_candidates(&other), vec![other.url.clone()]);
     }
     #[test]
     fn verifies_download_and_detects_truncation_and_corruption() {
@@ -819,7 +835,7 @@ mod tests {
             size: body.len() as u64,
             sha256: sha,
         };
-        let result = download_parallel(&client, &path, &asset, Arc::new(|_| {}));
+        let result = download_parallel(&client, &asset.url, &path, &asset, Arc::new(|_| {}));
         worker.join().unwrap();
         assert!(result.is_ok(), "parallel download failed: {result:?}");
         assert_eq!(served.load(Ordering::Relaxed), PARALLEL_CONNECTIONS as u64);
