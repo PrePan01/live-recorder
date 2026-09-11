@@ -158,11 +158,8 @@ fn initialize(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 fn restore(dir: &Path, current: &str, key: &str) -> Result<Option<(Update, bool)>, String> {
-    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
-        if entry.path().extension().is_some_and(|e| e == "part") {
-            let _ = fs::remove_file(entry.path());
-        }
-    }
+    // Partial installers are intentionally kept. The part filename includes the
+    // release version and asset filename, so download() can resume it safely.
     let Ok(bytes) = fs::read(dir.join("completed.json")) else {
         return Ok(None);
     };
@@ -243,14 +240,35 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     }
 }
 fn transfer(
-    mut reader: impl Read,
+    reader: impl Read,
     path: &Path,
     asset: &Asset,
     mut progress: impl FnMut(u64),
 ) -> Result<(), String> {
-    let mut file = File::create(path).map_err(|e| format!("无法创建安装包文件：{e}"))?;
+    transfer_from(reader, path, asset, 0, false, &mut progress)
+}
+
+fn transfer_from(
+    mut reader: impl Read,
+    path: &Path,
+    asset: &Asset,
+    initial: u64,
+    append: bool,
+    progress: &mut impl FnMut(u64),
+) -> Result<(), String> {
+    let mut file = if append {
+        File::options()
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("无法续写安装包文件：{e}"))?
+    } else {
+        File::create(path).map_err(|e| format!("无法创建安装包文件：{e}"))?
+    };
     let mut buf = [0u8; 65536];
-    let mut total = 0;
+    let mut total = initial;
+    if initial > 0 {
+        progress(total);
+    }
     loop {
         let count = reader
             .read(&mut buf)
@@ -291,18 +309,43 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
         s.error = None;
     });
     let result = (|| {
-        let response = client(Duration::from_secs(30 * 60))?
-            .get(&update.asset.url)
+        let existing = fs::metadata(&partial).ok().map(|m| m.len()).unwrap_or(0);
+        let resume_at = if existing > 0 && existing < update.asset.size {
+            existing
+        } else {
+            0
+        };
+        if resume_at == 0 && existing > 0 {
+            let _ = fs::remove_file(&partial);
+        }
+        let http = client(Duration::from_secs(30 * 60))?;
+        let mut request = http.get(&update.asset.url);
+        if resume_at > 0 {
+            request = request.header(reqwest::header::RANGE, format!("bytes={resume_at}-"));
+        }
+        let response = request
             .send()
             .and_then(|r| r.error_for_status())
             .map_err(|e| format!("下载安装包失败，请检查网络：{e}"))?;
+        // A compliant range response resumes; a normal 200 means the server ignored
+        // Range, so overwrite the partial file and download safely from the start.
+        let append = resume_at > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+        let start = if append { resume_at } else { 0 };
+        publish(&app, |s| s.downloaded = start);
         let mut last = Instant::now();
-        transfer(response, &partial, &update.asset, |total| {
-            if last.elapsed() >= Duration::from_millis(100) {
-                publish(&app, |s| s.downloaded = total);
-                last = Instant::now();
-            }
-        })?;
+        transfer_from(
+            response,
+            &partial,
+            &update.asset,
+            start,
+            append,
+            &mut |total| {
+                if last.elapsed() >= Duration::from_millis(100) {
+                    publish(&app, |s| s.downloaded = total);
+                    last = Instant::now();
+                }
+            },
+        )?;
         if destination.exists() {
             fs::remove_file(&destination).map_err(|e| e.to_string())?;
         }
@@ -461,7 +504,7 @@ mod tests {
                 .unwrap()
                 .1
         );
-        assert!(!dir.join("interrupted.part").exists());
+        assert!(dir.join("interrupted.part").exists());
         fs::write(installer(&dir, &update), b"bad").unwrap();
         assert!(
             !restore(&dir, "0.5.111", "windows-x86_64")

@@ -22,7 +22,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   app.put('/api/v1/settings', async (req, reply) => {
     const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string };
     const password = typeof body.mail?.password === 'string' && body.mail.password.length > 0 ? body.mail.password : null;
-    const douyinCookie = typeof body.douyinCookie === 'string' ? body.douyinCookie : null;
+    const douyinCookie = typeof body.douyinCookie === 'string' ? normalizeDouyinCookie(body.douyinCookie) : null;
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
     if (incoming.mail) delete incoming.mail.password;
     delete (incoming as { douyinCookie?: string }).douyinCookie;
@@ -171,6 +171,14 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     services.events.emit({ type: 'settings:updated', data: view });
     return reply.send({ pipeline: merged });
   });
+}
+
+/** 浏览器开发者工具有时会把 `Cookie:` 前缀或换行一并复制，规范化后再发给抖音。 */
+function normalizeDouyinCookie(value: string): string {
+  return value
+    .replace(/^\s*cookie\s*:\s*/i, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim();
 }
 
 /** V5 管线配置校验：返回 AppError 或 null。 */
