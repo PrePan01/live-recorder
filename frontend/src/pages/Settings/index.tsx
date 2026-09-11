@@ -211,7 +211,11 @@ export default function SettingsPage() {
       void runSelfCheck();
       return;
     }
-    if (ffmpegCheck && ffmpegCheck.status !== "ok" && !ffmpegPromptedRef.current) {
+    if (
+      ffmpegCheck &&
+      ffmpegCheck.status !== "ok" &&
+      !ffmpegPromptedRef.current
+    ) {
       ffmpegPromptedRef.current = true;
       Modal.warning({
         title: "需要安装 ffmpeg",
@@ -629,13 +633,14 @@ export default function SettingsPage() {
                   className="lr-settings-section__hint"
                   type="secondary"
                 >
-                  抖音直播间需登录 Cookie 才能取流，且必须包含{" "}
-                  <b>HttpOnly 的完整 Cookie</b>（关键字段如 ttwid、sessionid）。
+                  抖音直播间需登录 Cookie 才能观看与录制。
                   <br />
-                  获取方式（已登录抖音时）：F12 打开开发者工具 → 网络（Network）
-                  面板 → 刷新直播间页面 → 点开任意{" "}
-                  <Typography.Text code>live.douyin.com</Typography.Text>{" "}
-                  请求 → 在「请求标头」中复制 Cookie 整段 → 粘贴到下方输入框。
+                  获取方式：进入网页版抖音 → 登录 → 随便进入一个直播间 → F12
+                  打开开发者工具 → 网络（Network） 面板 → 刷新直播间页面 →
+                  点开任意{" "}
+                  <Typography.Text code>live.douyin.com</Typography.Text> 请求 →
+                  在「请求标头」中复制 Cookie 后方<b>整段</b>值 →
+                  粘贴到下方输入框。
                   <span className="lr-network-help">
                     <Tooltip
                       styles={{
@@ -666,11 +671,6 @@ export default function SettingsPage() {
                       />
                     </Tooltip>
                   </span>
-                  <br />
-                  <b>
-                    请勿使用控制台 copy(document.cookie)：它取不到 HttpOnly 的
-                    ttwid/sessionid，会导致「身份验证失败」。
-                  </b>
                   <br />
                   <b>
                     Cookie
