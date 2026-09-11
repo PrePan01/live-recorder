@@ -713,6 +713,26 @@ mod tests {
         assert!(select(manifest("0.5.112"), "0.5.111", "macos-x86_64").is_err());
         assert!(select(manifest("broken"), "0.5.111", "windows-x86_64").is_err());
     }
+
+    #[test]
+    fn stale_cdn_manifest_yields_no_update_so_github_is_consulted() {
+        // #44 freshness 保护的关键性质：CDN 清单若滞后（版本 <= 当前），select 必须返回 None，
+        // 这样调用方才会继续核验 GitHub（避免「CDN 旧清单静默漏更新」）。
+        assert!(select(manifest("0.5.120"), "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_none());
+        assert!(select(manifest("0.5.119"), "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_none());
+        // CDN 有新版本 → 直接可用（无需 GitHub）。
+        let mut fresh = manifest("0.5.121");
+        if let Some(a) = fresh.platforms.get_mut("windows-x86_64") {
+            a.url = format!("{RELEASE_PREFIX}v0.5.121/Live%20Recorder.msi");
+        }
+        assert!(select(fresh, "0.5.120", "windows-x86_64")
+            .unwrap()
+            .is_some());
+    }
     #[test]
     fn rejects_unsafe_asset() {
         let mut a = asset();
