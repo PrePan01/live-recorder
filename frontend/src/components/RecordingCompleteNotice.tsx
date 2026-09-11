@@ -65,6 +65,7 @@ export default function RecordingCompleteNotice() {
 
   return (
     <Modal
+      centered
       open={!!pendingConfirm}
       title="录制完成"
       closable={false}

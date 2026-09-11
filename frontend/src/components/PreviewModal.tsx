@@ -197,10 +197,7 @@ export default function PreviewModal({
         );
         // 至少覆盖完整的默认动效，再等待连续数帧不再变化；这也能兼容
         // WebView 首帧较慢时动效延后开始的情况。
-        if (
-          performance.now() - animationStartedAt < 500 ||
-          stableFrames < 3
-        )
+        if (performance.now() - animationStartedAt < 500 || stableFrames < 3)
           frame = window.requestAnimationFrame(followModalAnimation);
       };
       followModalAnimation();
@@ -294,7 +291,9 @@ export default function PreviewModal({
     // mouseup 后 WebView 可能还会补发一次原生暂停；当前用户手势内先续播，
     // 下一帧再确认一次，避免拖拽结束后停在暂停状态。
     void video?.play().catch(() => undefined);
-    window.requestAnimationFrame(() => void video?.play().catch(() => undefined));
+    window.requestAnimationFrame(
+      () => void video?.play().catch(() => undefined),
+    );
   };
 
   const onPictureMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -430,7 +429,6 @@ export default function PreviewModal({
             style={{
               position: "relative",
               background: "#000",
-              borderRadius: 8,
               overflow: "hidden",
               aspectRatio: "16 / 9",
             }}
@@ -452,6 +450,7 @@ export default function PreviewModal({
               <Space>
                 <Tooltip title={!onAir ? "未开播，无法录制" : undefined}>
                   <Button
+                    style={{ width: 100 }}
                     size="small"
                     type="primary"
                     icon={<VideoCameraAddOutlined />}
@@ -604,6 +603,7 @@ export default function PreviewModal({
                     )}
                   >
                     <Button
+                      style={{ width: 100 }}
                       size="small"
                       icon={<ClockCircleOutlined />}
                       disabled={exporting}
@@ -618,70 +618,65 @@ export default function PreviewModal({
         </div>
       </Modal>
       {createPortal(
-          <div
-            role={pictureInPicture ? "button" : undefined}
-            tabIndex={pictureInPicture ? 0 : undefined}
-            aria-label={
-              pictureInPicture ? "画中画视频，点击返回预览" : undefined
-            }
-            title={pictureInPicture ? "拖动移动；点击返回预览" : undefined}
-            onMouseDown={pictureInPicture ? onPictureMouseDown : undefined}
-            onClick={pictureInPicture ? onPictureClick : undefined}
-            onKeyDown={(e) => {
-              if (pictureInPicture && (e.key === "Enter" || e.key === " "))
-                setPictureInPicture(false);
-            }}
-            style={{
-              position: "fixed",
-              left: pictureInPicture
-                ? picturePosition.x
-                : (previewPlayerBounds?.left ?? 0),
-              top: pictureInPicture
-                ? picturePosition.y
-                : (previewPlayerBounds?.top ?? 0),
-              width: pictureInPicture
-                ? PICTURE_IN_PICTURE_WIDTH
-                : (previewPlayerBounds?.width ?? 0),
-              zIndex: pictureInPicture ? 1100 : 1001,
-              cursor: pictureInPicture ? "move" : undefined,
-              borderRadius: 8,
-              overflow: "hidden",
-              background: "#000",
-              boxShadow: pictureInPicture
-                ? "0 10px 28px rgba(0,0,0,.35)"
-                : undefined,
-              visibility:
-                !pictureInPicture && !previewPlayerBounds ? "hidden" : undefined,
-              opacity:
-                pictureInPicture || previewPlayerVisible ? 1 : 0,
-              transition: pictureInPicture
-                ? undefined
-                : "opacity 180ms ease-out",
-            }}
-          >
-            <VideoPlayer roomId={room.id} platform={room.platform} />
-            {!pictureInPicture && (
-              <div
-                onMouseDown={onHandleDown}
-                title="拖动调整大小"
-                style={{
-                  position: "absolute",
-                  right: 4,
-                  bottom: 4,
-                  width: 18,
-                  height: 18,
-                  cursor: "nwse-resize",
-                  zIndex: 2,
-                  borderRight: "3px solid rgba(255,255,255,0.75)",
-                  borderBottom: "3px solid rgba(255,255,255,0.75)",
-                  borderBottomRightRadius: 4,
-                  background: "rgba(0,0,0,0.25)",
-                }}
-              />
-            )}
-          </div>,
-          document.body,
-        )}
+        <div
+          role={pictureInPicture ? "button" : undefined}
+          tabIndex={pictureInPicture ? 0 : undefined}
+          aria-label={pictureInPicture ? "画中画视频，点击返回预览" : undefined}
+          title={pictureInPicture ? "拖动移动；点击返回预览" : undefined}
+          onMouseDown={pictureInPicture ? onPictureMouseDown : undefined}
+          onClick={pictureInPicture ? onPictureClick : undefined}
+          onKeyDown={(e) => {
+            if (pictureInPicture && (e.key === "Enter" || e.key === " "))
+              setPictureInPicture(false);
+          }}
+          style={{
+            position: "fixed",
+            left: pictureInPicture
+              ? picturePosition.x
+              : (previewPlayerBounds?.left ?? 0),
+            top: pictureInPicture
+              ? picturePosition.y
+              : (previewPlayerBounds?.top ?? 0),
+            width: pictureInPicture
+              ? PICTURE_IN_PICTURE_WIDTH
+              : (previewPlayerBounds?.width ?? 0),
+            zIndex: pictureInPicture ? 1100 : 1001,
+            cursor: pictureInPicture ? "move" : undefined,
+            borderRadius: 8,
+            overflow: "hidden",
+            background: "#000",
+            boxShadow: pictureInPicture
+              ? "0 10px 28px rgba(0,0,0,.35)"
+              : undefined,
+            visibility:
+              !pictureInPicture && !previewPlayerBounds ? "hidden" : undefined,
+            opacity: pictureInPicture || previewPlayerVisible ? 1 : 0,
+            transition: pictureInPicture ? undefined : "opacity 180ms ease-out",
+          }}
+        >
+          <VideoPlayer roomId={room.id} platform={room.platform} />
+          {!pictureInPicture && (
+            <div
+              onMouseDown={onHandleDown}
+              title="拖动调整大小"
+              style={{
+                position: "absolute",
+                right: 4,
+                bottom: 4,
+                width: 18,
+                height: 18,
+                cursor: "nwse-resize",
+                zIndex: 2,
+                borderRight: "3px solid rgba(255,255,255,0.75)",
+                borderBottom: "3px solid rgba(255,255,255,0.75)",
+                borderBottomRightRadius: 4,
+                background: "rgba(0,0,0,0.25)",
+              }}
+            />
+          )}
+        </div>,
+        document.body,
+      )}
     </>
   );
 }
