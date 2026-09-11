@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   App,
   Button,
@@ -134,6 +135,7 @@ const RoomCard = memo(function RoomCard({
   autoRecordEnabled: boolean;
   insight?: RoomInsight;
 }) {
+  const navigate = useNavigate();
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
@@ -143,175 +145,192 @@ const RoomCard = memo(function RoomCard({
   const { ref, compact } = useCompactRoomCardActions(actionCount);
   return (
     <div ref={ref} className="lr-room-card__container">
-    <Card
-      className={`lr-room-card ${onAir ? "lr-room-card--live" : "lr-room-card--offline"} ${layout === "list" ? "lr-room-card--list" : ""}`}
-      styles={{ body: { padding: 14 } }}
-      title={
-        <Space className="lr-room-card__title-row" align="center">
-          <PlatformLogoTag platform={room.platform} />
-          <Tooltip title={room.displayName}>
-            <Typography.Text className="lr-room-card__title" strong ellipsis>
-              {room.displayName}
-            </Typography.Text>
-          </Tooltip>
-          {room.titleFallbackUsed ? (
-            <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                （回退标题）
+      <Card
+        className={`lr-room-card ${onAir ? "lr-room-card--live" : "lr-room-card--offline"} ${layout === "list" ? "lr-room-card--list" : ""}`}
+        styles={{ body: { padding: 14 } }}
+        title={
+          <Space className="lr-room-card__title-row" align="center">
+            <PlatformLogoTag platform={room.platform} />
+            <Tooltip title={room.displayName}>
+              <Typography.Text className="lr-room-card__title" strong ellipsis>
+                {room.displayName}
               </Typography.Text>
             </Tooltip>
+            {room.titleFallbackUsed ? (
+              <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  （回退标题）
+                </Typography.Text>
+              </Tooltip>
+            ) : null}
+          </Space>
+        }
+        extra={
+          <Space size={0}>
+            <Button
+              type="text"
+              size="small"
+              aria-label="收藏"
+              icon={
+                room.favorited ? (
+                  <StarFilled style={{ color: "#faad14" }} />
+                ) : (
+                  <StarOutlined />
+                )
+              }
+              onClick={() => onFavorite(room, !room.favorited)}
+            />
+          </Space>
+        }
+      >
+        <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
+          <LiveStatusTag status={room.lastLiveStatus} />
+          {autoRecordEnabled ? (
+            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+              自动录
+            </Tag>
+          ) : null}
+          <LivePredictionBadge insight={insight} />
+          {room.tags.length > 0 ? (
+            <Space size={[4, 4]} wrap>
+              {room.tags.map((t) => (
+                <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
+                  {t.name}
+                </Tag>
+              ))}
+            </Space>
           ) : null}
         </Space>
-      }
-      extra={
-        <Space size={0}>
-          <Button
-            type="text"
-            size="small"
-            aria-label="收藏"
-            icon={
-              room.favorited ? (
-                <StarFilled style={{ color: "#faad14" }} />
-              ) : (
-                <StarOutlined />
-              )
+        <div
+          className="lr-room-card__stats"
+          style={{ marginBottom: 10, width: "100%" }}
+        >
+          <RoomStats
+            lastCheckedAt={room.lastCheckedAt}
+            startedAt={
+              recording && room.activeRecording
+                ? room.activeRecording.startedAt
+                : null
             }
-            onClick={() => onFavorite(room, !room.favorited)}
+            state={room.monitorState}
           />
-        </Space>
-      }
-    >
-      <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-        <LiveStatusTag status={room.lastLiveStatus} />
-        {autoRecordEnabled ? (
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-            自动录
-          </Tag>
-        ) : null}
-        <LivePredictionBadge insight={insight} />
-        {room.tags.length > 0 ? (
-          <Space size={[4, 4]} wrap>
-            {room.tags.map((t) => (
-              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-                {t.name}
-              </Tag>
-            ))}
-          </Space>
-        ) : null}
-      </Space>
-      <div
-        className="lr-room-card__stats"
-        style={{ marginBottom: 10, width: "100%" }}
-      >
-        <RoomStats
-          lastCheckedAt={room.lastCheckedAt}
-          startedAt={
-            recording && room.activeRecording
-              ? room.activeRecording.startedAt
-              : null
-          }
-          state={room.monitorState}
-        />
-      </div>
-      <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
-        <RoomHealth insight={insight} />
-      </div>
-      {room.lastError ? (
-        <Typography.Paragraph
-          className="lr-room-card__error"
-          type="danger"
-          style={{ marginBottom: 10, marginTop: 0 }}
-        >
-          {room.lastError.message}
-        </Typography.Paragraph>
-      ) : null}
-      <div
-        className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""}`}
-      >
-        <Tooltip
-          title={compact ? "检测" : undefined}
-          styles={compactActionTooltipStyles}
-        >
-          <Button
-            size="middle"
-            aria-label="检测"
-            icon={<ReloadOutlined />}
-            loading={acting && actingAction === "check"}
-            disabled={acting || room.monitorState === "checking" || recording}
-            onClick={() => onCheck(room)}
+        </div>
+        <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
+          <RoomHealth insight={insight} />
+        </div>
+        {room.lastError ? (
+          <Typography.Paragraph
+            className="lr-room-card__error"
+            type="danger"
+            style={{ marginBottom: 10, marginTop: 0 }}
           >
-            <span className="lr-room-card__action-label">检测</span>
-          </Button>
-        </Tooltip>
-        <Tooltip
-          title={compact ? "打开直播间" : undefined}
-          styles={compactActionTooltipStyles}
+            {room.platform === "douyin" &&
+            room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
+              <>
+                平台访问受限，请检查{" "}
+              <Typography.Link
+                className="lr-room-card__error-link"
+                underline
+                onClick={() => navigate("/settings#douyin-cookie")}
+              >
+                  Cookie 配置
+                </Typography.Link>
+              </>
+            ) : (
+              room.lastError.message
+            )}
+          </Typography.Paragraph>
+        ) : null}
+        <div
+          className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""}`}
         >
-          <Button
-            size="middle"
-            aria-label="打开直播间"
-            icon={<LinkOutlined />}
-            href={room.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <span className="lr-room-card__action-label">直播间</span>
-          </Button>
-        </Tooltip>
-        {onAir || recording ? (
           <Tooltip
-            title={compact ? "观看" : undefined}
+            title={compact ? "检测" : undefined}
             styles={compactActionTooltipStyles}
           >
             <Button
               size="middle"
-              type={recording ? "primary" : "default"}
-              aria-label="观看"
-              icon={<EyeOutlined />}
-              onClick={() => onWatch(room)}
+              aria-label="检测"
+              icon={<ReloadOutlined />}
+              loading={acting && actingAction === "check"}
+              disabled={acting || room.monitorState === "checking" || recording}
+              onClick={() => onCheck(room)}
             >
-              <span className="lr-room-card__action-label">观看</span>
+              <span className="lr-room-card__action-label">检测</span>
             </Button>
           </Tooltip>
-        ) : null}
-        {room.monitorState === "recording" ||
-        room.monitorState === "reconnecting" ? (
-          <Popconfirm title="确定停止当前录制？" onConfirm={() => onStop(room)}>
+          <Tooltip
+            title={compact ? "打开直播间" : undefined}
+            styles={compactActionTooltipStyles}
+          >
+            <Button
+              size="middle"
+              aria-label="打开直播间"
+              icon={<LinkOutlined />}
+              href={room.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span className="lr-room-card__action-label">直播间</span>
+            </Button>
+          </Tooltip>
+          {onAir || recording ? (
             <Tooltip
-              title={compact ? "停止录制" : undefined}
+              title={compact ? "观看" : undefined}
               styles={compactActionTooltipStyles}
             >
               <Button
                 size="middle"
-                danger
-                aria-label="停止录制"
-                loading={acting && actingAction === "stop"}
-                icon={<StopOutlined />}
+                type={recording ? "primary" : "default"}
+                aria-label="观看"
+                icon={<EyeOutlined />}
+                onClick={() => onWatch(room)}
               >
-                <span className="lr-room-card__action-label">停止</span>
+                <span className="lr-room-card__action-label">观看</span>
               </Button>
             </Tooltip>
-          </Popconfirm>
-        ) : onAir ? (
-          <Tooltip
-            title={compact ? "录制" : undefined}
-            styles={compactActionTooltipStyles}
-          >
-            <Button
-              size="middle"
-              type="primary"
-              aria-label="录制"
-              icon={<VideoCameraAddOutlined />}
-              loading={acting && actingAction === "record"}
-              disabled={acting || recentlyStopped || !onAir}
-              onClick={() => onRecord(room)}
+          ) : null}
+          {room.monitorState === "recording" ||
+          room.monitorState === "reconnecting" ? (
+            <Popconfirm
+              title="确定停止当前录制？"
+              onConfirm={() => onStop(room)}
             >
-              <span className="lr-room-card__action-label">录制</span>
-            </Button>
-          </Tooltip>
-        ) : null}
-      </div>
-    </Card>
+              <Tooltip
+                title={compact ? "停止录制" : undefined}
+                styles={compactActionTooltipStyles}
+              >
+                <Button
+                  size="middle"
+                  danger
+                  aria-label="停止录制"
+                  loading={acting && actingAction === "stop"}
+                  icon={<StopOutlined />}
+                >
+                  <span className="lr-room-card__action-label">停止</span>
+                </Button>
+              </Tooltip>
+            </Popconfirm>
+          ) : onAir ? (
+            <Tooltip
+              title={compact ? "录制" : undefined}
+              styles={compactActionTooltipStyles}
+            >
+              <Button
+                size="middle"
+                type="primary"
+                aria-label="录制"
+                icon={<VideoCameraAddOutlined />}
+                loading={acting && actingAction === "record"}
+                disabled={acting || recentlyStopped || !onAir}
+                onClick={() => onRecord(room)}
+              >
+                <span className="lr-room-card__action-label">录制</span>
+              </Button>
+            </Tooltip>
+          ) : null}
+        </div>
+      </Card>
     </div>
   );
 });

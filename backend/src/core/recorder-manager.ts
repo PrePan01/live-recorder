@@ -15,6 +15,8 @@ import type { Services } from './services.js';
 
 export interface PreviewSink {
   canAccept(): boolean;
+  /** 是否仍有客户端观看；共享录制结束后据此决定是否保留预览拉流。 */
+  hasClients(roomId: string): boolean;
   broadcastFrame(roomId: string, chunk: Buffer): void;
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void;
   /** 新录制/新分段开始时清空该房间预览头缓冲，确保下一段流的 FLV 头被重新捕获。 */
@@ -304,6 +306,10 @@ export class RecorderManager {
   async stopPreviewStream(roomId: string, transitioningToRecording = false): Promise<void> {
     const session = this.previewSessions.get(roomId);
     if (!session) return;
+    // 点击录制后，预览拉流会被复用为录制数据源。此时最后一个预览客户端
+    // 断开只表示弹窗已关闭，不能停止上游流，否则会把正在写入的录制直接收尾。
+    // transitioningToRecording 是旧交接路径的显式停止，必须仍然允许执行。
+    if (session.recording && !transitioningToRecording) return;
     if (transitioningToRecording) session.transitioningToRecording = true;
     await session.engine.stop().catch(() => undefined);
     await session.done.catch(() => undefined);
@@ -636,6 +642,8 @@ export class RecorderManager {
       try {
         await this.closeSharedPreviewRecording(sharedRecording);
         await this.completeRecording(room, session.recordingId, session.size, 'ended', true);
+        // 弹窗已关闭时共享上游流仍会为录制持续到这里；录制结束后没有观看者就收掉它。
+        if (!this.preview?.hasClients(roomId)) await this.stopPreviewStream(roomId);
       } catch (error) {
         sharedRecording.writer.destroy();
         const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: session.recordingId });
