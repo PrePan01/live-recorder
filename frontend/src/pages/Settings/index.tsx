@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   App,
   Alert,
@@ -79,6 +80,7 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 
 export default function SettingsPage() {
   const { message } = App.useApp();
+  const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
@@ -135,6 +137,17 @@ export default function SettingsPage() {
       setPreference(settings.theme);
     }
   }, [settings, setPreference]);
+
+  useEffect(() => {
+    if (hash !== "#douyin-cookie") return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById("douyin-cookie")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hash]);
 
   useEffect(() => {
     if (settings) {
@@ -593,7 +606,10 @@ export default function SettingsPage() {
                   </Form.Item>
                 </div>
               </div>
-              <div className="lr-settings-section lr-settings-section--credential">
+              <div
+                id="douyin-cookie"
+                className="lr-settings-section lr-settings-section--credential"
+              >
                 <Typography.Title
                   className="lr-settings-section__title"
                   level={4}

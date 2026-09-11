@@ -2,6 +2,12 @@
   padding: 18px 0 2px;
   border-top: 1px solid var(--lr-ink);
 }
+.lr-settings-section--credential {
+  scroll-margin-top: 20px;
+}
+.lr-room-card__error-link {
+  color: inherit !important;
+}
 .lr-settings-section:first-child {
   padding-top: 0;
   border-top: 0;
