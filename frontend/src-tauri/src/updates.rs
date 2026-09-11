@@ -196,9 +196,20 @@ fn restore(dir: &Path, current: &str, key: &str) -> Result<Option<(Update, bool)
     let ready = verified(&installer(dir, &update), &update.asset).is_ok();
     Ok(Some((update, ready)))
 }
+/// 清单检查客户端：强制 HTTPS（清单是完整性锚点，绝不可走明文 HTTP）。
 fn client(timeout: Duration) -> Result<Client, String> {
     Client::builder()
         .https_only(true)
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(timeout)
+        .user_agent("Live-Recorder-Update-Checker")
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// 安装包下载客户端（#28）：允许 HTTP——大陆镜像为 HTTP CDN，完整性由 HTTPS 清单中的 SHA256 保证。
+fn download_client(timeout: Duration) -> Result<Client, String> {
+    Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(timeout)
         .user_agent("Live-Recorder-Update-Checker")
@@ -518,7 +529,7 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
         s.error = None;
     });
     let outcome = (|| -> Result<(), String> {
-        let http = client(Duration::from_secs(30 * 60))?;
+        let http = download_client(Duration::from_secs(30 * 60))?;
         // #28：安装包候选 = [HTTP CDN 镜像, GitHub]；单源内退避重试+断点续传，源间清理避免跨源续传污染。
         let candidates = asset_candidates(&update.asset);
         let mut last = String::new();
