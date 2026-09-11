@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "0.5.115",
+  "version": "0.5.116",
   "private": true,
   "description": "Live Recorder desktop application",
   "scripts": {
