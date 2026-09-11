@@ -233,6 +233,9 @@ jobs:
       # 客户端自动回退 GitHub release（清单自身的 SHA256 兜底完整性）。
       - name: Publish installers to object storage
         if: env.QINIU_AK != '' && env.QINIU_SK != ''
+        # 对象存储上传失败不应阻断 GitHub Release（客户端会自动回退 GitHub 下载）；
+        # 失败会在 CI 日志中以告警呈现，便于后续修正对象存储配置。
+        continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
           AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
