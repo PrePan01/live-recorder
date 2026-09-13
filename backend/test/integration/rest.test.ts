@@ -489,6 +489,9 @@ describe('REST contract v1.1 (fake stack)', () => {
     const readAll = await app.inject({ method: 'POST', url: '/api/v1/alerts/read-all', headers: { host: '127.0.0.1:43120' } });
     expect(readAll.json().ok).toBe(true);
     expect((await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } })).json().alerts).toHaveLength(0);
+    const clearAll = await app.inject({ method: 'DELETE', url: '/api/v1/alerts', headers: { host: '127.0.0.1:43120' } });
+    expect(clearAll.json()).toMatchObject({ ok: true, deleted: 2 });
+    expect((await app.inject({ method: 'GET', url: '/api/v1/alerts', headers: { host: '127.0.0.1:43120' } })).json().alerts).toHaveLength(0);
     await app.close();
   });
 

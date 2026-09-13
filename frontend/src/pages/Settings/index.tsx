@@ -11,6 +11,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -110,6 +111,7 @@ export default function SettingsPage() {
     fetchAlerts,
     markRead,
     markAllRead,
+    clearAll,
     retryFailure,
     retryingId,
   } = useAlertStore();
@@ -967,14 +969,31 @@ export default function SettingsPage() {
             className="lr-alerts-card lr-settings-card"
             title="告警"
             extra={
-              <Button
-                size="small"
-                onClick={() => {
-                  void markAllRead().catch(() => undefined);
-                }}
-              >
-                全部已读
-              </Button>
+              <Space size={8}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    void markAllRead().catch(() => undefined);
+                  }}
+                >
+                  全部已读
+                </Button>
+                <Popconfirm
+                  title="清除全部告警？"
+                  okText="清除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() =>
+                    clearAll()
+                      .then(() => message.success("已清除全部告警"))
+                      .catch(() => message.error("清除告警失败"))
+                  }
+                >
+                  <Button size="small" danger disabled={alerts.length === 0}>
+                    清除全部
+                  </Button>
+                </Popconfirm>
+              </Space>
             }
           >
             <List
