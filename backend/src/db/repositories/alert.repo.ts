@@ -57,4 +57,8 @@ export class AlertRepository {
   markAllResolved(): number {
     return this.db.prepare('UPDATE alerts SET resolved = 1 WHERE resolved = 0').run().changes;
   }
+
+  clearAll(): number {
+    return this.db.prepare('DELETE FROM alerts').run().changes;
+  }
 }

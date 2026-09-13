@@ -41,6 +41,48 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('emits one live-started event only for an offline-to-live transition with all notification gates enabled', async () => {
+    const { services } = newServices();
+    services.settings.save({
+      ...baseSettings(),
+      autoRecord: false,
+      notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+    });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
+    const notices: Array<{ roomId: string; displayName: string }> = [];
+    services.events.on((event) => {
+      if (event.type === 'live:started') notices.push(event.data);
+    });
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+  });
+
+  it('does not announce an initially-live room or bypass disabled notification gates', async () => {
+    const { services } = newServices();
+    services.settings.save({
+      ...baseSettings(),
+      autoRecord: false,
+      notifications: { desktopEnabled: false, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+    });
+    const initiallyLive = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/602', displayName: '首次开播', liveNotificationEnabled: true });
+    const gated = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/603', displayName: '总开关关闭', liveNotificationEnabled: true });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
+    const notices: string[] = [];
+    services.events.on((event) => { if (event.type === 'live:started') notices.push(event.data.roomId); });
+
+    await services.scheduler.triggerImmediateCheck(initiallyLive.id);
+    await services.scheduler.triggerImmediateCheck(gated.id);
+    await services.scheduler.triggerImmediateCheck(gated.id);
+
+    expect(notices).toEqual([]);
+  });
+
   it('checks with the enabled autoRecord setting after an older check finishes', async () => {
     const { services } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-pending-'));

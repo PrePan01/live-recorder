@@ -4,6 +4,7 @@ import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapt
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
+const PLATFORM_REQUEST_ATTEMPTS = 2;
 
 /** 抖音 flv_pull_url 档位键 → 本地清晰度。 */
 const RESOLUTION_QUALITY: Record<string, Quality> = {
@@ -156,7 +157,18 @@ export class DouyinAdapter implements PlatformAdapter {
         ...(cookie ? { Cookie: cookie } : {}),
       },
     });
-    if (!res.ok) throw new Error(`douyin api http ${res.status}`);
+    if (!res.ok) {
+      // 429/5xx 是抖音侧的暂时限流/抖动，并不表示 enter 响应结构已变。
+      // 过去这里抛普通 Error，调用方会误报“平台接口有变动”；用户稍后手动
+      // 检测成功正是这一误判的典型表现。
+      if (res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500) {
+        throw new AppError('NETWORK_UNAVAILABLE', `平台暂时不可用（HTTP ${res.status}）`, { retryable: true });
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false });
+      }
+      throw new AppError('PLATFORM_CHANGED', `平台接口返回异常状态（HTTP ${res.status}）`, {});
+    }
     const text = await res.text();
     if (!text.trim()) {
       throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false });
@@ -170,6 +182,24 @@ export class DouyinAdapter implements PlatformAdapter {
     return json;
   }
 
+  /**
+   * 抖音 CDN/API 会偶发限流或短暂 5xx。单次即时重试可消除这类瞬态失败，
+   * 但不会掩盖鉴权失败或真正的响应结构变更。
+   */
+  private async fetchRoomInfoWithRetry(roomId: string, cookie?: string): Promise<DouyinEnterResponse> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.fetchRoomInfo(roomId, cookie);
+      } catch (err) {
+        lastError = err;
+        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
+        if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
+      }
+    }
+    throw lastError;
+  }
+
   async checkLiveStatus(roomUrl: string, cookie?: string): Promise<LiveStatusResult> {
     const roomId = this.parseRoomId(roomUrl);
     if (!roomId) {
@@ -177,7 +207,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     let data: DouyinEnterResponse;
     try {
-      data = await this.fetchRoomInfo(roomId, cookie);
+      data = await this.fetchRoomInfoWithRetry(roomId, cookie);
     } catch (err) {
       if (err instanceof AppError) {
         if (err.code === 'PLATFORM_ACCESS_RESTRICTED') {
@@ -240,7 +270,7 @@ export class DouyinAdapter implements PlatformAdapter {
     if (!roomId) throw new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {});
     let data: DouyinEnterResponse;
     try {
-      data = await this.fetchRoomInfo(roomId, cookie);
+      data = await this.fetchRoomInfoWithRetry(roomId, cookie);
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });

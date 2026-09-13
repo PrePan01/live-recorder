@@ -28,6 +28,7 @@ export interface Room {
   lastError: ApiErrorEnvelope | null;
   favorited: boolean;
   autoRecord: boolean | null;
+  liveNotificationEnabled: boolean;
   activeRecording: ActiveRecording | null;
   tags: Tag[];
   uploadEnabled: boolean | null;
@@ -49,6 +50,7 @@ export interface RoomCreateInput {
   url: string;
   displayName?: string;
   cookie?: string;
+  liveNotificationEnabled?: boolean;
 }
 
 export interface RoomUpdateInput {
@@ -56,5 +58,6 @@ export interface RoomUpdateInput {
   displayName?: string;
   cookie?: string;
   autoRecord?: boolean | null;
+  liveNotificationEnabled?: boolean;
   uploadEnabled?: boolean | null;
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { fetchAlerts, markAlertRead, markAllAlertsRead } from '../api/alerts';
+import { clearAllAlerts, fetchAlerts, markAlertRead, markAllAlertsRead } from '../api/alerts';
 import { checkRoomNow } from '../api/rooms';
 import type { Alert } from '../types/alert';
 
@@ -10,6 +10,7 @@ interface AlertState {
   fetchAlerts: () => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
+  clearAll: () => Promise<void>;
   retryFailure: (alert: Alert) => Promise<void>;
   upsertAlert: (alert: Alert) => void;
 }
@@ -33,6 +34,10 @@ export const useAlertStore = create<AlertState>((set) => ({
   async markAllRead() {
     await markAllAlertsRead();
     set((s) => ({ alerts: s.alerts.map((a) => ({ ...a, resolved: true })) }));
+  },
+  async clearAll() {
+    await clearAllAlerts();
+    set({ alerts: [] });
   },
   async retryFailure(alert) {
     if (!alert.roomId) throw new Error('该告警无可重试房间');

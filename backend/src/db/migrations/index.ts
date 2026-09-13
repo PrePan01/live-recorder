@@ -446,6 +446,14 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!has) db.exec(`ALTER TABLE upload_jobs ADD COLUMN delete_source_after_success INTEGER NOT NULL DEFAULT 0;`);
     },
   },
+  {
+    // 直播间级开播提醒。存量与新建房间均默认关闭，须由用户显式订阅。
+    version: 23,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_notification_enabled'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN live_notification_enabled INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
