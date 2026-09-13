@@ -25,11 +25,12 @@ const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
 const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
-/// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（2 次、8s，大陆被墙时快速失败）。
+/// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（1 次、5s，仅当 CDN 判「无更新」时才探测；
+/// 大陆被墙时快速失败，避免每次「已是最新」都长时间等待 GitHub）。
 const CDN_MANIFEST_ATTEMPTS: usize = 1;
-const GITHUB_MANIFEST_ATTEMPTS: usize = 2;
+const GITHUB_MANIFEST_ATTEMPTS: usize = 1;
 const CDN_MANIFEST_TIMEOUT_SECS: u64 = 20;
-const GITHUB_MANIFEST_TIMEOUT_SECS: u64 = 8;
+const GITHUB_MANIFEST_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_ATTEMPTS: usize = 3;
 /// 大文件启用多连接分片下载（#28 提速）；小文件或服务器不支持 Range 时回退单连接。
 const PARALLEL_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
@@ -46,11 +47,14 @@ pub struct Asset {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Manifest {
     version: String,
+    #[serde(default)]
+    notes: Vec<String>,
     platforms: BTreeMap<String, Asset>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Update {
     version: String,
+    notes: Vec<String>,
     asset: Asset,
 }
 #[derive(Clone, Default, Serialize)]
@@ -119,6 +123,7 @@ fn select(manifest: Manifest, current: &str, key: &str) -> Result<Option<Update>
     validate_asset(&manifest.version, key, &asset)?;
     Ok(Some(Update {
         version: manifest.version,
+        notes: manifest.notes,
         asset,
     }))
 }
@@ -190,6 +195,7 @@ fn restore(dir: &Path, current: &str, key: &str) -> Result<Option<(Update, bool)
     let Ok(Some(update)) = select(
         Manifest {
             version: update.version,
+            notes: update.notes.clone(),
             platforms,
         },
         current,
@@ -714,6 +720,7 @@ mod tests {
     fn manifest(version: &str) -> Manifest {
         Manifest {
             version: version.into(),
+            notes: vec!["更新说明".into()],
             platforms: BTreeMap::from([("windows-x86_64".into(), asset())]),
         }
     }
@@ -844,6 +851,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let update = Update {
             version: "0.5.112".into(),
+            notes: vec!["更新说明".into()],
             asset: asset(),
         };
         fs::write(

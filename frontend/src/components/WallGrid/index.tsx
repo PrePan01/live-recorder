@@ -21,6 +21,7 @@ interface WallGridProps {
   grid: GridLayout;
   onFullscreen: (room: Room) => void;
   onRemove: (room: Room) => void;
+  onEmptySlotClick: (slot: number) => void;
 }
 
 export default function WallGrid({
@@ -28,6 +29,7 @@ export default function WallGrid({
   grid,
   onFullscreen,
   onRemove,
+  onEmptySlotClick,
 }: WallGridProps) {
   const moveRoomToSlot = useWallStore((s) => s.moveRoomToSlot);
   const roomIds = useWallStore((s) => s.roomIds);
@@ -134,14 +136,23 @@ export default function WallGrid({
           aria-label={
             room
               ? `拖动调整 ${room.displayName} 的位置，也可使用方向键换位`
-              : `空位 ${index + 1}，可拖入视频`
+              : `空位 ${index + 1}，点击添加直播间或拖入视频`
           }
+          onClick={() => {
+            if (!room && !sourceId) onEmptySlotClick(index);
+          }}
           onDragStart={(event) => {
             if (room) startDrag(event, room);
           }}
           onDragEnd={resetDrag}
           onKeyDown={(event) => {
-            if (!room || event.target !== event.currentTarget) return;
+            if (event.target !== event.currentTarget) return;
+            if (!room && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              onEmptySlotClick(index);
+              return;
+            }
+            if (!room) return;
             const offsets: Record<string, number> = {
               ArrowLeft: -1,
               ArrowRight: 1,

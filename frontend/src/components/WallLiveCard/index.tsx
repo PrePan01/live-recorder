@@ -85,22 +85,26 @@ export default function Index({
         </span>
         <LiveStatusTag status={room.lastLiveStatus} />
         <Space size={0}>
-          <Button
-            className={styles.textButton}
-            type="text"
-            size="small"
-            aria-label={muted ? "取消静音" : "静音"}
-            icon={muted ? <MutedOutlined /> : <SoundOutlined />}
-            onClick={() => setMuted((value) => !value)}
-          ></Button>
-          <Button
-            className={`${styles.textButton} ${styles.fullscreenButton}`}
-            type="text"
-            size="small"
-            aria-label="全屏"
-            icon={<FullscreenOutlined />}
-            onClick={() => onFullscreen(room)}
-          />
+          {room.lastLiveStatus === "live" ? (
+            <>
+              <Button
+                className={styles.textButton}
+                type="text"
+                size="small"
+                aria-label={muted ? "取消静音" : "静音"}
+                icon={muted ? <MutedOutlined /> : <SoundOutlined />}
+                onClick={() => setMuted((value) => !value)}
+              ></Button>
+              <Button
+                className={`${styles.textButton} ${styles.fullscreenButton}`}
+                type="text"
+                size="small"
+                aria-label="全屏"
+                icon={<FullscreenOutlined />}
+                onClick={() => onFullscreen(room)}
+              />
+            </>
+          ) : null}
           <Button
             className={styles.textButton}
             type="text"
