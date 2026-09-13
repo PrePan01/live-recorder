@@ -46,6 +46,8 @@ interface WallState {
   grid: WallGrid;
   setGrid: (grid: WallGrid) => void;
   addRooms: (batch: string[]) => AddRoomsResult;
+  /** 将尚未加入直播墙的房间直接放入指定空格。 */
+  addRoomToSlot: (roomId: string, slot: number) => boolean;
   removeRoom: (roomId: string) => void;
   swapRooms: (sourceId: string, targetId: string) => void;
   moveRoomToSlot: (sourceId: string, target: number) => void;
@@ -90,6 +92,27 @@ export const useWallStore = create<WallState>()(
         const res = applyAddRooms(roomIds, batch, getWallCapacity(grid));
         set({ roomIds: res.nextIds });
         return res;
+      },
+      addRoomToSlot: (roomId, slot) => {
+        const { roomIds, grid } = get();
+        const capacity = getWallCapacity(grid);
+        if (
+          !roomId ||
+          !Number.isInteger(slot) ||
+          slot < 0 ||
+          slot >= capacity ||
+          roomIds.includes(roomId) ||
+          roomIds[slot] != null
+        ) {
+          return false;
+        }
+        const nextIds = Array.from(
+          { length: capacity },
+          (_, index) => roomIds[index] ?? null,
+        );
+        nextIds[slot] = roomId;
+        set({ roomIds: nextIds });
+        return true;
       },
       removeRoom: (roomId) => {
         set((s) => ({ roomIds: s.roomIds.map((id) => id === roomId ? null : id) }));

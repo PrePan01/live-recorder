@@ -51,6 +51,13 @@ import {
   useRoomSortableItem,
 } from "../../components/RoomSortable";
 
+let startupLiveCheck: Promise<void> | null = null;
+
+function triggerStartupLiveCheck(): Promise<void> {
+  startupLiveCheck ??= checkEnabledRooms();
+  return startupLiveCheck;
+}
+
 function SortableRoomCardItem({
   roomId,
   children,
@@ -228,11 +235,11 @@ const RoomCard = memo(function RoomCard({
             room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
               <>
                 平台访问受限，请检查{" "}
-              <Typography.Link
-                className="lr-room-card__error-link"
-                underline
-                onClick={() => navigate("/settings#douyin-cookie")}
-              >
+                <Typography.Link
+                  className="lr-room-card__error-link"
+                  underline
+                  onClick={() => navigate("/settings#douyin-cookie")}
+                >
                   Cookie 配置
                 </Typography.Link>
               </>
@@ -407,6 +414,18 @@ export default function Monitor() {
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error("房间列表加载失败"));
+  }, [fetchRooms, message]);
+
+  useEffect(() => {
+    let disposed = false;
+    void triggerStartupLiveCheck()
+      .then(() => (disposed ? undefined : fetchRooms(true)))
+      .catch(() => {
+        if (!disposed) message.error("启动时开播检测失败，请稍后重试");
+      });
+    return () => {
+      disposed = true;
+    };
   }, [fetchRooms, message]);
 
   useEffect(() => {

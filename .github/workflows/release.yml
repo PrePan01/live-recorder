@@ -222,7 +222,7 @@ jobs:
       - name: Generate update manifest
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION"
+        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION" "" release-notes.json
 
       - name: Generate checksums
         working-directory: release-assets
@@ -245,9 +245,12 @@ jobs:
           # 安装包文件名含版本号 → 内容不可变，长缓存（immutable）以利 CDN 加速。
           aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive \
             --exclude "latest.json" \
+            --exclude "releases.json" \
             --cache-control "public, max-age=31536000, immutable"
           # #43：latest.json 是「指针」，必须短缓存/回源校验，否则发版后 CDN 仍返回旧版本。
           aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/latest.json "s3://$QINIU_BUCKET/latest.json" \
+            --cache-control "no-cache, no-store, must-revalidate, max-age=0"
+          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/releases.json "s3://$QINIU_BUCKET/releases.json" \
             --cache-control "no-cache, no-store, must-revalidate, max-age=0"
 
       - name: Create GitHub Release

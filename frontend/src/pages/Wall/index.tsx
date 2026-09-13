@@ -28,10 +28,12 @@ export default function Wall() {
   const grid = useWallStore((s) => s.grid);
   const setGrid = useWallStore((s) => s.setGrid);
   const addRooms = useWallStore((s) => s.addRooms);
+  const addRoomToSlot = useWallStore((s) => s.addRoomToSlot);
   const removeWallRoom = useWallStore((s) => s.removeRoom);
   const reconcile = useWallStore((s) => s.reconcile);
   const [addOpen, setAddOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const [slotPicker, setSlotPicker] = useState<number | null>(null);
   const [fullscreen, setFullscreen] = useState<Room | null>(null);
   const videoAreaRef = useRef<HTMLDivElement>(null);
   const [wallFullscreen, setWallFullscreen] = useState(false);
@@ -143,6 +145,17 @@ export default function Wall() {
     message.info(`已添加 ${res.added.length} 路到直播墙`);
   };
 
+  const handlePickSlotRoom = (roomId: string) => {
+    if (slotPicker === null) return;
+    if (!addRoomToSlot(roomId, slotPicker)) {
+      message.warning("该网格已被占用，请重新选择");
+      setSlotPicker(null);
+      return;
+    }
+    openPreview(roomId);
+    setSlotPicker(null);
+  };
+
   const handleRemove = (room: Room) => {
     closePreview(room.id);
     removeWallRoom(room.id);
@@ -198,6 +211,7 @@ export default function Wall() {
           grid={grid}
           onFullscreen={setFullscreen}
           onRemove={handleRemove}
+          onEmptySlotClick={setSlotPicker}
         />
         {wallFullscreen && (
           <Button
@@ -241,6 +255,25 @@ export default function Wall() {
             maxTagCount="responsive"
           />
         </Space>
+      </Modal>
+      <Modal
+        title="添加直播间"
+        open={slotPicker !== null}
+        footer={null}
+        onCancel={() => setSlotPicker(null)}
+      >
+        <Select
+          autoFocus
+          style={{ width: "100%" }}
+          placeholder="搜索并选择直播间"
+          showSearch
+          optionFilterProp="label"
+          onChange={handlePickSlotRoom}
+          options={available.map((room) => ({
+            value: room.id,
+            label: room.displayName,
+          }))}
+        />
       </Modal>
       {fullscreen ? (
         <PreviewModal
