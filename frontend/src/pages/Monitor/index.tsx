@@ -197,7 +197,7 @@ const RoomCard = memo(function RoomCard({
               自动录
             </Tag>
           ) : null}
-          <LivePredictionBadge insight={insight} />
+          <LivePredictionBadge insight={insight} hidden={onAir || recording} />
           {room.tags.length > 0 ? (
             <Space size={[4, 4]} wrap>
               {room.tags.map((t) => (

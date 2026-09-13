@@ -160,17 +160,15 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
   it('confidence escalates by sample days (5-9 medium, 10+ high)', () => {
     const services = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/90', displayName: 'conf' });
-    const make = (day: number, id: string) => {
+    const make = (day: number) => {
       const iso = `2026-08-${String(day).padStart(2, '0')}`;
-      const r = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: id, streamTitle: 't' });
-      services.recordings.update(r.id, { state: 'completed', endedAt: `${iso}T11:00:00.000Z` });
-      services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${iso}T09:00:00.000Z`, r.id);
+      services.liveEvents.record(room.id, `${iso}T09:00:00.000Z`);
     };
-    for (let d = 16; d <= 20; d++) make(d, `m${d}`);
+    for (let d = 16; d <= 20; d++) make(d);
     const five = livePrediction(services, room.id);
     expect(five.basedOnDays).toBe(5);
     expect(five.confidence).toBe('medium');
-    for (let d = 21; d <= 25; d++) make(d, `h${d}`);
+    for (let d = 21; d <= 25; d++) make(d);
     const ten = livePrediction(services, room.id);
     expect(ten.basedOnDays).toBe(10);
     expect(ten.confidence).toBe('high');

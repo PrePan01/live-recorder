@@ -60,6 +60,7 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
 
     expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+    expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
   });
 
   it('does not announce an initially-live room or bypass disabled notification gates', async () => {
