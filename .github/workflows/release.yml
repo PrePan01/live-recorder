@@ -103,6 +103,19 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
+      # setup-node 只缓存 npm 的下载包；这里缓存已安装依赖，命中时可跳过 Windows 上约 1 分钟的 npm ci。
+      # key 包含 OS、Node 主版本和三份 lockfile，避免原生依赖（如 keytar）跨平台或跨依赖树复用。
+      - name: Restore installed dependencies
+        if: runner.os == 'Windows'
+        id: node_modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            backend/node_modules
+            frontend/node_modules
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -113,6 +126,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install dependencies
+        if: runner.os != 'Windows' || steps.node_modules.outputs.cache-hit != 'true'
         run: npm run install:ci
 
       - name: Compile backend
@@ -123,6 +137,18 @@ jobs:
 
       - name: Verify frontend
         run: npm --prefix frontend test
+
+      # package.mjs 随后会 prune backend/node_modules；必须在裁剪前保存完整依赖，
+      # 否则下一次命中缓存时会缺少 vitest/typescript 等测试依赖。
+      - name: Save installed dependencies
+        if: runner.os == 'Windows' && steps.node_modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            node_modules
+            backend/node_modules
+            frontend/node_modules
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
 
       - name: Build installer
         env:
@@ -222,7 +248,7 @@ jobs:
       - name: Generate update manifest
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION" "" release-notes.json
+        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION" release-notes.json
 
       - name: Generate checksums
         working-directory: release-assets
