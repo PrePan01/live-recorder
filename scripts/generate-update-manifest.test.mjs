@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { generateUpdateManifest } from './generate-update-manifest.mjs';
+import { checkReleaseNotes } from './check-release-notes.mjs';
 
 const execFile = promisify(execFileCallback);
 
@@ -65,6 +66,17 @@ test('release requires matching, well-formed notes and publishes the complete hi
     await generateUpdateManifest(dir, '0.5.112', undefined, notes);
     assert.deepEqual(JSON.parse(await readFile(join(dir, 'latest.json'), 'utf8')).notes, ['新功能']);
     assert.equal(JSON.parse(await readFile(join(dir, 'releases.json'), 'utf8')).releases.length, 2);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('release notes preflight rejects a missing current version before platform builds', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lr-release-notes-check-'));
+  try {
+    const notes = join(dir, 'release-notes.json');
+    await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.111', publishedAt: '2026-09-12', notes: ['旧版本'] }] }));
+    await assert.rejects(checkReleaseNotes('0.5.112', notes), /Missing release notes/);
+    await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['新功能'] }] }));
+    assert.deepEqual((await checkReleaseNotes('0.5.112', notes)).notes, ['新功能']);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
