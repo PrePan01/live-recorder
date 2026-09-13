@@ -31,7 +31,7 @@
     "active": true,
     "targets": [
       "app",
-      "msi"
+      "nsis"
     ],
     "resources": {
       "../../backend": "backend"
@@ -52,12 +52,15 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       },
-      "wix": {
-        "language": {
-          "en-US": {
-            "localePath": "./windows/locales/en-US.wxl"
-          }
-        }
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Live Recorder"
       }
     }
   }

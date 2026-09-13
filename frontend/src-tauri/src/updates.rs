@@ -86,7 +86,7 @@ fn platform() -> String {
 fn validate_asset(version: &str, key: &str, asset: &Asset) -> Result<(), String> {
     let extension = match key {
         "macos-aarch64" => ".dmg",
-        "windows-x86_64" => ".msi",
+        "windows-x86_64" => "-setup.exe",
         _ => return Err("暂无对应系统和架构的安装包".into()),
     };
     let expected = format!("{RELEASE_PREFIX}v{version}/");
@@ -711,8 +711,8 @@ mod tests {
     use super::*;
     fn asset() -> Asset {
         Asset {
-            filename: "Live Recorder.msi".into(),
-            url: format!("{RELEASE_PREFIX}v0.5.112/Live%20Recorder.msi"),
+            filename: "Live.Recorder_0.5.112_x64-setup.exe".into(),
+            url: format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_x64-setup.exe"),
             size: 3,
             sha256: format!("{:x}", Sha256::digest(b"abc")),
         }
@@ -754,7 +754,7 @@ mod tests {
         // CDN 有新版本 → 直接可用（无需 GitHub）。
         let mut fresh = manifest("0.5.121");
         if let Some(a) = fresh.platforms.get_mut("windows-x86_64") {
-            a.url = format!("{RELEASE_PREFIX}v0.5.121/Live%20Recorder.msi");
+            a.url = format!("{RELEASE_PREFIX}v0.5.121/Live.Recorder_0.5.121_x64-setup.exe");
         }
         assert!(select(fresh, "0.5.120", "windows-x86_64")
             .unwrap()
@@ -767,7 +767,7 @@ mod tests {
         let bytes = |v: &str| {
             let mut m = manifest(v);
             if let Some(a) = m.platforms.get_mut(key) {
-                a.url = format!("{RELEASE_PREFIX}v{v}/Live%20Recorder.msi");
+                a.url = format!("{RELEASE_PREFIX}v{v}/Live.Recorder_{v}_x64-setup.exe");
             }
             serde_json::to_vec(&m).unwrap()
         };
@@ -791,10 +791,10 @@ mod tests {
     #[test]
     fn rejects_unsafe_asset() {
         let mut a = asset();
-        a.filename = "../evil.msi".into();
+        a.filename = "../evil-setup.exe".into();
         assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
         a = asset();
-        a.url = "https://example.com/evil.msi".into();
+        a.url = "https://example.com/evil-setup.exe".into();
         assert!(validate_asset("0.5.112", "windows-x86_64", &a).is_err());
     }
 

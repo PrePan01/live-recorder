@@ -42,7 +42,7 @@ better-sqlite3 13.0.3 后，在同一 Node 24.20.0 上完成 5 轮迁移、查�
 - `node --expose-gc backend/scripts/check-runtime.mjs`：原生依赖与真实路由编译压力。
 - `node backend/scripts/check-startup.mjs`：真实 sidecar 在中文/空格路径中，经过
   端口冲突、不可用代理、强杀后恢复、再次启动；每次请求 health/status 25 次。
-- `node scripts/check-installation.mjs`：macOS .app 资源与 Windows MSI 行政解包后的
+- `node scripts/check-installation.mjs`：macOS .app 资源与 Windows NSIS 静默安装后的
   实际 Node/backend 重跑以上检查，防止源码通过而安装包仍含旧/不兼容模块。
 
 CI 在 macOS 和 Windows 上执行门禁后才上传安装包。构建 Node 固定为已验证的

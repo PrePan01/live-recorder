@@ -16,6 +16,7 @@ const expected = JSON.parse(
   readFileSync(path.join(root, 'package.json'), 'utf8'),
 ).version;
 let temporary;
+let uninstaller;
 function run(command, args, timeout = 60000) {
   const result = spawnSync(command, args, {
     stdio: 'inherit',
@@ -43,16 +44,16 @@ function findResources(directory) {
 try {
   let resources;
   if (process.platform === 'win32') {
-    temporary = mkdtempSync(path.join(tmpdir(), 'lr-msi-verify-'));
-    const msi = readdirSync(release).find(
-      (name) => name.includes(`_${expected}_`) && name.endsWith('.msi'),
+    temporary = mkdtempSync(path.join(tmpdir(), 'lr-nsis-verify-'));
+    const setup = readdirSync(release).find(
+      (name) => name.includes(`_${expected}_`) && name.endsWith('-setup.exe'),
     );
-    if (!msi) throw new Error('Windows installer missing');
-    run(
-      'msiexec.exe',
-      ['/a', path.join(release, msi), '/qn', `TARGETDIR=${temporary}`],
-      120000,
-    );
+    if (!setup) throw new Error('Windows NSIS setup installer missing');
+    // NSIS requires /D to be the final argument. A temporary, per-run target
+    // makes the CI payload test independent of the runner's user profile.
+    run(path.join(release, setup), ['/S', `/D=${temporary}`], 120000);
+    uninstaller = path.join(temporary, 'uninstall.exe');
+    if (!existsSync(uninstaller)) throw new Error('NSIS installer did not create an uninstaller');
     resources = findResources(temporary);
   } else if (process.platform === 'darwin') {
     resources = path.join(
@@ -85,6 +86,13 @@ try {
     `installation payload verified: ${expected}, ${process.platform}/${process.arch}`,
   );
 } finally {
+  if (uninstaller && existsSync(uninstaller)) {
+    try {
+      run(uninstaller, ['/S'], 120000);
+    } catch (error) {
+      console.warn(`NSIS uninstall cleanup failed: ${error.message}`);
+    }
+  }
   if (temporary)
     rmSync(temporary, { recursive: true, force: true, maxRetries: 5 });
 }
