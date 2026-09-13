@@ -20,6 +20,7 @@ export interface OpenListConfig {
   serverUrl: string;
   directoryTemplate: string;
   username: string;
+  deleteSourceAfterUpload: boolean;
   hasToken: boolean;
 }
 

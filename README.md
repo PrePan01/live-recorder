@@ -43,7 +43,7 @@
 ### 使用发布包
 
 - macOS：下载 `Live Recorder_x.y.z_aarch64.dmg` 安装
-- Windows：下载 `.msi` 安装包安装
+- Windows：下载 `Live.Recorder_x.y.z_x64-setup.exe` 安装包安装
 
 ### 从源码运行
 
@@ -91,7 +91,7 @@ npm run tauri:build
 ### 打包
 
 - macOS：`cd frontend && npm run tauri:build`，产物在 `release/`（.app + .dmg）
-- Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物 `.msi` / `.exe`（或使用 CI 的 `windows-latest` runner）
+- Windows：需在 Windows 环境执行 `cd frontend && npm run tauri:build`，产物为 NSIS `-setup.exe`（或使用 CI 的 `windows-latest` runner）
 
 ### 分支与协作约定
 
@@ -101,7 +101,7 @@ npm run tauri:build
 - 提交使用约定式前缀、原子提交
 
 ### 发布
- `release` 分支更新将触发发布流程，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 MSI，并创建 `v<版本号>` Release；同版本不会重复发布
+ `release` 分支更新将触发发布流程，GitHub Actions 会并行构建 Apple Silicon DMG 与 Windows x64 NSIS Setup.exe，并创建 `v<版本号>` Release；同版本不会重复发布
 
 **禁止直接推送至 `release` 分支**，仅可通过PR向 `release` 提交合并请求
 

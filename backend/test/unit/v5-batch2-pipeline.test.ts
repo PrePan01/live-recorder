@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -125,6 +125,106 @@ describe('V5 Batch2 pipeline: repo + config', () => {
   });
 });
 
+describe('OpenList 成功后删除本地源文件', () => {
+  async function createRecording(services: Services, suffix: string): Promise<{ rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const dir = await mkdtemp(path.join(tmpdir(), `lr-cleanup-${suffix}-`));
+    const file = path.join(dir, 'recording.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/${suffix}`, displayName: 'cleanup' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: suffix, streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { rec, file };
+  }
+
+  async function configure(services: Services, deleteSourceAfterUpload: boolean): Promise<void> {
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u', deleteSourceAfterUpload } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+  }
+
+  it('only deletes files for automatic uploads after a confirmed successful put', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
+    const { rec, file } = await createRecording(services, 'auto-delete');
+    await configure(services, true);
+
+    const job = await services.uploader.enqueue(rec.id, { automatic: true });
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await expect(access(file)).rejects.toThrow();
+    expect(services.recordings.get(rec.id)?.filePath).toBeNull();
+  });
+
+  it('keeps files for manual uploads even when automatic cleanup is enabled', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
+    const { rec, file } = await createRecording(services, 'manual-keep');
+    await configure(services, true);
+
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await expect(access(file)).resolves.toBeUndefined();
+    expect(services.recordings.get(rec.id)?.filePath).toBe(file);
+  });
+
+  it('never deletes a source when OpenList reports an upload failure', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { throw new Error('network interrupted'); } });
+    const { rec, file } = await createRecording(services, 'failed-keep');
+    await configure(services, true);
+
+    const job = await services.uploader.enqueue(rec.id, { automatic: true });
+    await waitFor(() => (services.uploader.uploadRepo.get(job!.id)?.error ?? '').includes('network interrupted'));
+    await expect(access(file)).resolves.toBeUndefined();
+    expect(services.recordings.get(rec.id)?.filePath).toBe(file);
+  });
+
+  it('does not delete a queued automatic upload when the setting is disabled before success', async () => {
+    const services = newServices();
+    let complete!: () => void;
+    let started!: () => void;
+    const putStarted = new Promise<void>((resolve) => { started = resolve; });
+    const putFinished = new Promise<void>((resolve) => { complete = resolve; });
+    services.uploader = new UploadManager(services, { async put() { started(); await putFinished; } });
+    const { rec, file } = await createRecording(services, 'disable-before-success');
+    await configure(services, true);
+
+    const job = await services.uploader.enqueue(rec.id, { automatic: true });
+    await putStarted;
+    await configure(services, false);
+    complete();
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await expect(access(file)).resolves.toBeUndefined();
+  });
+
+  it('deletes both the pipeline source and uploaded output, but not unrelated artifacts', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
+    const { rec, file: source } = await createRecording(services, 'pipeline-source');
+    const output = path.join(path.dirname(source), 'recording.mp4');
+    const cover = path.join(path.dirname(source), 'cover.jpg');
+    const archive = path.join(path.dirname(source), 'archive.mp4');
+    await writeFile(output, 'output');
+    await writeFile(cover, 'cover');
+    await writeFile(archive, 'archive');
+    services.recordings.update(rec.id, { filePath: output });
+    const run = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: {} });
+    const sidecar = services.pipeline.repo.createArtifact({ runId: run.id, step: 'sidecar' });
+    services.pipeline.repo.setArtifact(sidecar.id, { status: 'ok', path: source });
+    const coverArtifact = services.pipeline.repo.createArtifact({ runId: run.id, step: 'cover' });
+    services.pipeline.repo.setArtifact(coverArtifact.id, { status: 'ok', path: cover });
+    const archiveArtifact = services.pipeline.repo.createArtifact({ runId: run.id, step: 'archive' });
+    services.pipeline.repo.setArtifact(archiveArtifact.id, { status: 'ok', path: archive });
+    await configure(services, true);
+
+    const job = await services.uploader.enqueue(rec.id, { automatic: true });
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await expect(access(source)).rejects.toThrow();
+    await expect(access(output)).rejects.toThrow();
+    await expect(access(cover)).resolves.toBeUndefined();
+    await expect(access(archive)).resolves.toBeUndefined();
+  });
+});
+
 describe('V5 Batch2 pipeline: cover serving', () => {
   it('serves cover jpg when coverPath present', async () => {
     const services = newServices();
@@ -189,14 +289,16 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     const inj = host(app);
     const def = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
     expect(def.openlist.enabled).toBe(false);
+    expect(def.openlist.deleteSourceAfterUpload).toBe(false);
     expect(def.openlist.hasToken).toBe(false);
 
-    const set = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'secret-token' } });
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: true, deleteSourceAfterUpload: true, serverUrl: 'https://dav.example.com/dav', username: 'u', token: 'secret-token' } });
     expect(set.statusCode).toBe(200);
     expect(set.json().openlist.hasToken).toBe(true);
     expect(JSON.stringify(set.json())).not.toContain('secret-token');
     const after = (await inj({ method: 'GET', url: '/api/v1/settings/openlist' })).json();
     expect(after.openlist.enabled).toBe(true);
+    expect(after.openlist.deleteSourceAfterUpload).toBe(true);
     expect(after.openlist.hasToken).toBe(true);
     await app.close();
   });

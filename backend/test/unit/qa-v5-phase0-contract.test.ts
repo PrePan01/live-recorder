@@ -213,6 +213,8 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     const inj = host(app);
     const badEnabled = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: 'yes' } });
     expect(badEnabled.statusCode).toBe(422);
+    const badDeleteSource = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { deleteSourceAfterUpload: 'yes' } });
+    expect(badDeleteSource.statusCode).toBe(422);
     const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/97', displayName: 'up' } })).json().room;
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'up1', streamTitle: 't' });
     // 使用真实临时文件作为源文件（#18：磁盘文件缺失会明确报「源文件已删除」）。

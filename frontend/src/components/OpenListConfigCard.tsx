@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, Space, Switch, Typography } from "antd";
+import {
+  App,
+  Button,
+  Form,
+  Input,
+  Popconfirm,
+  Space,
+  Switch,
+  Typography,
+} from "antd";
 import {
   fetchOpenListConfig,
   updateOpenListConfig,
@@ -15,12 +24,14 @@ export default function OpenListConfigCard() {
   > | null>(null);
   const [form] = Form.useForm();
   const [testing, setTesting] = useState(false);
+  const [deleteSourceAfterUpload, setDeleteSourceAfterUpload] = useState(false);
 
   useEffect(() => {
     fetchOpenListConfig()
       .then((c) => {
         setConfig(c);
         form.setFieldsValue({ ...c, token: "" });
+        setDeleteSourceAfterUpload(c.deleteSourceAfterUpload);
       })
       .catch((e) =>
         message.error(
@@ -70,6 +81,12 @@ export default function OpenListConfigCard() {
     }
   };
 
+  const saveDeleteSourceAfterUpload = (enabled: boolean) => {
+    setDeleteSourceAfterUpload(enabled);
+    form.setFieldValue("deleteSourceAfterUpload", enabled);
+    save({ ...form.getFieldsValue(), deleteSourceAfterUpload: enabled });
+  };
+
   return (
     <Form
       form={form}
@@ -84,6 +101,38 @@ export default function OpenListConfigCard() {
         extra="管线完成后自动上传到 OpenList（WebDAV）"
       >
         <Switch />
+      </Form.Item>
+      <Form.Item label="上传成功后删除本地文件">
+        {deleteSourceAfterUpload ? (
+          <Switch
+            checked
+            onChange={(enabled) => {
+              if (!enabled) saveDeleteSourceAfterUpload(false);
+            }}
+          />
+        ) : (
+          <Popconfirm
+            title="确认开启？"
+            okText="确认"
+            cancelText="取消"
+            onConfirm={() => saveDeleteSourceAfterUpload(true)}
+          >
+            {/* 关闭时 Switch 不接收指针事件，只有确认后才可能改为开启。 */}
+            <span
+              role="button"
+              tabIndex={0}
+              style={{ display: "inline-flex" }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.currentTarget.click();
+                }
+              }}
+            >
+              <Switch checked={false} style={{ pointerEvents: "none" }} />
+            </span>
+          </Popconfirm>
+        )}
       </Form.Item>
       <Form.Item
         label="服务器地址"

@@ -436,6 +436,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       db.exec(`CREATE INDEX IF NOT EXISTS idx_rooms_sort_order ON rooms(sort_order, created_at DESC, id DESC)`);
     },
   },
+  {
+    // OpenList 自动上传成功后的本地文件清理资格。存于任务，避免重启/重试丢失自动与手动的边界。
+    version: 22,
+    up: (db) => {
+      const tableExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`).get());
+      if (!tableExists) return;
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('upload_jobs') WHERE name = 'delete_source_after_success'`).get();
+      if (!has) db.exec(`ALTER TABLE upload_jobs ADD COLUMN delete_source_after_success INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
