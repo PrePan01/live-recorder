@@ -222,6 +222,8 @@ export class RoomRepository {
 
   remove(id: string): void {
     // #92：仅移除监控配置，不再级联删除该房间的录制历史（迁移 v8 已去掉外键）。
+    // 检测事件仅服务于仍存在的监控项，删除房间时一并移除，避免外键阻塞删除。
+    this.db.prepare('DELETE FROM live_events WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
   }
 }

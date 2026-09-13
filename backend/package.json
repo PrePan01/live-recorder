@@ -1,6 +1,6 @@
 {
   "name": "@live-recorder/backend",
-  "version": "0.5.125",
+  "version": "0.5.126",
   "private": true,
   "type": "module",
   "description": "Local live recording service",

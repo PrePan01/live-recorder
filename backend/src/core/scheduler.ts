@@ -156,6 +156,11 @@ export class Scheduler {
       this.services.rooms.setLiveStatus(room.id, status.status);
     }
     if (status.status === 'live') {
+      // Persist the detector's own observation before any auto-record/manual-record logic.
+      // This is the sole source of truth for live-time prediction.
+      if (room.lastLiveStatus !== 'live') {
+        this.services.liveEvents.record(room.id, this.services.clock.iso());
+      }
       const notifications = {
         ...DEFAULT_NOTIFICATION_PREFERENCE,
         ...(this.services.settings.load()?.notifications ?? {}),
