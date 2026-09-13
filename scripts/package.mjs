@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 统一打包入口（PrePan：macOS/Windows 均一行命令，产物只放根目录 release/）：
 //   1) 后端构建 backend/dist
-//   2) tauri build（按当前平台产出 macOS .app / Windows .msi/.exe）
+//   2) tauri build（按当前平台产出 macOS .app / Windows NSIS Setup.exe）
 //   3) macOS 额外用 hdiutil 生成 .dmg
 //   4) 把产物拷贝到根目录 release/（先清理旧产物）
 //   5) 清理 tauri target bundle 中间产物（不在其他位置留产物）
@@ -107,16 +107,13 @@ if (!isWin) {
     process.exit(1);
   }
 } else {
-  for (const sub of ['msi', 'nsis']) {
+  for (const sub of ['nsis']) {
     const dir = path.join(bundle, sub);
     if (existsSync(dir)) {
       for (const f of readdirSync(dir)) {
-        // WiX requires a locale (en-US) internally, but it is not part of the
-        // user-facing installer filename.
-        const outputName = f.replace(/_en-US(?=\.(?:msi|exe)$)/i, '');
-        copyFileSync(path.join(dir, f), path.join(release, outputName));
-        products.push(outputName);
-        console.log(`[package] 拷贝 -> release/${outputName}`);
+        copyFileSync(path.join(dir, f), path.join(release, f));
+        products.push(f);
+        console.log(`[package] 拷贝 -> release/${f}`);
       }
     }
   }

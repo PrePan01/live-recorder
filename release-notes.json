@@ -1,6 +1,11 @@
 {
   "releases": [
     {
+      "version": "0.5.123",
+      "publishedAt": "2026-09-13",
+      "notes": ["新增：OpenList 上传后可选自动删除录制文件", "优化：设置页优化"]
+    },
+    {
       "version": "0.5.122",
       "publishedAt": "2026-09-13",
       "notes": [

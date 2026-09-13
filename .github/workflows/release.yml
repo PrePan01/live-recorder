@@ -78,7 +78,7 @@ jobs:
             files: release/*.dmg
           - os: windows-latest
             artifact: live-recorder-windows-${{ needs.prepare.outputs.version }}
-            files: release/*.msi
+            files: release/*-setup.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:

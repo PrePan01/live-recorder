@@ -7,7 +7,7 @@ vi.mock('./bootStore', () => ({ bridge: {
 } }));
 const available: UpdateState = {
   revision: 2, currentVersion: '0.5.111', phase: 'available', downloaded: 0, error: null,
-  update: { version: '0.5.112', notes: ['更新说明'], asset: { filename: 'app.msi', url: 'https://example.com/app.msi', size: 100, sha256: '' } },
+  update: { version: '0.5.112', notes: ['更新说明'], asset: { filename: 'app-setup.exe', url: 'https://example.com/app-setup.exe', size: 100, sha256: '' } },
 };
 beforeEach(() => { vi.resetAllMocks(); useUpdateStore.setState({ state: null, checking: false }); });
 afterEach(() => { vi.useRealTimers(); });

@@ -42,6 +42,18 @@
   margin-top: 20px;
 }
 
+/* 设置页底部的官网与反馈入口 */
+.lr-settings-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+  padding: 4px 0 12px;
+  color: var(--lr-text-secondary);
+}
+.lr-settings-footer .ant-typography {
+  font-size: 13px;
+}
+
 /* 设置页：辅助文案 */
 .lr-settings-directory-status.ant-typography {
   margin: -7px 0 14px;

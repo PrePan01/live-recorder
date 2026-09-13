@@ -1,5 +1,5 @@
 import { createReadStream, statSync, existsSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, unlink } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -723,11 +723,14 @@ export class UploadManager {
     const stored = settings?.openlist as Partial<OpenListConfig> | undefined;
     if (!stored) return null;
     const hasToken = await this.services.secretStore.has(OPENLIST_TOKEN_KEY);
-    return { enabled: false, serverUrl: '', directoryTemplate: '{room}/{date}', username: '', hasToken, ...stored };
+    return { enabled: false, serverUrl: '', directoryTemplate: '{room}/{date}', username: '', deleteSourceAfterUpload: false, hasToken, ...stored };
   }
 
   /** 录制完成时入队上传（openlist.enabled 且令牌已配置时）。 */
-  async enqueue(recordingId: string): Promise<UploadJob | null> {
+  /**
+   * automatic 仅由录制完成后的管线调用。手动上传即使全局开关打开，也绝不获得删除资格。
+   */
+  async enqueue(recordingId: string, { automatic = false }: { automatic?: boolean } = {}): Promise<UploadJob | null> {
     const config = await this.config();
     if (this.services.resetting) return null;
     const rec = this.services.recordings.get(recordingId);
@@ -744,7 +747,12 @@ export class UploadManager {
     }
     // 原子幂等（QA #178）：INSERT OR IGNORE——并发窗口内对方已插入同 idempotency_key 时返回 null，
     // 回查既有 job，绝不抛 UNIQUE 500。
-    const created = this.repo.create({ recordingId, idempotencyKey: `rec_${recordingId}` });
+    const created = this.repo.create({
+      recordingId,
+      idempotencyKey: `rec_${recordingId}`,
+      // 在创建时快照资格，防止手动任务在后来打开开关后被意外升级为清理任务。
+      deleteSourceAfterSuccess: automatic && config.deleteSourceAfterUpload,
+    });
     if (!created) return this.repo.jobForRecording(recordingId);
     this.services.events.emit({ type: 'upload:updated', data: created });
     this.enqueueJob(created.id);
@@ -880,6 +888,23 @@ export class UploadManager {
       }, config.serverUrl);
       if (this.repo.get(jobId)?.status === 'cancelled') return;
       this.repo.update(jobId, { status: 'ok', progress: 100, error: null });
+      // 只有 OpenList 已确认上传成功、任务创建时属于自动清理任务、且用户当前仍保持开关开启时才清理。
+      // 这条路径在所有失败/取消/超时分支之外；任何不确定结果都不会到达这里。
+      // 在通知 UI 为可重试状态前完成清理，避免用户立即重试与 unlink 交错。
+      try {
+        const latestConfig = await this.config();
+        if (job.deleteSourceAfterSuccess && latestConfig?.deleteSourceAfterUpload) {
+          await this.cleanupUploadedSources(rec.id, rec.filePath);
+        }
+      } catch (err) {
+        // 清理永远不得反转已确认的远端上传结果。
+        this.services.alerts.create({
+          level: 'warning',
+          source: 'upload',
+          message: `OpenList 上传成功，但本地文件清理异常（${rec.id}）：${err instanceof Error ? err.message : '未知错误'}`,
+          occurredAt: this.services.clock.iso(),
+        });
+      }
       this.emit(jobId);
     } catch (err) {
       if (this.repo.get(jobId)?.status === 'cancelled') return;
@@ -917,6 +942,47 @@ export class UploadManager {
         this.repo.update(jobId, { status: 'failed', retryCount, error: message });
         this.emit(jobId);
       }
+    }
+  }
+
+  /** 清理最终上传文件及后处理记录的初始源文件；封面、切片和归档副本不在候选范围内。 */
+  private async cleanupUploadedSources(recordingId: string, uploadedPath: string): Promise<void> {
+    const candidates = new Set<string>([uploadedPath]);
+    const run = this.services.pipeline.repo.runForRecording(recordingId);
+    const initialSource = run?.artifacts.find((artifact) => artifact.step === 'sidecar' && artifact.status === 'ok')?.path;
+    if (initialSource) candidates.add(initialSource);
+
+    const failures: Array<{ path: string; message: string }> = [];
+    let uploadedRemoved = false;
+    for (const filePath of candidates) {
+      try {
+        await unlink(filePath);
+        if (filePath === uploadedPath) uploadedRemoved = true;
+      } catch (err) {
+        // 文件已由用户清理时，目标状态已经满足；不把它当作上传或清理失败。
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          if (filePath === uploadedPath) uploadedRemoved = true;
+          continue;
+        }
+        failures.push({ path: filePath, message: err instanceof Error ? err.message : '未知错误' });
+      }
+    }
+
+    if (uploadedRemoved) {
+      const recording = this.services.recordings.get(recordingId);
+      // 不覆盖用户在上传期间自行重命名/替换过的路径。
+      if (recording?.filePath === uploadedPath) {
+        const updated = this.services.recordings.update(recordingId, { filePath: null });
+        this.services.events.emit({ type: 'recording:updated', data: updated });
+      }
+    }
+    if (failures.length > 0) {
+      this.services.alerts.create({
+        level: 'warning',
+        source: 'upload',
+        message: `OpenList 上传成功，但本地文件清理失败（${recordingId}）：${failures.map((failure) => `${failure.path}：${failure.message}`).join('；')}`,
+        occurredAt: this.services.clock.iso(),
+      });
     }
   }
 

@@ -26,12 +26,15 @@ import {
   SyncOutlined,
   NotificationOutlined,
   QuestionCircleOutlined,
+  GlobalOutlined,
+  BugOutlined,
 } from "@ant-design/icons";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
+import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
 import { validateDirectory } from "../../api/settings";
@@ -77,6 +80,18 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
   warn: "警告",
   pending: "检测中",
 };
+const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
+const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
+
+function openExternalUrl(url: string): void {
+  if (bridge.isDesktop) {
+    void bridge.openPath(url).catch(() => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 export default function SettingsPage() {
   const { message } = App.useApp();
@@ -1031,6 +1046,16 @@ export default function SettingsPage() {
           </Card>
         </Col>
       </Row>
+      <footer className="lr-settings-footer" aria-label="相关链接">
+        <Space size={16} wrap>
+          <Typography.Link onClick={() => openExternalUrl(OFFICIAL_SITE_URL)}>
+            <GlobalOutlined /> 官网
+          </Typography.Link>
+          <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
+            <BugOutlined /> 提交 Issue
+          </Typography.Link>
+        </Space>
+      </footer>
     </div>
   );
 }

@@ -19,14 +19,14 @@ test('release manifest requires both platforms and describes real bytes', async 
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /windows/);
     await assert.rejects(readFile(join(dir, 'latest.json')));
-    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64.msi'), 'abcd');
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     const result = await generateUpdateManifest(dir, '0.5.112', undefined, notes);
     assert.equal(result.platforms['macos-aarch64'].size, 3);
     assert.equal(result.platforms['windows-x86_64'].sha256, createHash('sha256').update('abcd').digest('hex'));
     assert.match(result.platforms['macos-aarch64'].url, /v0.5.112\/Live\.Recorder/);
     await assert.rejects(generateUpdateManifest(dir, '0.5.113', undefined, notes), /macos/);
     await writeFile(join(dir, 'Live Recorder_0.5.114_aarch64.dmg'), 'abc');
-    await writeFile(join(dir, 'Live Recorder_0.5.114_x64.msi'), 'abcd');
+    await writeFile(join(dir, 'Live Recorder_0.5.114_x64-setup.exe'), 'abcd');
     await assert.rejects(generateUpdateManifest(dir, '0.5.114', undefined, notes), /must not contain whitespace/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -37,7 +37,7 @@ test('manifest points asset urls at the mirror base when provided (#28)', async 
     const notes = join(dir, 'release-notes.json');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['修复安装问题'] }] }));
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
-    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64.msi'), 'abcd');
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     const result = await generateUpdateManifest(dir, '0.5.112', 'https://live-recorder.s3.cn-south-1.qiniucs.com/', notes);
     assert.equal(
       result.platforms['macos-aarch64'].url,
@@ -45,7 +45,7 @@ test('manifest points asset urls at the mirror base when provided (#28)', async 
     );
     assert.equal(
       result.platforms['windows-x86_64'].url,
-      'https://live-recorder.s3.cn-south-1.qiniucs.com/Live.Recorder_0.5.112_x64.msi',
+      'https://live-recorder.s3.cn-south-1.qiniucs.com/Live.Recorder_0.5.112_x64-setup.exe',
     );
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -55,7 +55,7 @@ test('release requires matching, well-formed notes and publishes the complete hi
   try {
     const notes = join(dir, 'release-notes.json');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
-    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64.msi'), 'abcd');
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.111', publishedAt: '2026-09-12', notes: ['旧版本'] }] }));
     await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /Missing release notes/);
     await writeFile(notes, JSON.stringify({ releases: [
@@ -73,7 +73,7 @@ test('CLI treats its third argument as the release notes path', async () => {
   try {
     const notes = join(dir, 'notes.json');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
-    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64.msi'), 'abcd');
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['命令行参数校验'] }] }));
     await execFile(process.execPath, ['scripts/generate-update-manifest.mjs', dir, '0.5.112', notes], { cwd: process.cwd() });
     assert.equal(JSON.parse(await readFile(join(dir, 'latest.json'), 'utf8')).version, '0.5.112');

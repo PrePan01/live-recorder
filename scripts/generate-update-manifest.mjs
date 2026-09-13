@@ -30,9 +30,9 @@ export async function generateUpdateManifest(directory, version, baseUrl, releas
   const base = typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl.replace(/\/+$/, '') : '';
   const files = await readdir(directory);
   const platforms = {};
-  // scripts/package.mjs removes WiX's internal `_en-US` locale suffix before
-  // copying the installer into release/. Match the public artifact name.
-  for (const [platform, suffix] of [['macos-aarch64', '_aarch64.dmg'], ['windows-x86_64', '_x64.msi']]) {
+  // NSIS emits an executable setup package; public names are normalized by the
+  // release workflow before this manifest is generated.
+  for (const [platform, suffix] of [['macos-aarch64', '_aarch64.dmg'], ['windows-x86_64', '_x64-setup.exe']]) {
     const candidates = files.filter((name) => name.endsWith(suffix) && name.includes(`_${version}_`));
     if (candidates.length !== 1) throw new Error(`Expected exactly one ${platform} installer for ${version}`);
     const filename = candidates[0];
