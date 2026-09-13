@@ -4,7 +4,7 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-function validateReleaseNotes(value, version) {
+export function validateReleaseNotes(value, version) {
   const releases = value && typeof value === 'object' && Array.isArray(value.releases) ? value.releases : null;
   if (!releases) throw new Error('Release notes must contain a releases array');
   const seen = new Set();
