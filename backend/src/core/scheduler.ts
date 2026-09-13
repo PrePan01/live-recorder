@@ -1,4 +1,4 @@
-import type { Platform, Room } from '../types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type Platform, type Room } from '../types/index.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
@@ -156,6 +156,26 @@ export class Scheduler {
       this.services.rooms.setLiveStatus(room.id, status.status);
     }
     if (status.status === 'live') {
+      const notifications = {
+        ...DEFAULT_NOTIFICATION_PREFERENCE,
+        ...(this.services.settings.load()?.notifications ?? {}),
+      };
+      // 仅在已确认离线后的下一次开播通知：首次检测/重启时的未知状态不补发。
+      if (
+        room.lastLiveStatus === 'offline' &&
+        checkedRoom.enabled &&
+        checkedRoom.liveNotificationEnabled &&
+        notifications.desktopEnabled &&
+        notifications.liveStarted
+      ) {
+        this.services.events.emit({
+          type: 'live:started',
+          data: {
+            roomId: checkedRoom.id,
+            displayName: checkedRoom.displayName.trim() || status.displayName?.trim() || checkedRoom.url,
+          },
+        });
+      }
       // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });

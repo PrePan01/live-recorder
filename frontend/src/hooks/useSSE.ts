@@ -10,9 +10,10 @@ import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
 import type { UploadJob } from '../api/openlist';
 import { applyServerEvent } from '../stores/applyEvent';
-import { useBootStore } from '../stores/bootStore';
+import { bridge, useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
 import { useRoomStore } from '../stores/roomStore';
+import { sendLiveStartedDesktopNotification } from '../utils/liveNotification';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
 
@@ -25,6 +26,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
   switch (type) {
     case 'room:updated':
       return { type, room: payload as unknown as Room };
+    case 'live:started':
+      return { type, notification: payload as { roomId: string; displayName: string } };
     case 'recording:updated':
       return { type, recording: payload as unknown as Recording };
     case 'alert:created':
@@ -64,7 +67,12 @@ export function useSSE() {
       }
       try {
         const payload = JSON.parse(raw) as Record<string, unknown>;
-        applyServerEvent(toServerEvent(type, payload));
+        const event = toServerEvent(type, payload);
+        if (event.type === 'live:started') {
+          void sendLiveStartedDesktopNotification(bridge, event.notification).catch(() => undefined);
+        } else {
+          applyServerEvent(event);
+        }
       } catch {
         /* 忽略坏帧 */
       }

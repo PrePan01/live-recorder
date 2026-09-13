@@ -103,6 +103,20 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(created.statusCode).toBe(201);
     const room = created.json().room;
     expect(room.url).toBe('https://live.bilibili.com/123');
+    expect(room.liveNotificationEnabled).toBe(false);
+
+    const enableLiveNotification = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' },
+      payload: { liveNotificationEnabled: true },
+    });
+    expect(enableLiveNotification.statusCode).toBe(200);
+    expect(enableLiveNotification.json().room.liveNotificationEnabled).toBe(true);
+    const invalidLiveNotification = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' },
+      payload: { liveNotificationEnabled: 'yes' },
+    });
+    expect(invalidLiveNotification.statusCode).toBe(422);
+    expect(invalidLiveNotification.json().error.code).toBe('ROOM_LINK_INVALID');
 
     const dup = await app.inject({
       method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },

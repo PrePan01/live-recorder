@@ -17,6 +17,7 @@ function normalizeRoom(room: Room): Room {
     ...room,
     favorited: room.favorited ?? false,
     autoRecord: room.autoRecord ?? null,
+    liveNotificationEnabled: room.liveNotificationEnabled ?? false,
     lastLiveStatus: room.lastLiveStatus ?? null,
     activeRecording: room.activeRecording ?? null,
     tags: room.tags ?? [],
@@ -55,6 +56,7 @@ interface RoomState {
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
   setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
+  setLiveNotification: (id: string, value: boolean) => Promise<void>;
   checkRoomNow: (id: string) => Promise<void>;
   startRoomRecording: (id: string) => Promise<void>;
   stopRoomRecording: (id: string) => Promise<void>;
@@ -136,6 +138,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     invalidateRoomsRequest();
     get().upsertRoom(
       normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
+    );
+  },
+  async setLiveNotification(id, value) {
+    invalidateRoomsRequest();
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.updateRoom(id, { liveNotificationEnabled: value })),
     );
   },
   async checkRoomNow(id) {
