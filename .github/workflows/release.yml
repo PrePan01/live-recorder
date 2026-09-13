@@ -53,9 +53,18 @@ jobs:
             exit 0
           fi
 
-          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" >/dev/null 2>&1; then
+          # A previously interrupted publishing job can leave a draft behind.
+          # Resume that draft instead of treating the version as published.
+          existing_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .draft 2>/dev/null || true)"
+          if [ "$existing_draft" = "false" ]; then
             echo "Release ${tag} already exists; nothing to publish."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$existing_draft" = "true" ]; then
+            echo "Draft release ${tag} already exists; resuming publication."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -284,10 +293,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release create "$RELEASE_TAG" release-assets/* \
+          # GitHub's Releases API occasionally returns transient 5xx errors.
+          # Keep each phase idempotent: a retry can resume after the draft has
+          # been created, or after only some assets were uploaded.
+          retry() {
+            local attempt=1 max_attempts=5 delay=2
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::Command failed after ${attempt} attempts: $*"
+                return 1
+              fi
+              echo "Command failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          ensure_draft_release() {
+            # A failed create request may still have reached GitHub. Check on
+            # every attempt so a retry resumes that draft instead of receiving
+            # an "already exists" error forever.
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              return 0
+            fi
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              --draft
+          }
+
+          retry ensure_draft_release
+
+          retry gh release upload "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" \
-            --generate-notes \
-            --draft
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            --clobber
+          retry gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
