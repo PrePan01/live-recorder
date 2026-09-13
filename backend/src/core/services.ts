@@ -26,6 +26,7 @@ import { AlertRepository } from '../db/repositories/alert.repo.js';
 import { TagRepository } from '../db/repositories/tag.repo.js';
 import { DiagnosticRepository } from '../db/repositories/diagnostic.repo.js';
 import { ScheduleRepository } from '../db/repositories/schedule.repo.js';
+import { LiveEventRepository } from '../db/repositories/live-event.repo.js';
 import os from 'node:os';
 import path from 'node:path';
 import { Notifier } from './notifier.js';
@@ -46,6 +47,7 @@ export interface Services {
   db: DB;
   rooms: RoomRepository;
   recordings: RecordingRepository;
+  liveEvents: LiveEventRepository;
   settings: SettingsRepository;
   alerts: AlertRepository;
   tags: TagRepository;
@@ -132,6 +134,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     tags,
     rooms: new RoomRepository(db, tags),
     recordings: new RecordingRepository(db),
+    liveEvents: new LiveEventRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
     diagnostics: new DiagnosticRepository(db),

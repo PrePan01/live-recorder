@@ -309,30 +309,27 @@ describe('V5 notifications + live prediction contract', () => {
   it('live prediction returns null with insufficient samples and window with enough', () => {
     const services = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'pred' });
-    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'pd1', streamTitle: 't' });
-    services.recordings.update(rec.id, { state: 'completed', endedAt: '2026-08-27T11:00:00.000Z' });
-    services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run('2026-08-27T09:00:00.000Z', rec.id);
-    // 仅 1 天样本 → null + notice
+    services.liveEvents.record(room.id, '2026-08-27T09:00:00.000Z');
+    // 仅 1 天样本 → 展示本机观察事实，但不称为预测
     const single = livePrediction(services, room.id);
-    expect(single.startAt).toBeNull();
+    expect(single.kind).toBe('observation');
+    expect(single.startAt).toMatch(/^\d{2}:\d{2}$/);
     expect(single.confidence).toBeNull();
-    expect(single.notice).toContain('样本不足');
     expect(single.basedOnDays).toBe(1);
 
     // 补足 3 天 → 给出窗口（低置信）
-    for (const [day, start, end] of [
-      ['2026-08-25', '09:00:00.000Z', '11:00:00.000Z'],
-      ['2026-08-26', '09:30:00.000Z', '11:30:00.000Z'],
+    for (const [day, start] of [
+      ['2026-08-25', '09:00:00.000Z'],
+      ['2026-08-26', '09:30:00.000Z'],
     ] as const) {
-      const r = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: `pd_${day}`, streamTitle: 't' });
-      services.recordings.update(r.id, { state: 'completed', endedAt: `${day}T${end}` });
-      services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${day}T${start}`, r.id);
+      services.liveEvents.record(room.id, `${day}T${start}`);
     }
     const win = livePrediction(services, room.id);
     expect(win.basedOnDays).toBe(3);
     expect(win.confidence).toBe('low');
+    expect(win.kind).toBe('next');
     expect(win.startAt).toMatch(/^\d{2}:\d{2}$/);
-    expect(win.endAt).toMatch(/^\d{2}:\d{2}$/);
+    expect(win.endAt).toBeNull();
     expect(win.notice).toBeNull();
   });
 

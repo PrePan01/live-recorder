@@ -454,6 +454,20 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN live_notification_enabled INTEGER NOT NULL DEFAULT 0;`);
     },
   },
+  {
+    // 开播预测使用检测到的离线→开播事件，而不是录制会话时间；手动录制、重连分段不会污染样本。
+    version: 24,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS live_events (
+          id TEXT PRIMARY KEY,
+          room_id TEXT NOT NULL REFERENCES rooms(id),
+          detected_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_live_events_room_detected ON live_events(room_id, detected_at DESC);
+      `);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

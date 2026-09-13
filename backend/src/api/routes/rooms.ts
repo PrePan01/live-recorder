@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Platform } from '../../types/index.js';
 import type { Services } from '../../core/services.js';
+import { calculateLivePrediction, type LivePrediction } from '../../core/live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const INSIGHT_CACHE_TTL_MS = 30_000;
@@ -12,18 +13,7 @@ export interface RoomInsight {
   successRate: number;
   completed: number;
   failed: number;
-  prediction: { startAt: string | null; endAt: string | null; confidence: 'high' | 'medium' | 'low' | null; basedOnDays: number; notice: string | null };
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
-}
-
-function hhmm(ms: number): string {
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  prediction: LivePrediction;
 }
 
 export function registerRoomRoutes(app: FastifyInstance, services: Services): void {
@@ -56,41 +46,36 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const key = [...roomIds].sort().join(',');
     const now = services.clock.now();
     if (insightCache?.key === key && insightCache.expiresAt > now) return reply.send(insightCache.body);
+    const from60 = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
     const from30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
     const from7 = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
     const placeholders = roomIds.map(() => '?').join(',');
     const rows = services.db.prepare(
       `SELECT room_id, state, file_size_bytes, started_at, ended_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
-    ).all(...roomIds, from30) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null }>;
+    ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null }>;
+    const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
+    const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
     for (const row of rows) grouped.get(row.room_id)?.push(row);
+    for (const event of liveEvents) eventsByRoom.get(event.roomId)?.push(event);
     const insights: Record<string, RoomInsight> = {};
     for (const id of roomIds) {
       const records = grouped.get(id) ?? [];
       const week = records.filter((record) => record.started_at >= from7);
       const completed = week.filter((record) => record.state === 'completed').length;
       const failed = week.filter((record) => record.state === 'failed').length;
-      const byDay = new Map<string, { start: number; end: number }>();
-      for (const record of records) {
-        if (!record.ended_at) continue;
-        const start = Date.parse(record.started_at);
-        const end = Date.parse(record.ended_at);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
-        const day = record.started_at.slice(0, 10);
-        const current = byDay.get(day);
-        byDay.set(day, current ? { start: Math.min(current.start, start), end: Math.max(current.end, end) } : { start, end });
-      }
-      const days = [...byDay.values()];
-      const basedOnDays = days.length;
       insights[id] = {
         totalRecordings: week.length,
         totalBytes: week.reduce((sum, record) => sum + (record.file_size_bytes ?? 0), 0),
         completed,
         failed,
         successRate: completed + failed === 0 ? 100 : Math.round((completed / (completed + failed)) * 100),
-        prediction: basedOnDays < 3
-          ? { startAt: null, endAt: null, confidence: null, basedOnDays, notice: '近 30 天样本不足，暂无开播预测' }
-          : { startAt: hhmm(median(days.map((day) => day.start))), endAt: hhmm(median(days.map((day) => day.end))), confidence: basedOnDays >= 10 ? 'high' : basedOnDays >= 5 ? 'medium' : 'low', basedOnDays, notice: null },
+        prediction: calculateLivePrediction({
+          roomId: id,
+          events: eventsByRoom.get(id) ?? [],
+          now,
+          generatedAt: services.clock.iso(),
+        }),
       };
     }
     const response = { insights, generatedAt: services.clock.iso() };
