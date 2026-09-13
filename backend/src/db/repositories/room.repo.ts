@@ -11,6 +11,7 @@ interface RoomRow {
   enabled: number;
   favorited: number;
   auto_record: number | null;
+  live_notification_enabled: number;
   last_live_status: string | null;
   upload_enabled: number | null;
   title_source: string | null;
@@ -42,6 +43,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
+    liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
     titleSource: (row.title_source as TitleSource) ?? null,
@@ -63,6 +65,7 @@ export interface NewRoomInput {
   url: string;
   displayName: string;
   enabled?: boolean;
+  liveNotificationEnabled?: boolean;
 }
 
 export class RoomRepository {
@@ -100,6 +103,7 @@ export class RoomRepository {
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
+      liveNotificationEnabled: input.liveNotificationEnabled ?? false,
       lastLiveStatus: null,
       uploadEnabled: null,
       titleSource: null,
@@ -117,10 +121,10 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, sort_order, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, live_notification_enabled, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, sort_order, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
         )
-        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.sortOrder, room.monitorState, now, now);
+        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.liveNotificationEnabled ? 1 : 0, room.sortOrder, room.monitorState, now, now);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: this.findIdByPlatformUrl(room.platform, room.url) });
@@ -135,7 +139,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -145,7 +149,7 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
@@ -153,6 +157,7 @@ export class RoomRepository {
           next.enabled ? 1 : 0,
           next.favorited ? 1 : 0,
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
+          next.liveNotificationEnabled ? 1 : 0,
           next.uploadEnabled === null ? null : next.uploadEnabled ? 1 : 0,
           next.titleSource ?? null,
           next.titleUpdatedAt ?? null,

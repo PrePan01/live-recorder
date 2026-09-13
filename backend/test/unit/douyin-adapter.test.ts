@@ -109,6 +109,28 @@ describe('DouyinAdapter', () => {
     expect(result.error?.retryable).toBe(true);
   });
 
+  it('retries a transient upstream HTTP failure instead of reporting PLATFORM_CHANGED', async () => {
+    let requests = 0;
+    const a = new DouyinAdapter(async () => {
+      requests += 1;
+      return requests === 1
+        ? new Response('', { status: 503 }) as unknown as Response
+        : new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=valid');
+    expect(requests).toBe(2);
+    expect(result.status).toBe('live');
+  });
+
+  it('reports persistent 429/5xx as retryable network failure, not PLATFORM_CHANGED', async () => {
+    const a = new DouyinAdapter(async () => new Response('', { status: 429 }) as unknown as Response);
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=valid');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
+  });
+
   it('returns error for an invalid url', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload()));
     const result = await a.checkLiveStatus('https://example.com/1');

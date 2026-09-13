@@ -107,7 +107,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
   });
 
   app.post('/api/v1/rooms', async (req, reply) => {
-    const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean };
+    const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean; liveNotificationEnabled?: boolean };
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
@@ -121,11 +121,15 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
     const adapter = services.adapterFor(platform);
+    if (body.liveNotificationEnabled !== undefined && typeof body.liveNotificationEnabled !== 'boolean') {
+      throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值');
+    }
     const room = services.rooms.create({
       platform,
       url: adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
+      liveNotificationEnabled: body.liveNotificationEnabled ?? false,
     });
     // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
     // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
@@ -185,8 +189,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
 
   app.patch('/api/v1/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; uploadEnabled?: boolean | null };
-    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; uploadEnabled?: boolean | null } = {};
+    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null };
+    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
       const adapter = services.adapterFor(existing?.platform ?? 'bilibili');
@@ -203,6 +207,12 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
         throw new AppError('ROOM_LINK_INVALID', 'autoRecord 必须为布尔值或 null', { roomId: id });
       }
       patch.autoRecord = body.autoRecord;
+    }
+    if (body.liveNotificationEnabled !== undefined) {
+      if (typeof body.liveNotificationEnabled !== 'boolean') {
+        throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值', { roomId: id });
+      }
+      patch.liveNotificationEnabled = body.liveNotificationEnabled;
     }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。

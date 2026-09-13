@@ -13,3 +13,7 @@ export async function markAlertRead(id: string): Promise<void> {
 export async function markAllAlertsRead(): Promise<void> {
   await http.post('/alerts/read-all');
 }
+
+export async function clearAllAlerts(): Promise<void> {
+  await http.delete('/alerts');
+}

@@ -11,6 +11,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -110,6 +111,7 @@ export default function SettingsPage() {
     fetchAlerts,
     markRead,
     markAllRead,
+    clearAll,
     retryFailure,
     retryingId,
   } = useAlertStore();
@@ -256,8 +258,10 @@ export default function SettingsPage() {
     try {
       const res = await testNotification();
       const parts: string[] = [];
-      if (res.desktop) parts.push("桌面通知已发送");
-      else parts.push("桌面通知未开启");
+      if (res.desktop) {
+        await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
+        parts.push("桌面通知已发送");
+      } else parts.push("桌面通知未开启");
       if (res.email === "sent") parts.push("邮件已发送");
       else if (res.email === "skipped") parts.push("SMTP 未配置，邮件跳过");
       else if (res.email === "failed") parts.push("邮件发送失败");
@@ -898,7 +902,7 @@ export default function SettingsPage() {
                 style={{ marginBottom: 0 }}
               >
                 桌面通知使用系统通知能力；邮件告警需在「SMTP
-                邮件告警」配置并启用。测试会发送一条示例通知。
+                邮件告警」配置并启用。
               </Typography.Paragraph>
             </Space>
           </Card>
@@ -918,7 +922,7 @@ export default function SettingsPage() {
           >
             {checks === null ? (
               <Typography.Paragraph type="secondary">
-                检测环境健康：后端可达、平台 Cookie、SMTP、磁盘空间、目录可写。
+                点击检测，检测功能是否正常
               </Typography.Paragraph>
             ) : (
               <List
@@ -967,14 +971,31 @@ export default function SettingsPage() {
             className="lr-alerts-card lr-settings-card"
             title="告警"
             extra={
-              <Button
-                size="small"
-                onClick={() => {
-                  void markAllRead().catch(() => undefined);
-                }}
-              >
-                全部已读
-              </Button>
+              <Space size={8}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    void markAllRead().catch(() => undefined);
+                  }}
+                >
+                  全部已读
+                </Button>
+                <Popconfirm
+                  title="清除全部告警？"
+                  okText="清除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() =>
+                    clearAll()
+                      .then(() => message.success("已清除全部告警"))
+                      .catch(() => message.error("清除告警失败"))
+                  }
+                >
+                  <Button size="small" danger disabled={alerts.length === 0}>
+                    清除全部
+                  </Button>
+                </Popconfirm>
+              </Space>
             }
           >
             <List
