@@ -68,5 +68,6 @@ export async function generateUpdateManifest(directory, version, baseUrl, releas
   return manifest;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  await generateUpdateManifest(process.argv[2], process.argv[3], process.env.UPDATE_BASE_URL, process.argv[4]);
+  // CLI 只接受「产物目录、版本号、日志文件」；安装包 CDN 基址继续由环境变量提供。
+  await generateUpdateManifest(process.argv[2], process.argv[3], process.env.UPDATE_BASE_URL, process.argv[4] ?? 'release-notes.json');
 }
