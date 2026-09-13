@@ -47,11 +47,14 @@ pub struct Asset {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Manifest {
     version: String,
+    #[serde(default)]
+    notes: Vec<String>,
     platforms: BTreeMap<String, Asset>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Update {
     version: String,
+    notes: Vec<String>,
     asset: Asset,
 }
 #[derive(Clone, Default, Serialize)]
@@ -120,6 +123,7 @@ fn select(manifest: Manifest, current: &str, key: &str) -> Result<Option<Update>
     validate_asset(&manifest.version, key, &asset)?;
     Ok(Some(Update {
         version: manifest.version,
+        notes: manifest.notes,
         asset,
     }))
 }
@@ -191,6 +195,7 @@ fn restore(dir: &Path, current: &str, key: &str) -> Result<Option<(Update, bool)
     let Ok(Some(update)) = select(
         Manifest {
             version: update.version,
+            notes: update.notes.clone(),
             platforms,
         },
         current,
@@ -715,6 +720,7 @@ mod tests {
     fn manifest(version: &str) -> Manifest {
         Manifest {
             version: version.into(),
+            notes: vec!["更新说明".into()],
             platforms: BTreeMap::from([("windows-x86_64".into(), asset())]),
         }
     }
@@ -845,6 +851,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let update = Update {
             version: "0.5.112".into(),
+            notes: vec!["更新说明".into()],
             asset: asset(),
         };
         fs::write(
