@@ -9,6 +9,8 @@ export interface UploadJob {
   error: string | null;
   retryCount: number;
   idempotencyKey: string;
+  /** 仅自动上传任务可设置；跨重启/重试保留，手动上传恒为 false。 */
+  deleteSourceAfterSuccess: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -19,6 +21,8 @@ export interface OpenListConfig {
   serverUrl: string;
   directoryTemplate: string;
   username: string;
+  /** OpenList 确认远端落盘成功后，删除本地录制源文件。默认关闭。 */
+  deleteSourceAfterUpload: boolean;
   /** 派生标记：令牌是否已配置（SecretStore 存在键）。 */
   hasToken: boolean;
 }
