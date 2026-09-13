@@ -44,6 +44,9 @@ jobs:
         run: |
           version="$(node scripts/check-release-version.mjs)"
           tag="v${version}"
+          # Fail before the expensive platform builds when this release has no
+          # corresponding entry in the update manifest's release notes.
+          node scripts/check-release-notes.mjs "$version" release-notes.json
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
