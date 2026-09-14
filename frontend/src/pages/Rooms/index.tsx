@@ -25,6 +25,7 @@ import {
   ScheduleOutlined,
   DeleteOutlined,
   EditOutlined,
+  SnippetsOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { useRoomStore } from "../../stores/roomStore";
@@ -339,6 +340,19 @@ export default function Rooms() {
   };
 
   const urlValue = Form.useWatch("url", form);
+
+  const pasteRoomUrl = async () => {
+    try {
+      const url = await navigator.clipboard.readText();
+      if (!url.trim()) {
+        message.warning("剪贴板中没有可粘贴的内容");
+        return;
+      }
+      form.setFieldValue("url", url.trim());
+    } catch {
+      message.error("无法读取剪贴板，请检查系统剪贴板权限");
+    }
+  };
 
   const submitBatch = async () => {
     const urls = batchText
@@ -759,7 +773,12 @@ export default function Rooms() {
                 : undefined
             }
           >
-            <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
+            <Space.Compact block>
+              <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
+              <Button icon={<SnippetsOutlined />} onClick={() => void pasteRoomUrl()}>
+                粘贴
+              </Button>
+            </Space.Compact>
           </Form.Item>
           <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
             <Input placeholder="主播昵称" />

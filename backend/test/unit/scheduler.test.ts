@@ -7,6 +7,7 @@ import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import type { AppSettings } from '../../src/types/index.js';
+import { AppError } from '../../src/types/error.js';
 
 function newServices(): { services: Services; clock: FakeClock } {
   const clock = new FakeClock();
@@ -452,6 +453,39 @@ describe('Scheduler', () => {
     await services.secretStore.delete('douyin.cookie');
     await services.scheduler.triggerImmediateCheck(room.id);
     expect(seenCookie).toBeUndefined();
+  });
+
+  it('marks every douyin room and skips further checks after an explicit cookie-expired response', async () => {
+    const { services } = newServices();
+    const first = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/71', displayName: 'first' });
+    const second = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/72', displayName: 'second' });
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/73', displayName: 'bilibili' });
+    let calls = 0;
+    const expiredAdapter: PlatformAdapter = {
+      platform: 'douyin',
+      async checkLiveStatus() {
+        calls += 1;
+        return {
+          status: 'restricted',
+          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新').toObject(),
+        };
+      },
+      async getStreamUrl() {
+        return { url: 'https://x/flv', format: 'flv', actualQuality: 'original' };
+      },
+      normalizeUrl: (url) => url,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => expiredAdapter;
+
+    await services.scheduler.triggerImmediateCheck(first.id);
+    await services.scheduler.triggerImmediateCheck(second.id);
+
+    expect(services.rooms.get(first.id)?.lastError?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+    expect(services.rooms.get(second.id)?.lastError?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+    expect(calls).toBe(1);
+    expect(services.rooms.get(bilibili.id)?.lastError).toBeNull();
+    expect(services.alerts.list().filter((alert) => alert.errorCode === 'DOUYIN_COOKIE_EXPIRED')).toHaveLength(1);
   });
 
   it('writes lastLiveStatus from check result (#78)', async () => {
