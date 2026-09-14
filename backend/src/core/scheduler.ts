@@ -207,6 +207,10 @@ export class Scheduler {
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
       this.services.rooms.setLiveStatus(room.id, status.status);
+      this.services.rooms.setCurrentStreamTitle(
+        room.id,
+        status.status === 'live' ? status.streamTitle ?? null : null,
+      );
     }
     if (status.status === 'live') {
       // Persist the detector's own observation before any auto-record/manual-record logic.

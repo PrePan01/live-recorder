@@ -13,6 +13,7 @@ interface RoomRow {
   auto_record: number | null;
   live_notification_enabled: number;
   last_live_status: string | null;
+  current_stream_title: string | null;
   upload_enabled: number | null;
   title_source: string | null;
   title_updated_at: string | null;
@@ -45,6 +46,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
     liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
+    currentStreamTitle: row.current_stream_title,
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
     titleSource: (row.title_source as TitleSource) ?? null,
     titleUpdatedAt: row.title_updated_at,
@@ -105,6 +107,7 @@ export class RoomRepository {
       autoRecord: null,
       liveNotificationEnabled: input.liveNotificationEnabled ?? false,
       lastLiveStatus: null,
+      currentStreamTitle: null,
       uploadEnabled: null,
       titleSource: null,
       titleUpdatedAt: null,
@@ -218,6 +221,13 @@ export class RoomRepository {
     this.db
       .prepare(`UPDATE rooms SET last_live_status = ?, updated_at = ? WHERE id = ?`)
       .run(status, nowIso(), id);
+  }
+
+  /** 保存本场直播的房间标题；离线/受限时清除，避免展示过期标题。 */
+  setCurrentStreamTitle(id: string, title: string | null): void {
+    this.db
+      .prepare(`UPDATE rooms SET current_stream_title = ?, updated_at = ? WHERE id = ?`)
+      .run(title?.trim() || null, nowIso(), id);
   }
 
   /** 写入房间标题识别元数据（V5 #91：识别来源/时间/回退标记）。 */

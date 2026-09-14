@@ -191,7 +191,7 @@ const RoomCard = memo(function RoomCard({
         }
       >
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-          <LiveStatusTag status={room.lastLiveStatus} />
+          <LiveStatusTag status={room.lastLiveStatus} streamTitle={room.currentStreamTitle} />
           {autoRecordEnabled ? (
             <Tag color="blue" style={{ marginInlineEnd: 0 }}>
               自动录

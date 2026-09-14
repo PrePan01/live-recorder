@@ -468,6 +468,14 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       `);
     },
   },
+  {
+    // 监控总览展示正在直播的房间标题，不能复用主播显示名或录制历史标题。
+    version: 25,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'current_stream_title'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN current_stream_title TEXT;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

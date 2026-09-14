@@ -29,6 +29,7 @@ export interface Room {
   favorited: boolean;
   autoRecord: boolean | null;
   liveNotificationEnabled: boolean;
+  currentStreamTitle: string | null;
   activeRecording: ActiveRecording | null;
   tags: Tag[];
   uploadEnabled: boolean | null;

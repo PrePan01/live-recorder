@@ -42,6 +42,22 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('stores the detected live room title and clears it once the room goes offline', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/600', displayName: '主播A' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamTitle: '这是当前直播间标题，不是主播名字' },
+      { status: 'offline' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.currentStreamTitle).toBe('这是当前直播间标题，不是主播名字');
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.currentStreamTitle).toBeNull();
+  });
+
   it('emits one live-started event only for an offline-to-live transition with all notification gates enabled', async () => {
     const { services } = newServices();
     services.settings.save({
