@@ -171,12 +171,12 @@ describe('DouyinAdapter', () => {
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
 
-  it('maps status_code=10011 with cookie to restricted (invalid/expired cookie, #56 part2)', async () => {
+  it('maps status_code=10011 with cookie to restricted with a cookie-expired error (#56 part2)', async () => {
     // 带 Cookie 时抖音返回 status_code=10011（Request params error / 服务繁忙）→ 视为凭证失效引导更新 Cookie，而非平台变动。
     const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 10011, data: { message: 'Request params error', prompts: '当前服务繁忙，请稍后重试' } })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=expired');
     expect(result.status).toBe('restricted');
-    expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(result.error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
     expect(result.error?.message).toContain('Cookie');
   });
 
