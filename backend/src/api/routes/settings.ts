@@ -40,6 +40,9 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
       if (douyinCookie.length > 0) {
         validateDouyinCookie(douyinCookie);
         await services.secretStore.set(DOUYIN_COOKIE_KEY, douyinCookie);
+        // 平台请求最久可超过前端 10 秒 HTTP 超时；后台复检既不阻塞保存，
+        // 也会等待旧 Cookie 的在途请求结束后再用新 Cookie 发起全量检测。
+        void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
       } else {
         await services.secretStore.delete(DOUYIN_COOKIE_KEY);
       }

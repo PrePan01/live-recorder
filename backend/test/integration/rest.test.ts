@@ -439,6 +439,35 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings: saving a new douyin cookie immediately checks every douyin room', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cookie-check-'));
+    const enabledDouyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/1', displayName: 'enabled' });
+    const disabledDouyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/2', displayName: 'disabled', enabled: false });
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/3', displayName: 'bilibili' });
+
+    const put = await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: {
+        recordingDirectory: dir,
+        maxConcurrentRecordings: 2,
+        quality: 'original',
+        checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+        retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+        diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+        mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+        douyinCookie: 'sessionid=abc123;ttwid=xyz',
+      },
+    });
+
+    expect(put.statusCode).toBe(200);
+    expect(services.rooms.get(enabledDouyin.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(disabledDouyin.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(bilibili.id)?.lastCheckedAt).toBeNull();
+    await app.close();
+  });
+
   it('settings: douyin cookie validation rejects incomplete cookies (missing ttwid/sessionid) (#30)', async () => {
     const services = newServices();
     const { app } = buildApp(services);
