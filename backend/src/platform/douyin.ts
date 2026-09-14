@@ -228,7 +228,12 @@ export class DouyinAdapter implements PlatformAdapter {
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
       const appErr = classifyStatusError(data, Boolean(cookie));
-      return { status: appErr.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: appErr.toObject() };
+      return {
+        status: appErr.code === 'PLATFORM_ACCESS_RESTRICTED' || appErr.code === 'DOUYIN_COOKIE_EXPIRED'
+          ? 'restricted'
+          : 'error',
+        error: appErr.toObject(),
+      };
     }
     const entry = arr[0];
     if (!entry) {
