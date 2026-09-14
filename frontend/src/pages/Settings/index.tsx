@@ -470,6 +470,13 @@ export default function SettingsPage() {
                 >
                   录制行为
                 </Typography.Title>
+                <Form.Item
+                  label="录制完成后询问是否保留"
+                  name="confirmAfterComplete"
+                  valuePropName="checked"
+                >
+                  <Switch />
+                </Form.Item>
                 <Row gutter={16}>
                   <Col xs={24} md={8}>
                     <Form.Item
@@ -626,15 +633,6 @@ export default function SettingsPage() {
                     rules={[{ required: true }]}
                   >
                     <InputNumber min={5} max={600} addonAfter="秒" />
-                  </Form.Item>
-                </div>
-                <div className="lr-settings-section">
-                  <Form.Item
-                    label="录制完成后询问是否保留"
-                    name="confirmAfterComplete"
-                    valuePropName="checked"
-                  >
-                    <Switch />
                   </Form.Item>
                 </div>
               </div>
