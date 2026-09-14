@@ -232,7 +232,8 @@ const RoomCard = memo(function RoomCard({
             style={{ marginBottom: 10, marginTop: 0 }}
           >
             {room.platform === "douyin" &&
-            room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
+            (room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ||
+              room.lastError.code === "DOUYIN_COOKIE_EXPIRED") ? (
               <>
                 平台访问受限，请检查{" "}
                 <Typography.Link

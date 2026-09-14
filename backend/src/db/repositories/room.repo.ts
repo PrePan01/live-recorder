@@ -206,6 +206,13 @@ export class RoomRepository {
       .run(state, opts.lastCheckedAt ?? null, opts.lastError ? JSON.stringify(opts.lastError) : null, nowIso(), id);
   }
 
+  /** 写入平台级错误但保留录制等现有状态，避免中断正在进行的录制。 */
+  setLastError(id: string, error: ErrorObject): void {
+    this.db
+      .prepare('UPDATE rooms SET last_error = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(error), nowIso(), id);
+  }
+
   /** 写入最近一次检测的直播状态（#78）。 */
   setLiveStatus(id: string, status: LiveStatus): void {
     this.db

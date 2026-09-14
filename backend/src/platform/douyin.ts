@@ -64,6 +64,10 @@ function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): App
   const code = json.status_code;
   // 凭证相关信号：请求参数错误/服务繁忙/需登录等（抖音风控常见 status_code）。
   const credentialLike = code === 10011 || /请求参数|服务繁忙|请稍后|登录|风控|verify|RiskControl/i.test(message);
+  // 已携带 Cookie 时的 10011 是明确凭证失效信号，可作为平台级失败处理。
+  if (code === 10011 && hasCookie) {
+    return new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', { retryable: false });
+  }
   if (credentialLike || !hasCookie) {
     return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，Cookie 可能已失效，请到设置页更新' : '平台访问受限，请配置抖音 Cookie', { retryable: false });
   }
@@ -165,7 +169,11 @@ export class DouyinAdapter implements PlatformAdapter {
         throw new AppError('NETWORK_UNAVAILABLE', `平台暂时不可用（HTTP ${res.status}）`, { retryable: true });
       }
       if (res.status === 401 || res.status === 403) {
-        throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false });
+        throw new AppError(
+          cookie ? 'DOUYIN_COOKIE_EXPIRED' : 'PLATFORM_ACCESS_RESTRICTED',
+          cookie ? '抖音 Cookie 已失效，请到设置页更新' : '平台访问受限，请检查 Cookie 配置',
+          { retryable: false },
+        );
       }
       throw new AppError('PLATFORM_CHANGED', `平台接口返回异常状态（HTTP ${res.status}）`, {});
     }
@@ -210,7 +218,7 @@ export class DouyinAdapter implements PlatformAdapter {
       data = await this.fetchRoomInfoWithRetry(roomId, cookie);
     } catch (err) {
       if (err instanceof AppError) {
-        if (err.code === 'PLATFORM_ACCESS_RESTRICTED') {
+        if (err.code === 'PLATFORM_ACCESS_RESTRICTED' || err.code === 'DOUYIN_COOKIE_EXPIRED') {
           return { status: 'restricted', error: err.toObject() };
         }
         return { status: 'error', error: err.toObject() };

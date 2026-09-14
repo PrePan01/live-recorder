@@ -14,6 +14,8 @@ export class Scheduler {
   private dueByPlatform = new Map<Platform, string[]>();
   /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
   private checking = new Map<string, Promise<void>>();
+  /** 已收到抖音明确的凭证失效信号；保存新 Cookie 后才恢复请求。 */
+  private douyinCookieExpired = false;
 
   constructor(private services: Services, private manager: RecorderManager) {}
 
@@ -56,6 +58,7 @@ export class Scheduler {
   }
 
   private async runPlatform(platform: Platform): Promise<void> {
+    if (platform === 'douyin' && this.douyinCookieExpired) return;
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
     const scheduledRooms = this.dueScheduleChecks(now, platform)
@@ -70,14 +73,60 @@ export class Scheduler {
 
   private async runChecks(rooms: Room[], opts: { scheduled?: boolean } = {}): Promise<void> {
     let cursor = 0;
+    const isDouyinQueue = rooms[0]?.platform === 'douyin';
     const worker = async () => {
-      while (this.running) {
+      while (this.running && (!isDouyinQueue || !this.douyinCookieExpired)) {
         const room = rooms[cursor++];
         if (!room) return;
         await this.checkRoom(room, opts).catch(() => undefined);
       }
     };
     await Promise.all(Array.from({ length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) }, worker));
+  }
+
+  /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */
+  resetDouyinCookieFailure(): void {
+    this.douyinCookieExpired = false;
+  }
+
+  /** 等待已在途的检测完成，供凭证更新后避免复用仍携带旧 Cookie 的请求。 */
+  async waitForRoomCheck(roomId: string): Promise<void> {
+    await this.checking.get(roomId);
+  }
+
+  /**
+   * Cookie 更新后的全量复检在后台执行：设置保存不能被平台请求阻塞，
+   * 同时会等待携带旧 Cookie 的在途检测收口后再发起新请求。
+   */
+  async recheckDouyinRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.list().filter((room) => room.platform === 'douyin');
+    await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    this.resetDouyinCookieFailure();
+    await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
+  }
+
+  private markDouyinCookieExpired(): void {
+    if (this.douyinCookieExpired) return;
+    this.douyinCookieExpired = true;
+    const now = this.services.clock.iso();
+    for (const room of this.services.rooms.list().filter((item) => item.platform === 'douyin')) {
+      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', {
+        roomId: room.id,
+        retryable: false,
+      }).toObject();
+      // 正在录制的房间保留录制状态；lastError 足以让卡片显示 Cookie 已失效。
+      if (this.manager.isRoomActive(room.id)) this.services.rooms.setLastError(room.id, error);
+      else this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: now, lastError: error });
+      this.emitRoom(room.id);
+    }
+    const alert = this.services.alerts.create({
+      level: 'warning',
+      source: 'platform',
+      message: 'DOUYIN_COOKIE_EXPIRED: 抖音 Cookie 已失效，请到设置页更新',
+      occurredAt: now,
+      errorCode: 'DOUYIN_COOKIE_EXPIRED',
+    });
+    this.services.events.emit({ type: 'alert:created', data: alert });
   }
 
   /** 到期计划清单 + 推进 nextRunAt（幂等：重复调用同 now 不会重复触发）。 */
@@ -103,6 +152,7 @@ export class Scheduler {
 
   async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     if (this.services.resetting) return;
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
@@ -139,6 +189,9 @@ export class Scheduler {
   private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
+    // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
+    // 不让这个已在途请求的结果覆盖全局失效标记。
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
     // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
     const detectedName = status.displayName?.trim();
@@ -224,6 +277,10 @@ export class Scheduler {
       status.status === 'restricted' ? '平台访问受限，请检查 Cookie 配置' : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
+    if (room.platform === 'douyin' && err.code === 'DOUYIN_COOKIE_EXPIRED') {
+      this.markDouyinCookieExpired();
+      return;
+    }
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
     this.emitRoom(room.id);
     const alert = this.services.alerts.create({
@@ -251,6 +308,7 @@ export class Scheduler {
   async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     await this.checkRoom(room, { manual: true, ...opts }).catch(() => undefined);
   }
 }
