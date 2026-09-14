@@ -773,12 +773,20 @@ export default function Rooms() {
                 : undefined
             }
           >
-            <Space.Compact block>
-              <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
-              <Button icon={<SnippetsOutlined />} onClick={() => void pasteRoomUrl()}>
-                粘贴
-              </Button>
-            </Space.Compact>
+            <Input
+              placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..."
+              addonAfter={
+                <Button
+                  className="lr-room-url-paste"
+                  type="text"
+                  size="small"
+                  icon={<SnippetsOutlined />}
+                  onClick={() => void pasteRoomUrl()}
+                >
+                  粘贴
+                </Button>
+              }
+            />
           </Form.Item>
           <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
             <Input placeholder="主播昵称" />

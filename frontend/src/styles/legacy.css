@@ -96,6 +96,20 @@
   vertical-align: baseline;
 }
 
+/* 直播链接：输入框后置的剪贴板操作与输入高度协调，保留明确的可点击反馈。 */
+.lr-room-url-paste.ant-btn {
+  height: 26px;
+  padding-inline: 8px;
+  color: var(--lr-primary);
+  font-weight: 500;
+  border-radius: 4px;
+}
+.lr-room-url-paste.ant-btn:hover,
+.lr-room-url-paste.ant-btn:focus-visible {
+  color: var(--lr-primary);
+  background: color-mix(in srgb, var(--lr-primary) 10%, transparent);
+}
+
 /* 抖音 Cookie 教程图 */
 .lr-cookie-tutorial-image {
   display: block;
