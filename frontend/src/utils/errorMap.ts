@@ -8,7 +8,7 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   PLATFORM_CHANGED: '平台有变动，等待适配更新',
   DIRECTORY_NOT_WRITABLE: '目录不可写，请检查权限',
   DISK_SPACE_INSUFFICIENT: '磁盘空间不足，无法开始录制',
-  CONCURRENT_LIMIT_REACHED: '并发录制数已达上限',
+  CONCURRENT_LIMIT_REACHED: '录制达到最大并发数量，请在设置内增加最大并发',
   RECORDING_START_FAILED: '录制启动失败',
   STREAM_DISCONNECTED_RECONNECT_EXHAUSTED: '断流重连次数已耗尽',
   SMTP_SEND_FAILED: '邮件发送失败，请检查 SMTP 配置',
