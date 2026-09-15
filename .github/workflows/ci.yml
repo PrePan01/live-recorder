@@ -12,11 +12,15 @@ concurrency:
 
 jobs:
   test:
-    name: Typecheck and tests
+    name: Typecheck, build and tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      npm_config_audit: 'false'
+      npm_config_fund: 'false'
+      npm_config_prefer_offline: 'true'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -39,6 +43,12 @@ jobs:
 
       - name: Verify backend
         run: npm --prefix backend test
+
+      - name: Lint frontend
+        run: npm --prefix frontend run lint
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
 
       - name: Verify frontend
         run: npm --prefix frontend test
