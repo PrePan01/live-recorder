@@ -306,10 +306,10 @@ describe('V5 notifications + live prediction contract', () => {
     await app.close();
   });
 
-  it('live prediction returns null with insufficient samples and window with enough', () => {
+  it('live prediction starts with a recent observation and gains a window with more samples', () => {
     const services = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/6', displayName: 'pred' });
-    services.liveEvents.record(room.id, '2026-08-27T09:00:00.000Z');
+    services.liveEvents.record(room.id, '2026-08-27T09:00:00.000Z', {source:'platform',platformStartedAt:'2026-08-27T09:00:00.000Z'});
     // 仅 1 天样本 → 展示本机观察事实，但不称为预测
     const single = livePrediction(services, room.id);
     expect(single.kind).toBe('observation');
@@ -322,7 +322,7 @@ describe('V5 notifications + live prediction contract', () => {
       ['2026-08-25', '09:00:00.000Z'],
       ['2026-08-26', '09:30:00.000Z'],
     ] as const) {
-      services.liveEvents.record(room.id, `${day}T${start}`);
+      services.liveEvents.record(room.id, `${day}T${start}`, {source:"platform",platformStartedAt:`${day}T${start}`});
     }
     const win = livePrediction(services, room.id);
     expect(win.basedOnDays).toBe(3);

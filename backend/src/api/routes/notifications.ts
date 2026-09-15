@@ -15,19 +15,18 @@ export function notificationPreference(services: Services): NotificationPreferen
 }
 
 /**
- * 检测观测优先；仅没有任何观测历史时，才低权重兼容旧录像的开始时间。
+ * 检测观测优先；旧录像低权重补充未被检测记录覆盖的日期。
  */
 export function livePrediction(services: Services, roomId: string): LivePrediction {
   const from = new Date(services.clock.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
   const events = services.liveEvents.list(roomId, from);
-  const recordings = events.length === 0
-    ? services.recordings.list({ roomId, pageSize: 100, dateFrom: from }).items
-    : [];
+  const recordings = services.recordings.list({ roomId, pageSize: 100, dateFrom: from }).items;
   return calculateLivePrediction({
     roomId, events,
     fallbackEvents: recordingFallbackEvents(recordings),
     now: services.clock.now(), generatedAt: services.clock.iso(),
     calibration: services.predictionCalibration.profiles([roomId], localDateFromMs(services.clock.now() - 60 * 24 * 60 * 60 * 1000)).get(roomId),
+    coverage: services.predictionCalibration.intervals([roomId], from).get(roomId),
   });
 }
 
