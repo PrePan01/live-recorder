@@ -78,7 +78,55 @@ jobs:
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
 
+  # Run repository-wide checks once on Linux. The platform build jobs below
+  # should spend their time on platform-specific packaging rather than
+  # repeating the same backend/frontend test suite on macOS and Windows.
+  quality:
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      npm_config_audit: 'false'
+      npm_config_fund: 'false'
+      npm_config_prefer_offline: 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:ci
+
+      - name: Compile backend
+        run: npm --prefix backend run build
+
+      - name: Verify backend
+        run: npm --prefix backend test
+
+      - name: Lint frontend
+        run: npm --prefix frontend run lint
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+      - name: Verify frontend
+        run: npm --prefix frontend test
+
   build:
+    # Run platform packaging in parallel with the Linux quality gate. The
+    # release job still waits for both, so a quality failure can never publish.
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     strategy:
@@ -144,12 +192,6 @@ jobs:
       - name: Compile backend
         run: npm --prefix backend run build
 
-      - name: Verify backend
-        run: npm --prefix backend test
-
-      - name: Verify frontend
-        run: npm --prefix frontend test
-
       # package.mjs 随后会 prune backend/node_modules；必须在裁剪前保存完整依赖，
       # 否则下一次命中缓存时会缺少 vitest/typescript 等测试依赖。
       - name: Save installed dependencies
@@ -164,7 +206,8 @@ jobs:
 
       - name: Build installer
         env:
-          # Already compiled and tested above; CI does not need dev dependencies restored.
+          # The Linux quality gate covers the shared test suite; this job only
+          # needs the backend compiled for the platform-specific package.
           LR_SKIP_BACKEND_BUILD: '1'
           LR_SKIP_BACKEND_RESTORE: '1'
         run: npm run package
@@ -183,6 +226,8 @@ jobs:
           compression-level: 0
 
   native-test:
+    # Native checks are independent of the Linux JS test suite and can run in
+    # parallel with it to keep release wall-clock time down.
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     strategy:
@@ -218,7 +263,7 @@ jobs:
         run: cargo test --locked --manifest-path frontend/src-tauri/Cargo.toml --lib
 
   release:
-    needs: [prepare, build, native-test]
+    needs: [prepare, quality, build, native-test]
     if: needs.prepare.outputs.should_release == 'true' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     permissions:

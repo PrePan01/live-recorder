@@ -701,7 +701,7 @@ export default function Monitor() {
                 size="small"
                 type="link"
                 icon={<VideoCameraAddOutlined />}
-                disabled={!onAir || recentStop[room.id] !== undefined}
+                disabled={acting || !onAir || recentStop[room.id] !== undefined}
                 onClick={() =>
                   void startRoomRecording(room.id).catch((e) =>
                     message.error(
