@@ -9,7 +9,8 @@ const CONF_META: Record<string, { color: string; text: string }> = {
 };
 
 function likelihoodText(value: "high" | "medium" | "low" | null): string {
-  return `可能性${CONF_META[value ?? "low"].text}`;
+  if (value === "low") return "有开播可能";
+  return `可能性${CONF_META[value ?? "medium"].text}`;
 }
 
 function periodFor(time: string | null): string {
@@ -30,18 +31,6 @@ function approximateTime(time: string): string {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function dateLabel(date: string): string {
-  const now = new Date();
-  const local = (value: Date) =>
-    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  if (date === local(now)) return "今晚";
-  if (date === local(tomorrow)) return "明晚";
-  const weekday = new Date(`${date}T00:00:00`).getDay();
-  return `周${"日一二三四五六"[weekday]}`;
-}
-
 function isToday(date: string): boolean {
   const now = new Date();
   return date === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -53,6 +42,23 @@ function clockMinutes(value: string): number {
   const nextDay = value.startsWith("次日 ");
   const [hour, minute] = value.replace("次日 ", "").split(":").map(Number);
   return (nextDay ? 1440 : 0) + hour * 60 + minute;
+}
+
+function regularTime(prediction: Prediction): string {
+  if (!prediction.startAt) return "";
+  return prediction.timeGranularity === "exact" ? prediction.startAt : `${approximateTime(prediction.startAt)} 左右`;
+}
+
+function currentTodaySlot(prediction: Prediction) {
+  const now = new Date();
+  const minute = now.getHours() * 60 + now.getMinutes();
+  const slots = prediction.slots.map((slot) => ({ ...slot, start: clockMinutes(slot.startAt), end: Math.max(clockMinutes(slot.endAt), clockMinutes(slot.startAt) + 20) }));
+  return slots.find((slot) => minute >= slot.start && minute <= slot.end + 30)
+    ?? slots.filter((slot) => slot.start > minute).sort((a, b) => a.start - b.start)[0];
+}
+
+function tagColor(value: "high" | "medium" | "low" | null): string | undefined {
+  return value === "low" || !value ? undefined : CONF_META[value].color;
 }
 
 function PredictionTimeline({ prediction }: { prediction: Prediction }) {
@@ -78,13 +84,23 @@ function PredictionTimeline({ prediction }: { prediction: Prediction }) {
         {showNow && <span className="lr-live-prediction-timeline__now" style={{ left: `${nowPosition}%` }} aria-label="当前时间" />}
       </div>
       <div className="lr-live-prediction-timeline__hours" aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+      {prediction.recentObservations.length > 0 && <div className="lr-live-prediction-timeline__observations" aria-label="近期检测到的开播时间">
+        {prediction.recentObservations.map((observation, index) => (
+          <span
+            key={`${observation.time}-${observation.quality}-${index}`}
+            className={`lr-live-prediction-timeline__observation lr-live-prediction-timeline__observation--${observation.quality}`}
+            style={{ left: `${(clockMinutes(observation.time) / 1440) * 100}%` }}
+            aria-label={`近期检测到 ${observation.time} 开播`}
+          />
+        ))}
+      </div>}
     </div>
   );
 }
 
 function PredictionPopover({ prediction, children }: { prediction: Prediction; children: ReactNode }) {
   const title = prediction.confidence ? <><span>开播可能时段</span><span className="lr-live-prediction-popover__reliability">可靠性{CONF_META[prediction.confidence].text}</span></> : "开播可能时段";
-  return <Popover title={title} content={<PredictionTimeline prediction={prediction} />} trigger={["hover", "focus"]}>{children}</Popover>;
+  return <Popover title={title} content={<><div className="lr-live-prediction-popover__usual">通常 {regularTime(prediction)}开播</div><PredictionTimeline prediction={prediction} /></>} trigger={["hover", "focus"]}>{children}</Popover>;
 }
 
 function PredictionHint({ content, children }: { content: string; children: ReactNode }) {
@@ -108,23 +124,12 @@ export default function LivePredictionBadge({
     return <PredictionHint content="样本不足，暂未形成开播预测"><Tag>最近检测到开播：{value.lastRecordedAt}</Tag></PredictionHint>;
   }
   if (!value.startAt || !value.confidence) return null;
-  const conf = CONF_META[value.confidence];
-  let text: string;
-  if (value.kind === "next" && value.nextDate) {
-    const date = dateLabel(value.nextDate);
-    if (isToday(value.nextDate)) {
-      const likelihood = value.todayProbability ?? value.likelihood;
-      text = `今天${periodFor(value.startAt)}开播 · ${likelihoodText(likelihood)}`;
-      return <PredictionPopover prediction={value}><Tag color={CONF_META[likelihood ?? value.confidence].color}><Typography.Text style={{ fontSize: 12 }}>{text}</Typography.Text></Tag></PredictionPopover>;
-    }
-    const time = value.timeGranularity === "exact" ? value.startAt : `${approximateTime(value.startAt)} 左右`;
-    const prefix = value.basis === "day_type"
-      ? (date === "今晚" || date === "明晚" || date === "周六" || date === "周日" ? "周末" : "工作日")
-      : date;
-    text = `${prefix} ${time}开播 · ${likelihoodText(value.likelihood)}`;
-  } else {
-    const time = value.timeGranularity === "exact" ? value.startAt : `${approximateTime(value.startAt)} 左右`;
-    text = `通常${time}开播 · ${likelihoodText(value.likelihood)}`;
-  }
-  return <PredictionPopover prediction={value}><Tag color={conf.color}><Typography.Text style={{ fontSize: 12 }}>{text}</Typography.Text></Tag></PredictionPopover>;
+  const todaySlot = value.kind === "next" && value.nextDate && isToday(value.nextDate)
+    ? currentTodaySlot(value)
+    : undefined;
+  const likelihood = todaySlot ? value.todayProbability ?? todaySlot.likelihood : value.likelihood ?? value.confidence;
+  const text = todaySlot
+    ? `今天${periodFor(todaySlot.startAt)}开播 · ${likelihoodText(likelihood)}`
+    : `通常${regularTime(value)}开播 · ${likelihoodText(likelihood)}`;
+  return <PredictionPopover prediction={value}><Tag color={tagColor(likelihood)}><Typography.Text style={{ fontSize: 12 }}>{text}</Typography.Text></Tag></PredictionPopover>;
 }

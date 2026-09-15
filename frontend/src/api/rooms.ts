@@ -155,6 +155,7 @@ export interface RoomInsight {
     todayProbability: "high" | "medium" | "low" | null;
     likelihood: "high" | "medium" | "low" | null;
     lastRecordedAt: string | null;
+    recentObservations: Array<{ time: string; quality: "platform" | "transition" | "initial_live" | "legacy" }>;
     startAt: string | null;
     endAt: string | null;
     confidence: "high" | "medium" | "low" | null;

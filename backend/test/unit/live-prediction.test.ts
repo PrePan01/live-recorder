@@ -163,4 +163,32 @@ describe('live prediction', () => {
     // (0 + 1) / (5 + 2) is deliberately smoothed, then maps to low.
     expect(result.todayProbability).toBe('low');
   });
+
+  it('includes only a compact trace of recent observations for the popover', () => {
+    const events = Array.from({ length: 10 }, (_, index) => ({
+      detectedAt: `2026-09-${String(index + 1).padStart(2, '0')}T12:00:00.000Z`,
+      source: index === 9 ? 'platform' as const : 'transition' as const,
+      platformStartedAt: index === 9 ? '2026-09-10T11:55:00.000Z' : null,
+    }));
+    const result = calculateLivePrediction({ roomId: 'room_1', now, generatedAt, events });
+    expect(result.recentObservations).toHaveLength(8);
+    expect(result.recentObservations.at(-1)).toEqual({ time: '19:55', quality: 'platform' });
+  });
+
+  it('gradually promotes a concentrated recent shift without discarding the older slot', () => {
+    const localTime = (day: string, time: string) => new Date(`${day}T${time}:00`).toISOString();
+    const currentNow = Date.parse(localTime('2026-09-20', '23:00'));
+    const events = [
+      '2026-08-02', '2026-08-09', '2026-08-16', '2026-08-23',
+    ].map((day) => detected(localTime(day, '12:00'))).concat(
+      ['2026-08-30', '2026-09-06', '2026-09-13'].map((day) => detected(localTime(day, '16:00'))),
+    );
+    const result = calculateLivePrediction({ roomId: 'room_1', now: currentNow, generatedAt, events });
+    expect(result.kind).toBe('next');
+    expect(result.startAt).toBe('16:00');
+    expect(result.slots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ startAt: '12:00' }),
+      expect.objectContaining({ startAt: '16:00' }),
+    ]));
+  });
 });

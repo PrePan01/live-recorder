@@ -2,6 +2,7 @@ export type PredictionConfidence = 'high' | 'medium' | 'low';
 export type PredictionKind = 'unavailable' | 'observation' | 'typical' | 'next';
 export type PredictionBasis = 'weekday' | 'day_type' | 'all';
 export type PredictionTimeGranularity = 'exact' | 'approximate' | 'period';
+export type PredictionObservationQuality = 'platform' | 'transition' | 'initial_live' | 'legacy';
 
 export interface DetectedLiveEvent {
   detectedAt: string;
@@ -38,6 +39,8 @@ export interface LivePrediction {
   likelihood: PredictionConfidence | null;
   /** Latest recorded opening time, for display before a prediction can be formed. */
   lastRecordedAt: string | null;
+  /** A compact, local-only trace for the prediction popover; newest observations only. */
+  recentObservations: Array<{ time: string; quality: PredictionObservationQuality }>;
 }
 
 interface LiveOccurrence {
@@ -45,6 +48,7 @@ interface LiveOccurrence {
   recordedAt: number;
   weight: number;
   platformTimed: boolean;
+  quality: PredictionObservationQuality;
 }
 
 interface Model {
@@ -59,6 +63,7 @@ interface TimeSlot {
   wrapsMidnight: boolean;
   weight: number;
   platformWeight: number;
+  count: number;
 }
 
 const WINDOW_DAYS = 60;
@@ -88,6 +93,10 @@ export function calculateLivePrediction(input: {
   const lastRecordedAt = occurrences.length > 0
     ? hhmmFromMinutes(minuteOfDay(occurrences[occurrences.length - 1]!.recordedAt))
     : null;
+  const recentObservations = occurrences.slice(-8).map((occurrence) => ({
+    time: hhmmFromMinutes(minuteOfDay(occurrence.estimatedAt)),
+    quality: occurrence.quality,
+  }));
   const base = (overrides: Partial<LivePrediction>): LivePrediction => ({
     roomId: input.roomId,
     startAt: null,
@@ -108,6 +117,7 @@ export function calculateLivePrediction(input: {
     todayProbability: null,
     likelihood: null,
     lastRecordedAt,
+    recentObservations,
     ...overrides,
   });
 
@@ -125,8 +135,8 @@ export function calculateLivePrediction(input: {
   const models = modelCandidates(occurrences);
   const selected = selectUpcomingModel(models, input.now);
   const todayProbability = probabilityForToday(models, input.now, input.calibration);
-  if (selected) return predictionForModel(base, selected.model, selected.date, selected.slot, todayProbability);
-  return predictionForModel(base, { basis: 'all', occurrences }, null, undefined, todayProbability);
+  if (selected) return predictionForModel(base, selected.model, selected.date, selected.slot, todayProbability, input.now);
+  return predictionForModel(base, { basis: 'all', occurrences }, null, undefined, todayProbability, input.now);
 }
 
 function modelCandidates(occurrences: LiveOccurrence[]): Model[] {
@@ -157,20 +167,19 @@ function selectUpcomingModel(models: Model[], now: number): { model: Model; date
       const type = dow === 0 || dow === 6 ? 'weekend' : 'weekday';
       const model = modelForDate(models, basis, dow, type);
       if (!model) continue;
-      const slots = clusterSlots(model.occurrences.map((occurrence) => ({ value: minuteOfDay(occurrence.estimatedAt), weight: occurrence.weight, platformTimed: occurrence.platformTimed })));
+      const slots = slotsForModel(model, now);
       const nowMinutes = offset === 0 ? minuteOfDay(now) : -1;
       // For today, surface the nearest habitual period rather than a verbose
       // ranked list of all periods. Future dates retain the first opening slot.
-      const slot = offset === 0 ? closestSlot(slots, nowMinutes) : slots[0];
+      const slot = offset === 0 ? closestSlot(slots, nowMinutes) : dominantSlot(slots);
       if (slot) return { model, date, slot };
     }
   }
   return null;
 }
 
-function predictionForModel(base: (overrides: Partial<LivePrediction>) => LivePrediction, model: Model, nextDate: Date | null, selectedSlot?: TimeSlot, todayProbability: PredictionConfidence | null = null): LivePrediction {
-  const starts = model.occurrences.map((occurrence) => ({ value: minuteOfDay(occurrence.estimatedAt), weight: occurrence.weight, platformTimed: occurrence.platformTimed }));
-  const slots = clusterSlots(starts);
+function predictionForModel(base: (overrides: Partial<LivePrediction>) => LivePrediction, model: Model, nextDate: Date | null, selectedSlot: TimeSlot | undefined, todayProbability: PredictionConfidence | null, now: number): LivePrediction {
+  const slots = slotsForModel(model, now);
   const slot = selectedSlot ?? slots[0]!;
   const representativeStart = Math.round(slot.representative);
   const windowWidth = slot.end - slot.start;
@@ -224,6 +233,41 @@ function closestSlot(slots: TimeSlot[], nowMinutes: number): TimeSlot | undefine
     const closestDistance = closest ? Math.abs(closest.representative - nowMinutes) : Number.POSITIVE_INFINITY;
     return distance < closestDistance ? slot : closest;
   }, undefined);
+}
+
+function dominantSlot(slots: TimeSlot[]): TimeSlot | undefined {
+  return slots.reduce<TimeSlot | undefined>((dominant, slot) => !dominant || slot.weight > dominant.weight ? slot : dominant, undefined);
+}
+
+/**
+ * A recent, concentrated shift may promote a new habitual opening time, but
+ * only after enough evidence has accumulated. The older slot remains in the
+ * timeline and naturally regains priority if the recent pattern fades.
+ */
+function slotsForModel(model: Model, now: number): TimeSlot[] {
+  const slots = clusterSlots(model.occurrences.map((occurrence) => ({
+    value: minuteOfDay(occurrence.estimatedAt), weight: occurrence.weight, platformTimed: occurrence.platformTimed,
+  })));
+  const recentCutoff = now - 21 * 24 * 60 * 60 * 1_000;
+  const recent = model.occurrences.filter((occurrence) => occurrence.estimatedAt >= recentCutoff);
+  if (recent.length < 3 || slots.length < 2) return slots;
+  const recentSlots = clusterSlots(recent.map((occurrence) => ({
+    value: minuteOfDay(occurrence.estimatedAt), weight: occurrence.weight, platformTimed: occurrence.platformTimed,
+  })));
+  const recentDominant = dominantSlot(recentSlots);
+  const longDominant = dominantSlot(slots);
+  if (!recentDominant || !longDominant || recentDominant.count < 3) return slots;
+  const recentWeight = recentSlots.reduce((sum, slot) => sum + slot.weight, 0);
+  if (recentWeight <= 0 || recentDominant.weight / recentWeight < 0.6 || circularMinuteDistance(recentDominant.representative, longDominant.representative) < 90) return slots;
+  const promoted = closestSlot(slots, recentDominant.representative);
+  if (!promoted || circularMinuteDistance(promoted.representative, recentDominant.representative) > 90) return slots;
+  // Give a verified new habit a slight lead, rather than replacing older data.
+  return slots.map((slot) => slot === promoted ? { ...slot, weight: Math.max(slot.weight, longDominant.weight * 1.05) } : slot);
+}
+
+function circularMinuteDistance(a: number, b: number): number {
+  const raw = Math.abs(a - b) % 1440;
+  return Math.min(raw, 1440 - raw);
 }
 
 function probabilityForToday(models: Model[], now: number, calibration?: Partial<Record<PredictionConfidence, { hits: number; total: number }>>): PredictionConfidence | null {
@@ -280,6 +324,7 @@ function clusterSlots(values: Array<{ value: number; weight: number; platformTim
     wrapsMidnight: group.some((item) => item.value >= 1440),
     weight: group.reduce((sum, item) => sum + item.weight, 0),
     platformWeight: group.filter((item) => item.platformTimed).reduce((sum, item) => sum + item.weight, 0),
+    count: group.length,
   }));
 }
 
@@ -311,7 +356,7 @@ function toOccurrence(event: DetectedLiveEvent): LiveOccurrence | null {
   if (!Number.isFinite(detectedAt)) return null;
   const platformStartedAt = event.platformStartedAt ? Date.parse(event.platformStartedAt) : Number.NaN;
   if (event.source === 'platform' && Number.isFinite(platformStartedAt) && platformStartedAt <= detectedAt + 5 * 60 * 1_000) {
-    return { estimatedAt: platformStartedAt, recordedAt: platformStartedAt, weight: 1, platformTimed: true };
+    return { estimatedAt: platformStartedAt, recordedAt: platformStartedAt, weight: 1, platformTimed: true, quality: 'platform' };
   }
   const lowerBoundAt = event.lowerBoundAt ? Date.parse(event.lowerBoundAt) : Number.NaN;
   const hasUsableLowerBound = Number.isFinite(lowerBoundAt) && lowerBoundAt <= detectedAt;
@@ -326,7 +371,12 @@ function toOccurrence(event: DetectedLiveEvent): LiveOccurrence | null {
   const intervalWeight = source === 'legacy' || (source === 'transition' && !hasUsableLowerBound) || intervalMs <= 2 * 60 * 60 * 1000
     ? 1
     : intervalMs <= 6 * 60 * 60 * 1000 ? 0.7 : 0.45;
-  return { estimatedAt, recordedAt: detectedAt, weight: baseWeight * intervalWeight, platformTimed: false };
+  const quality: PredictionObservationQuality = source === 'transition'
+    ? 'transition'
+    : source === 'initial_live'
+      ? 'initial_live'
+      : 'legacy';
+  return { estimatedAt, recordedAt: detectedAt, weight: baseWeight * intervalWeight, platformTimed: false, quality };
 }
 
 /**
