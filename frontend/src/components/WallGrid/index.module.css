@@ -3,7 +3,7 @@
 }
 
 .emptyCell {
-  cursor: default;
+  cursor: pointer;
   box-sizing: border-box;
 }
 

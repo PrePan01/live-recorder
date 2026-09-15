@@ -37,6 +37,12 @@ export function registerOpenListRoutes(
     ) {
       throw new AppError("CONFIG_INVALID", "username 必须为字符串");
     }
+    if (
+      typeof rest.deleteSourceAfterUpload !== "undefined" &&
+      typeof rest.deleteSourceAfterUpload !== "boolean"
+    ) {
+      throw new AppError("CONFIG_INVALID", "deleteSourceAfterUpload 必须为布尔值");
+    }
     const merged: OpenListConfig = {
       ...current,
       ...rest,
@@ -52,6 +58,7 @@ export function registerOpenListRoutes(
         serverUrl: merged.serverUrl,
         directoryTemplate: merged.directoryTemplate,
         username: merged.username,
+        deleteSourceAfterUpload: merged.deleteSourceAfterUpload,
       },
     } as never);
     // 令牌写 SecretStore：空串=清除，非空=设置（不落盘、不回显）。
@@ -193,6 +200,7 @@ export async function openListView(
     serverUrl: stored?.serverUrl ?? "",
     directoryTemplate: stored?.directoryTemplate ?? "{room}/{date}",
     username: stored?.username ?? "",
+    deleteSourceAfterUpload: stored?.deleteSourceAfterUpload ?? false,
     hasToken,
   };
 }

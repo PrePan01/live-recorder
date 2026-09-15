@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Live Recorder",
-  "version": "0.5.121",
+  "version": "0.5.131",
   "identifier": "com.live-recorder.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -31,7 +31,7 @@
     "active": true,
     "targets": [
       "app",
-      "msi"
+      "nsis"
     ],
     "resources": {
       "../../backend": "backend"
@@ -52,12 +52,15 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       },
-      "wix": {
-        "language": {
-          "en-US": {
-            "localePath": "./windows/locales/en-US.wxl"
-          }
-        }
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Live Recorder"
       }
     }
   }

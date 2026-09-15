@@ -42,6 +42,18 @@
   margin-top: 20px;
 }
 
+/* 设置页底部的官网与反馈入口 */
+.lr-settings-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+  padding: 4px 0 12px;
+  color: var(--lr-text-secondary);
+}
+.lr-settings-footer .ant-typography {
+  font-size: 13px;
+}
+
 /* 设置页：辅助文案 */
 .lr-settings-directory-status.ant-typography {
   margin: -7px 0 14px;
@@ -82,6 +94,20 @@
 }
 .lr-network-help .lr-inline-icon-button.ant-btn {
   vertical-align: baseline;
+}
+
+/* 直播链接：输入框后置的剪贴板操作与输入高度协调，保留明确的可点击反馈。 */
+.lr-room-url-paste.ant-btn {
+  height: 26px;
+  padding-inline: 8px;
+  color: var(--lr-primary);
+  font-weight: 500;
+  border-radius: 4px;
+}
+.lr-room-url-paste.ant-btn:hover,
+.lr-room-url-paste.ant-btn:focus-visible {
+  color: var(--lr-primary);
+  background: color-mix(in srgb, var(--lr-primary) 10%, transparent);
 }
 
 /* 抖音 Cookie 教程图 */
@@ -131,12 +157,15 @@
     flex: 1 1 100%;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(2) {
-    flex: 2 1 150px;
+    flex: 0 1 auto;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(3) {
-    flex: 1 1 108px;
+    flex: 0 1 auto;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(4) {
+    flex: 1 1 108px;
+  }
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(5) {
     flex: 0 1 76px;
   }
 }

@@ -29,7 +29,17 @@ export default function AppVersion() {
     dialogOpen.current = true;
     modal.confirm({
       title: `发现新版本 ${snapshot.update.version}`,
-      content: `当前版本 ${snapshot.currentVersion}，是否下载安装包？下载完成后需手动安装。`,
+      content: (
+        <div>
+          <p>当前版本 {snapshot.currentVersion}，下载完成后需手动安装。</p>
+          {snapshot.update.notes.length > 0 && (
+            <div>
+              <strong>本次更新</strong>
+              <ul>{snapshot.update.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      ),
       okText: '下载更新', cancelText: '稍后',
       afterClose: () => { dialogOpen.current = false; },
       onOk: () => {

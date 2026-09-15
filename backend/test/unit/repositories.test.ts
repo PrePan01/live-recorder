@@ -5,6 +5,7 @@ import { RoomRepository } from '../../src/db/repositories/room.repo.ts';
 import { RecordingRepository } from '../../src/db/repositories/recording.repo.ts';
 import { SettingsRepository } from '../../src/db/repositories/settings.repo.ts';
 import { AlertRepository } from '../../src/db/repositories/alert.repo.ts';
+import { PredictionCalibrationRepository } from '../../src/db/repositories/prediction-calibration.repo.ts';
 import { AppError } from '../../src/types/error.ts';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.ts';
 
@@ -17,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(21);
+    expect(runMigrations(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(21);
+    expect(currentSchemaVersion(db)).toBe(29);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -47,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(19);
+    expect(runMigrations(db)).toBe(27);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(21);
+    expect(currentSchemaVersion(db)).toBe(29);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -80,20 +81,21 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('title_fallback_used');
     expect(roomsCols).not.toContain('upload_enabled');
 
-    // 仅 v16-v21 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(6);
+    // 仅 v16-v22 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
+    expect(runMigrations(db)).toBe(14);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
     expect(after).toContain('title_fallback_used');
     expect(after).toContain('upload_enabled');
+    expect(after).toContain('current_stream_title');
 
     const repo = new RoomRepository(db);
     const room = repo.create({ platform: 'douyin', url: 'https://live.douyin.com/405783317287', displayName: '' });
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(21);
+    expect(currentSchemaVersion(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -114,8 +116,8 @@ describe('migrations', () => {
     const colsBefore = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsBefore).not.toContain('expected_quality');
 
-    // v19 补列，v20 追加索引，v21 增加直播间顺序。
-    expect(runMigrations(db)).toBe(3);
+    // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
+    expect(runMigrations(db)).toBe(11);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -127,7 +129,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(21);
+    expect(currentSchemaVersion(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -144,6 +146,57 @@ describe('migrations', () => {
     MIGRATIONS.find((item) => item.version === 21)!.up!(db);
     expect(new RoomRepository(db).list().map((room) => room.id)).toEqual(['new', 'old']);
     expect((db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_rooms_sort_order'`).get() as { name: string }).name).toBe('idx_rooms_sort_order');
+  });
+
+  it('v22 adds a false-by-default cleanup flag to existing upload jobs', () => {
+    const db = openDatabase(':memory:');
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 21)) {
+      if (migration.up) migration.up(db);
+      else if (migration.sql) db.exec(migration.sql);
+    }
+    db.exec(`INSERT INTO upload_jobs (id, recording_id, idempotency_key) VALUES ('upl-old', 'rec-old', 'rec_old')`);
+    MIGRATIONS.find((item) => item.version === 22)!.up!(db);
+    expect(db.prepare(`SELECT delete_source_after_success FROM upload_jobs WHERE id = 'upl-old'`).get()).toEqual({ delete_source_after_success: 0 });
+  });
+
+  it('v23 adds a false-by-default live notification flag to existing rooms', () => {
+    const db = openDatabase(':memory:');
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 22)) {
+      if (migration.up) migration.up(db);
+      else if (migration.sql) db.exec(migration.sql);
+    }
+    db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('room-old', 'bilibili', 'https://live.bilibili.com/99')`).run();
+    MIGRATIONS.find((item) => item.version === 23)!.up!(db);
+    const rooms = new RoomRepository(db);
+    expect(rooms.get('room-old')!.liveNotificationEnabled).toBe(false);
+    expect(rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/100', displayName: '新房间' }).liveNotificationEnabled).toBe(false);
+    expect(rooms.update('room-old', { liveNotificationEnabled: true }).liveNotificationEnabled).toBe(true);
+  });
+
+  it('v24 adds detector-owned live event history', () => {
+    const db = openDatabase(':memory:');
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 23)) {
+      if (migration.up) migration.up(db);
+      else if (migration.sql) db.exec(migration.sql);
+    }
+    MIGRATIONS.find((item) => item.version === 24)!.up!(db);
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'live_events'`).get()).toBeTruthy();
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_live_events_room_detected'`).get()).toBeTruthy();
+  });
+
+  it('v28 keeps one local forecast per room-day and retains coverage separately', () => {
+    const db = freshDb();
+    const calibration = new PredictionCalibrationRepository(db);
+    calibration.recordForecast({ roomId: 'room_1', targetDate: '2026-09-14', probability: 'low', rawProbability: 'medium', windowStartAt: '2026-09-14T08:00:00.000Z', windowEndAt: '2026-09-14T09:00:00.000Z', generatedAt: '2026-09-13T16:00:00.000Z' });
+    calibration.recordForecast({ roomId: 'room_1', targetDate: '2026-09-14', probability: 'high', generatedAt: '2026-09-13T17:00:00.000Z' });
+    calibration.recordCoverage('room_1', '2026-09-14', '2026-09-14T00:00:00.000Z');
+    calibration.recordCoverage('room_1', '2026-09-14', '2026-09-14T04:00:00.000Z');
+    const forecast = calibration.pendingBefore('2026-09-15');
+    expect(forecast).toHaveLength(1);
+    expect(forecast[0]).toMatchObject({ probability: 'low', rawProbability: 'medium' });
+    expect(calibration.coverage('room_1', '2026-09-14')).toMatchObject({ checks: 2, firstCheckedAt: '2026-09-14T00:00:00.000Z', lastCheckedAt: '2026-09-14T04:00:00.000Z' });
+    calibration.resolve(forecast[0]!.id, 'hit', '2026-09-15T00:00:00.000Z');
+    expect(calibration.profiles(['room_1'], '2026-08-01').get('room_1')).toEqual({ medium: { hits: 1, total: 1 } });
   });
 });
 

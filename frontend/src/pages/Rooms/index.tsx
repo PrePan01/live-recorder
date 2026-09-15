@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Alert,
@@ -25,6 +25,7 @@ import {
   ScheduleOutlined,
   DeleteOutlined,
   EditOutlined,
+  SnippetsOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { useRoomStore } from "../../stores/roomStore";
@@ -67,6 +68,7 @@ export default function Rooms() {
     toggleRoom,
     favoriteRoom,
     setAutoRecord,
+    setLiveNotification,
     updateRoomTags,
     checkRoomNow,
     reorderRooms,
@@ -83,7 +85,11 @@ export default function Rooms() {
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [tagIds, setTagIds] = useState<string[]>([]);
-  const [form] = Form.useForm<{ url: string; displayName?: string }>();
+  const [form] = Form.useForm<{
+    url: string;
+    displayName?: string;
+    liveNotificationEnabled: boolean;
+  }>();
   const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState<string>();
   const [state, setState] = useState<string>();
@@ -94,6 +100,11 @@ export default function Rooms() {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
+  const [editingDisplayName, setEditingDisplayName] = useState<{
+    id: string;
+    value: string;
+  } | null>(null);
+  const savingDisplayNameIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void fetchRooms().catch(() => message.error("直播间列表加载失败"));
@@ -163,6 +174,32 @@ export default function Rooms() {
 
   const resetPage = () => setPage(1);
 
+  const saveDisplayName = async (room: Room) => {
+    const draft = editingDisplayName;
+    if (
+      !draft ||
+      draft.id !== room.id ||
+      savingDisplayNameIdRef.current === room.id
+    )
+      return;
+    savingDisplayNameIdRef.current = room.id;
+    setEditingDisplayName(null);
+    const displayName = draft.value.trim();
+    try {
+      if (displayName !== room.displayName) {
+        await editRoom(room.id, { displayName });
+      }
+    } catch (e) {
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "显示名保存失败",
+      );
+    } finally {
+      savingDisplayNameIdRef.current = null;
+    }
+  };
+
   const runBatch = async (fn: (r: Room) => Promise<void>, okMsg: string) => {
     const targets = rooms.filter((r) => selectedKeys.includes(r.id));
     if (targets.length === 0) {
@@ -201,6 +238,30 @@ export default function Rooms() {
       >
         批量停用
       </Button>
+      <Button
+        size="small"
+        disabled={batchBusy || selectedKeys.length === 0}
+        onClick={() =>
+          void runBatch(
+            (r) => setLiveNotification(r.id, true),
+            "已开启开播提醒",
+          )
+        }
+      >
+        开启开播提醒
+      </Button>
+      <Button
+        size="small"
+        disabled={batchBusy || selectedKeys.length === 0}
+        onClick={() =>
+          void runBatch(
+            (r) => setLiveNotification(r.id, false),
+            "已关闭开播提醒",
+          )
+        }
+      >
+        关闭开播提醒
+      </Button>
       <Popconfirm
         title={`确定删除所选 ${selectedKeys.length} 个直播间？不可恢复。`}
         onConfirm={() => void runBatch((r) => removeRoom(r.id), "已删除")}
@@ -219,13 +280,18 @@ export default function Rooms() {
   const openAdd = () => {
     setEditing(null);
     form.resetFields();
+    form.setFieldValue("liveNotificationEnabled", false);
     setTagIds([]);
     setModalOpen(true);
   };
 
   const openEdit = (room: Room) => {
     setEditing(room);
-    form.setFieldsValue({ url: room.url, displayName: room.displayName });
+    form.setFieldsValue({
+      url: room.url,
+      displayName: room.displayName,
+      liveNotificationEnabled: room.liveNotificationEnabled,
+    });
     setTagIds(room.tags.map((t) => t.id));
     setModalOpen(true);
   };
@@ -234,7 +300,11 @@ export default function Rooms() {
     // Ant Design rejects when client-side validation fails.  This handler is
     // invoked with `void submit()`, so validation failures must be consumed
     // here instead of becoming a window-level unhandled rejection.
-    let values: { url: string; displayName?: string };
+    let values: {
+      url: string;
+      displayName?: string;
+      liveNotificationEnabled: boolean;
+    };
     try {
       values = await form.validateFields();
     } catch {
@@ -270,6 +340,19 @@ export default function Rooms() {
   };
 
   const urlValue = Form.useWatch("url", form);
+
+  const pasteRoomUrl = async () => {
+    try {
+      const url = await navigator.clipboard.readText();
+      if (!url.trim()) {
+        message.warning("剪贴板中没有可粘贴的内容");
+        return;
+      }
+      form.setFieldValue("url", url.trim());
+    } catch {
+      message.error("无法读取剪贴板，请检查系统剪贴板权限");
+    }
+  };
 
   const submitBatch = async () => {
     const urls = batchText
@@ -364,22 +447,64 @@ export default function Rooms() {
       ),
     },
     {
+      title: "开播提醒",
+      dataIndex: "liveNotificationEnabled",
+      width: 100,
+      render: (v: boolean, room) => (
+        <Switch
+          checked={v}
+          onChange={(checked) =>
+            void setLiveNotification(room.id, checked).catch((e) =>
+              message.error(
+                e instanceof ApiError
+                  ? describeError(e.code, e.message)
+                  : "操作失败",
+              ),
+            )
+          }
+        />
+      ),
+    },
+    {
       title: "显示名",
       dataIndex: "displayName",
       width: 160,
       ellipsis: true,
-      render: (v: string, r) => (
-        <Space size={4}>
-          <span>{v}</span>
-          {r.titleFallbackUsed ? (
-            <Tooltip title="回退/占位标题，平台接口未返回正式标题">
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                （回退）
-              </Typography.Text>
-            </Tooltip>
-          ) : null}
-        </Space>
-      ),
+      render: (v: string, r) =>
+        editingDisplayName?.id === r.id ? (
+          <Input
+            autoFocus
+            size="small"
+            value={editingDisplayName.value}
+            onChange={(event) =>
+              setEditingDisplayName((current) =>
+                current ? { ...current, value: event.target.value } : current,
+              )
+            }
+            onPressEnter={() => void saveDisplayName(r)}
+            onBlur={() => void saveDisplayName(r)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setEditingDisplayName(null);
+            }}
+          />
+        ) : (
+          <Space
+            size={4}
+            onDoubleClick={() =>
+              setEditingDisplayName({ id: r.id, value: r.displayName })
+            }
+            style={{ cursor: "text" }}
+          >
+            <span>{v || "-"}</span>
+            {r.titleFallbackUsed ? (
+              <Tooltip title="回退/占位标题，平台接口未返回正式标题">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  （回退）
+                </Typography.Text>
+              </Tooltip>
+            ) : null}
+          </Space>
+        ),
     },
     {
       title: "标签",
@@ -648,10 +773,31 @@ export default function Rooms() {
                 : undefined
             }
           >
-            <Input placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..." />
+            <Input
+              placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..."
+              addonAfter={
+                <Button
+                  className="lr-room-url-paste"
+                  type="text"
+                  size="small"
+                  icon={<SnippetsOutlined />}
+                  onClick={() => void pasteRoomUrl()}
+                >
+                  粘贴
+                </Button>
+              }
+            />
           </Form.Item>
           <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
             <Input placeholder="主播昵称" />
+          </Form.Item>
+          <Form.Item
+            name="liveNotificationEnabled"
+            label="开播提醒"
+            valuePropName="checked"
+            extra="检测到该直播间从未开播变为开播时发送桌面通知"
+          >
+            <Switch />
           </Form.Item>
           {editing ? (
             <Form.Item

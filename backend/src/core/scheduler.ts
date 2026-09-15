@@ -1,9 +1,10 @@
-import type { Platform, Room } from '../types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type Platform, type Room } from '../types/index.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
 import { dueSchedules } from '../api/routes/schedules.js';
+import { calculateLivePrediction, coversPredictionWindow, openingEvidenceInWindow } from './live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const PLATFORM_CHECK_CONCURRENCY = 2;
@@ -14,6 +15,12 @@ export class Scheduler {
   private dueByPlatform = new Map<Platform, string[]>();
   /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
   private checking = new Map<string, Promise<void>>();
+  /** 已收到抖音明确的凭证失效信号；保存新 Cookie 后才恢复请求。 */
+  private douyinCookieExpired = false;
+  private predictionsFinalizedAt = 0;
+  private forecastDate: string | null = null;
+  private forecastRecordedFor = new Set<string>();
+  private forecastRetry = new Map<string, { at: number; latestEventId: string | null }>();
 
   constructor(private services: Services, private manager: RecorderManager) {}
 
@@ -56,6 +63,8 @@ export class Scheduler {
   }
 
   private async runPlatform(platform: Platform): Promise<void> {
+    if (platform === 'douyin' && this.douyinCookieExpired) return;
+    await this.finalizePastPredictions();
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
     const scheduledRooms = this.dueScheduleChecks(now, platform)
@@ -70,14 +79,60 @@ export class Scheduler {
 
   private async runChecks(rooms: Room[], opts: { scheduled?: boolean } = {}): Promise<void> {
     let cursor = 0;
+    const isDouyinQueue = rooms[0]?.platform === 'douyin';
     const worker = async () => {
-      while (this.running) {
+      while (this.running && (!isDouyinQueue || !this.douyinCookieExpired)) {
         const room = rooms[cursor++];
         if (!room) return;
         await this.checkRoom(room, opts).catch(() => undefined);
       }
     };
     await Promise.all(Array.from({ length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) }, worker));
+  }
+
+  /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */
+  resetDouyinCookieFailure(): void {
+    this.douyinCookieExpired = false;
+  }
+
+  /** 等待已在途的检测完成，供凭证更新后避免复用仍携带旧 Cookie 的请求。 */
+  async waitForRoomCheck(roomId: string): Promise<void> {
+    await this.checking.get(roomId);
+  }
+
+  /**
+   * Cookie 更新后的全量复检在后台执行：设置保存不能被平台请求阻塞，
+   * 同时会等待携带旧 Cookie 的在途检测收口后再发起新请求。
+   */
+  async recheckDouyinRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.list().filter((room) => room.platform === 'douyin');
+    await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    this.resetDouyinCookieFailure();
+    await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
+  }
+
+  private markDouyinCookieExpired(): void {
+    if (this.douyinCookieExpired) return;
+    this.douyinCookieExpired = true;
+    const now = this.services.clock.iso();
+    for (const room of this.services.rooms.list().filter((item) => item.platform === 'douyin')) {
+      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', {
+        roomId: room.id,
+        retryable: false,
+      }).toObject();
+      // 正在录制的房间保留录制状态；lastError 足以让卡片显示 Cookie 已失效。
+      if (this.manager.isRoomActive(room.id)) this.services.rooms.setLastError(room.id, error);
+      else this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: now, lastError: error });
+      this.emitRoom(room.id);
+    }
+    const alert = this.services.alerts.create({
+      level: 'warning',
+      source: 'platform',
+      message: 'DOUYIN_COOKIE_EXPIRED: 抖音 Cookie 已失效，请到设置页更新',
+      occurredAt: now,
+      errorCode: 'DOUYIN_COOKIE_EXPIRED',
+    });
+    this.services.events.emit({ type: 'alert:created', data: alert });
   }
 
   /** 到期计划清单 + 推进 nextRunAt（幂等：重复调用同 now 不会重复触发）。 */
@@ -103,6 +158,7 @@ export class Scheduler {
 
   async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     if (this.services.resetting) return;
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
@@ -139,6 +195,9 @@ export class Scheduler {
   private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
+    // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
+    // 不让这个已在途请求的结果覆盖全局失效标记。
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
     // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
     const detectedName = status.displayName?.trim();
@@ -154,8 +213,52 @@ export class Scheduler {
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
       this.services.rooms.setLiveStatus(room.id, status.status);
+      this.services.rooms.setCurrentStreamTitle(
+        room.id,
+        status.status === 'live' ? status.streamTitle ?? null : null,
+      );
+    }
+    if (status.status === 'live' || status.status === 'offline') {
+      this.recordCoverage(room.id);
+      if (status.status === 'offline') this.recordTodayForecast(room.id);
     }
     if (status.status === 'live') {
+      // A confirmed offline→live transition has a narrow polling interval. First
+      // discovery while already live is still useful, but is stored as a lower-
+      // confidence interval instead of claiming the check time is the start time.
+      if (room.lastLiveStatus !== 'live' && status.platformStartedAt) {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'platform', lowerBoundAt: room.lastLiveStatus === 'offline' ? room.lastCheckedAt : null, platformStartedAt: status.platformStartedAt,
+        });
+      } else if (room.lastLiveStatus === 'offline') {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'transition', lowerBoundAt: room.lastCheckedAt,
+        });
+      } else if (room.lastLiveStatus === null) {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'initial_live', lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
+        });
+      }
+      const notifications = {
+        ...DEFAULT_NOTIFICATION_PREFERENCE,
+        ...(this.services.settings.load()?.notifications ?? {}),
+      };
+      // 仅在已确认离线后的下一次开播通知：首次检测/重启时的未知状态不补发。
+      if (
+        room.lastLiveStatus === 'offline' &&
+        checkedRoom.enabled &&
+        checkedRoom.liveNotificationEnabled &&
+        notifications.desktopEnabled &&
+        notifications.liveStarted
+      ) {
+        this.services.events.emit({
+          type: 'live:started',
+          data: {
+            roomId: checkedRoom.id,
+            displayName: checkedRoom.displayName.trim() || status.displayName?.trim() || checkedRoom.url,
+          },
+        });
+      }
       // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -199,6 +302,10 @@ export class Scheduler {
       status.status === 'restricted' ? '平台访问受限，请检查 Cookie 配置' : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
+    if (room.platform === 'douyin' && err.code === 'DOUYIN_COOKIE_EXPIRED') {
+      this.markDouyinCookieExpired();
+      return;
+    }
     this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
     this.emitRoom(room.id);
     const alert = this.services.alerts.create({
@@ -210,6 +317,69 @@ export class Scheduler {
       errorCode: err.code,
     });
     this.services.events.emit({ type: 'alert:created', data: alert });
+  }
+
+  private recordCoverage(roomId: string): void {
+    const now = this.services.clock.now();
+    const room = this.services.rooms.get(roomId);
+    const gap = Math.min(10 * 60_000, Math.max(180_000, this.intervalFor(room?.platform ?? 'bilibili') * 2_000 + 30_000));
+    this.services.predictionCalibration.recordCoverage(roomId, localDate(now), this.services.clock.iso(), gap);
+  }
+
+  private recordTodayForecast(roomId: string): void {
+    const now = this.services.clock.now();
+    const today = localDate(now);
+    if (this.forecastDate !== today) { this.forecastRecordedFor.clear(); this.forecastRetry.clear(); this.forecastDate = today; }
+    const key = `${roomId}:${today}`;
+    if (this.forecastRecordedFor.has(key)) return;
+    const latestEventId = this.services.liveEvents.latestId(roomId);
+    const retry = this.forecastRetry.get(roomId);
+    if (retry && now < retry.at && retry.latestEventId === latestEventId) return;
+    this.forecastRetry.set(roomId, { at: now + 5 * 60_000, latestEventId });
+    const from = new Date(now - 60 * 24 * 60 * 60 * 1_000).toISOString();
+    const events = this.services.liveEvents.list(roomId, from);
+    if (events.length < 2) return;
+    const prediction = calculateLivePrediction({
+      roomId, events, now, generatedAt: this.services.clock.iso(),
+      calibration: this.services.predictionCalibration.profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000)).get(roomId),
+      coverage: this.services.predictionCalibration.intervals([roomId], from).get(roomId),
+    });
+    // Retry at the current window's end even when the normal throttle has not
+    // elapsed, so the next session can be considered without stale dates.
+    const end = prediction.windowEndTimestamp ? Date.parse(prediction.windowEndTimestamp) : NaN;
+    if (Number.isFinite(end) && end >= now) {
+      this.forecastRetry.set(roomId, { at: Math.min(now + 5 * 60_000, end + 1), latestEventId });
+    }
+    if (prediction.kind !== 'next' || !prediction.rawLikelihood || !prediction.likelihood || !prediction.windowStartTimestamp || !prediction.windowEndTimestamp) return;
+    const start = Date.parse(prediction.windowStartTimestamp);
+    if (localDate(start) !== today || start <= now) return;
+    this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.likelihood, rawProbability: prediction.rawLikelihood,
+      windowStartAt: prediction.windowStartTimestamp, windowEndAt: prediction.windowEndTimestamp, generatedAt: this.services.clock.iso() });
+    // INSERT OR IGNORE can mean another run already persisted this room-day.
+    // Either way a concrete forecast exists before the in-memory key is set.
+    this.forecastRecordedFor.add(key);
+  }
+
+  private async finalizePastPredictions(): Promise<void> {
+    const now = this.services.clock.now();
+    const today = localDate(now);
+    if (now - this.predictionsFinalizedAt < 60_000) return;
+    this.predictionsFinalizedAt = now;
+    for (const forecast of this.services.predictionCalibration.pendingBefore(today)) {
+      if (!forecast.windowStartAt || !forecast.windowEndAt || !forecast.rawProbability) {
+        this.services.predictionCalibration.resolve(forecast.id, 'unknown', this.services.clock.iso()); continue;
+      }
+      const start = Date.parse(forecast.windowStartAt), end = Date.parse(forecast.windowEndAt);
+      // Allow the next check to discover an opening near the window's end.
+      if (end + 10 * 60_000 > now) continue;
+      const events = this.services.liveEvents.listBetween(forecast.roomId, forecast.windowStartAt, new Date(end + 10 * 60_000).toISOString());
+      const evidence = events.map(event => openingEvidenceInWindow(event,start,end));
+      const opened = evidence.includes('hit');
+      const coverage = this.services.predictionCalibration.intervals([forecast.roomId], forecast.windowStartAt).get(forecast.roomId) ?? [];
+      const ambiguous = evidence.includes('unknown');
+      const outcome = opened ? 'hit' : !ambiguous && coversPredictionWindow(coverage, start, end) ? 'miss' : 'unknown';
+      this.services.predictionCalibration.resolve(forecast.id, outcome, this.services.clock.iso());
+    }
   }
 
   /** 开启自动录制后使用最新配置检测；已有录制无需探测，避免改变其状态或停录。 */
@@ -226,6 +396,12 @@ export class Scheduler {
   async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
+    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     await this.checkRoom(room, { manual: true, ...opts }).catch(() => undefined);
   }
+}
+
+function localDate(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }

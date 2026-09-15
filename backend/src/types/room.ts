@@ -27,8 +27,12 @@ export interface Room {
   favorited: boolean;
   /** 是否单独设置自动录制（v4 P0 #75）：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
   autoRecord: boolean | null;
+  /** 是否在该直播间离线转开播时发送桌面提醒；默认关闭。 */
+  liveNotificationEnabled: boolean;
   /** 最近一次检测的直播状态（#78）：live/offline/restricted，未检测过为 null。 */
   lastLiveStatus: LiveStatus | null;
+  /** 最近一次检测到的当前直播间标题；仅在开播时保留。 */
+  currentStreamTitle: string | null;
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ErrorObject | null;

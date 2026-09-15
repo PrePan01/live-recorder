@@ -44,6 +44,9 @@ jobs:
         run: |
           version="$(node scripts/check-release-version.mjs)"
           tag="v${version}"
+          # Fail before the expensive platform builds when this release has no
+          # corresponding entry in the update manifest's release notes.
+          node scripts/check-release-notes.mjs "$version" release-notes.json
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
@@ -53,9 +56,18 @@ jobs:
             exit 0
           fi
 
-          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" >/dev/null 2>&1; then
+          # A previously interrupted publishing job can leave a draft behind.
+          # Resume that draft instead of treating the version as published.
+          existing_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .draft 2>/dev/null || true)"
+          if [ "$existing_draft" = "false" ]; then
             echo "Release ${tag} already exists; nothing to publish."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$existing_draft" = "true" ]; then
+            echo "Draft release ${tag} already exists; resuming publication."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -66,7 +78,55 @@ jobs:
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
 
+  # Run repository-wide checks once on Linux. The platform build jobs below
+  # should spend their time on platform-specific packaging rather than
+  # repeating the same backend/frontend test suite on macOS and Windows.
+  quality:
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      npm_config_audit: 'false'
+      npm_config_fund: 'false'
+      npm_config_prefer_offline: 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:ci
+
+      - name: Compile backend
+        run: npm --prefix backend run build
+
+      - name: Verify backend
+        run: npm --prefix backend test
+
+      - name: Lint frontend
+        run: npm --prefix frontend run lint
+
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+      - name: Verify frontend
+        run: npm --prefix frontend test
+
   build:
+    # Run platform packaging in parallel with the Linux quality gate. The
+    # release job still waits for both, so a quality failure can never publish.
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     strategy:
@@ -78,7 +138,7 @@ jobs:
             files: release/*.dmg
           - os: windows-latest
             artifact: live-recorder-windows-${{ needs.prepare.outputs.version }}
-            files: release/*.msi
+            files: release/*-setup.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -103,6 +163,19 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
+      # setup-node 只缓存 npm 的下载包；这里缓存已安装依赖，命中时可跳过 Windows 上约 1 分钟的 npm ci。
+      # key 包含 OS、Node 主版本和三份 lockfile，避免原生依赖（如 keytar）跨平台或跨依赖树复用。
+      - name: Restore installed dependencies
+        if: runner.os == 'Windows'
+        id: node_modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            backend/node_modules
+            frontend/node_modules
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -113,20 +186,28 @@ jobs:
           cache-on-failure: true
 
       - name: Install dependencies
+        if: runner.os != 'Windows' || steps.node_modules.outputs.cache-hit != 'true'
         run: npm run install:ci
 
       - name: Compile backend
         run: npm --prefix backend run build
 
-      - name: Verify backend
-        run: npm --prefix backend test
-
-      - name: Verify frontend
-        run: npm --prefix frontend test
+      # package.mjs 随后会 prune backend/node_modules；必须在裁剪前保存完整依赖，
+      # 否则下一次命中缓存时会缺少 vitest/typescript 等测试依赖。
+      - name: Save installed dependencies
+        if: runner.os == 'Windows' && steps.node_modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            node_modules
+            backend/node_modules
+            frontend/node_modules
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
 
       - name: Build installer
         env:
-          # Already compiled and tested above; CI does not need dev dependencies restored.
+          # The Linux quality gate covers the shared test suite; this job only
+          # needs the backend compiled for the platform-specific package.
           LR_SKIP_BACKEND_BUILD: '1'
           LR_SKIP_BACKEND_RESTORE: '1'
         run: npm run package
@@ -145,6 +226,8 @@ jobs:
           compression-level: 0
 
   native-test:
+    # Native checks are independent of the Linux JS test suite and can run in
+    # parallel with it to keep release wall-clock time down.
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     strategy:
@@ -180,7 +263,7 @@ jobs:
         run: cargo test --locked --manifest-path frontend/src-tauri/Cargo.toml --lib
 
   release:
-    needs: [prepare, build, native-test]
+    needs: [prepare, quality, build, native-test]
     if: needs.prepare.outputs.should_release == 'true' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     permissions:
@@ -222,7 +305,7 @@ jobs:
       - name: Generate update manifest
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION"
+        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION" release-notes.json
 
       - name: Generate checksums
         working-directory: release-assets
@@ -245,9 +328,12 @@ jobs:
           # 安装包文件名含版本号 → 内容不可变，长缓存（immutable）以利 CDN 加速。
           aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive \
             --exclude "latest.json" \
+            --exclude "releases.json" \
             --cache-control "public, max-age=31536000, immutable"
           # #43：latest.json 是「指针」，必须短缓存/回源校验，否则发版后 CDN 仍返回旧版本。
           aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/latest.json "s3://$QINIU_BUCKET/latest.json" \
+            --cache-control "no-cache, no-store, must-revalidate, max-age=0"
+          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/releases.json "s3://$QINIU_BUCKET/releases.json" \
             --cache-control "no-cache, no-store, must-revalidate, max-age=0"
 
       - name: Create GitHub Release
@@ -255,10 +341,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release create "$RELEASE_TAG" release-assets/* \
+          # GitHub's Releases API occasionally returns transient 5xx errors.
+          # Keep each phase idempotent: a retry can resume after the draft has
+          # been created, or after only some assets were uploaded.
+          retry() {
+            local attempt=1 max_attempts=5 delay=2
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::Command failed after ${attempt} attempts: $*"
+                return 1
+              fi
+              echo "Command failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          ensure_draft_release() {
+            # A failed create request may still have reached GitHub. Check on
+            # every attempt so a retry resumes that draft instead of receiving
+            # an "already exists" error forever.
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              return 0
+            fi
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" \
+              --generate-notes \
+              --draft
+          }
+
+          retry ensure_draft_release
+
+          retry gh release upload "$RELEASE_TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" \
-            --generate-notes \
-            --draft
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            --clobber
+          retry gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -11,7 +11,9 @@ interface RoomRow {
   enabled: number;
   favorited: number;
   auto_record: number | null;
+  live_notification_enabled: number;
   last_live_status: string | null;
+  current_stream_title: string | null;
   upload_enabled: number | null;
   title_source: string | null;
   title_updated_at: string | null;
@@ -42,7 +44,9 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
+    liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
+    currentStreamTitle: row.current_stream_title,
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
     titleSource: (row.title_source as TitleSource) ?? null,
     titleUpdatedAt: row.title_updated_at,
@@ -63,6 +67,7 @@ export interface NewRoomInput {
   url: string;
   displayName: string;
   enabled?: boolean;
+  liveNotificationEnabled?: boolean;
 }
 
 export class RoomRepository {
@@ -100,7 +105,9 @@ export class RoomRepository {
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
+      liveNotificationEnabled: input.liveNotificationEnabled ?? false,
       lastLiveStatus: null,
+      currentStreamTitle: null,
       uploadEnabled: null,
       titleSource: null,
       titleUpdatedAt: null,
@@ -117,10 +124,10 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, sort_order, monitor_state, last_checked_at, last_error, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
+          `INSERT INTO rooms (id, platform, url, display_name, enabled, favorited, auto_record, live_notification_enabled, last_live_status, upload_enabled, title_source, title_updated_at, title_fallback_used, sort_order, monitor_state, last_checked_at, last_error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
         )
-        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.sortOrder, room.monitorState, now, now);
+        .run(room.id, room.platform, room.url, room.displayName, room.enabled ? 1 : 0, room.favorited ? 1 : 0, room.liveNotificationEnabled ? 1 : 0, room.sortOrder, room.monitorState, now, now);
     } catch (err) {
       if (isUniqueConflict(err)) {
         throw new AppError('ROOM_LINK_DUPLICATE', '该直播间已存在', { roomId: this.findIdByPlatformUrl(room.platform, room.url) });
@@ -135,7 +142,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -145,7 +152,7 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
@@ -153,6 +160,7 @@ export class RoomRepository {
           next.enabled ? 1 : 0,
           next.favorited ? 1 : 0,
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
+          next.liveNotificationEnabled ? 1 : 0,
           next.uploadEnabled === null ? null : next.uploadEnabled ? 1 : 0,
           next.titleSource ?? null,
           next.titleUpdatedAt ?? null,
@@ -201,11 +209,25 @@ export class RoomRepository {
       .run(state, opts.lastCheckedAt ?? null, opts.lastError ? JSON.stringify(opts.lastError) : null, nowIso(), id);
   }
 
+  /** 写入平台级错误但保留录制等现有状态，避免中断正在进行的录制。 */
+  setLastError(id: string, error: ErrorObject): void {
+    this.db
+      .prepare('UPDATE rooms SET last_error = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(error), nowIso(), id);
+  }
+
   /** 写入最近一次检测的直播状态（#78）。 */
   setLiveStatus(id: string, status: LiveStatus): void {
     this.db
       .prepare(`UPDATE rooms SET last_live_status = ?, updated_at = ? WHERE id = ?`)
       .run(status, nowIso(), id);
+  }
+
+  /** 保存本场直播的房间标题；离线/受限时清除，避免展示过期标题。 */
+  setCurrentStreamTitle(id: string, title: string | null): void {
+    this.db
+      .prepare(`UPDATE rooms SET current_stream_title = ?, updated_at = ? WHERE id = ?`)
+      .run(title?.trim() || null, nowIso(), id);
   }
 
   /** 写入房间标题识别元数据（V5 #91：识别来源/时间/回退标记）。 */
@@ -217,6 +239,11 @@ export class RoomRepository {
 
   remove(id: string): void {
     // #92：仅移除监控配置，不再级联删除该房间的录制历史（迁移 v8 已去掉外键）。
+    // 检测事件仅服务于仍存在的监控项，删除房间时一并移除，避免外键阻塞删除。
+    this.db.prepare('DELETE FROM live_events WHERE room_id = ?').run(id);
+    this.db.prepare('DELETE FROM prediction_forecasts WHERE room_id = ?').run(id);
+    this.db.prepare('DELETE FROM prediction_coverage WHERE room_id = ?').run(id);
+    this.db.prepare('DELETE FROM prediction_coverage_intervals WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
   }
 }

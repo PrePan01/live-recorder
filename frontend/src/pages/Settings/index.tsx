@@ -11,6 +11,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -26,12 +27,15 @@ import {
   SyncOutlined,
   NotificationOutlined,
   QuestionCircleOutlined,
+  GlobalOutlined,
+  BugOutlined,
 } from "@ant-design/icons";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
+import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
 import { validateDirectory } from "../../api/settings";
@@ -77,6 +81,18 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
   warn: "警告",
   pending: "检测中",
 };
+const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
+const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
+
+function openExternalUrl(url: string): void {
+  if (bridge.isDesktop) {
+    void bridge.openPath(url).catch(() => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 export default function SettingsPage() {
   const { message } = App.useApp();
@@ -95,6 +111,7 @@ export default function SettingsPage() {
     fetchAlerts,
     markRead,
     markAllRead,
+    clearAll,
     retryFailure,
     retryingId,
   } = useAlertStore();
@@ -241,8 +258,10 @@ export default function SettingsPage() {
     try {
       const res = await testNotification();
       const parts: string[] = [];
-      if (res.desktop) parts.push("桌面通知已发送");
-      else parts.push("桌面通知未开启");
+      if (res.desktop) {
+        await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
+        parts.push("桌面通知已发送");
+      } else parts.push("桌面通知未开启");
       if (res.email === "sent") parts.push("邮件已发送");
       else if (res.email === "skipped") parts.push("SMTP 未配置，邮件跳过");
       else if (res.email === "failed") parts.push("邮件发送失败");
@@ -256,7 +275,10 @@ export default function SettingsPage() {
     }
   };
 
-  const persist = async (values: SettingsInput, clearDouyinCookie = false) => {
+  const persist = async (
+    values: SettingsInput,
+    clearDouyinCookie = false,
+  ): Promise<boolean> => {
     const { mail, douyinCookie, ...rest } = values as SettingsInput & {
       mail?: Record<string, unknown> & {
         recipients?: string;
@@ -283,10 +305,12 @@ export default function SettingsPage() {
             }
           : undefined,
       });
+      return true;
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
+      return false;
     }
   };
 
@@ -451,12 +475,20 @@ export default function SettingsPage() {
                 >
                   录制行为
                 </Typography.Title>
+                <Form.Item
+                  label="录制完成后询问是否保留"
+                  name="confirmAfterComplete"
+                  valuePropName="checked"
+                >
+                  <Switch />
+                </Form.Item>
                 <Row gutter={16}>
                   <Col xs={24} md={8}>
                     <Form.Item
                       label="最大并发"
                       name="maxConcurrentRecordings"
                       rules={[{ required: true }]}
+                      extra="可同时录制的直播间数量"
                     >
                       <InputNumber min={1} max={8} style={{ width: "100%" }} />
                     </Form.Item>
@@ -609,15 +641,6 @@ export default function SettingsPage() {
                     <InputNumber min={5} max={600} addonAfter="秒" />
                   </Form.Item>
                 </div>
-                <div className="lr-settings-section">
-                  <Form.Item
-                    label="录制完成后询问是否保留"
-                    name="confirmAfterComplete"
-                    valuePropName="checked"
-                  >
-                    <Switch />
-                  </Form.Item>
-                </div>
               </div>
               <div
                 id="douyin-cookie"
@@ -710,8 +733,19 @@ export default function SettingsPage() {
               initialPath={settings?.recordingDirectory}
               onClose={() => setPickerOpen(false)}
               onPick={(dir) => {
+                // setFieldValue 不会触发 Form 的 onValuesChange；如果只回填表单，
+                // 离开页面后重新加载设置时会丢失目录选择。
+                if (debounceRef.current) {
+                  clearTimeout(debounceRef.current);
+                  debounceRef.current = null;
+                }
                 form.setFieldValue("recordingDirectory", dir);
-                message.success("目录已选择，点击保存生效");
+                void persist({
+                  ...form.getFieldsValue(),
+                  recordingDirectory: dir,
+                } as SettingsInput).then((saved) => {
+                  if (saved) message.success("目录已选择并保存");
+                });
               }}
             />
             <input
@@ -883,7 +917,7 @@ export default function SettingsPage() {
                 style={{ marginBottom: 0 }}
               >
                 桌面通知使用系统通知能力；邮件告警需在「SMTP
-                邮件告警」配置并启用。测试会发送一条示例通知。
+                邮件告警」配置并启用。
               </Typography.Paragraph>
             </Space>
           </Card>
@@ -903,7 +937,7 @@ export default function SettingsPage() {
           >
             {checks === null ? (
               <Typography.Paragraph type="secondary">
-                检测环境健康：后端可达、平台 Cookie、SMTP、磁盘空间、目录可写。
+                点击检测，检测功能是否正常
               </Typography.Paragraph>
             ) : (
               <List
@@ -952,14 +986,31 @@ export default function SettingsPage() {
             className="lr-alerts-card lr-settings-card"
             title="告警"
             extra={
-              <Button
-                size="small"
-                onClick={() => {
-                  void markAllRead().catch(() => undefined);
-                }}
-              >
-                全部已读
-              </Button>
+              <Space size={8}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    void markAllRead().catch(() => undefined);
+                  }}
+                >
+                  全部已读
+                </Button>
+                <Popconfirm
+                  title="清除全部告警？"
+                  okText="清除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() =>
+                    clearAll()
+                      .then(() => message.success("已清除全部告警"))
+                      .catch(() => message.error("清除告警失败"))
+                  }
+                >
+                  <Button size="small" danger disabled={alerts.length === 0}>
+                    清除全部
+                  </Button>
+                </Popconfirm>
+              </Space>
             }
           >
             <List
@@ -1031,6 +1082,16 @@ export default function SettingsPage() {
           </Card>
         </Col>
       </Row>
+      <footer className="lr-settings-footer" aria-label="相关链接">
+        <Space size={16} wrap>
+          <Typography.Link onClick={() => openExternalUrl(OFFICIAL_SITE_URL)}>
+            <GlobalOutlined /> 官网
+          </Typography.Link>
+          <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
+            <BugOutlined /> 提交 Issue
+          </Typography.Link>
+        </Space>
+      </footer>
     </div>
   );
 }

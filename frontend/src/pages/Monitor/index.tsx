@@ -17,12 +17,14 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
+  AppstoreOutlined,
   EyeOutlined,
   LinkOutlined,
   ReloadOutlined,
   StarFilled,
   StarOutlined,
   StopOutlined,
+  UnorderedListOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { useRoomStore } from "../../stores/roomStore";
@@ -33,7 +35,7 @@ import {
   fetchRoomInsights,
   type RoomInsight,
 } from "../../api/rooms";
-import { PlatformLogoTag } from "../../components/PlatformLogo";
+import { PlatformIcon, PlatformLogoTag } from "../../components/PlatformLogo";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import { MonitorStateTag } from "../../components/StatusTags";
 import { formatRelative } from "../../utils/format";
@@ -44,12 +46,19 @@ import LivePredictionBadge from "../../components/LivePredictionBadge";
 import PreviewModal from "../../components/PreviewModal";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
-import type { Room } from "../../types/room";
+import type { Platform, Room } from "../../types/room";
 import {
   RoomSortableProvider,
   SortableRoomTableRow,
   useRoomSortableItem,
 } from "../../components/RoomSortable";
+
+let startupLiveCheck: Promise<void> | null = null;
+
+function triggerStartupLiveCheck(): Promise<void> {
+  startupLiveCheck ??= checkEnabledRooms();
+  return startupLiveCheck;
+}
 
 function SortableRoomCardItem({
   roomId,
@@ -184,13 +193,13 @@ const RoomCard = memo(function RoomCard({
         }
       >
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-          <LiveStatusTag status={room.lastLiveStatus} />
+          <LiveStatusTag status={room.lastLiveStatus} streamTitle={room.currentStreamTitle} />
           {autoRecordEnabled ? (
             <Tag color="blue" style={{ marginInlineEnd: 0 }}>
               自动录
             </Tag>
           ) : null}
-          <LivePredictionBadge insight={insight} />
+          <LivePredictionBadge insight={insight} hidden={onAir || recording} />
           {room.tags.length > 0 ? (
             <Space size={[4, 4]} wrap>
               {room.tags.map((t) => (
@@ -225,14 +234,15 @@ const RoomCard = memo(function RoomCard({
             style={{ marginBottom: 10, marginTop: 0 }}
           >
             {room.platform === "douyin" &&
-            room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
+            (room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ||
+              room.lastError.code === "DOUYIN_COOKIE_EXPIRED") ? (
               <>
                 平台访问受限，请检查{" "}
-              <Typography.Link
-                className="lr-room-card__error-link"
-                underline
-                onClick={() => navigate("/settings#douyin-cookie")}
-              >
+                <Typography.Link
+                  className="lr-room-card__error-link"
+                  underline
+                  onClick={() => navigate("/settings#douyin-cookie")}
+                >
                   Cookie 配置
                 </Typography.Link>
               </>
@@ -373,6 +383,9 @@ export default function Monitor() {
   const [filter, setFilter] = useState<"全部" | "开播中" | "录制中" | "收藏">(
     "全部",
   );
+  const [platformFilter, setPlatformFilter] = useState<"全部" | Platform>(
+    "全部",
+  );
   const [keyword, setKeyword] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
@@ -410,21 +423,37 @@ export default function Monitor() {
   }, [fetchRooms, message]);
 
   useEffect(() => {
+    let disposed = false;
+    void triggerStartupLiveCheck()
+      .then(() => (disposed ? undefined : fetchRooms(true)))
+      .catch(() => {
+        if (!disposed) message.error("启动时开播检测失败，请稍后重试");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [fetchRooms, message]);
+
+  useEffect(() => {
     const ids = rooms.filter((room) => room.enabled).map((room) => room.id);
     if (ids.length === 0) {
       setInsights({});
       return;
     }
     let disposed = false;
-    void fetchRoomInsights(ids)
-      .then((next) => {
-        if (!disposed) setInsights(next);
-      })
-      .catch(() => {
-        if (!disposed) setInsights({});
-      });
+    // Coalesce room events from the same polling batch into one insight request.
+    const timer = setTimeout(() => {
+      void fetchRoomInsights(ids)
+        .then((next) => {
+          if (!disposed) setInsights(next);
+        })
+        .catch(() => {
+          if (!disposed) setInsights({});
+        });
+    }, 250);
     return () => {
       disposed = true;
+      clearTimeout(timer);
     };
   }, [rooms]);
 
@@ -434,6 +463,7 @@ export default function Monitor() {
 
   const monitorRooms = rooms
     .filter((r) => r.enabled)
+    .filter((r) => platformFilter === "全部" || r.platform === platformFilter)
     .filter((r) => {
       if (filter === "开播中") return r.lastLiveStatus === "live";
       if (filter === "录制中")
@@ -463,11 +493,13 @@ export default function Monitor() {
     [message, reorderRooms],
   );
 
-  const enabledRooms = rooms.filter((r) => r.enabled);
-  const liveCount = enabledRooms.filter(
+  const platformRooms = rooms.filter(
+    (r) => r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
+  );
+  const liveCount = platformRooms.filter(
     (r) => r.lastLiveStatus === "live",
   ).length;
-  const recordingCount = enabledRooms.filter(
+  const recordingCount = platformRooms.filter(
     (r) => r.monitorState === "recording" || r.monitorState === "reconnecting",
   ).length;
 
@@ -673,7 +705,7 @@ export default function Monitor() {
                 size="small"
                 type="link"
                 icon={<VideoCameraAddOutlined />}
-                disabled={!onAir || recentStop[room.id] !== undefined}
+                disabled={acting || !onAir || recentStop[room.id] !== undefined}
                 onClick={() =>
                   void startRoomRecording(room.id).catch((e) =>
                     message.error(
@@ -723,7 +755,53 @@ export default function Monitor() {
             }
           />
           <MemphisRadioGroup
-            options={["卡片", "列表"]}
+            className="lr-platform-filter"
+            aria-label="平台筛选"
+            options={[
+              { label: "全部", value: "全部" },
+              {
+                label: (
+                  <Tooltip title="B站">
+                    <PlatformIcon platform="bilibili" />
+                  </Tooltip>
+                ),
+                value: "bilibili",
+              },
+              {
+                label: (
+                  <Tooltip title="抖音">
+                    <PlatformIcon platform="douyin" />
+                  </Tooltip>
+                ),
+                value: "douyin",
+              },
+            ]}
+            value={platformFilter}
+            onChange={(e) =>
+              setPlatformFilter(e.target.value as "全部" | Platform)
+            }
+          />
+          <MemphisRadioGroup
+            className="lr-monitor-view-toggle"
+            aria-label="显示方式"
+            options={[
+              {
+                label: (
+                  <Tooltip title="卡片视图">
+                    <AppstoreOutlined />
+                  </Tooltip>
+                ),
+                value: "卡片",
+              },
+              {
+                label: (
+                  <Tooltip title="列表视图">
+                    <UnorderedListOutlined />
+                  </Tooltip>
+                ),
+                value: "列表",
+              },
+            ]}
             value={view}
             onChange={(e) => {
               const nextView = e.target.value as "卡片" | "列表";

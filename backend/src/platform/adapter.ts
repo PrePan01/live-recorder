@@ -5,6 +5,8 @@ export type { Quality };
 export interface LiveStatusResult {
   status: 'offline' | 'live' | 'restricted' | 'error';
   streamSessionId?: string;
+  /** Platform-reported start time for the current broadcast, when the platform exposes a reliable value. */
+  platformStartedAt?: string;
   streamTitle?: string;
   displayName?: string;
   availableQualities?: Quality[];

@@ -103,6 +103,20 @@ describe('REST contract v1.1 (fake stack)', () => {
     expect(created.statusCode).toBe(201);
     const room = created.json().room;
     expect(room.url).toBe('https://live.bilibili.com/123');
+    expect(room.liveNotificationEnabled).toBe(false);
+
+    const enableLiveNotification = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' },
+      payload: { liveNotificationEnabled: true },
+    });
+    expect(enableLiveNotification.statusCode).toBe(200);
+    expect(enableLiveNotification.json().room.liveNotificationEnabled).toBe(true);
+    const invalidLiveNotification = await app.inject({
+      method: 'PATCH', url: `/api/v1/rooms/${room.id}`, headers: { host: '127.0.0.1:43120' },
+      payload: { liveNotificationEnabled: 'yes' },
+    });
+    expect(invalidLiveNotification.statusCode).toBe(422);
+    expect(invalidLiveNotification.json().error.code).toBe('ROOM_LINK_INVALID');
 
     const dup = await app.inject({
       method: 'POST', url: '/api/v1/rooms', headers: { host: '127.0.0.1:43120' },
@@ -425,6 +439,35 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings: saving a new douyin cookie immediately checks every douyin room', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cookie-check-'));
+    const enabledDouyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/1', displayName: 'enabled' });
+    const disabledDouyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/2', displayName: 'disabled', enabled: false });
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/3', displayName: 'bilibili' });
+
+    const put = await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: {
+        recordingDirectory: dir,
+        maxConcurrentRecordings: 2,
+        quality: 'original',
+        checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+        retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+        diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+        mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+        douyinCookie: 'sessionid=abc123;ttwid=xyz',
+      },
+    });
+
+    expect(put.statusCode).toBe(200);
+    expect(services.rooms.get(enabledDouyin.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(disabledDouyin.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(bilibili.id)?.lastCheckedAt).toBeNull();
+    await app.close();
+  });
+
   it('settings: douyin cookie validation rejects incomplete cookies (missing ttwid/sessionid) (#30)', async () => {
     const services = newServices();
     const { app } = buildApp(services);
@@ -489,6 +532,9 @@ describe('REST contract v1.1 (fake stack)', () => {
     const readAll = await app.inject({ method: 'POST', url: '/api/v1/alerts/read-all', headers: { host: '127.0.0.1:43120' } });
     expect(readAll.json().ok).toBe(true);
     expect((await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } })).json().alerts).toHaveLength(0);
+    const clearAll = await app.inject({ method: 'DELETE', url: '/api/v1/alerts', headers: { host: '127.0.0.1:43120' } });
+    expect(clearAll.json()).toMatchObject({ ok: true, deleted: 2 });
+    expect((await app.inject({ method: 'GET', url: '/api/v1/alerts', headers: { host: '127.0.0.1:43120' } })).json().alerts).toHaveLength(0);
     await app.close();
   });
 

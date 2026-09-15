@@ -232,7 +232,7 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.state !== undefined) {

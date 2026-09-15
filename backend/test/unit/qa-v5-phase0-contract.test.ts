@@ -157,23 +157,19 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
     await app.close();
   });
 
-  it('confidence escalates by sample days (5-9 medium, 10+ high)', () => {
+  it('confidence grows with independent dates supporting the selected weekday window', () => {
     const services = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/90', displayName: 'conf' });
-    const make = (day: number, id: string) => {
-      const iso = `2026-08-${String(day).padStart(2, '0')}`;
-      const r = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: id, streamTitle: 't' });
-      services.recordings.update(r.id, { state: 'completed', endedAt: `${iso}T11:00:00.000Z` });
-      services.db.prepare('UPDATE recordings SET started_at = ? WHERE id = ?').run(`${iso}T09:00:00.000Z`, r.id);
-    };
-    for (let d = 16; d <= 20; d++) make(d, `m${d}`);
-    const five = livePrediction(services, room.id);
-    expect(five.basedOnDays).toBe(5);
-    expect(five.confidence).toBe('medium');
-    for (let d = 21; d <= 25; d++) make(d, `h${d}`);
-    const ten = livePrediction(services, room.id);
-    expect(ten.basedOnDays).toBe(10);
-    expect(ten.confidence).toBe('high');
+    const dates = ['2026-07-17','2026-07-24','2026-07-31','2026-08-07','2026-08-14','2026-08-21'];
+    const make = (day: string) => services.liveEvents.record(room.id, `${day}T09:00:00.000Z`, {source:'platform',platformStartedAt:`${day}T09:00:00.000Z`});
+    dates.slice(0,2).forEach(make);
+    expect(livePrediction(services,room.id).confidence).toBe('low');
+    dates.slice(2,4).forEach(make);
+    expect(livePrediction(services,room.id).confidence).toBe('medium');
+    dates.slice(4).forEach(make);
+    const six = livePrediction(services,room.id);
+    expect(six.basedOnDays).toBe(6);
+    expect(six.confidence).toBe('high');
   });
 
   it('persists notifications in settings view and round-trips after save', async () => {
@@ -213,6 +209,8 @@ describe('QA Batch2 #116/#117 gaps: openlist & email', () => {
     const inj = host(app);
     const badEnabled = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { enabled: 'yes' } });
     expect(badEnabled.statusCode).toBe(422);
+    const badDeleteSource = await inj({ method: 'PUT', url: '/api/v1/settings/openlist', payload: { deleteSourceAfterUpload: 'yes' } });
+    expect(badDeleteSource.statusCode).toBe(422);
     const room = (await inj({ method: 'POST', url: '/api/v1/rooms', payload: { platform: 'bilibili', url: 'https://live.bilibili.com/97', displayName: 'up' } })).json().room;
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'up1', streamTitle: 't' });
     // 使用真实临时文件作为源文件（#18：磁盘文件缺失会明确报「源文件已删除」）。

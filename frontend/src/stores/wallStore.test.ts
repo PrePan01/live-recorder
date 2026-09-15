@@ -26,6 +26,15 @@ it('swaps only the requested rooms and ignores stale drag targets', () => {
   expect(useWallStore.getState().roomIds).toEqual(['d', 'b', 'c', 'a']);
 });
 
+it('adds a room directly into the selected empty slot', () => {
+  useWallStore.setState({ roomIds: ['a', null, null, 'd'], grid: '2x2' });
+  expect(useWallStore.getState().addRoomToSlot('b', 2)).toBe(true);
+  expect(useWallStore.getState().roomIds).toEqual(['a', null, 'b', 'd']);
+  expect(useWallStore.getState().addRoomToSlot('a', 1)).toBe(false);
+  expect(useWallStore.getState().addRoomToSlot('c', 2)).toBe(false);
+  expect(useWallStore.getState().addRoomToSlot('c', 4)).toBe(false);
+});
+
 afterEach(() => {
   useWallStore.setState({ roomIds: [], grid: '2x2' });
   vi.restoreAllMocks();

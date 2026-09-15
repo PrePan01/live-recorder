@@ -7,6 +7,7 @@ import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import type { AppSettings } from '../../src/types/index.js';
+import { AppError } from '../../src/types/error.js';
 
 function newServices(): { services: Services; clock: FakeClock } {
   const clock = new FakeClock();
@@ -41,6 +42,100 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('stores the detected live room title and clears it once the room goes offline', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/600', displayName: '主播A' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamTitle: '这是当前直播间标题，不是主播名字' },
+      { status: 'offline' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.currentStreamTitle).toBe('这是当前直播间标题，不是主播名字');
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.currentStreamTitle).toBeNull();
+  });
+
+  it('emits one live-started event only for an offline-to-live transition with all notification gates enabled', async () => {
+    const { services } = newServices();
+    services.settings.save({
+      ...baseSettings(),
+      autoRecord: false,
+      notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+    });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
+    const notices: Array<{ roomId: string; displayName: string }> = [];
+    services.events.on((event) => {
+      if (event.type === 'live:started') notices.push(event.data);
+    });
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+    expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
+  });
+
+  it('does not announce an initially-live room or bypass disabled notification gates', async () => {
+    const { services } = newServices();
+    services.settings.save({
+      ...baseSettings(),
+      autoRecord: false,
+      notifications: { desktopEnabled: false, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+    });
+    const initiallyLive = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/602', displayName: '首次开播', liveNotificationEnabled: true });
+    const gated = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/603', displayName: '总开关关闭', liveNotificationEnabled: true });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
+    const notices: string[] = [];
+    services.events.on((event) => { if (event.type === 'live:started') notices.push(event.data.roomId); });
+
+    await services.scheduler.triggerImmediateCheck(initiallyLive.id);
+    await services.scheduler.triggerImmediateCheck(gated.id);
+    await services.scheduler.triggerImmediateCheck(gated.id);
+
+    expect(notices).toEqual([]);
+  });
+
+  it('persists initial-live discovery separately from an offline-to-live transition', async () => {
+    const { services, clock } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/604', displayName: '首次发现' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_000);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_000);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const events = services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z');
+    expect(events.map((event) => event.source)).toEqual(['initial_live', 'transition']);
+    expect(events[0]!.lowerBoundAt).toBe(room.createdAt);
+    expect(events[1]!.lowerBoundAt).toBeTruthy();
+  });
+
+  it('uses a platform-reported start time once without duplicating an ongoing broadcast', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/605', displayName: '平台时间' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', platformStartedAt: '2026-08-28T00:00:00.000Z' },
+      { status: 'live', platformStartedAt: '2026-08-28T00:00:00.000Z' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const events = services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: 'platform', platformStartedAt: '2026-08-28T00:00:00.000Z' });
+  });
+
   it('checks with the enabled autoRecord setting after an older check finishes', async () => {
     const { services } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-pending-'));
@@ -409,6 +504,39 @@ describe('Scheduler', () => {
     await services.secretStore.delete('douyin.cookie');
     await services.scheduler.triggerImmediateCheck(room.id);
     expect(seenCookie).toBeUndefined();
+  });
+
+  it('marks every douyin room and skips further checks after an explicit cookie-expired response', async () => {
+    const { services } = newServices();
+    const first = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/71', displayName: 'first' });
+    const second = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/72', displayName: 'second' });
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/73', displayName: 'bilibili' });
+    let calls = 0;
+    const expiredAdapter: PlatformAdapter = {
+      platform: 'douyin',
+      async checkLiveStatus() {
+        calls += 1;
+        return {
+          status: 'restricted',
+          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新').toObject(),
+        };
+      },
+      async getStreamUrl() {
+        return { url: 'https://x/flv', format: 'flv', actualQuality: 'original' };
+      },
+      normalizeUrl: (url) => url,
+      validateUrl: () => true,
+    };
+    services.adapterFor = () => expiredAdapter;
+
+    await services.scheduler.triggerImmediateCheck(first.id);
+    await services.scheduler.triggerImmediateCheck(second.id);
+
+    expect(services.rooms.get(first.id)?.lastError?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+    expect(services.rooms.get(second.id)?.lastError?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+    expect(calls).toBe(1);
+    expect(services.rooms.get(bilibili.id)?.lastError).toBeNull();
+    expect(services.alerts.list().filter((alert) => alert.errorCode === 'DOUYIN_COOKIE_EXPIRED')).toHaveLength(1);
   });
 
   it('writes lastLiveStatus from check result (#78)', async () => {

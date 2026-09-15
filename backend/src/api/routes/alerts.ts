@@ -24,4 +24,9 @@ export function registerAlertRoutes(app: FastifyInstance, services: Services): v
     services.alerts.markAllResolved();
     return reply.send({ ok: true });
   });
+
+  app.delete('/api/v1/alerts', async (_req, reply) => {
+    const deleted = services.alerts.clearAll();
+    return reply.send({ ok: true, deleted });
+  });
 }

@@ -15,6 +15,7 @@ describe('room insight batch endpoint', () => {
       const startedAt = new Date(clock.now() - day * 86_400_000).toISOString();
       const endedAt = new Date(clock.now() - day * 86_400_000 + 3_600_000).toISOString();
       services.recordings.update(rec.id, { state: day === 3 ? 'failed' : 'completed', startedAt, endedAt, fileSizeBytes: day * 100 });
+      services.liveEvents.record(room.id, startedAt);
     }
     const { app } = buildApp(services);
     const response = await app.inject({ method: 'POST', url: '/api/v1/rooms/insights/batch', headers: HOST, payload: { roomIds: [room.id] } });

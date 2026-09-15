@@ -45,7 +45,7 @@ export class PipelineManager {
     if (!config.enabled) {
       // 未启用管线：录制保持 completed，pipelineStatus=not_required；仍触发 OpenList 自动上传（uploader 自身校验 enabled/token）。
       this.services.recordings.update(recordingId, { pipelineStatus: 'not_required' });
-      void this.services.uploader.enqueue(recordingId).catch(() => undefined);
+      void this.services.uploader.enqueue(recordingId, { automatic: true }).catch(() => undefined);
       return;
     }
     // 同录制单飞：已排队/运行中则忽略。
@@ -221,7 +221,7 @@ export class PipelineManager {
       this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(run.recordingId)! });
       // 管线完成（ok/partial）后触发 OpenList 上传（若启用）。
       if (status === 'ok' || status === 'partial') {
-        void this.services.uploader.enqueue(run.recordingId).catch(() => undefined);
+        void this.services.uploader.enqueue(run.recordingId, { automatic: true }).catch(() => undefined);
       }
     }
   }

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Platform } from '../../types/index.js';
 import type { Services } from '../../core/services.js';
+import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const INSIGHT_CACHE_TTL_MS = 30_000;
@@ -12,18 +13,7 @@ export interface RoomInsight {
   successRate: number;
   completed: number;
   failed: number;
-  prediction: { startAt: string | null; endAt: string | null; confidence: 'high' | 'medium' | 'low' | null; basedOnDays: number; notice: string | null };
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
-}
-
-function hhmm(ms: number): string {
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  prediction: LivePrediction;
 }
 
 export function registerRoomRoutes(app: FastifyInstance, services: Services): void {
@@ -56,41 +46,42 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const key = [...roomIds].sort().join(',');
     const now = services.clock.now();
     if (insightCache?.key === key && insightCache.expiresAt > now) return reply.send(insightCache.body);
+    const from60 = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
     const from30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
     const from7 = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
     const placeholders = roomIds.map(() => '?').join(',');
     const rows = services.db.prepare(
-      `SELECT room_id, state, file_size_bytes, started_at, ended_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
-    ).all(...roomIds, from30) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null }>;
+      `SELECT room_id, state, file_size_bytes, started_at, ended_at, stream_session_id FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
+    ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null; stream_session_id: string | null }>;
+    const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
+    const calibrationProfiles = services.predictionCalibration.profiles(roomIds, localDateFromMs(now - 60 * 24 * 60 * 60 * 1000));
+    const coverage = services.predictionCalibration.intervals(roomIds, from60);
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
+    const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
     for (const row of rows) grouped.get(row.room_id)?.push(row);
+    for (const event of liveEvents) eventsByRoom.get(event.roomId)?.push(event);
     const insights: Record<string, RoomInsight> = {};
     for (const id of roomIds) {
       const records = grouped.get(id) ?? [];
+      const events = eventsByRoom.get(id) ?? [];
       const week = records.filter((record) => record.started_at >= from7);
       const completed = week.filter((record) => record.state === 'completed').length;
       const failed = week.filter((record) => record.state === 'failed').length;
-      const byDay = new Map<string, { start: number; end: number }>();
-      for (const record of records) {
-        if (!record.ended_at) continue;
-        const start = Date.parse(record.started_at);
-        const end = Date.parse(record.ended_at);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
-        const day = record.started_at.slice(0, 10);
-        const current = byDay.get(day);
-        byDay.set(day, current ? { start: Math.min(current.start, start), end: Math.max(current.end, end) } : { start, end });
-      }
-      const days = [...byDay.values()];
-      const basedOnDays = days.length;
       insights[id] = {
         totalRecordings: week.length,
         totalBytes: week.reduce((sum, record) => sum + (record.file_size_bytes ?? 0), 0),
         completed,
         failed,
         successRate: completed + failed === 0 ? 100 : Math.round((completed / (completed + failed)) * 100),
-        prediction: basedOnDays < 3
-          ? { startAt: null, endAt: null, confidence: null, basedOnDays, notice: '近 30 天样本不足，暂无开播预测' }
-          : { startAt: hhmm(median(days.map((day) => day.start))), endAt: hhmm(median(days.map((day) => day.end))), confidence: basedOnDays >= 10 ? 'high' : basedOnDays >= 5 ? 'medium' : 'low', basedOnDays, notice: null },
+        prediction: calculateLivePrediction({
+          roomId: id,
+          events,
+          fallbackEvents: recordingFallbackEvents(records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id }))),
+          now,
+          generatedAt: services.clock.iso(),
+          calibration: calibrationProfiles.get(id),
+          coverage: coverage.get(id),
+        }),
       };
     }
     const response = { insights, generatedAt: services.clock.iso() };
@@ -107,7 +98,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
   });
 
   app.post('/api/v1/rooms', async (req, reply) => {
-    const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean };
+    const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean; liveNotificationEnabled?: boolean };
     if (typeof body.url !== 'string' || body.url.trim().length === 0) {
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
@@ -121,11 +112,15 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
     }
     const adapter = services.adapterFor(platform);
+    if (body.liveNotificationEnabled !== undefined && typeof body.liveNotificationEnabled !== 'boolean') {
+      throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值');
+    }
     const room = services.rooms.create({
       platform,
       url: adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === 'string' ? body.displayName : '',
       enabled: body.enabled ?? true,
+      liveNotificationEnabled: body.liveNotificationEnabled ?? false,
     });
     // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
     // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
@@ -185,8 +180,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
 
   app.patch('/api/v1/rooms/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; uploadEnabled?: boolean | null };
-    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; uploadEnabled?: boolean | null } = {};
+    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null };
+    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
       const adapter = services.adapterFor(existing?.platform ?? 'bilibili');
@@ -203,6 +198,12 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
         throw new AppError('ROOM_LINK_INVALID', 'autoRecord 必须为布尔值或 null', { roomId: id });
       }
       patch.autoRecord = body.autoRecord;
+    }
+    if (body.liveNotificationEnabled !== undefined) {
+      if (typeof body.liveNotificationEnabled !== 'boolean') {
+        throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值', { roomId: id });
+      }
+      patch.liveNotificationEnabled = body.liveNotificationEnabled;
     }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。
@@ -363,7 +364,25 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (status.status !== 'live') {
       throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
     }
-    await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    const started = await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    if (!started) {
+      if (services.manager.isRoomActive(id)) {
+        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });
+      }
+      if (services.manager.isRoomStarting(id)) {
+        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在启动录制', { roomId: id, retryable: true });
+      }
+      const maxConcurrent = services.settings.load()?.maxConcurrentRecordings;
+      if (maxConcurrent !== undefined && services.recordings.activeCount() >= maxConcurrent) {
+        throw new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: id, retryable: true });
+      }
+      throw new AppError('RECORDING_START_FAILED', '录制未能启动，请稍后重试', { roomId: id, retryable: true });
+    }
     return reply.send({ ok: true });
   });
+}
+
+function localDateFromMs(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }

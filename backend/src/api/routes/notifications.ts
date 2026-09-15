@@ -3,12 +3,9 @@ import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
+import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
-/** 预测样本窗口：近 30 天；样本不足 3 天则无预测（返回提示）。 */
-const PREDICTION_WINDOW_DAYS = 30;
-const MIN_SAMPLE_DAYS = 3;
-
-export type PredictionConfidence = 'high' | 'medium' | 'low';
+export type { LivePrediction, PredictionConfidence } from '../../core/live-prediction.js';
 
 /** V5 通知偏好读写（GET/PUT /settings/notifications，随 settings 存储）。 */
 export function notificationPreference(services: Services): NotificationPreference {
@@ -18,65 +15,24 @@ export function notificationPreference(services: Services): NotificationPreferen
 }
 
 /**
- * V5 开播预测：只读近 30 天录制/开播事实，按「最早开始-最晚结束」聚合典型开播窗口。
- * 返回 { roomId, startAt, endAt, confidence, basedOnDays }；样本不足返回 confidence=null + notice。
+ * 检测观测优先；旧录像低权重补充未被检测记录覆盖的日期。
  */
-export function livePrediction(services: Services, roomId: string): {
-  roomId: string;
-  startAt: string | null;
-  endAt: string | null;
-  confidence: PredictionConfidence | null;
-  basedOnDays: number;
-  notice: string | null;
-  generatedAt: string;
-} {
-  const from = new Date(services.clock.now() - PREDICTION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const recs = services.recordings.list({ roomId, pageSize: 500, dateFrom: from, groupBy: 'session' }).items;
-  // 按天聚合每场最早开始与最晚结束（当日直播窗口）。
-  const byDay = new Map<string, { start: number; end: number }>();
-  for (const r of recs) {
-    if (!r.endedAt || !r.startedAt) continue;
-    const day = r.startedAt.slice(0, 10);
-    const start = new Date(r.startedAt).getTime();
-    const end = new Date(r.endedAt).getTime();
-    const cur = byDay.get(day);
-    if (!cur) {
-      byDay.set(day, { start, end });
-    } else {
-      cur.start = Math.min(cur.start, start);
-      cur.end = Math.max(cur.end, end);
-    }
-  }
-  const days = [...byDay.values()].sort((a, b) => a.start - b.start);
-  const generatedAt = services.clock.iso();
-  if (days.length < MIN_SAMPLE_DAYS) {
-    return { roomId, startAt: null, endAt: null, confidence: null, basedOnDays: days.length, notice: '近 30 天样本不足，暂无开播预测', generatedAt };
-  }
-  // 中位数起始/结束（抗离群），转本地时区 HH:MM。
-  const startMs = median(days.map((d) => d.start));
-  const endMs = median(days.map((d) => d.end));
-  // 置信度按样本天数：≥10 高、≥5 中、≥3 低。
-  const confidence: PredictionConfidence = days.length >= 10 ? 'high' : days.length >= 5 ? 'medium' : 'low';
-  return {
-    roomId,
-    startAt: hhmm(startMs),
-    endAt: hhmm(endMs),
-    confidence,
-    basedOnDays: days.length,
-    notice: null,
-    generatedAt,
-  };
+export function livePrediction(services: Services, roomId: string): LivePrediction {
+  const from = new Date(services.clock.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+  const events = services.liveEvents.list(roomId, from);
+  const recordings = services.recordings.list({ roomId, pageSize: 100, dateFrom: from }).items;
+  return calculateLivePrediction({
+    roomId, events,
+    fallbackEvents: recordingFallbackEvents(recordings),
+    now: services.clock.now(), generatedAt: services.clock.iso(),
+    calibration: services.predictionCalibration.profiles([roomId], localDateFromMs(services.clock.now() - 60 * 24 * 60 * 60 * 1000)).get(roomId),
+    coverage: services.predictionCalibration.intervals([roomId], from).get(roomId),
+  });
 }
 
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
-}
-
-function hhmm(ms: number): string {
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+function localDateFromMs(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 export function registerNotificationRoutes(app: FastifyInstance, services: Services): void {
@@ -118,7 +74,7 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
     return reply.send({ ok: true, desktop: prefs.desktopEnabled, email });
   });
 
-  // 开播预测：只读近 30 天录制事实；样本不足时 predictedWindow=null（FE 显示「暂无预测」）。
+  // 开播预测使用近 60 天观测；没有观测历史时才低权重回退到旧录像开始时间。
   app.get('/api/v1/rooms/:id/live-prediction', async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);

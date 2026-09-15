@@ -4,9 +4,15 @@ import { setRoomTags } from "../api/tags";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
 
 let roomsRequest: Promise<Room[]> | null = null;
+let roomsRequestEpoch = -1;
 let roomsEpoch = 0;
 let roomsFetchedAt = 0;
 const ROOMS_CACHE_MS = 30_000;
+
+// A room mutation must not share a list request that started before the
+// mutation. The old request may still be useful to its original callers, but
+// its response is no longer authoritative for the current epoch.
+const recordingRequests = new Map<string, Promise<void>>();
 
 function invalidateRoomsRequest(): void {
   roomsEpoch += 1;
@@ -17,7 +23,9 @@ function normalizeRoom(room: Room): Room {
     ...room,
     favorited: room.favorited ?? false,
     autoRecord: room.autoRecord ?? null,
+    liveNotificationEnabled: room.liveNotificationEnabled ?? false,
     lastLiveStatus: room.lastLiveStatus ?? null,
+    currentStreamTitle: room.currentStreamTitle ?? null,
     activeRecording: room.activeRecording ?? null,
     tags: room.tags ?? [],
     uploadEnabled: room.uploadEnabled ?? null,
@@ -55,6 +63,7 @@ interface RoomState {
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
   setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
+  setLiveNotification: (id: string, value: boolean) => Promise<void>;
   checkRoomNow: (id: string) => Promise<void>;
   startRoomRecording: (id: string) => Promise<void>;
   stopRoomRecording: (id: string) => Promise<void>;
@@ -79,12 +88,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     set({ loading: true });
     const epoch = roomsEpoch;
     try {
-      if (!roomsRequest) {
+      if (!roomsRequest || roomsRequestEpoch !== roomsEpoch) {
         const request = roomsApi.fetchRooms();
         const wrapped = request.finally(() => {
           if (roomsRequest === wrapped) roomsRequest = null;
         });
         roomsRequest = wrapped;
+        roomsRequestEpoch = roomsEpoch;
       }
       const rooms = await roomsRequest;
       // A mutation made while this response was in flight already updated the
@@ -138,6 +148,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
     );
   },
+  async setLiveNotification(id, value) {
+    invalidateRoomsRequest();
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.updateRoom(id, { liveNotificationEnabled: value })),
+    );
+  },
   async checkRoomNow(id) {
     invalidateRoomsRequest();
     set({ actingRoomId: id, actingAction: "check" });
@@ -155,7 +171,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       set({ actingRoomId: null, actingAction: null });
     }
   },
-  async startRoomRecording(id) {
+  startRoomRecording(id) {
+    const pending = recordingRequests.get(id);
+    if (pending) return pending;
+
+    const task = (async () => {
     invalidateRoomsRequest();
     set({ actingRoomId: id, actingAction: "record" });
     try {
@@ -175,6 +195,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     } finally {
       set({ actingRoomId: null, actingAction: null });
     }
+    })();
+    recordingRequests.set(id, task);
+    void task.then(
+      () => recordingRequests.delete(id),
+      () => recordingRequests.delete(id),
+    );
+    return task;
   },
   async stopRoomRecording(id) {
     invalidateRoomsRequest();
