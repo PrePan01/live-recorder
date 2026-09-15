@@ -55,6 +55,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null; stream_session_id: string | null }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
     const calibrationProfiles = services.predictionCalibration.profiles(roomIds, localDateFromMs(now - 60 * 24 * 60 * 60 * 1000));
+    const coverage = services.predictionCalibration.intervals(roomIds, from60);
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
     const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
     for (const row of rows) grouped.get(row.room_id)?.push(row);
@@ -75,12 +76,11 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
         prediction: calculateLivePrediction({
           roomId: id,
           events,
-          fallbackEvents: events.length === 0
-            ? recordingFallbackEvents(records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id })))
-            : [],
+          fallbackEvents: recordingFallbackEvents(records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id }))),
           now,
           generatedAt: services.clock.iso(),
           calibration: calibrationProfiles.get(id),
+          coverage: coverage.get(id),
         }),
       };
     }
