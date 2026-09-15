@@ -1,7 +1,7 @@
 {
   "releases": [
     {
-      "version": "0.5.130",
+      "version": "0.5.131",
       "publishedAt": "2026-09-15",
       "notes": [
         "新增：监控总览页面新增平台筛选按钮",
