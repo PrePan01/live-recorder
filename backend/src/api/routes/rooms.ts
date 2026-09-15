@@ -364,7 +364,16 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (status.status !== 'live') {
       throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
     }
-    await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    const started = await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    if (!started) {
+      if (services.manager.isRoomActive(id)) {
+        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });
+      }
+      if (services.manager.isRoomStarting(id)) {
+        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在启动录制', { roomId: id, retryable: true });
+      }
+      throw new AppError('RECORDING_START_FAILED', '录制未能启动，请稍后重试', { roomId: id, retryable: true });
+    }
     return reply.send({ ok: true });
   });
 }

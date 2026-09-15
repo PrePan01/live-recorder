@@ -64,6 +64,8 @@ interface SharedPreviewRecording {
 
 export class RecorderManager {
   private active = new Map<string, ActiveSession>();
+  /** Prevent manual and scheduler starts from both passing the async preflight. */
+  private starting = new Set<string>();
   private backgroundTasks = 0;
 
   get busy(): boolean { return this.active.size > 0 || this.backgroundTasks > 0; }
@@ -92,6 +94,10 @@ export class RecorderManager {
 
   isRoomActive(roomId: string): boolean {
     return this.active.has(roomId);
+  }
+
+  isRoomStarting(roomId: string): boolean {
+    return this.starting.has(roomId);
   }
 
   activeRoomIds(): string[] {
@@ -453,9 +459,18 @@ export class RecorderManager {
   }
 
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
-  async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<void> {
-    if (this.services.resetting) return;
-    if (this.active.has(room.id)) return;
+  async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
+    if (this.services.resetting) return false;
+    if (this.active.has(room.id) || this.starting.has(room.id)) return false;
+    this.starting.add(room.id);
+    try {
+      return await this.maybeStartRecordingInternal(room, status, opts);
+    } finally {
+      this.starting.delete(room.id);
+    }
+  }
+
+  private async maybeStartRecordingInternal(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
     await this.disableHighlightBuffer(room.id);
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
@@ -463,14 +478,14 @@ export class RecorderManager {
       // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
-      return;
+      return false;
     }
 
     if (this.services.recordings.activeCount() >= settings.maxConcurrentRecordings) {
       const err = new AppError('CONCURRENT_LIMIT_REACHED', '并发录制数已达上限', { roomId: room.id, retryable: true });
       this.raiseAlert('warning', 'recorder', err);
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
-      return;
+      return false;
     }
 
     if (settings.recordingDirectory.length > 0) {
@@ -483,18 +498,23 @@ export class RecorderManager {
         this.raiseAlert('error', 'disk', err);
         await this.notifier.notify('disk_space_low', room.id, { title: room.displayName });
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
-        return;
+        return false;
       }
     }
 
     const cookie = await this.services.platformCookie(room.platform);
     const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
+    // The stream lookup is asynchronous. A scheduler/manual request may have
+    // claimed this room while it was in flight; never create a second session
+    // or report a successful manual start in that case.
+    if (this.active.has(room.id)) return false;
     // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
-    if (await this.startSharedPreviewRecording(room, status, stream.actualQuality, settings)) return;
+    if (await this.startSharedPreviewRecording(room, status, stream.actualQuality, settings)) return true;
     this.previewTransitions.add(room.id);
     try {
       // 无观看预览时维持原有独立录制路径。
       await this.stopPreviewStream(room.id, true);
+      if (this.active.has(room.id)) return false;
       const filePath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       const recording = this.services.recordings.create({
         roomId: room.id,
@@ -515,6 +535,7 @@ export class RecorderManager {
       this.emitServiceStatus();
 
       void this.runSession(room, recording.id, stream, filePath, session, 0).catch(() => undefined);
+      return true;
     } finally {
       this.previewTransitions.delete(room.id);
     }
