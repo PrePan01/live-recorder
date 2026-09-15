@@ -275,7 +275,10 @@ export default function SettingsPage() {
     }
   };
 
-  const persist = async (values: SettingsInput, clearDouyinCookie = false) => {
+  const persist = async (
+    values: SettingsInput,
+    clearDouyinCookie = false,
+  ): Promise<boolean> => {
     const { mail, douyinCookie, ...rest } = values as SettingsInput & {
       mail?: Record<string, unknown> & {
         recipients?: string;
@@ -300,12 +303,14 @@ export default function SettingsPage() {
                 .filter(Boolean),
               password: mail.password || undefined,
             }
-          : undefined,
+        : undefined,
       });
+      return true;
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
+      return false;
     }
   };
 
@@ -727,8 +732,19 @@ export default function SettingsPage() {
               initialPath={settings?.recordingDirectory}
               onClose={() => setPickerOpen(false)}
               onPick={(dir) => {
+                // setFieldValue 不会触发 Form 的 onValuesChange；如果只回填表单，
+                // 离开页面后重新加载设置时会丢失目录选择。
+                if (debounceRef.current) {
+                  clearTimeout(debounceRef.current);
+                  debounceRef.current = null;
+                }
                 form.setFieldValue("recordingDirectory", dir);
-                message.success("目录已选择，点击保存生效");
+                void persist({
+                  ...form.getFieldsValue(),
+                  recordingDirectory: dir,
+                } as SettingsInput).then((saved) => {
+                  if (saved) message.success("目录已选择并保存");
+                });
               }}
             />
             <input
