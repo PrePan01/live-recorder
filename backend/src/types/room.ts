@@ -31,6 +31,8 @@ export interface Room {
   liveNotificationEnabled: boolean;
   /** 最近一次检测的直播状态（#78）：live/offline/restricted，未检测过为 null。 */
   lastLiveStatus: LiveStatus | null;
+  /** 最近一次检测到的当前直播间标题；仅在开播时保留。 */
+  currentStreamTitle: string | null;
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ErrorObject | null;

@@ -3,7 +3,7 @@ import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
-import { calculateLivePrediction, type LivePrediction } from '../../core/live-prediction.js';
+import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
 export type { LivePrediction, PredictionConfidence } from '../../core/live-prediction.js';
 
@@ -15,12 +15,25 @@ export function notificationPreference(services: Services): NotificationPreferen
 }
 
 /**
- * 开播预测只使用系统检测到的开播事件；录制会话时间不会参与。
+ * 检测观测优先；仅没有任何观测历史时，才低权重兼容旧录像的开始时间。
  */
 export function livePrediction(services: Services, roomId: string): LivePrediction {
   const from = new Date(services.clock.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
   const events = services.liveEvents.list(roomId, from);
-  return calculateLivePrediction({ roomId, events, now: services.clock.now(), generatedAt: services.clock.iso() });
+  const recordings = events.length === 0
+    ? services.recordings.list({ roomId, pageSize: 100, dateFrom: from }).items
+    : [];
+  return calculateLivePrediction({
+    roomId, events,
+    fallbackEvents: recordingFallbackEvents(recordings),
+    now: services.clock.now(), generatedAt: services.clock.iso(),
+    calibration: services.predictionCalibration.profiles([roomId], localDateFromMs(services.clock.now() - 60 * 24 * 60 * 60 * 1000)).get(roomId),
+  });
+}
+
+function localDateFromMs(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 export function registerNotificationRoutes(app: FastifyInstance, services: Services): void {
@@ -62,7 +75,7 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
     return reply.send({ ok: true, desktop: prefs.desktopEnabled, email });
   });
 
-  // 开播预测：只读近 30 天录制事实；样本不足时 predictedWindow=null（FE 显示「暂无预测」）。
+  // 开播预测使用近 60 天观测；没有观测历史时才低权重回退到旧录像开始时间。
   app.get('/api/v1/rooms/:id/live-prediction', async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);

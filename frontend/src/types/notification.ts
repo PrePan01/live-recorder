@@ -21,7 +21,11 @@ export interface LivePrediction {
   windowStart: string | null;
   windowEnd: string | null;
   expectedEndAt: string | null;
-  slots: Array<{ startAt: string; endAt: string }>;
+  slots: Array<{ startAt: string; endAt: string; likelihood: LivePredictionConfidence }>;
+  todayProbability: LivePredictionConfidence | null;
+  likelihood: LivePredictionConfidence | null;
+  lastRecordedAt: string | null;
+  recentObservations: Array<{ time: string; quality: "platform" | "transition" | "initial_live" | "legacy" }>;
   startAt: string | null;
   endAt: string | null;
   confidence: LivePredictionConfidence | null;

@@ -157,12 +157,15 @@
     flex: 1 1 100%;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(2) {
-    flex: 2 1 150px;
+    flex: 0 1 auto;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(3) {
-    flex: 1 1 108px;
+    flex: 0 1 auto;
   }
   .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(4) {
+    flex: 1 1 108px;
+  }
+  .lr-monitor-page .lr-page-actions > .ant-space-item:nth-child(5) {
     flex: 0 1 76px;
   }
 }

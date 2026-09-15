@@ -17,12 +17,14 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
+  AppstoreOutlined,
   EyeOutlined,
   LinkOutlined,
   ReloadOutlined,
   StarFilled,
   StarOutlined,
   StopOutlined,
+  UnorderedListOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { useRoomStore } from "../../stores/roomStore";
@@ -33,7 +35,7 @@ import {
   fetchRoomInsights,
   type RoomInsight,
 } from "../../api/rooms";
-import { PlatformLogoTag } from "../../components/PlatformLogo";
+import { PlatformIcon, PlatformLogoTag } from "../../components/PlatformLogo";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import { MonitorStateTag } from "../../components/StatusTags";
 import { formatRelative } from "../../utils/format";
@@ -44,7 +46,7 @@ import LivePredictionBadge from "../../components/LivePredictionBadge";
 import PreviewModal from "../../components/PreviewModal";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
-import type { Room } from "../../types/room";
+import type { Platform, Room } from "../../types/room";
 import {
   RoomSortableProvider,
   SortableRoomTableRow,
@@ -191,7 +193,7 @@ const RoomCard = memo(function RoomCard({
         }
       >
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-          <LiveStatusTag status={room.lastLiveStatus} />
+          <LiveStatusTag status={room.lastLiveStatus} streamTitle={room.currentStreamTitle} />
           {autoRecordEnabled ? (
             <Tag color="blue" style={{ marginInlineEnd: 0 }}>
               自动录
@@ -381,6 +383,9 @@ export default function Monitor() {
   const [filter, setFilter] = useState<"全部" | "开播中" | "录制中" | "收藏">(
     "全部",
   );
+  const [platformFilter, setPlatformFilter] = useState<"全部" | Platform>(
+    "全部",
+  );
   const [keyword, setKeyword] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
@@ -454,6 +459,7 @@ export default function Monitor() {
 
   const monitorRooms = rooms
     .filter((r) => r.enabled)
+    .filter((r) => platformFilter === "全部" || r.platform === platformFilter)
     .filter((r) => {
       if (filter === "开播中") return r.lastLiveStatus === "live";
       if (filter === "录制中")
@@ -483,11 +489,13 @@ export default function Monitor() {
     [message, reorderRooms],
   );
 
-  const enabledRooms = rooms.filter((r) => r.enabled);
-  const liveCount = enabledRooms.filter(
+  const platformRooms = rooms.filter(
+    (r) => r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
+  );
+  const liveCount = platformRooms.filter(
     (r) => r.lastLiveStatus === "live",
   ).length;
-  const recordingCount = enabledRooms.filter(
+  const recordingCount = platformRooms.filter(
     (r) => r.monitorState === "recording" || r.monitorState === "reconnecting",
   ).length;
 
@@ -743,7 +751,53 @@ export default function Monitor() {
             }
           />
           <MemphisRadioGroup
-            options={["卡片", "列表"]}
+            className="lr-platform-filter"
+            aria-label="平台筛选"
+            options={[
+              { label: "全部", value: "全部" },
+              {
+                label: (
+                  <Tooltip title="B站">
+                    <PlatformIcon platform="bilibili" />
+                  </Tooltip>
+                ),
+                value: "bilibili",
+              },
+              {
+                label: (
+                  <Tooltip title="抖音">
+                    <PlatformIcon platform="douyin" />
+                  </Tooltip>
+                ),
+                value: "douyin",
+              },
+            ]}
+            value={platformFilter}
+            onChange={(e) =>
+              setPlatformFilter(e.target.value as "全部" | Platform)
+            }
+          />
+          <MemphisRadioGroup
+            className="lr-monitor-view-toggle"
+            aria-label="显示方式"
+            options={[
+              {
+                label: (
+                  <Tooltip title="卡片视图">
+                    <AppstoreOutlined />
+                  </Tooltip>
+                ),
+                value: "卡片",
+              },
+              {
+                label: (
+                  <Tooltip title="列表视图">
+                    <UnorderedListOutlined />
+                  </Tooltip>
+                ),
+                value: "列表",
+              },
+            ]}
             value={view}
             onChange={(e) => {
               const nextView = e.target.value as "卡片" | "列表";

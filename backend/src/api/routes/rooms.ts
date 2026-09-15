@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Platform } from '../../types/index.js';
 import type { Services } from '../../core/services.js';
-import { calculateLivePrediction, type LivePrediction } from '../../core/live-prediction.js';
+import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const INSIGHT_CACHE_TTL_MS = 30_000;
@@ -51,9 +51,10 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const from7 = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
     const placeholders = roomIds.map(() => '?').join(',');
     const rows = services.db.prepare(
-      `SELECT room_id, state, file_size_bytes, started_at, ended_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
-    ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null }>;
+      `SELECT room_id, state, file_size_bytes, started_at, ended_at, stream_session_id FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
+    ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null; stream_session_id: string | null }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
+    const calibrationProfiles = services.predictionCalibration.profiles(roomIds, localDateFromMs(now - 60 * 24 * 60 * 60 * 1000));
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
     const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
     for (const row of rows) grouped.get(row.room_id)?.push(row);
@@ -61,6 +62,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const insights: Record<string, RoomInsight> = {};
     for (const id of roomIds) {
       const records = grouped.get(id) ?? [];
+      const events = eventsByRoom.get(id) ?? [];
       const week = records.filter((record) => record.started_at >= from7);
       const completed = week.filter((record) => record.state === 'completed').length;
       const failed = week.filter((record) => record.state === 'failed').length;
@@ -72,9 +74,13 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
         successRate: completed + failed === 0 ? 100 : Math.round((completed / (completed + failed)) * 100),
         prediction: calculateLivePrediction({
           roomId: id,
-          events: eventsByRoom.get(id) ?? [],
+          events,
+          fallbackEvents: events.length === 0
+            ? recordingFallbackEvents(records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id })))
+            : [],
           now,
           generatedAt: services.clock.iso(),
+          calibration: calibrationProfiles.get(id),
         }),
       };
     }
@@ -361,4 +367,9 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
     return reply.send({ ok: true });
   });
+}
+
+function localDateFromMs(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
