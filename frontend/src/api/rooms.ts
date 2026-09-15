@@ -144,18 +144,34 @@ export interface RoomInsight {
   failed: number;
   prediction: {
     kind: "unavailable" | "observation" | "typical" | "next";
-    basis: "weekday" | "day_type" | "all" | null;
+    basis: "weekday" | "day_type" | "interval" | "all" | null;
     nextDate: string | null;
+    startTimestamp?: string | null;
+    windowStartTimestamp?: string | null;
+    windowEndTimestamp?: string | null;
+    rawLikelihood?: "high" | "medium" | "low" | null;
+    probabilityKnown?: boolean;
     sampleCount: number;
-    timeGranularity: "exact" | "approximate" | "period" | null;
+    timeGranularity: "exact" | "quarter_hour" | "approximate" | "period" | null;
     windowStart: string | null;
     windowEnd: string | null;
     expectedEndAt: string | null;
-    slots: Array<{ startAt: string; endAt: string; likelihood: "high" | "medium" | "low" }>;
+    slots: Array<{
+      startAt: string;
+      endAt: string;
+      likelihood: "high" | "medium" | "low";
+      probabilityKnown?: boolean;
+    }>;
     todayProbability: "high" | "medium" | "low" | null;
     likelihood: "high" | "medium" | "low" | null;
     lastRecordedAt: string | null;
-    recentObservations: Array<{ time: string; quality: "platform" | "transition" | "initial_live" | "legacy" }>;
+    lastRecordedQuality?: "platform" | "transition" | "initial_live" | "legacy";
+    nextDateEnd?: string | null;
+    typicalDayType?: string | null;
+    recentObservations: Array<{
+      time: string;
+      quality: "platform" | "transition" | "initial_live" | "legacy";
+    }>;
     startAt: string | null;
     endAt: string | null;
     confidence: "high" | "medium" | "low" | null;

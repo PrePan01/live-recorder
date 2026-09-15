@@ -2,81 +2,30 @@ import type { ReactNode } from "react";
 import { Popover, Tag, Typography } from "antd";
 import type { RoomInsight } from "../api/rooms";
 
-const CONF_META: Record<string, { text: string }> = {
+import {
+  clockMinutes,
+  timelineShowsNow,
+  predictionTitle,
+  predictionLikelihoodText,
+  predictionDisplayLikelihood,
+  timelineBands,
+} from "../utils/livePrediction";
+
+const CONF_META = {
   high: { text: "高" },
   medium: { text: "中" },
   low: { text: "低" },
 };
-
-function likelihoodText(value: "high" | "medium" | "low" | null): string {
-  if (value === "low") return "有开播可能";
-  return `可能性${CONF_META[value ?? "medium"].text}`;
-}
-
-function periodFor(time: string | null): string {
-  if (!time) return "晚间";
-  const hour = Number(time.slice(0, 2));
-  if (hour < 6) return "凌晨";
-  if (hour < 12) return "上午";
-  if (hour < 18) return "下午";
-  return "晚间";
-}
-
-/** Round uncertain predictions to a readable 15-minute display interval. */
-function approximateTime(time: string): string {
-  const [hour, minute] = time.split(":").map(Number);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return time;
-  const rounded = Math.round((hour * 60 + minute) / 15) * 15;
-  const total = ((rounded % 1440) + 1440) % 1440;
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
-
-function isToday(date: string): boolean {
-  const now = new Date();
-  return (
-    date ===
-    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
-  );
-}
-
 type Prediction = RoomInsight["prediction"];
 
-function clockMinutes(value: string): number {
-  const nextDay = value.startsWith("次日 ");
-  const [hour, minute] = value.replace("次日 ", "").split(":").map(Number);
-  return (nextDay ? 1440 : 0) + hour * 60 + minute;
-}
-
-function regularTime(prediction: Prediction): string {
-  if (!prediction.startAt) return "";
-  return prediction.timeGranularity === "exact"
-    ? prediction.startAt
-    : ` ${approximateTime(prediction.startAt)} 左右`;
-}
-
-function currentTodaySlot(prediction: Prediction) {
-  const now = new Date();
-  const minute = now.getHours() * 60 + now.getMinutes();
-  const slots = prediction.slots.map((slot) => ({
-    ...slot,
-    start: clockMinutes(slot.startAt),
-    end: Math.max(clockMinutes(slot.endAt), clockMinutes(slot.startAt) + 20),
-  }));
-  return (
-    slots.find((slot) => minute >= slot.start && minute <= slot.end + 30) ??
-    slots
-      .filter((slot) => slot.start > minute)
-      .sort((a, b) => a.start - b.start)[0]
-  );
-}
-
 function PredictionTimeline({ prediction }: { prediction: Prediction }) {
-  const slots = prediction.slots.map((slot) => {
-    const start = clockMinutes(slot.startAt);
-    const end = Math.max(clockMinutes(slot.endAt), start + 20);
-    return { ...slot, start, end };
-  });
-  const showNow = !prediction.nextDate || isToday(prediction.nextDate);
+  const slots = prediction.slots.flatMap((slot) =>
+    timelineBands({
+      ...slot,
+      likelihood: predictionDisplayLikelihood(slot, slot.likelihood),
+    }),
+  );
+  const showNow = timelineShowsNow(prediction);
   const current = new Date();
   const nowPosition =
     ((current.getHours() * 60 + current.getMinutes()) / 1440) * 100;
@@ -88,11 +37,11 @@ function PredictionTimeline({ prediction }: { prediction: Prediction }) {
       <div className="lr-live-prediction-timeline__track">
         {slots.map((slot) => (
           <span
-            key={`${slot.startAt}-${slot.endAt}`}
+            key={`${slot.startAt}-${slot.endAt}-${slot.start}`}
             className={`lr-live-prediction-timeline__band lr-live-prediction-timeline__band--${slot.likelihood}`}
             style={{
               left: `${(slot.start / 1440) * 100}%`,
-              width: `${Math.min(100 - (slot.start / 1440) * 100, Math.max(3, ((slot.end - slot.start) / 1440) * 100))}%`,
+              width: `${((slot.end - slot.start) / 1440) * 100}%`,
             }}
             aria-label={`${slot.startAt} 至 ${slot.endAt}，开播可能性${CONF_META[slot.likelihood].text}`}
           />
@@ -136,17 +85,19 @@ function PredictionTimeline({ prediction }: { prediction: Prediction }) {
 function PredictionPopover({
   prediction,
   likelihood,
+  titleText,
   children,
 }: {
   prediction: Prediction;
   likelihood: "high" | "medium" | "low" | null;
+  titleText: string;
   children: ReactNode;
 }) {
   const title = (
     <>
-      <span>开播可能时段</span>
+      <span>开播预测</span>
       <span className="lr-live-prediction-popover__likelihood">
-        {likelihoodText(likelihood)}
+        {predictionLikelihoodText(prediction, likelihood)}
       </span>
     </>
   );
@@ -155,9 +106,7 @@ function PredictionPopover({
       title={title}
       content={
         <>
-          <div className="lr-live-prediction-popover__usual">
-            通常 {regularTime(prediction)}开播
-          </div>
+          <div className="lr-live-prediction-popover__usual">{titleText}</div>
           <PredictionTimeline prediction={prediction} />
         </>
       }
@@ -196,33 +145,34 @@ export default function LivePredictionBadge({
     return (
       <PredictionHint content="检测到更多开播记录后形成开播预测">
         <Tag className="lr-live-prediction-tag lr-live-prediction-tag--empty">
-          暂无开播预测
+          暂无预测
         </Tag>
       </PredictionHint>
     );
   }
+  // Retain a graceful presentation for responses from older backend versions.
   if (value.kind === "observation" && value.lastRecordedAt) {
     return (
-      <PredictionHint content="样本不足，暂未形成开播预测">
+      <PredictionHint content="检测到更多开播记录后形成开播预测">
         <Tag className="lr-live-prediction-tag lr-live-prediction-tag--observation">
-          最近检测到开播 {value.lastRecordedAt}
+          {value.lastRecordedQuality === "platform" ? "上次开播" : "上次检测到开播"}{" "}
+          {value.lastRecordedAt}
         </Tag>
       </PredictionHint>
     );
   }
   if (!value.startAt || !value.confidence) return null;
-  const todaySlot =
-    value.kind === "next" && value.nextDate && isToday(value.nextDate)
-      ? currentTodaySlot(value)
-      : undefined;
-  const likelihood = todaySlot
-    ? (value.todayProbability ?? todaySlot.likelihood)
-    : (value.likelihood ?? value.confidence);
-  const text = todaySlot
-    ? `今天${periodFor(todaySlot.startAt)}开播`
-    : `通常${regularTime(value)}开播`;
+  const likelihood = predictionDisplayLikelihood(
+    value,
+    value.likelihood ?? value.confidence,
+  );
+  const text = predictionTitle(value);
   return (
-    <PredictionPopover prediction={value} likelihood={likelihood}>
+    <PredictionPopover
+      prediction={value}
+      likelihood={likelihood}
+      titleText={text}
+    >
       <Tag
         className={`lr-live-prediction-tag lr-live-prediction-tag--${likelihood}`}
       >

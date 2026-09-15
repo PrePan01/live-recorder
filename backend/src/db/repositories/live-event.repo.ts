@@ -29,6 +29,12 @@ export class LiveEventRepository {
     return event;
   }
 
+  /** Indexed, constant-size change check for scheduler forecast retries. */
+  latestId(roomId: string): string | null {
+    const row = this.db.prepare('SELECT id FROM live_events WHERE room_id = ? ORDER BY detected_at DESC LIMIT 1').get(roomId) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   list(roomId: string, from: string): LiveEvent[] {
     return this.db.prepare(
       `SELECT id, room_id AS roomId, detected_at AS detectedAt, source, lower_bound_at AS lowerBoundAt, platform_started_at AS platformStartedAt FROM live_events WHERE room_id = ? AND detected_at >= ? ORDER BY detected_at ASC`,

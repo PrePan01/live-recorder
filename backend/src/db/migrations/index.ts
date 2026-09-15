@@ -520,6 +520,21 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       );
     `,
   },
+  {
+    version: 29,
+    sql: `
+      ALTER TABLE prediction_forecasts ADD COLUMN raw_probability TEXT;
+      ALTER TABLE prediction_forecasts ADD COLUMN window_start_at TEXT;
+      ALTER TABLE prediction_forecasts ADD COLUMN window_end_at TEXT;
+      CREATE TABLE prediction_coverage_intervals (
+        room_id TEXT NOT NULL,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        PRIMARY KEY(room_id, start_at)
+      );
+      CREATE INDEX idx_prediction_coverage_intervals_end ON prediction_coverage_intervals(room_id, end_at);
+    `,
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

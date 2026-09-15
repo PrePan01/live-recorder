@@ -441,15 +441,19 @@ export default function Monitor() {
       return;
     }
     let disposed = false;
-    void fetchRoomInsights(ids)
-      .then((next) => {
-        if (!disposed) setInsights(next);
-      })
-      .catch(() => {
-        if (!disposed) setInsights({});
-      });
+    // Coalesce room events from the same polling batch into one insight request.
+    const timer = setTimeout(() => {
+      void fetchRoomInsights(ids)
+        .then((next) => {
+          if (!disposed) setInsights(next);
+        })
+        .catch(() => {
+          if (!disposed) setInsights({});
+        });
+    }, 250);
     return () => {
       disposed = true;
+      clearTimeout(timer);
     };
   }, [rooms]);
 

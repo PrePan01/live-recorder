@@ -18,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(28);
+    expect(runMigrations(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(28);
+    expect(currentSchemaVersion(db)).toBe(29);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -48,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(26);
+    expect(runMigrations(db)).toBe(27);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(28);
+    expect(currentSchemaVersion(db)).toBe(29);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +82,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16-v22 未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(13);
+    expect(runMigrations(db)).toBe(14);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -95,7 +95,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(28);
+    expect(currentSchemaVersion(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -117,7 +117,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(10);
+    expect(runMigrations(db)).toBe(11);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -129,7 +129,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(28);
+    expect(currentSchemaVersion(db)).toBe(29);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -187,13 +187,13 @@ describe('migrations', () => {
   it('v28 keeps one local forecast per room-day and retains coverage separately', () => {
     const db = freshDb();
     const calibration = new PredictionCalibrationRepository(db);
-    calibration.recordForecast({ roomId: 'room_1', targetDate: '2026-09-14', probability: 'medium', generatedAt: '2026-09-13T16:00:00.000Z' });
+    calibration.recordForecast({ roomId: 'room_1', targetDate: '2026-09-14', probability: 'low', rawProbability: 'medium', windowStartAt: '2026-09-14T08:00:00.000Z', windowEndAt: '2026-09-14T09:00:00.000Z', generatedAt: '2026-09-13T16:00:00.000Z' });
     calibration.recordForecast({ roomId: 'room_1', targetDate: '2026-09-14', probability: 'high', generatedAt: '2026-09-13T17:00:00.000Z' });
     calibration.recordCoverage('room_1', '2026-09-14', '2026-09-14T00:00:00.000Z');
     calibration.recordCoverage('room_1', '2026-09-14', '2026-09-14T04:00:00.000Z');
     const forecast = calibration.pendingBefore('2026-09-15');
     expect(forecast).toHaveLength(1);
-    expect(forecast[0]).toMatchObject({ probability: 'medium' });
+    expect(forecast[0]).toMatchObject({ probability: 'low', rawProbability: 'medium' });
     expect(calibration.coverage('room_1', '2026-09-14')).toMatchObject({ checks: 2, firstCheckedAt: '2026-09-14T00:00:00.000Z', lastCheckedAt: '2026-09-14T04:00:00.000Z' });
     calibration.resolve(forecast[0]!.id, 'hit', '2026-09-15T00:00:00.000Z');
     expect(calibration.profiles(['room_1'], '2026-08-01').get('room_1')).toEqual({ medium: { hits: 1, total: 1 } });

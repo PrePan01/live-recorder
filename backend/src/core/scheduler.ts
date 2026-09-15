@@ -4,7 +4,7 @@ import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
 import { dueSchedules } from '../api/routes/schedules.js';
-import { calculateLivePrediction } from './live-prediction.js';
+import { calculateLivePrediction, coversPredictionWindow, openingEvidenceInWindow } from './live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const PLATFORM_CHECK_CONCURRENCY = 2;
@@ -17,9 +17,10 @@ export class Scheduler {
   private checking = new Map<string, Promise<void>>();
   /** 已收到抖音明确的凭证失效信号；保存新 Cookie 后才恢复请求。 */
   private douyinCookieExpired = false;
-  private finalizedPredictionDate: string | null = null;
-  private coverageWrittenAt = new Map<string, number>();
+  private predictionsFinalizedAt = 0;
+  private forecastDate: string | null = null;
   private forecastRecordedFor = new Set<string>();
+  private forecastRetry = new Map<string, { at: number; latestEventId: string | null }>();
 
   constructor(private services: Services, private manager: RecorderManager) {}
 
@@ -227,7 +228,7 @@ export class Scheduler {
       // confidence interval instead of claiming the check time is the start time.
       if (room.lastLiveStatus !== 'live' && status.platformStartedAt) {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
-          source: 'platform', lowerBoundAt: room.lastCheckedAt, platformStartedAt: status.platformStartedAt,
+          source: 'platform', lowerBoundAt: room.lastLiveStatus === 'offline' ? room.lastCheckedAt : null, platformStartedAt: status.platformStartedAt,
         });
       } else if (room.lastLiveStatus === 'offline') {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
@@ -320,45 +321,63 @@ export class Scheduler {
 
   private recordCoverage(roomId: string): void {
     const now = this.services.clock.now();
-    const last = this.coverageWrittenAt.get(roomId) ?? 0;
-    if (now - last < 60 * 60 * 1_000) return;
-    this.coverageWrittenAt.set(roomId, now);
-    this.services.predictionCalibration.recordCoverage(roomId, localDate(now), this.services.clock.iso());
+    const room = this.services.rooms.get(roomId);
+    const gap = Math.min(10 * 60_000, Math.max(180_000, this.intervalFor(room?.platform ?? 'bilibili') * 2_000 + 30_000));
+    this.services.predictionCalibration.recordCoverage(roomId, localDate(now), this.services.clock.iso(), gap);
   }
 
   private recordTodayForecast(roomId: string): void {
     const now = this.services.clock.now();
     const today = localDate(now);
+    if (this.forecastDate !== today) { this.forecastRecordedFor.clear(); this.forecastRetry.clear(); this.forecastDate = today; }
     const key = `${roomId}:${today}`;
     if (this.forecastRecordedFor.has(key)) return;
-    this.forecastRecordedFor.add(key);
+    const latestEventId = this.services.liveEvents.latestId(roomId);
+    const retry = this.forecastRetry.get(roomId);
+    if (retry && now < retry.at && retry.latestEventId === latestEventId) return;
+    this.forecastRetry.set(roomId, { at: now + 5 * 60_000, latestEventId });
     const from = new Date(now - 60 * 24 * 60 * 60 * 1_000).toISOString();
     const events = this.services.liveEvents.list(roomId, from);
-    if (events.length < 3) return;
+    if (events.length < 2) return;
     const prediction = calculateLivePrediction({
       roomId, events, now, generatedAt: this.services.clock.iso(),
       calibration: this.services.predictionCalibration.profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000)).get(roomId),
+      coverage: this.services.predictionCalibration.intervals([roomId], from).get(roomId),
     });
-    if (prediction.kind !== 'next' || prediction.nextDate !== today || !prediction.todayProbability) return;
-    this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.todayProbability, generatedAt: this.services.clock.iso() });
+    // Retry at the current window's end even when the normal throttle has not
+    // elapsed, so the next session can be considered without stale dates.
+    const end = prediction.windowEndTimestamp ? Date.parse(prediction.windowEndTimestamp) : NaN;
+    if (Number.isFinite(end) && end >= now) {
+      this.forecastRetry.set(roomId, { at: Math.min(now + 5 * 60_000, end + 1), latestEventId });
+    }
+    if (prediction.kind !== 'next' || !prediction.rawLikelihood || !prediction.likelihood || !prediction.windowStartTimestamp || !prediction.windowEndTimestamp) return;
+    const start = Date.parse(prediction.windowStartTimestamp);
+    if (localDate(start) !== today || start <= now) return;
+    this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.likelihood, rawProbability: prediction.rawLikelihood,
+      windowStartAt: prediction.windowStartTimestamp, windowEndAt: prediction.windowEndTimestamp, generatedAt: this.services.clock.iso() });
+    // INSERT OR IGNORE can mean another run already persisted this room-day.
+    // Either way a concrete forecast exists before the in-memory key is set.
+    this.forecastRecordedFor.add(key);
   }
 
   private async finalizePastPredictions(): Promise<void> {
-    const today = localDate(this.services.clock.now());
-    if (this.finalizedPredictionDate === today) return;
-    this.finalizedPredictionDate = today;
-    // The de-duplication key is only meaningful for the current calendar day.
-    // Clearing it keeps a long-running desktop process from retaining one key per
-    // room per day indefinitely.
-    this.forecastRecordedFor.clear();
+    const now = this.services.clock.now();
+    const today = localDate(now);
+    if (now - this.predictionsFinalizedAt < 60_000) return;
+    this.predictionsFinalizedAt = now;
     for (const forecast of this.services.predictionCalibration.pendingBefore(today)) {
-      const start = new Date(`${forecast.targetDate}T00:00:00`).toISOString();
-      const endDate = new Date(`${forecast.targetDate}T00:00:00`);
-      endDate.setDate(endDate.getDate() + 1);
-      const opened = this.services.liveEvents.listBetween(forecast.roomId, start, endDate.toISOString()).length > 0;
-      const coverage = this.services.predictionCalibration.coverage(forecast.roomId, forecast.targetDate);
-      const coverageMs = coverage ? Date.parse(coverage.lastCheckedAt) - Date.parse(coverage.firstCheckedAt) : 0;
-      const outcome = opened ? 'hit' : coverage && coverage.checks >= 3 && coverageMs >= 4 * 60 * 60 * 1_000 ? 'miss' : 'unknown';
+      if (!forecast.windowStartAt || !forecast.windowEndAt || !forecast.rawProbability) {
+        this.services.predictionCalibration.resolve(forecast.id, 'unknown', this.services.clock.iso()); continue;
+      }
+      const start = Date.parse(forecast.windowStartAt), end = Date.parse(forecast.windowEndAt);
+      // Allow the next check to discover an opening near the window's end.
+      if (end + 10 * 60_000 > now) continue;
+      const events = this.services.liveEvents.listBetween(forecast.roomId, forecast.windowStartAt, new Date(end + 10 * 60_000).toISOString());
+      const evidence = events.map(event => openingEvidenceInWindow(event,start,end));
+      const opened = evidence.includes('hit');
+      const coverage = this.services.predictionCalibration.intervals([forecast.roomId], forecast.windowStartAt).get(forecast.roomId) ?? [];
+      const ambiguous = evidence.includes('unknown');
+      const outcome = opened ? 'hit' : !ambiguous && coversPredictionWindow(coverage, start, end) ? 'miss' : 'unknown';
       this.services.predictionCalibration.resolve(forecast.id, outcome, this.services.clock.iso());
     }
   }
