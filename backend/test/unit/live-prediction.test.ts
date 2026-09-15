@@ -8,6 +8,12 @@ function detected(detectedAt: string) {
   return { detectedAt };
 }
 
+/** The prediction is displayed in the recorder machine's local timezone. */
+function localHhmm(iso: string): string {
+  const date = new Date(iso);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 describe('live prediction', () => {
   it('uses a single valid record as an observation rather than an unsupported prediction', () => {
     const result = calculateLivePrediction({ roomId: 'room_1', now, generatedAt, events: [detected('2026-09-12T12:00:00.000Z')] });
@@ -64,7 +70,7 @@ describe('live prediction', () => {
         platformStartedAt: '2026-09-12T12:00:00.000Z',
       }],
     });
-    expect(result.startAt).toBe('20:00');
+    expect(result.startAt).toBe(localHhmm('2026-09-12T12:00:00.000Z'));
   });
 
   it('uses historical recording starts only as a de-duplicated fallback', () => {
@@ -172,7 +178,10 @@ describe('live prediction', () => {
     }));
     const result = calculateLivePrediction({ roomId: 'room_1', now, generatedAt, events });
     expect(result.recentObservations).toHaveLength(8);
-    expect(result.recentObservations.at(-1)).toEqual({ time: '19:55', quality: 'platform' });
+    expect(result.recentObservations.at(-1)).toEqual({
+      time: localHhmm('2026-09-10T11:55:00.000Z'),
+      quality: 'platform',
+    });
   });
 
   it('gradually promotes a concentrated recent shift without discarding the older slot', () => {
