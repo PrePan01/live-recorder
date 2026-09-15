@@ -207,6 +207,47 @@
   font-weight: 800;
   line-height: 26px;
 }
+
+.lr-live-prediction-timeline {
+  width: 220px;
+  padding: 2px 0;
+}
+.lr-live-prediction-popover__reliability {
+  margin-left: 8px;
+  color: var(--lr-muted);
+  opacity: 0.62;
+  font-weight: 400;
+}
+.lr-live-prediction-timeline__track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  background: var(--lr-surface-alt);
+}
+.lr-live-prediction-timeline__band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.lr-live-prediction-timeline__band--high { background: var(--lr-success); }
+.lr-live-prediction-timeline__band--medium { background: var(--lr-primary); }
+.lr-live-prediction-timeline__band--low { background: var(--lr-muted); }
+.lr-live-prediction-timeline__now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--lr-ink);
+  transform: translateX(-1px);
+}
+.lr-live-prediction-timeline__hours {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  line-height: 1;
+}
 .lr-live-status-title__viewport {
   flex: 1 1 auto;
   min-width: 0;

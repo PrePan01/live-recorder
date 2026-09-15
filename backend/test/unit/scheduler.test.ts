@@ -101,6 +101,41 @@ describe('Scheduler', () => {
     expect(notices).toEqual([]);
   });
 
+  it('persists initial-live discovery separately from an offline-to-live transition', async () => {
+    const { services, clock } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/604', displayName: '首次发现' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_000);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_000);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const events = services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z');
+    expect(events.map((event) => event.source)).toEqual(['initial_live', 'transition']);
+    expect(events[0]!.lowerBoundAt).toBe(room.createdAt);
+    expect(events[1]!.lowerBoundAt).toBeTruthy();
+  });
+
+  it('uses a platform-reported start time once without duplicating an ongoing broadcast', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/605', displayName: '平台时间' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', platformStartedAt: '2026-08-28T00:00:00.000Z' },
+      { status: 'live', platformStartedAt: '2026-08-28T00:00:00.000Z' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const events = services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: 'platform', platformStartedAt: '2026-08-28T00:00:00.000Z' });
+  });
+
   it('checks with the enabled autoRecord setting after an older check finishes', async () => {
     const { services } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-auto-pending-'));
