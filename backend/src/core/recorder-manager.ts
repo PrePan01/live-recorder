@@ -482,7 +482,7 @@ export class RecorderManager {
     }
 
     if (this.services.recordings.activeCount() >= settings.maxConcurrentRecordings) {
-      const err = new AppError('CONCURRENT_LIMIT_REACHED', '并发录制数已达上限', { roomId: room.id, retryable: true });
+      const err = new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: room.id, retryable: true });
       this.raiseAlert('warning', 'recorder', err);
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
       return false;

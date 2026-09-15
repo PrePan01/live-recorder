@@ -372,6 +372,10 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       if (services.manager.isRoomStarting(id)) {
         throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在启动录制', { roomId: id, retryable: true });
       }
+      const maxConcurrent = services.settings.load()?.maxConcurrentRecordings;
+      if (maxConcurrent !== undefined && services.recordings.activeCount() >= maxConcurrent) {
+        throw new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: id, retryable: true });
+      }
       throw new AppError('RECORDING_START_FAILED', '录制未能启动，请稍后重试', { roomId: id, retryable: true });
     }
     return reply.send({ ok: true });
