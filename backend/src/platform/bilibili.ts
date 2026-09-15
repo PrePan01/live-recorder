@@ -63,6 +63,14 @@ function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
 
+/** B站 live_time 是本场直播的秒级 Unix 时间；拒绝明显无效或未来的值。 */
+function platformStartedAt(liveTime: number | undefined): string | undefined {
+  if (!Number.isInteger(liveTime) || !liveTime || liveTime < 1_420_070_400) return undefined;
+  const ms = liveTime * 1_000;
+  if (!Number.isSafeInteger(ms) || ms > Date.now() + 5 * 60 * 1_000) return undefined;
+  return new Date(ms).toISOString();
+}
+
 export class BilibiliAdapter implements PlatformAdapter {
   readonly platform = 'bilibili' as const;
 
@@ -199,9 +207,11 @@ export class BilibiliAdapter implements PlatformAdapter {
     // B站每次开播的 live_time 不同，用它标识本场直播，避免把同一房间的多次开播误判为同一场。
     const liveTime = data.data.live_time;
     const sessionId = liveTime && liveTime > 0 ? `${roomId}:${liveTime}` : `live_${roomId}_${Date.now()}`;
+    const startedAt = platformStartedAt(liveTime);
     return {
       status: 'live',
       streamSessionId: sessionId,
+      ...(startedAt ? { platformStartedAt: startedAt } : {}),
       streamTitle: title,
       ...(uname ? { displayName: uname } : {}),
       availableQualities: this.availableQns(data).map(qnToQuality),

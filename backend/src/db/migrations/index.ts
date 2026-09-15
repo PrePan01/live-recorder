@@ -468,6 +468,58 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       `);
     },
   },
+  {
+    // 监控总览展示正在直播的房间标题，不能复用主播显示名或录制历史标题。
+    version: 25,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'current_stream_title'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN current_stream_title TEXT;`);
+    },
+  },
+  {
+    // 开播观测保留来源和可确认的时间范围。旧事件仍可读取，避免升级后丢失预测历史。
+    version: 26,
+    up: (db) => {
+      const hasSource = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'source'`).get();
+      if (!hasSource) db.exec(`ALTER TABLE live_events ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy';`);
+      const hasLowerBound = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'lower_bound_at'`).get();
+      if (!hasLowerBound) db.exec(`ALTER TABLE live_events ADD COLUMN lower_bound_at TEXT;`);
+    },
+  },
+  {
+    // 平台提供真实开播时间时单独保存，既保留本地检测时间，也能用于最高质量预测样本。
+    version: 27,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'platform_started_at'`).get();
+      if (!has) db.exec(`ALTER TABLE live_events ADD COLUMN platform_started_at TEXT;`);
+    },
+  },
+  {
+    // 本地预测命中校准：每天每房间最多一条预测；覆盖不足的日期不记为失败。
+    version: 28,
+    sql: `
+      CREATE TABLE IF NOT EXISTS prediction_forecasts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL,
+        target_date TEXT NOT NULL,
+        probability TEXT NOT NULL CHECK(probability IN ('high', 'medium', 'low')),
+        generated_at TEXT NOT NULL,
+        outcome TEXT CHECK(outcome IN ('hit', 'miss', 'unknown')),
+        resolved_at TEXT,
+        UNIQUE(room_id, target_date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_prediction_forecasts_pending ON prediction_forecasts(outcome, target_date);
+      CREATE INDEX IF NOT EXISTS idx_prediction_forecasts_room_date ON prediction_forecasts(room_id, target_date DESC);
+      CREATE TABLE IF NOT EXISTS prediction_coverage (
+        room_id TEXT NOT NULL,
+        target_date TEXT NOT NULL,
+        first_checked_at TEXT NOT NULL,
+        last_checked_at TEXT NOT NULL,
+        checks INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(room_id, target_date)
+      );
+    `,
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

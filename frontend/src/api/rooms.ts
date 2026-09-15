@@ -151,7 +151,11 @@ export interface RoomInsight {
     windowStart: string | null;
     windowEnd: string | null;
     expectedEndAt: string | null;
-    slots: Array<{ startAt: string; endAt: string }>;
+    slots: Array<{ startAt: string; endAt: string; likelihood: "high" | "medium" | "low" }>;
+    todayProbability: "high" | "medium" | "low" | null;
+    likelihood: "high" | "medium" | "low" | null;
+    lastRecordedAt: string | null;
+    recentObservations: Array<{ time: string; quality: "platform" | "transition" | "initial_live" | "legacy" }>;
     startAt: string | null;
     endAt: string | null;
     confidence: "high" | "medium" | "low" | null;

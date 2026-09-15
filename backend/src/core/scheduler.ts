@@ -4,6 +4,7 @@ import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
 import { dueSchedules } from '../api/routes/schedules.js';
+import { calculateLivePrediction } from './live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const PLATFORM_CHECK_CONCURRENCY = 2;
@@ -16,6 +17,9 @@ export class Scheduler {
   private checking = new Map<string, Promise<void>>();
   /** 已收到抖音明确的凭证失效信号；保存新 Cookie 后才恢复请求。 */
   private douyinCookieExpired = false;
+  private finalizedPredictionDate: string | null = null;
+  private coverageWrittenAt = new Map<string, number>();
+  private forecastRecordedFor = new Set<string>();
 
   constructor(private services: Services, private manager: RecorderManager) {}
 
@@ -59,6 +63,7 @@ export class Scheduler {
 
   private async runPlatform(platform: Platform): Promise<void> {
     if (platform === 'douyin' && this.douyinCookieExpired) return;
+    await this.finalizePastPredictions();
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
     const scheduledRooms = this.dueScheduleChecks(now, platform)
@@ -207,12 +212,31 @@ export class Scheduler {
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
       this.services.rooms.setLiveStatus(room.id, status.status);
+      this.services.rooms.setCurrentStreamTitle(
+        room.id,
+        status.status === 'live' ? status.streamTitle ?? null : null,
+      );
+    }
+    if (status.status === 'live' || status.status === 'offline') {
+      this.recordCoverage(room.id);
+      if (status.status === 'offline') this.recordTodayForecast(room.id);
     }
     if (status.status === 'live') {
-      // Persist the detector's own observation before any auto-record/manual-record logic.
-      // This is the sole source of truth for live-time prediction.
-      if (room.lastLiveStatus !== 'live') {
-        this.services.liveEvents.record(room.id, this.services.clock.iso());
+      // A confirmed offline→live transition has a narrow polling interval. First
+      // discovery while already live is still useful, but is stored as a lower-
+      // confidence interval instead of claiming the check time is the start time.
+      if (room.lastLiveStatus !== 'live' && status.platformStartedAt) {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'platform', lowerBoundAt: room.lastCheckedAt, platformStartedAt: status.platformStartedAt,
+        });
+      } else if (room.lastLiveStatus === 'offline') {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'transition', lowerBoundAt: room.lastCheckedAt,
+        });
+      } else if (room.lastLiveStatus === null) {
+        this.services.liveEvents.record(room.id, this.services.clock.iso(), {
+          source: 'initial_live', lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
+        });
       }
       const notifications = {
         ...DEFAULT_NOTIFICATION_PREFERENCE,
@@ -294,6 +318,51 @@ export class Scheduler {
     this.services.events.emit({ type: 'alert:created', data: alert });
   }
 
+  private recordCoverage(roomId: string): void {
+    const now = this.services.clock.now();
+    const last = this.coverageWrittenAt.get(roomId) ?? 0;
+    if (now - last < 60 * 60 * 1_000) return;
+    this.coverageWrittenAt.set(roomId, now);
+    this.services.predictionCalibration.recordCoverage(roomId, localDate(now), this.services.clock.iso());
+  }
+
+  private recordTodayForecast(roomId: string): void {
+    const now = this.services.clock.now();
+    const today = localDate(now);
+    const key = `${roomId}:${today}`;
+    if (this.forecastRecordedFor.has(key)) return;
+    this.forecastRecordedFor.add(key);
+    const from = new Date(now - 60 * 24 * 60 * 60 * 1_000).toISOString();
+    const events = this.services.liveEvents.list(roomId, from);
+    if (events.length < 3) return;
+    const prediction = calculateLivePrediction({
+      roomId, events, now, generatedAt: this.services.clock.iso(),
+      calibration: this.services.predictionCalibration.profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000)).get(roomId),
+    });
+    if (prediction.kind !== 'next' || prediction.nextDate !== today || !prediction.todayProbability) return;
+    this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.todayProbability, generatedAt: this.services.clock.iso() });
+  }
+
+  private async finalizePastPredictions(): Promise<void> {
+    const today = localDate(this.services.clock.now());
+    if (this.finalizedPredictionDate === today) return;
+    this.finalizedPredictionDate = today;
+    // The de-duplication key is only meaningful for the current calendar day.
+    // Clearing it keeps a long-running desktop process from retaining one key per
+    // room per day indefinitely.
+    this.forecastRecordedFor.clear();
+    for (const forecast of this.services.predictionCalibration.pendingBefore(today)) {
+      const start = new Date(`${forecast.targetDate}T00:00:00`).toISOString();
+      const endDate = new Date(`${forecast.targetDate}T00:00:00`);
+      endDate.setDate(endDate.getDate() + 1);
+      const opened = this.services.liveEvents.listBetween(forecast.roomId, start, endDate.toISOString()).length > 0;
+      const coverage = this.services.predictionCalibration.coverage(forecast.roomId, forecast.targetDate);
+      const coverageMs = coverage ? Date.parse(coverage.lastCheckedAt) - Date.parse(coverage.firstCheckedAt) : 0;
+      const outcome = opened ? 'hit' : coverage && coverage.checks >= 3 && coverageMs >= 4 * 60 * 60 * 1_000 ? 'miss' : 'unknown';
+      this.services.predictionCalibration.resolve(forecast.id, outcome, this.services.clock.iso());
+    }
+  }
+
   /** 开启自动录制后使用最新配置检测；已有录制无需探测，避免改变其状态或停录。 */
   async triggerAutoRecordCheck(roomId: string): Promise<void> {
     if (this.manager.isRoomActive(roomId)) return;
@@ -311,4 +380,9 @@ export class Scheduler {
     if (room.platform === 'douyin' && this.douyinCookieExpired) return;
     await this.checkRoom(room, { manual: true, ...opts }).catch(() => undefined);
   }
+}
+
+function localDate(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }

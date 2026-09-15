@@ -78,6 +78,7 @@ describe('BilibiliAdapter', () => {
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
     expect(result.status).toBe('live');
     expect(result.streamSessionId).toBe('123456:1787891234');
+    expect(result.platformStartedAt).toBe('2026-08-28T04:27:14.000Z');
     expect(result.streamTitle).toBe('测试直播间');
     expect(result.displayName).toBe('测试主播');
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
@@ -88,6 +89,7 @@ describe('BilibiliAdapter', () => {
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
     expect(result.status).toBe('live');
     expect(result.streamSessionId).toMatch(/^live_123456_\d+$/);
+    expect(result.platformStartedAt).toBeUndefined();
   });
 
   it('reports offline when live_status is not 1', async () => {

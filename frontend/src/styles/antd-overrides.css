@@ -422,6 +422,13 @@ textarea.ant-input,
 .lr-memphis-radio-group .ant-radio-button-wrapper::before {
   display: none !important;
 }
+.lr-platform-filter .ant-radio-button-wrapper,
+.lr-platform-filter .ant-radio-button-wrapper-checked,
+.lr-monitor-view-toggle .ant-radio-button-wrapper,
+.lr-monitor-view-toggle .ant-radio-button-wrapper-checked {
+  min-width: 36px;
+  padding: 0 6px !important;
+}
 
 /* Tags, tables and status */
 .lr-live-status-tag {

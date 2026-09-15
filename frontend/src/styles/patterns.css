@@ -164,6 +164,162 @@
   font-size: 16px;
   line-height: 1.2;
 }
+.lr-live-status-tag {
+  min-width: 0;
+  gap: 6px;
+}
+.lr-room-card__status {
+  display: flex !important;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.lr-room-card__status > .ant-space-item {
+  min-width: 0;
+}
+.lr-room-card__status > .ant-space-item:first-child {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.lr-room-card__status .lr-live-status-tag {
+  display: inline-flex;
+  max-width: 100%;
+}
+.lr-live-status-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.lr-live-status-title {
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  white-space: nowrap;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: var(--lr-success);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 26px;
+}
+
+.lr-live-prediction-timeline {
+  width: 220px;
+  padding: 2px 0;
+}
+.lr-live-prediction-popover__likelihood {
+  margin-left: 8px;
+  color: var(--lr-muted);
+  opacity: 0.62;
+  font-weight: 400;
+}
+.lr-live-prediction-tag.ant-tag {
+  margin-inline-end: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--lr-yellow) 48%, var(--lr-surface));
+  color: #000;
+}
+.lr-live-prediction-tag.ant-tag .ant-typography {
+  color: inherit;
+}
+.lr-live-prediction-tag--high.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 76%, var(--lr-surface));
+}
+.lr-live-prediction-tag--medium.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 62%, var(--lr-surface));
+}
+.lr-live-prediction-tag--low.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 48%, var(--lr-surface));
+}
+.lr-live-prediction-tag--observation.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 40%, var(--lr-surface));
+}
+.lr-live-prediction-tag--empty.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 32%, var(--lr-surface));
+}
+.lr-live-prediction-popover__usual {
+  margin-bottom: 8px;
+  color: var(--lr-muted);
+  font-size: 12px;
+  opacity: 0.72;
+}
+.lr-live-prediction-timeline__track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  background: var(--lr-surface-alt);
+}
+.lr-live-prediction-timeline__band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.lr-live-prediction-timeline__band--high { background: color-mix(in srgb, var(--lr-yellow) 88%, var(--lr-ink)); }
+.lr-live-prediction-timeline__band--medium { background: color-mix(in srgb, var(--lr-yellow) 61%, var(--lr-surface)); }
+.lr-live-prediction-timeline__band--low { background: color-mix(in srgb, var(--lr-yellow) 28%, var(--lr-surface-alt)); }
+.lr-live-prediction-timeline__now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--lr-ink);
+  transform: translateX(-1px);
+}
+.lr-live-prediction-timeline__hours {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  line-height: 1;
+}
+.lr-live-prediction-timeline__observations {
+  position: relative;
+  height: 7px;
+  margin-top: 5px;
+  opacity: 0.38;
+}
+.lr-live-prediction-timeline__observation {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 7px;
+  background: var(--lr-ink);
+  transform: translateX(-1px);
+}
+.lr-live-prediction-timeline__observation--platform,
+.lr-live-prediction-timeline__observation--transition { opacity: 0.9; }
+.lr-live-prediction-timeline__observation--initial_live { opacity: 0.48; }
+.lr-live-prediction-timeline__observation--legacy { opacity: 0.3; }
+.lr-live-status-title__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 6px;
+}
+.lr-live-status-title__content {
+  display: inline-block;
+}
+.lr-live-status-title__marquee {
+  display: flex;
+  width: max-content;
+  padding-right: 8px;
+  gap: 2rem;
+  animation: lr-live-title-marquee 12s linear infinite;
+}
+@keyframes lr-live-title-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-50% - 1rem)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-live-status-title__marquee { animation: none; }
+}
 .lr-room-card:nth-child(3n + 1) {
   border-top-color: var(--lr-pink) !important;
 }
