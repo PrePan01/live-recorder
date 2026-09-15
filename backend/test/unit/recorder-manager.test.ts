@@ -25,7 +25,7 @@ function baseSettings(dir: string): AppSettings {
   };
 }
 
-async function waitFor(fn: () => boolean, timeoutMs = 3000): Promise<void> {
+async function waitFor(fn: () => boolean, timeoutMs = 10_000): Promise<void> {
   const start = Date.now();
   while (!fn()) {
     if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
@@ -37,6 +37,19 @@ async function settle(clock: FakeClock, ms: number): Promise<void> {
   clock.advance(ms);
   await new Promise((r) => setTimeout(r, 5));
   await new Promise((r) => setTimeout(r, 5));
+}
+
+/**
+ * Advance both the application's clock and the event loop until an async
+ * state transition completes. A real-time poll alone cannot trigger retry
+ * timers backed by FakeClock, which made this test race on slower runners.
+ */
+async function waitForWithClock(clock: FakeClock, fn: () => boolean, attempts = 60): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (fn()) return;
+    await settle(clock, 500);
+  }
+  throw new Error('waitForWithClock timeout');
 }
 
 class FakePreview implements PreviewSink {
@@ -473,22 +486,13 @@ describe('RecorderManager', () => {
     const first = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
     // 自然结束仍开播 → 开新段续录；旧段 completed 后必须走分段收尾（pipeline.enqueue → uploader.enqueue 建上传任务）。
-    for (let i = 0; i < 20 && services.recordings.list({ roomId: room.id }).items.length < 2; i += 1) {
-      await settle(clock, 500);
-    }
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length >= 2);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.some((r) => r.state === 'recording'));
+    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.length >= 2);
+    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.some((r) => r.state === 'recording'));
     const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
     await services.manager.stopRecording(room.id);
-    for (let i = 0; i < 20 && services.recordings.get(activeRec.id)!.state !== 'completed'; i += 1) {
-      await settle(clock, 500);
-    }
-    await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+    await waitForWithClock(clock, () => services.recordings.get(activeRec.id)!.state === 'completed');
     // 转封装失败重试使用 FakeClock；停止第二段后继续推进收尾任务。
-    const deadline = Date.now() + 5000;
-    while (services.uploader.uploadRepo.jobForRecording(first.id) === null && Date.now() < deadline) {
-      await settle(clock, 500);
-    }
+    await waitForWithClock(clock, () => services.uploader.uploadRepo.jobForRecording(first.id) !== null);
     expect(services.uploader.uploadRepo.jobForRecording(first.id)).not.toBeNull();
   });
 });

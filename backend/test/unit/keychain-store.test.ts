@@ -26,7 +26,10 @@ describe('KeytarSecretStore', () => {
     expect(credentials.size).toBe(0);
   });
 
-  it('round-trips a secret through the OS keychain and cleans up', async () => {
+  // The desktop product supports macOS Keychain and Windows Credential Manager.
+  // Ubuntu's hosted runners neither ship libsecret nor expose a login keyring.
+  // The injected-store test above still verifies the storage implementation there.
+  it.skipIf(process.platform === 'linux')('round-trips a secret through the OS keychain and cleans up', async () => {
     const store = new KeytarSecretStore();
     const key = `test.${Date.now()}`;
     try {
