@@ -303,7 +303,7 @@ export default function SettingsPage() {
                 .filter(Boolean),
               password: mail.password || undefined,
             }
-        : undefined,
+          : undefined,
       });
       return true;
     } catch (e) {
@@ -488,6 +488,7 @@ export default function SettingsPage() {
                       label="最大并发"
                       name="maxConcurrentRecordings"
                       rules={[{ required: true }]}
+                      extra="可同时录制的直播间数量"
                     >
                       <InputNumber min={1} max={8} style={{ width: "100%" }} />
                     </Form.Item>
