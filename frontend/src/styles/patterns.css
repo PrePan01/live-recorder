@@ -212,11 +212,36 @@
   width: 220px;
   padding: 2px 0;
 }
-.lr-live-prediction-popover__reliability {
+.lr-live-prediction-popover__likelihood {
   margin-left: 8px;
   color: var(--lr-muted);
   opacity: 0.62;
   font-weight: 400;
+}
+.lr-live-prediction-tag.ant-tag {
+  margin-inline-end: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--lr-yellow) 48%, var(--lr-surface));
+  color: #000;
+}
+.lr-live-prediction-tag.ant-tag .ant-typography {
+  color: inherit;
+}
+.lr-live-prediction-tag--high.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 76%, var(--lr-surface));
+}
+.lr-live-prediction-tag--medium.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 62%, var(--lr-surface));
+}
+.lr-live-prediction-tag--low.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 48%, var(--lr-surface));
+}
+.lr-live-prediction-tag--observation.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 40%, var(--lr-surface));
+}
+.lr-live-prediction-tag--empty.ant-tag {
+  background: color-mix(in srgb, var(--lr-yellow) 32%, var(--lr-surface));
 }
 .lr-live-prediction-popover__usual {
   margin-bottom: 8px;
@@ -235,9 +260,9 @@
   top: 0;
   bottom: 0;
 }
-.lr-live-prediction-timeline__band--high { background: var(--lr-success); }
-.lr-live-prediction-timeline__band--medium { background: var(--lr-primary); }
-.lr-live-prediction-timeline__band--low { background: var(--lr-muted); }
+.lr-live-prediction-timeline__band--high { background: color-mix(in srgb, var(--lr-yellow) 88%, var(--lr-ink)); }
+.lr-live-prediction-timeline__band--medium { background: color-mix(in srgb, var(--lr-yellow) 61%, var(--lr-surface)); }
+.lr-live-prediction-timeline__band--low { background: color-mix(in srgb, var(--lr-yellow) 28%, var(--lr-surface-alt)); }
 .lr-live-prediction-timeline__now {
   position: absolute;
   top: -3px;
