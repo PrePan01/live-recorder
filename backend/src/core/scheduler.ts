@@ -1,4 +1,4 @@
-import { DEFAULT_NOTIFICATION_PREFERENCE, type Platform, type Room } from '../types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type ErrorObject, type Platform, type Room } from '../types/index.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
@@ -173,9 +173,21 @@ export class Scheduler {
     this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
   }
 
+  /** 检测失败不能掩盖仍由 RecorderManager 持有的活动录制会话。 */
+  private setCheckFailure(roomId: string, error: ErrorObject): void {
+    if (this.manager.isRoomActive(roomId)) {
+      this.services.rooms.setLastError(roomId, error);
+    } else {
+      this.services.rooms.setState(roomId, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: error });
+    }
+    this.emitRoom(roomId);
+  }
+
   private async runCheckRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
-    this.services.rooms.setState(room.id, 'checking', { lastCheckedAt: this.services.clock.iso() });
+    // 手动/全量复检也可能命中正在录制的房间。录制会话仍由 manager 持有，
+    // 不能仅为检测而把对外状态降为 checking，否则前端会丢失「停止」入口。
+    this.services.rooms.setState(room.id, this.manager.isRoomActive(room.id) ? 'recording' : 'checking', { lastCheckedAt: this.services.clock.iso() });
     this.emitRoom(room.id);
     try {
       await this.runCheckRoomInner(room, adapter, opts);
@@ -185,8 +197,7 @@ export class Scheduler {
       const appErr = err instanceof AppError
         ? err
         : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
-      this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
-      this.emitRoom(room.id);
+      this.setCheckFailure(room.id, appErr.toObject());
       const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
       this.services.events.emit({ type: 'alert:created', data: alert });
     }
@@ -223,6 +234,13 @@ export class Scheduler {
       if (status.status === 'offline') this.recordTodayForecast(room.id);
     }
     if (status.status === 'live') {
+      // 录制中的房间仍需继续检测（例如确认下播后自动收口），但开播结果不能
+      // 覆盖已有会话的 recording 状态；也无需再次进入自动录制决策。
+      if (this.manager.isRoomActive(room.id)) {
+        this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.emitRoom(room.id);
+        return;
+      }
       // A confirmed offline→live transition has a narrow polling interval. First
       // discovery while already live is still useful, but is stored as a lower-
       // confidence interval instead of claiming the check time is the start time.
@@ -268,8 +286,7 @@ export class Scheduler {
         }
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
-        this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
-        this.emitRoom(room.id);
+        this.setCheckFailure(room.id, appErr.toObject());
         const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
@@ -299,8 +316,7 @@ export class Scheduler {
       this.markDouyinCookieExpired();
       return;
     }
-    this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
-    this.emitRoom(room.id);
+    this.setCheckFailure(room.id, err);
     const alert = this.services.alerts.create({
       level: status.status === 'restricted' ? 'warning' : 'error',
       source: 'platform',
