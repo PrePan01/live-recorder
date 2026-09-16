@@ -243,13 +243,14 @@ export class Scheduler {
         ...DEFAULT_NOTIFICATION_PREFERENCE,
         ...(this.services.settings.load()?.notifications ?? {}),
       };
+      const shouldNotifyLiveStarted = room.lastLiveStatus === 'offline'
+        && checkedRoom.enabled
+        && checkedRoom.liveNotificationEnabled
+        && notifications.liveStarted;
       // 仅在已确认离线后的下一次开播通知：首次检测/重启时的未知状态不补发。
       if (
-        room.lastLiveStatus === 'offline' &&
-        checkedRoom.enabled &&
-        checkedRoom.liveNotificationEnabled &&
-        notifications.desktopEnabled &&
-        notifications.liveStarted
+        shouldNotifyLiveStarted &&
+        notifications.desktopEnabled
       ) {
         this.services.events.emit({
           type: 'live:started',
@@ -273,10 +274,16 @@ export class Scheduler {
       if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
         this.emitRoom(room.id);
+        if (shouldNotifyLiveStarted) {
+          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName });
+        }
         return;
       }
       try {
-        await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        const started = await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        if (shouldNotifyLiveStarted) {
+          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName, autoRecordingStarted: started });
+        }
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });

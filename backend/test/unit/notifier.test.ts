@@ -18,15 +18,16 @@ describe('Notifier', () => {
     const notifier = new Notifier(services.mailer, clock, services.alerts, () => MAIL);
     const mailer = services.mailer as FakeMailer;
 
-    await notifier.notify('recording_started', 'room1', { title: '主播A' });
+    await notifier.notify('live_started', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]!.subject).toContain('已开播：主播A');
+    expect(mailer.sent[0]!.subject).toContain('您订阅的 主播A 已开播');
 
-    await notifier.notify('recording_started', 'room1', { title: '主播A' });
+    await notifier.notify('live_started', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(1);
 
-    await notifier.notify('recording_started', 'room2', { title: '主播B' });
+    await notifier.notify('live_started', 'room2', { title: '主播B', autoRecordingStarted: true });
     expect(mailer.sent).toHaveLength(2);
+    expect(mailer.sent[1]!.subject).toContain('自动录制已开始');
 
     await notifier.notify('recording_failed', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(3);
@@ -37,7 +38,7 @@ describe('Notifier', () => {
     expect(mailer.sent[3]!.subject).toContain('磁盘空间不足');
 
     clock.advance(31 * 60 * 1000);
-    await notifier.notify('recording_started', 'room1', { title: '主播A' });
+    await notifier.notify('live_started', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(5);
   });
 
@@ -45,7 +46,7 @@ describe('Notifier', () => {
     const { services, clock } = newServices();
     const mailer = services.mailer as FakeMailer;
     const disabled = new Notifier(services.mailer, clock, services.alerts, () => ({ ...MAIL, enabled: false }));
-    await disabled.notify('recording_started', 'room1');
+    await disabled.notify('live_started', 'room1');
     expect(mailer.sent).toHaveLength(0);
 
     const enabled = new Notifier(services.mailer, clock, services.alerts, () => MAIL);

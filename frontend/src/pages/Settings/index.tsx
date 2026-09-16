@@ -379,6 +379,24 @@ export default function SettingsPage() {
             设置与告警
           </Typography.Title>
         </div>
+        <Space className="lr-page-actions" wrap>
+          <Button
+            size="small"
+            icon={<DownloadOutlined />}
+            loading={exporting}
+            onClick={() => void onExport()}
+          >
+            导出配置
+          </Button>
+          <Button
+            size="small"
+            icon={<UploadOutlined />}
+            loading={importing}
+            onClick={() => fileRef.current?.click()}
+          >
+            导入配置
+          </Button>
+        </Space>
       </div>
       {diskDanger ? (
         <Alert
@@ -394,26 +412,6 @@ export default function SettingsPage() {
           <Card
             className="lr-settings-card lr-settings-card--primary"
             title="服务设置"
-            extra={
-              <Space>
-                <Button
-                  size="small"
-                  icon={<DownloadOutlined />}
-                  loading={exporting}
-                  onClick={() => void onExport()}
-                >
-                  导出配置
-                </Button>
-                <Button
-                  size="small"
-                  icon={<UploadOutlined />}
-                  loading={importing}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  导入配置
-                </Button>
-              </Space>
-            }
           >
             <Form
               className="lr-settings-form"
@@ -765,10 +763,10 @@ export default function SettingsPage() {
           <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
-          <Card className="lr-settings-card" title="OpenList 自动上传">
+          <Card className="lr-settings-card" title="自动上传">
             <OpenListConfigCard />
           </Card>
-          <Card className="lr-settings-card" title="邮件通知（服务商预设）">
+          <Card className="lr-settings-card" title="邮件通知">
             <EmailConfigCard />
           </Card>
           <ResetSettingsCard
@@ -896,7 +894,7 @@ export default function SettingsPage() {
                 </Col>
               </Row>
               <Form.Item
-                label="通知去重窗口（分钟）"
+                label="通知去重时间（分钟）"
                 style={{ marginBottom: 0 }}
               >
                 <InputNumber
@@ -912,13 +910,6 @@ export default function SettingsPage() {
                   }}
                 />
               </Form.Item>
-              <Typography.Paragraph
-                type="secondary"
-                style={{ marginBottom: 0 }}
-              >
-                桌面通知使用系统通知能力；邮件告警需在「SMTP
-                邮件告警」配置并启用。
-              </Typography.Paragraph>
             </Space>
           </Card>
           <Card

@@ -454,7 +454,6 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recording.id)! });
     this.emitServiceStatus();
-    await this.notifier.notify('recording_started', room.id, { title: room.displayName });
     return true;
   }
 
@@ -567,7 +566,6 @@ export class RecorderManager {
             startedConfirmed = true;
             this.services.recordings.update(recordingId, { state: 'recording', filePath: event.filePath });
             this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
-            await this.notifier.notify('recording_started', room.id, { title: room.displayName });
             break;
           }
           case 'data': {

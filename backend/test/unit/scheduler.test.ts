@@ -6,6 +6,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
+import { FakeMailer } from '../../src/mail/mailer.js';
 import type { AppSettings } from '../../src/types/index.js';
 import { AppError } from '../../src/types/error.js';
 
@@ -63,6 +64,7 @@ describe('Scheduler', () => {
     services.settings.save({
       ...baseSettings(),
       autoRecord: false,
+      mail: { enabled: true, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'u@x.com', recipients: ['me@x.com'] },
       notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
     });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
@@ -77,6 +79,9 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
 
     expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+    const mailer = services.mailer as FakeMailer;
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 您订阅的 主播A 已开播');
     expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
   });
 
