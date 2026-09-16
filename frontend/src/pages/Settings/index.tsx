@@ -194,7 +194,7 @@ export default function SettingsPage() {
     if (!dir) return;
     try {
       await validateDirectory(dir);
-      setDirMsg({ ok: true, text: "目录可写" });
+      setDirMsg({ ok: true, text: "目录可用" });
     } catch (e) {
       setDirMsg({
         ok: false,

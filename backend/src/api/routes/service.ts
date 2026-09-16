@@ -75,14 +75,14 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
       };
     }));
 
-    // ⑤ 目录可写。
+    // ⑤ 目录可用。
     items.push(await withTimeout(async () => {
       if (!settings || !settings.recordingDirectory) {
         return { key: 'writable', label: '录像目录', status: 'warn', detail: '未设置录像目录', fixHint: '在设置页选择录像目录' };
       }
       try {
         await access(settings.recordingDirectory, constants.W_OK);
-        return { key: 'writable', label: '录像目录', status: 'ok', detail: '目录可写', fixHint: '' };
+        return { key: 'writable', label: '录像目录', status: 'ok', detail: '目录可用', fixHint: '' };
       } catch {
         return { key: 'writable', label: '录像目录', status: 'fail', detail: '目录不可写', fixHint: '检查目录权限或重新选择' };
       }

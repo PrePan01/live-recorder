@@ -8,7 +8,6 @@ import {
 import { useRoomStore } from "../../stores/roomStore";
 import { usePreviewStore } from "../../stores/previewStore";
 import { getWallCapacity, useWallStore } from "../../stores/wallStore";
-import PreviewModal from "../../components/PreviewModal";
 import WallGrid from "../../components/WallGrid";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import type { Room } from "../../types/room";
@@ -19,7 +18,20 @@ export default function Wall() {
   const { message } = App.useApp();
   const { rooms, fetchRooms } = useRoomStore();
   const openPreview = usePreviewStore((s) => s.open);
+  const openPreviewModal = usePreviewStore((s) => s.openModal);
   const closePreview = usePreviewStore((s) => s.close);
+  const activeModalRoomId = usePreviewStore((s) => s.activeModal?.roomId);
+  const activeModalRoomIdRef = useRef(activeModalRoomId);
+  useEffect(() => {
+    activeModalRoomIdRef.current = activeModalRoomId;
+  }, [activeModalRoomId]);
+  // 观看弹窗的画中画由应用布局持有；直播墙只释放自己独占的预览会话。
+  const closeWallPreview = useCallback(
+    (roomId: string) => {
+      if (roomId !== activeModalRoomIdRef.current) closePreview(roomId);
+    },
+    [closePreview],
+  );
   const wallRoomIds = useWallStore((s) => s.roomIds);
   const wallRoomIdsRef = useRef(wallRoomIds);
   useEffect(() => {
@@ -34,7 +46,6 @@ export default function Wall() {
   const [addOpen, setAddOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [slotPicker, setSlotPicker] = useState<number | null>(null);
-  const [fullscreen, setFullscreen] = useState<Room | null>(null);
   const videoAreaRef = useRef<HTMLDivElement>(null);
   const [wallFullscreen, setWallFullscreen] = useState(false);
   const restoreFullscreen = useRef<(() => Promise<void>) | null>(null);
@@ -85,10 +96,10 @@ export default function Wall() {
       restoreFullscreen.current = null;
       // 离开直播墙时释放本页打开的预览，避免 openRoomIds 泄漏。
       wallRoomIdsRef.current.forEach((rid) => {
-        if (rid) closePreview(rid);
+        if (rid) closeWallPreview(rid);
       });
     };
-  }, [closePreview]);
+  }, [closeWallPreview]);
 
   useEffect(() => {
     if (!wallFullscreen) return;
@@ -157,7 +168,7 @@ export default function Wall() {
   };
 
   const handleRemove = (room: Room) => {
-    closePreview(room.id);
+    closeWallPreview(room.id);
     removeWallRoom(room.id);
     setPickedIds([]);
   };
@@ -168,10 +179,23 @@ export default function Wall() {
     // reduced to 2x2. The grid store performs the actual slot truncation.
     if (nextGrid === "2x2") {
       wallRoomIds.slice(getWallCapacity(nextGrid)).forEach((roomId) => {
-        if (roomId) closePreview(roomId);
+        if (roomId) closeWallPreview(roomId);
       });
     }
     setGrid(nextGrid);
+  };
+
+  const handleRoomFullscreen = (room: Room) => {
+    if (
+      !openPreviewModal({
+        roomId: room.id,
+        titlePrefix: "全屏",
+        defaultWidth: 1080,
+        enableHighlights: false,
+      })
+    ) {
+      message.warning("预览数量已达上限，请先关闭其他预览");
+    }
   };
 
   return (
@@ -209,7 +233,7 @@ export default function Wall() {
         <WallGrid
           rooms={wallRooms}
           grid={grid}
-          onFullscreen={setFullscreen}
+          onFullscreen={handleRoomFullscreen}
           onRemove={handleRemove}
           onEmptySlotClick={setSlotPicker}
         />
@@ -275,15 +299,6 @@ export default function Wall() {
           }))}
         />
       </Modal>
-      {fullscreen ? (
-        <PreviewModal
-          room={fullscreen}
-          titlePrefix="全屏"
-          defaultWidth={1080}
-          enableHighlights={false}
-          onClose={() => setFullscreen(null)}
-        />
-      ) : null}
     </div>
   );
 }
