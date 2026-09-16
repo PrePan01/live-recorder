@@ -199,7 +199,8 @@
   padding-inline: 8px;
 }
 .lr-room-card--list .lr-room-card__error,
-.lr-room-card--list .lr-room-card__warning {
+.lr-room-card--list .lr-room-card__warning,
+.lr-room-card--list .lr-room-card__quality {
   flex-basis: 100%;
 }
 .lr-room-card--list .lr-room-card__error {

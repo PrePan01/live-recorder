@@ -59,6 +59,26 @@ describe('Scheduler', () => {
     expect(services.rooms.get(room.id)!.currentStreamTitle).toBeNull();
   });
 
+  /**
+   * 监控卡片要在录制前说明「这个房间最高能录到什么」。离线时必须清空，
+   * 否则会把上一场的档位当成当前状态展示（未登录 B站 时尤其误导）。
+   */
+  it('stores the qualities the room can actually record and clears them once offline', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播B' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', availableQualities: ['720p'] },
+      { status: 'offline' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.availableQualities).toEqual(['720p']);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.availableQualities).toEqual([]);
+  });
+
   it('emits one live-started event only for an offline-to-live transition with all notification gates enabled', async () => {
     const { services } = newServices();
     services.settings.save({

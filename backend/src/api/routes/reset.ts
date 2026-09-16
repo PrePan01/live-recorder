@@ -4,9 +4,9 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import { AppError } from '../../types/error.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
 
-const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY];
+const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY];
 
 export function registerResetRoutes(app: FastifyInstance, services: Services, otherWrites: () => number): void {
   app.post('/api/v1/settings/reset', async (req, reply) => {

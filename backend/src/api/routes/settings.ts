@@ -9,10 +9,12 @@ import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, MailConfig, PipelineConfig } from '../../types/index.js';
 import { validateSettings } from '../../config/schema.js';
-import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { settingsView } from './settings-view.js';
 
 export { settingsView };
+
+const BILIBILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 export function registerSettingsRoutes(app: FastifyInstance, services: Services): void {
   app.get('/api/v1/settings', async (_req, reply) => {
@@ -20,12 +22,14 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   });
 
   app.put('/api/v1/settings', async (req, reply) => {
-    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string };
+    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string; bilibiliCookie?: string };
     const password = typeof body.mail?.password === 'string' && body.mail.password.length > 0 ? body.mail.password : null;
     const douyinCookie = typeof body.douyinCookie === 'string' ? normalizeDouyinCookie(body.douyinCookie) : null;
+    const bilibiliCookie = typeof body.bilibiliCookie === 'string' ? normalizeBilibiliCookie(body.bilibiliCookie) : null;
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
     if (incoming.mail) delete incoming.mail.password;
     delete (incoming as { douyinCookie?: string }).douyinCookie;
+    delete (incoming as { bilibiliCookie?: string }).bilibiliCookie;
     const merged: AppSettings = {
       ...(services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings)),
       ...incoming,
@@ -45,6 +49,15 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
         void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
       } else {
         await services.secretStore.delete(DOUYIN_COOKIE_KEY);
+      }
+    }
+    if (bilibiliCookie !== null) {
+      if (bilibiliCookie.length > 0) {
+        validateBilibiliCookie(bilibiliCookie);
+        await services.secretStore.set(BILIBILI_COOKIE_KEY, bilibiliCookie);
+        void services.scheduler.recheckBilibiliRoomsAfterCookieUpdate().catch(() => undefined);
+      } else {
+        await services.secretStore.delete(BILIBILI_COOKIE_KEY);
       }
     }
     const view = await settingsView(services);
@@ -75,6 +88,28 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     const cookie = await services.secretStore.get(DOUYIN_COOKIE_KEY);
     if (!cookie) return reply.send({ status: 'missing' });
     return reply.send({ status: await checkDouyinCookieStatus(cookie) });
+  });
+
+  // 与抖音授权同构：桌面端登录窗口通过原生 Cookie 库读取 HttpOnly 凭证后，
+  // 只需写一个字段，不必回传整份设置表单。
+  app.post('/api/v1/settings/bilibili-cookie', async (req, reply) => {
+    const body = (req.body ?? {}) as { cookie?: unknown };
+    if (typeof body.cookie !== 'string') {
+      throw new AppError('CONFIG_INVALID', '未读取到B站登录凭证，请先在授权窗口完成登录后重试');
+    }
+    const cookie = normalizeBilibiliCookie(body.cookie);
+    validateBilibiliCookie(cookie);
+    await services.secretStore.set(BILIBILI_COOKIE_KEY, cookie);
+    void services.scheduler.recheckBilibiliRoomsAfterCookieUpdate().catch(() => undefined);
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return reply.send({ settings: view });
+  });
+
+  app.get('/api/v1/settings/bilibili-cookie-status', async (_req, reply) => {
+    const cookie = await services.secretStore.get(BILIBILI_COOKIE_KEY);
+    if (!cookie) return reply.send({ status: 'missing' });
+    return reply.send({ status: await checkBilibiliCookieStatus(cookie) });
   });
 
   app.post('/api/v1/settings/validate-directory', async (req, reply) => {
@@ -206,6 +241,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
 }
 
 type DouyinCookieStatus = 'valid' | 'invalid' | 'unknown';
+type BilibiliCookieStatus = 'valid' | 'invalid' | 'unknown';
 
 /** Verify a stored login session without exposing the cookie or response body. */
 async function checkDouyinCookieStatus(cookie: string): Promise<DouyinCookieStatus> {
@@ -236,6 +272,60 @@ function normalizeDouyinCookie(value: string): string {
     .replace(/^\s*cookie\s*:\s*/i, '')
     .replace(/[\r\n]+/g, ' ')
     .trim();
+}
+
+/** 同 normalizeDouyinCookie：去掉 `Cookie:` 前缀与换行。 */
+function normalizeBilibiliCookie(value: string): string {
+  return value
+    .replace(/^\s*cookie\s*:\s*/i, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim();
+}
+
+/**
+ * B站授权校验：`SESSDATA` 是 B站 的 HttpOnly 登录凭证，未登录时 getRoomPlayInfo
+ * 只返回 720p 及以下档位，因此缺它就是「授权无效」而不是「稍后可用」。
+ * `DedeUserID` 虽非 HttpOnly，但属登录凭证组的一部份，缺失说明复制不完整。
+ */
+function validateBilibiliCookie(cookie: string): void {
+  const hasPair = /(?:^|;\s*)[^=;\s]+=[^;]*/.test(cookie);
+  if (!hasPair) {
+    throw new AppError('CONFIG_INVALID', 'B站 Cookie 格式无效，请粘贴完整 Cookie 字符串（形如 k=v; k2=v2）');
+  }
+  if (!/(?:^|;\s*)SESSDATA=[^;]+/.test(cookie)) {
+    throw new AppError(
+      'CONFIG_INVALID',
+      'Cookie 缺少 SESSDATA（B站 HttpOnly 登录凭证，方式一 document.cookie 读取不到）。请改用方式二：F12 → 网络(Network) → 点开任意 live.bilibili.com 请求 → 在「请求标头」里复制完整 Cookie 整段',
+    );
+  }
+  if (!/(?:^|;\s*)DedeUserID=[^;]+/.test(cookie)) {
+    throw new AppError(
+      'CONFIG_INVALID',
+      'Cookie 缺少登录凭证 DedeUserID。请确认已在上方窗口完成 B站 登录，并复制完整 Cookie',
+    );
+  }
+}
+
+/** B站 登录态探测：nav 接口仅在已登录时返回 code=0 且 isLogin=true。 */
+async function checkBilibiliCookieStatus(cookie: string): Promise<BilibiliCookieStatus> {
+  try {
+    const response = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+      headers: {
+        Cookie: cookie,
+        Referer: 'https://www.bilibili.com/',
+        'User-Agent': BILIBILI_UA,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return 'unknown';
+    const body = await response.json() as { code?: unknown; data?: { isLogin?: unknown } };
+    if (body.code === 0 && body.data?.isLogin === true) return 'valid';
+    // -101 账号未登录是 B站 对匿名/过期会话的明确答复。
+    if (body.code === -101 || body.data?.isLogin === false) return 'invalid';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**

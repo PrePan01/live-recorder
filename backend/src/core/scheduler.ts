@@ -111,6 +111,16 @@ export class Scheduler {
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
   }
 
+  /**
+   * B站授权更新后的复检：B站 的登录态只影响可选清晰度档位，不会返回凭证失效错误，
+   * 因此无需抖音那样的熔断复位，仅等待旧 Cookie 的在途请求收口后重新发起检测。
+   */
+  async recheckBilibiliRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.list().filter((room) => room.platform === 'bilibili');
+    await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
+  }
+
   private markDouyinCookieExpired(): void {
     if (this.douyinCookieExpired) return;
     this.douyinCookieExpired = true;
@@ -228,6 +238,12 @@ export class Scheduler {
         room.id,
         status.status === 'live' ? status.streamTitle ?? null : null,
       );
+      // 未登录 B站 时平台只给低清晰度。提前把「这个房间现在能录到什么」存下来，
+      // 让监控卡片在按下录制之前就能说明，而不是录完翻历史才发现画质不符。
+      this.services.rooms.setAvailableQualities(
+        room.id,
+        status.status === 'live' ? status.availableQualities ?? [] : [],
+      );
     }
     if (status.status === 'live' || status.status === 'offline') {
       this.recordCoverage(room.id);
@@ -308,7 +324,7 @@ export class Scheduler {
       status.status === 'restricted'
         ? room.platform === 'douyin'
           ? '平台访问受限，请检查抖音授权'
-          : '平台访问受限，请检查 Cookie 配置'
+          : '平台访问受限，请检查B站授权'
         : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();

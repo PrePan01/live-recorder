@@ -4,7 +4,7 @@ import type { ErrorCode } from '../types/error';
 const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   ROOM_LINK_INVALID: '链接无效或平台不支持，请检查后重试',
   ROOM_LINK_DUPLICATE: '该直播间已存在',
-  PLATFORM_ACCESS_RESTRICTED: '平台访问受限，请检查抖音授权',
+  PLATFORM_ACCESS_RESTRICTED: '平台访问受限，请检查平台授权',
   PLATFORM_CHANGED: '平台有变动，等待适配更新',
   DIRECTORY_NOT_WRITABLE: '目录不可写，请检查权限',
   DISK_SPACE_INSUFFICIENT: '磁盘空间不足，无法开始录制',

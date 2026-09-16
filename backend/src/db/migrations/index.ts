@@ -567,6 +567,15 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       `);
     },
   },
+  {
+    // 监控卡片要展示「最高可录」：未登录 B站 时平台只给低清晰度，存下来才能在录制前告知用户，
+    // 而不是等录完翻历史才发现画质不符。与 current_stream_title 同为检测派生的缓存字段。
+    version: 31,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'available_qualities'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN available_qualities TEXT;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

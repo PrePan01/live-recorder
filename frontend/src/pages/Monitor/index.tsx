@@ -46,6 +46,7 @@ import LivePredictionBadge from "../../components/LivePredictionBadge";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import type { Platform, Room } from "../../types/room";
+import type { Quality } from "../../types/settings";
 import {
   RoomSortableProvider,
   SortableRoomTableRow,
@@ -95,6 +96,22 @@ const compactActionTooltipStyles = {
   },
 };
 
+/** 清晰度由高到低，索引越小画质越高。 */
+const QUALITY_ORDER = ["original", "1080p", "720p", "360p"];
+const qualityRank = (q: string) => QUALITY_ORDER.indexOf(q);
+const qualityLabel = (q: string) => (q === "original" ? "原画" : q);
+
+/** 平台给出的可录清晰度中最高的一档；空数组表示平台没提供，不展示。 */
+function bestQuality(qualities: string[]): string | null {
+  let best: string | null = null;
+  for (const q of qualities) {
+    const rank = qualityRank(q);
+    if (rank < 0) continue;
+    if (best === null || rank < qualityRank(best)) best = q;
+  }
+  return best;
+}
+
 function useCompactRoomCardActions(actionCount: number) {
   const ref = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
@@ -129,6 +146,8 @@ const RoomCard = memo(function RoomCard({
   recentlyStopped,
   autoRecordEnabled,
   insight,
+  qualityPreference,
+  bilibiliAuthorized,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -142,11 +161,23 @@ const RoomCard = memo(function RoomCard({
   recentlyStopped?: boolean;
   autoRecordEnabled: boolean;
   insight?: RoomInsight;
+  qualityPreference: Quality | null;
+  bilibiliAuthorized: boolean;
 }) {
   const navigate = useNavigate();
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
+  const bestAvailable = bestQuality(room.availableQualities);
+  // 这行只在「B站 且录不到你设置的清晰度」时出现。
+  // 抖音没有「没登录就压清晰度」这回事，达标时也没有任何可做的事——两种情况都别打扰用户。
+  const qualityShortfall =
+    room.platform === "bilibili" &&
+    bestAvailable !== null &&
+    qualityPreference !== null &&
+    qualityRank(bestAvailable) > qualityRank(qualityPreference);
+  // 只有确实还没登录时才引导去登录；房间本身没有该档位的话给了入口也没用。
+  const offerBilibiliLogin = qualityShortfall && !bilibiliAuthorized;
   // 离线时只有「检测、直播间」；开播或录制中再出现「观看、录制/停止」。
   // 每张卡片按自己的按钮数切换，不能让两按钮卡片沿用四按钮的紧凑阈值。
   const actionCount = onAir || recording ? 4 : 2;
@@ -226,6 +257,30 @@ const RoomCard = memo(function RoomCard({
         <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
           <RoomHealth insight={insight} />
         </div>
+        {qualityShortfall && bestAvailable ? (
+          <Typography.Paragraph
+            className="lr-room-card__quality"
+            type="warning"
+            style={{ marginBottom: 10, marginTop: 0, fontSize: 12 }}
+          >
+            最高只能录到 {qualityLabel(bestAvailable)}
+            {offerBilibiliLogin ? (
+              <>
+                ，
+                <Typography.Link
+                  className="lr-room-card__error-link"
+                  underline
+                  // .ant-typography 自带 font-size，不继承本行的 12px，会显得比同行文字大。
+                  style={{ fontSize: "inherit" }}
+                  onClick={() => navigate("/settings#bilibili-cookie")}
+                >
+                  登录B站
+                </Typography.Link>
+                可录更高
+              </>
+            ) : null}
+          </Typography.Paragraph>
+        ) : null}
         {room.lastError ? (
           <Typography.Paragraph
             className="lr-room-card__error"
@@ -243,6 +298,18 @@ const RoomCard = memo(function RoomCard({
                   onClick={() => navigate("/settings#douyin-cookie")}
                 >
                   抖音授权
+                </Typography.Link>
+              </>
+            ) : room.platform === "bilibili" &&
+              room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
+              <>
+                平台访问受限，请检查{" "}
+                <Typography.Link
+                  className="lr-room-card__error-link"
+                  underline
+                  onClick={() => navigate("/settings#bilibili-cookie")}
+                >
+                  B站授权
                 </Typography.Link>
               </>
             ) : (
@@ -859,6 +926,8 @@ export default function Monitor() {
                     room.autoRecord ?? settings?.autoRecord ?? true
                   }
                   insight={insights[room.id]}
+                  qualityPreference={settings?.quality ?? null}
+                  bilibiliAuthorized={settings?.bilibiliCookie.hasCookie ?? false}
                   onRecord={onRecordRoom}
                   onFavorite={onFavoriteRoom}
                   layout="card"

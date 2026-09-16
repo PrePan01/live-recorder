@@ -39,8 +39,10 @@ import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
 import {
+  fetchBilibiliCookieStatus,
   fetchDouyinCookieStatus,
   validateDirectory,
+  type BilibiliCookieStatus,
   type DouyinCookieStatus,
 } from "../../api/settings";
 import { exportConfig, importConfig } from "../../api/config";
@@ -50,6 +52,7 @@ import {
   type SelfCheckStatus,
 } from "../../api/service";
 import DirectoryPicker from "../../components/DirectoryPicker";
+import { PlatformIcon } from "../../components/PlatformLogo";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import PipelineConfigCard from "../../components/PipelineConfigCard";
 import NamingRuleCard from "../../components/NamingRuleCard";
@@ -60,6 +63,7 @@ import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes, formatTime } from "../../utils/format";
 import type { SettingsInput } from "../../types/settings";
+import type { Platform } from "../../types/room";
 import type { NotificationEventPreference } from "../../types/notification";
 import saveCookieTutorial from "../../assets/img/save_cookie.png";
 
@@ -109,6 +113,162 @@ function openExternalUrl(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+type CredentialStatus = "authorized" | "invalid" | "unauthorized";
+
+const CREDENTIAL_PLATFORM_LABEL: Record<Platform, string> = {
+  douyin: "抖音",
+  bilibili: "B站",
+};
+
+const CREDENTIAL_STATUS_TEXT: Record<CredentialStatus, string> = {
+  authorized: "已登录",
+  invalid: "登录已失效",
+  unauthorized: "未登录",
+};
+
+/**
+ * 平台授权的一行：平台（含状态）、说明、动作三栏对齐，两个平台可直接横向对比。
+ * 说明文字由状态驱动——已登录后不再重复「怎么登录」，只留不满足时的后果与补救。
+ */
+function CredentialRow({
+  anchor,
+  platform,
+  status,
+  hasCookie,
+  authorizing,
+  unauthorizedHint,
+  cookieField,
+  manualHost,
+  manualPlaceholder,
+  tutorialImage,
+  onAuthorize,
+  onClear,
+}: {
+  anchor: string;
+  platform: Platform;
+  status: CredentialStatus;
+  hasCookie: boolean;
+  authorizing: boolean;
+  unauthorizedHint: string;
+  cookieField: "douyinCookie" | "bilibiliCookie";
+  manualHost: string;
+  manualPlaceholder: string;
+  /** 手动粘贴的操作示意图；平台各有一张，没有对应图的平台不显示入口。 */
+  tutorialImage?: string;
+  onAuthorize: () => void;
+  onClear: () => void;
+}) {
+  const authorized = status !== "unauthorized";
+  const label = CREDENTIAL_PLATFORM_LABEL[platform];
+  return (
+    <div id={anchor} className="lr-credential-row">
+      <div className="lr-credential-row__main">
+        <div className="lr-credential-row__platform">
+          <span className="lr-credential-row__name">
+            <PlatformIcon platform={platform} size={18} />
+            <Typography.Text strong>{label}</Typography.Text>
+          </span>
+          <Tag
+            color={
+              status === "invalid"
+                ? "error"
+                : authorized
+                  ? "success"
+                  : "default"
+            }
+          >
+            {CREDENTIAL_STATUS_TEXT[status]}
+          </Tag>
+        </div>
+        <div className="lr-credential-row__state">
+          {status === "authorized" ? null : (
+            <Typography.Text
+              type={status === "invalid" ? "danger" : "secondary"}
+            >
+              {status === "invalid" ? "请重新登录" : unauthorizedHint}
+            </Typography.Text>
+          )}
+        </div>
+        <div className="lr-credential-row__actions">
+          {bridge.isDesktop ? (
+            <Button
+              type={authorized ? "default" : "primary"}
+              loading={authorizing}
+              onClick={onAuthorize}
+            >
+              {authorized ? "重新登录" : "登录并授权"}
+            </Button>
+          ) : (
+            <Typography.Text type="secondary">
+              请用桌面客户端登录
+            </Typography.Text>
+          )}
+          <Button type="text" danger disabled={!authorized} onClick={onClear}>
+            清除
+          </Button>
+        </div>
+      </div>
+      <Collapse
+        className="lr-credential-manual"
+        ghost
+        items={[
+          {
+            key: "manual-cookie",
+            label: "手动粘贴 Cookie（高级）",
+            children: (
+              <div className="lr-credential-manual__content">
+                <Typography.Paragraph type="secondary">
+                  进入网页版{label}并登录，打开任意直播间后按 F12 →
+                  网络（Network） → 刷新页面 → 点开任意{" "}
+                  <Typography.Text code>{manualHost}</Typography.Text> 请求 →
+                  在「请求标头」复制完整 Cookie 并粘贴。
+                  {tutorialImage ? (
+                    <span className="lr-network-help">
+                      <Tooltip
+                        styles={{
+                          root: {
+                            width: "min(600px, calc(100vw - 48px))",
+                            maxWidth: "none",
+                          },
+                        }}
+                        title={
+                          <img
+                            alt={`从网络面板保存${label} Cookie 的教程`}
+                            className="lr-cookie-tutorial-image"
+                            src={tutorialImage}
+                          />
+                        }
+                        placement="top"
+                      >
+                        <Button
+                          aria-label={`查看${label}网络面板 Cookie 教程`}
+                          className="lr-inline-icon-button"
+                          size="small"
+                          type="text"
+                          icon={<QuestionCircleOutlined />}
+                        />
+                      </Tooltip>
+                    </span>
+                  ) : null}
+                </Typography.Paragraph>
+                <Form.Item
+                  name={cookieField}
+                  extra={hasCookie ? "已保存；留空则不修改" : undefined}
+                >
+                  <Input.Password
+                    placeholder={hasCookie ? "••••••" : manualPlaceholder}
+                    autoComplete="new-password"
+                  />
+                </Form.Item>
+              </div>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
@@ -146,6 +306,22 @@ export default function SettingsPage() {
   const [douyinAuthorizing, setDouyinAuthorizing] = useState(false);
   const [douyinCookieStatus, setDouyinCookieStatus] =
     useState<DouyinCookieStatus | null>(null);
+  const [bilibiliAuthorizing, setBilibiliAuthorizing] = useState(false);
+  const [bilibiliCookieStatus, setBilibiliCookieStatus] =
+    useState<BilibiliCookieStatus | null>(null);
+  // 状态驱动渲染：探测结果优先于「本地是否存过」，失效的凭证不该显示成已登录。
+  const douyinCredentialStatus: CredentialStatus =
+    douyinCookieStatus === "invalid"
+      ? "invalid"
+      : settings?.douyinCookie.hasCookie
+        ? "authorized"
+        : "unauthorized";
+  const bilibiliCredentialStatus: CredentialStatus =
+    bilibiliCookieStatus === "invalid"
+      ? "invalid"
+      : settings?.bilibiliCookie.hasCookie
+        ? "authorized"
+        : "unauthorized";
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
@@ -185,6 +361,20 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    void fetchBilibiliCookieStatus()
+      .then((result) => {
+        if (!disposed) setBilibiliCookieStatus(result);
+      })
+      .catch(() => {
+        if (!disposed) setBilibiliCookieStatus("unknown");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
     return bridge.onDouyinAuthorized(() => {
       void load();
       void fetchDouyinCookieStatus()
@@ -195,15 +385,31 @@ export default function SettingsPage() {
   }, [load, message]);
 
   useEffect(() => {
+    return bridge.onBilibiliAuthorized(() => {
+      void load();
+      void fetchBilibiliCookieStatus()
+        .then(setBilibiliCookieStatus)
+        .catch(() => setBilibiliCookieStatus("unknown"));
+      message.success("B站授权已完成");
+    });
+  }, [load, message]);
+
+  useEffect(() => {
     if (settings && settings.theme) {
       setPreference(settings.theme);
     }
   }, [settings, setPreference]);
 
   useEffect(() => {
-    if (hash !== "#douyin-cookie") return;
+    const target =
+      hash === "#douyin-cookie"
+        ? "douyin-cookie"
+        : hash === "#bilibili-cookie"
+          ? "bilibili-cookie"
+          : null;
+    if (!target) return;
     const frame = requestAnimationFrame(() => {
-      document.getElementById("douyin-cookie")?.scrollIntoView({
+      document.getElementById(target)?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
@@ -225,6 +431,7 @@ export default function SettingsPage() {
         highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
         douyinCookie: "",
+        bilibiliCookie: "",
         mail: {
           ...settings.mail,
           recipients: settings.mail.recipients.join(", "),
@@ -314,23 +521,32 @@ export default function SettingsPage() {
 
   const persist = async (
     values: SettingsInput,
-    clearDouyinCookie = false,
+    clearCookies: { douyin?: boolean; bilibili?: boolean } = {},
   ): Promise<boolean> => {
-    const { mail, douyinCookie, ...rest } = values as SettingsInput & {
-      mail?: Record<string, unknown> & {
-        recipients?: string;
-        password?: string;
+    const { mail, douyinCookie, bilibiliCookie, ...rest } =
+      values as SettingsInput & {
+        mail?: Record<string, unknown> & {
+          recipients?: string;
+          password?: string;
+        };
+        douyinCookie?: string;
+        bilibiliCookie?: string;
       };
-      douyinCookie?: string;
-    };
+    const cookieField = (
+      value: string | undefined,
+      clear: boolean | undefined,
+      key: "douyinCookie" | "bilibiliCookie",
+    ) =>
+      clear
+        ? { [key]: "" }
+        : typeof value === "string" && value.length > 0
+          ? { [key]: value }
+          : {};
     try {
       await save({
         ...rest,
-        ...(clearDouyinCookie
-          ? { douyinCookie: "" }
-          : typeof douyinCookie === "string" && douyinCookie.length > 0
-            ? { douyinCookie }
-            : {}),
+        ...cookieField(douyinCookie, clearCookies.douyin, "douyinCookie"),
+        ...cookieField(bilibiliCookie, clearCookies.bilibili, "bilibiliCookie"),
         mail: mail
           ? {
               ...mail,
@@ -362,6 +578,20 @@ export default function SettingsPage() {
       );
     } finally {
       setDouyinAuthorizing(false);
+    }
+  };
+
+  const startBilibiliAuthorization = async () => {
+    setBilibiliAuthorizing(true);
+    try {
+      await bridge.startBilibiliAuthorization();
+      message.info("请在新窗口完成 B站 登录，完成后回到此处确认。");
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "无法打开B站授权窗口",
+      );
+    } finally {
+      setBilibiliAuthorizing(false);
     }
   };
 
@@ -546,7 +776,7 @@ export default function SettingsPage() {
                     <Form.Item
                       label="默认清晰度"
                       name="quality"
-                      extra="若直播间未提供所选画质，将按实际可用画质录制"
+                      extra="拿不到所选清晰度时，自动改录能录到的最高清晰度"
                     >
                       <Select
                         options={[
@@ -691,148 +921,59 @@ export default function SettingsPage() {
                   </Form.Item>
                 </div>
               </div>
-              <div
-                id="douyin-cookie"
-                className="lr-settings-section lr-settings-section--credential"
-              >
+              <div className="lr-settings-section lr-settings-section--credential">
                 <Typography.Title
                   className="lr-settings-section__title"
                   level={4}
                 >
-                  抖音授权
+                  平台授权
                 </Typography.Title>
-                <div className="lr-douyin-auth-card">
-                  <div className="lr-douyin-auth-card__heading">
-                    <div>
-                      <Typography.Text strong>
-                        授权后即可检测和录制抖音直播间，两步授权：
-                      </Typography.Text>
-                    </div>
-                    <Tag
-                      color={
-                        douyinCookieStatus === "invalid"
-                          ? "error"
-                          : settings?.douyinCookie.hasCookie
-                            ? "success"
-                            : "default"
-                      }
-                    >
-                      {douyinCookieStatus === "invalid"
-                        ? "授权失败"
-                        : settings?.douyinCookie.hasCookie
-                          ? "已授权"
-                          : "未授权"}
-                    </Tag>
-                  </div>
-                  {bridge.isDesktop ? (
-                    <div className="lr-douyin-auth-card__actions">
-                      <Button
-                        type="primary"
-                        size="medium"
-                        loading={douyinAuthorizing}
-                        onClick={() => void startDouyinAuthorization()}
-                      >
-                        登录并授权
-                      </Button>
-                      <div className="lr-douyin-auth-card__step">
-                        <span>1. 在新窗口中登录抖音</span>
-                        <span>2. 窗口底部点击“我已完成登录”</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <Typography.Text type="secondary">
-                      请使用桌面客户端完成一键授权，或通过下方手动方式导入。
-                    </Typography.Text>
-                  )}
-                  <Typography.Text
-                    className="lr-douyin-auth-card__privacy"
-                    type="secondary"
-                  >
-                    Cookie 仅存在本地，不会上传或提供给他人，可随时
-                    <Button
-                      className="lr-douyin-auth-card__clear"
-                      size="small"
-                      type="text"
-                      danger
-                      disabled={!settings?.douyinCookie.hasCookie}
-                      onClick={() => {
-                        form.setFieldValue("douyinCookie", "");
-                        void persist(
-                          form.getFieldsValue() as SettingsInput,
-                          true,
-                        );
-                      }}
-                    >
-                      清除
-                    </Button>
-                    ，请放心。
-                  </Typography.Text>
+                <div className="lr-credential-list">
+                  <CredentialRow
+                    anchor="douyin-cookie"
+                    platform="douyin"
+                    status={douyinCredentialStatus}
+                    hasCookie={settings?.douyinCookie.hasCookie ?? false}
+                    authorizing={douyinAuthorizing}
+                    unauthorizedHint="未登录时无法检测和录制抖音直播间"
+                    cookieField="douyinCookie"
+                    manualHost="live.douyin.com"
+                    manualPlaceholder="粘贴完整抖音 Cookie"
+                    // 现有示意图是抖音网络面板的截图，B站 没有对应图，故只给抖音。
+                    tutorialImage={saveCookieTutorial}
+                    onAuthorize={() => void startDouyinAuthorization()}
+                    onClear={() => {
+                      form.setFieldValue("douyinCookie", "");
+                      void persist(form.getFieldsValue() as SettingsInput, {
+                        douyin: true,
+                      });
+                    }}
+                  />
+                  <CredentialRow
+                    anchor="bilibili-cookie"
+                    platform="bilibili"
+                    status={bilibiliCredentialStatus}
+                    hasCookie={settings?.bilibiliCookie.hasCookie ?? false}
+                    authorizing={bilibiliAuthorizing}
+                    unauthorizedHint="未登录时最高只能录到 720p"
+                    cookieField="bilibiliCookie"
+                    manualHost="live.bilibili.com"
+                    manualPlaceholder="粘贴完整B站 Cookie"
+                    onAuthorize={() => void startBilibiliAuthorization()}
+                    onClear={() => {
+                      form.setFieldValue("bilibiliCookie", "");
+                      void persist(form.getFieldsValue() as SettingsInput, {
+                        bilibili: true,
+                      });
+                    }}
+                  />
                 </div>
-                <Collapse
-                  className="lr-douyin-manual"
-                  ghost
-                  items={[
-                    {
-                      key: "manual-cookie",
-                      label: "手动粘贴 Cookie（高级）",
-                      children: (
-                        <div className="lr-douyin-manual__content">
-                          <Typography.Paragraph type="secondary">
-                            进入网页版抖音并登录，打开任意直播间后按 F12 →
-                            网络（Network） → 刷新页面 → 点开任意{" "}
-                            <Typography.Text code>
-                              live.douyin.com
-                            </Typography.Text>{" "}
-                            请求 → 在「请求标头」复制完整 Cookie 并粘贴。
-                            <span className="lr-network-help">
-                              <Tooltip
-                                styles={{
-                                  root: {
-                                    width: "min(600px, calc(100vw - 48px))",
-                                    maxWidth: "none",
-                                  },
-                                }}
-                                title={
-                                  <img
-                                    alt="从网络面板保存 Cookie 的教程"
-                                    className="lr-cookie-tutorial-image"
-                                    src={saveCookieTutorial}
-                                  />
-                                }
-                                placement="top"
-                              >
-                                <Button
-                                  aria-label="查看网络面板 Cookie 教程"
-                                  className="lr-inline-icon-button"
-                                  size="small"
-                                  type="text"
-                                  icon={<QuestionCircleOutlined />}
-                                />
-                              </Tooltip>
-                            </span>
-                          </Typography.Paragraph>
-                          <Form.Item
-                            name="douyinCookie"
-                            extra={
-                              settings?.douyinCookie.hasCookie
-                                ? "已保存；留空则不修改"
-                                : undefined
-                            }
-                          >
-                            <Input.Password
-                              placeholder={
-                                settings?.douyinCookie.hasCookie
-                                  ? "••••••"
-                                  : "粘贴完整抖音 Cookie"
-                              }
-                              autoComplete="new-password"
-                            />
-                          </Form.Item>
-                        </div>
-                      ),
-                    },
-                  ]}
-                />
+                <Typography.Text
+                  className="lr-credential-list__privacy"
+                  type="secondary"
+                >
+                  Cookie 仅保存在本地，不会上传或提供给他人，请放心。
+                </Typography.Text>
               </div>
             </Form>
             <DirectoryPicker

@@ -1,4 +1,5 @@
 import type { ApiErrorEnvelope } from "./error";
+import type { Quality } from "./settings";
 import type { Tag } from "./tag";
 
 export type Platform = "bilibili" | "douyin";
@@ -30,6 +31,8 @@ export interface Room {
   autoRecord: boolean | null;
   liveNotificationEnabled: boolean;
   currentStreamTitle: string | null;
+  /** 最近一次检测时该房间实际能录到的清晰度；未开播或平台未给出时为空。 */
+  availableQualities: Quality[];
   activeRecording: ActiveRecording | null;
   tags: Tag[];
   uploadEnabled: boolean | null;

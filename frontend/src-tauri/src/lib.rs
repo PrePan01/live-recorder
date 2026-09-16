@@ -33,6 +33,14 @@ const DOUYIN_AUTH_WINDOW: &str = "douyin-auth";
 const DOUYIN_CONTROLS_WEBVIEW: &str = "douyin-auth-controls";
 const DOUYIN_LOGIN_WEBVIEW: &str = "douyin-auth-login-page";
 const DOUYIN_LOGIN_URL: &str = "https://www.douyin.com/";
+const BILIBILI_AUTHORIZED_EVENT: &str = "bilibili:authorized";
+const BILIBILI_AUTH_WINDOW: &str = "bilibili-auth";
+const BILIBILI_CONTROLS_WEBVIEW: &str = "bilibili-auth-controls";
+const BILIBILI_LOGIN_WEBVIEW: &str = "bilibili-auth-login-page";
+// 登录页（passport）与主站同属 bilibili.com 域，登录成功后 Cookie 落在 .bilibili.com。
+const BILIBILI_LOGIN_URL: &str = "https://passport.bilibili.com/login";
+/** 授权窗口底部本地确认栏高度：远程登录页占满其余空间。 */
+const AUTH_CONTROLS_HEIGHT: f64 = 76.0;
 
 // Store logical pixels so the window keeps a sensible size when the display's
 // scale factor changes (for example, moving between Retina and non-Retina
@@ -152,21 +160,83 @@ fn show_douyin_auth_windows(app: &AppHandle) -> Result<(), String> {
             LogicalPosition::new(0.0, 0.0),
             // Keep this slightly shorter than the window so the local
             // confirmation page remains visible along the bottom.
-            LogicalSize::new(980.0, 644.0),
+            LogicalSize::new(980.0, 720.0 - AUTH_CONTROLS_HEIGHT),
         )
         .map_err(|e| format!("无法加载抖音登录页面: {e}"))?;
     auth_window
         .add_child(
             WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("douyin-auth.html".into())),
-            LogicalPosition::new(0.0, 644.0),
-            LogicalSize::new(980.0, 76.0),
+            LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+            LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
         )
         .map_err(|e| format!("无法加载抖音授权确认栏: {e}"))?;
     Ok(())
 }
 
+/// B站授权窗口：与抖音授权同构（远程登录页 + 底部本地确认栏），
+/// 区别仅在于登录页是 passport.bilibili.com，且登录凭证为 SESSDATA。
+fn show_bilibili_auth_windows(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_window(BILIBILI_AUTH_WINDOW) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let auth_window = WindowBuilder::new(app, BILIBILI_AUTH_WINDOW)
+        .title("B站授权")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(720.0, 520.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("无法打开B站授权窗口: {e}"))?;
+    let login_url = BILIBILI_LOGIN_URL
+        .parse()
+        .map_err(|e| format!("B站登录地址无效: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(BILIBILI_LOGIN_WEBVIEW, WebviewUrl::External(login_url)),
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(980.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+        )
+        .map_err(|e| format!("无法加载B站登录页面: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(BILIBILI_CONTROLS_WEBVIEW, WebviewUrl::App("bilibili-auth.html".into())),
+            LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+            LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
+        )
+        .map_err(|e| format!("无法加载B站授权确认栏: {e}"))?;
+    Ok(())
+}
+
+/// 授权窗口被用户缩放时重新排布：远程登录页占满上部，本地确认栏贴底。
+fn layout_auth_window(
+    app: &AppHandle,
+    size: tauri::PhysicalSize<u32>,
+    scale_factor: f64,
+    login_label: &str,
+    controls_label: &str,
+) {
+    let logical = size.to_logical::<f64>(scale_factor);
+    let bar_top = (logical.height - AUTH_CONTROLS_HEIGHT).max(320.0);
+    if let Some(login) = app.get_webview(login_label) {
+        let _ = login.set_size(LogicalSize::new(logical.width, bar_top));
+    }
+    if let Some(controls) = app.get_webview(controls_label) {
+        let _ = controls.set_position(LogicalPosition::new(0.0, bar_top));
+        let _ = controls.set_size(LogicalSize::new(logical.width, AUTH_CONTROLS_HEIGHT));
+    }
+}
+
 fn close_douyin_auth_windows(app: &AppHandle) {
     if let Some(window) = app.get_window(DOUYIN_AUTH_WINDOW) {
+        let _ = window.close();
+    }
+}
+
+fn close_bilibili_auth_windows(app: &AppHandle) {
+    if let Some(window) = app.get_window(BILIBILI_AUTH_WINDOW) {
         let _ = window.close();
     }
 }
@@ -179,6 +249,13 @@ async fn start_douyin_authorization(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || show_douyin_auth_windows(&app))
         .await
         .map_err(|e| format!("创建抖音授权窗口任务异常: {e}"))?
+}
+
+#[tauri::command]
+async fn start_bilibili_authorization(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || show_bilibili_auth_windows(&app))
+        .await
+        .map_err(|e| format!("创建B站授权窗口任务异常: {e}"))?
 }
 
 fn douyin_cookie_header(app: &AppHandle) -> Result<String, String> {
@@ -272,6 +349,99 @@ async fn complete_douyin_authorization(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("保存抖音授权任务异常: {e}"))??;
     close_douyin_auth_windows(&app);
     let _ = app.emit(DOUYIN_AUTHORIZED_EVENT, ());
+    Ok(())
+}
+
+fn bilibili_cookie_header(app: &AppHandle) -> Result<String, String> {
+    let window = app
+        .get_webview(BILIBILI_LOGIN_WEBVIEW)
+        .ok_or_else(|| "授权窗口已关闭，请重新打开后完成登录".to_string())?;
+    // 与抖音同理：passport 与主站分属不同 host，只按其中一个过滤会漏掉登录流程
+    // 落在 live.bilibili.com 的 host-only Cookie。这里读取整个原生存储（含 HttpOnly）。
+    let mut pairs: Vec<String> = window
+        .cookies()
+        .map_err(|e| format!("无法读取B站登录凭证: {e}"))?
+        .into_iter()
+        .filter(|cookie| {
+            cookie
+                .domain()
+                .is_none_or(|domain| domain.trim_start_matches('.').ends_with("bilibili.com"))
+        })
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect();
+    pairs.sort();
+    pairs.dedup();
+    if !pairs.iter().any(|pair| pair.starts_with("SESSDATA=")) {
+        return Err("尚未检测到B站登录态。请先在上方窗口登录B站，再点击“完成登录并授权”。".to_string());
+    }
+    if !pairs.iter().any(|pair| pair.starts_with("DedeUserID=")) {
+        return Err("登录凭证尚未完整写入。请等待几秒后刷新B站页面，再点击“完成登录并授权”。".to_string());
+    }
+    Ok(pairs.join("; "))
+}
+
+fn verify_bilibili_login(cookie: &str) -> Result<(), String> {
+    // Presence of SESSDATA alone is not proof of an active session: B站 会在退出登录后
+    // 把过期凭证留在原生 Cookie 库里。nav 接口仅在已登录时返回 code=0 且 data.isLogin=true，
+    // 匿名/过期会话返回 code=-101。
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("无法创建B站登录校验请求: {e}"))?
+        .get("https://api.bilibili.com/x/web-interface/nav")
+        .header("Cookie", cookie)
+        .header("Referer", "https://www.bilibili.com/")
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .send()
+        .map_err(|e| format!("无法确认B站登录状态，请检查网络后重试: {e}"))?;
+    if !response.status().is_success() {
+        return Err("无法确认B站登录状态，请稍后重试。授权未保存。".to_string());
+    }
+    let parsed = response.json::<serde_json::Value>().ok();
+    let code = parsed.as_ref().and_then(|body| body.get("code").and_then(|value| value.as_i64()));
+    let is_login = parsed
+        .as_ref()
+        .and_then(|body| body.pointer("/data/isLogin").and_then(|value| value.as_bool()));
+    if code == Some(0) && is_login == Some(true) {
+        return Ok(());
+    }
+    if code == Some(-101) || is_login == Some(false) {
+        return Err("B站当前未登录或登录已失效。请在上方网页登录后再授权。".to_string());
+    }
+    Err("暂时无法确认B站登录状态。请完成网页登录后稍候重试；授权未保存。".to_string())
+}
+
+fn save_bilibili_cookie(cookie: String) -> Result<(), String> {
+    verify_bilibili_login(&cookie)?;
+    let instance = backend::fetch_ready().ok_or_else(|| "本地服务尚未就绪，请稍候重试".to_string())?;
+    let response = reqwest::blocking::Client::new()
+        .post(format!("{}/api/v1/settings/bilibili-cookie", instance.base_url))
+        .json(&serde_json::json!({ "cookie": cookie }))
+        .send()
+        .map_err(|e| format!("保存B站授权失败: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let detail = response
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|body| body.pointer("/error/message").and_then(|value| value.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| format!("服务返回 {status}"));
+    Err(format!("保存B站授权失败: {detail}"))
+}
+
+#[tauri::command]
+async fn complete_bilibili_authorization(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    let cookie = tauri::async_runtime::spawn_blocking(move || bilibili_cookie_header(&handle))
+        .await
+        .map_err(|e| format!("读取B站授权任务异常: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || save_bilibili_cookie(cookie))
+        .await
+        .map_err(|e| format!("保存B站授权任务异常: {e}"))??;
+    close_bilibili_auth_windows(&app);
+    let _ = app.emit(BILIBILI_AUTHORIZED_EVENT, ());
     Ok(())
 }
 
@@ -451,19 +621,16 @@ pub fn run() {
                 if window.label() == "main" {
                     save_main_window_size(&window.app_handle(), *size);
                 }
-                if window.label() == DOUYIN_AUTH_WINDOW {
+                if window.label() == DOUYIN_AUTH_WINDOW || window.label() == BILIBILI_AUTH_WINDOW {
                     // The remote child webview occupies all but the bottom
                     // confirmation bar, including after user resizes.
                     if let Ok(scale_factor) = window.scale_factor() {
-                        let logical = size.to_logical::<f64>(scale_factor);
-                        if let Some(login) = window.app_handle().get_webview(DOUYIN_LOGIN_WEBVIEW) {
-                            let _ = login.set_size(LogicalSize::new(logical.width, (logical.height - 76.0).max(320.0)));
-                        }
-                        if let Some(controls) = window.app_handle().get_webview(DOUYIN_CONTROLS_WEBVIEW) {
-                            let bar_top = (logical.height - 76.0).max(320.0);
-                            let _ = controls.set_position(LogicalPosition::new(0.0, bar_top));
-                            let _ = controls.set_size(LogicalSize::new(logical.width, 76.0));
-                        }
+                        let (login_label, controls_label) = if window.label() == DOUYIN_AUTH_WINDOW {
+                            (DOUYIN_LOGIN_WEBVIEW, DOUYIN_CONTROLS_WEBVIEW)
+                        } else {
+                            (BILIBILI_LOGIN_WEBVIEW, BILIBILI_CONTROLS_WEBVIEW)
+                        };
+                        layout_auth_window(&window.app_handle(), *size, scale_factor, login_label, controls_label);
                     }
                 }
                 emit_window_visibility(&window.app_handle());
@@ -486,6 +653,8 @@ pub fn run() {
             get_window_visible,
             start_douyin_authorization,
             complete_douyin_authorization,
+            start_bilibili_authorization,
+            complete_bilibili_authorization,
             quit_app,
         ])
         .setup(|app| {
