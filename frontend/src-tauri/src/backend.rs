@@ -2,7 +2,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{atomic::{AtomicBool, Ordering}, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -149,7 +152,10 @@ impl BackendManager {
                         key: "service".into(),
                         message: format!("本地服务运行中（{}）", instance.port),
                     }];
-                self.recovery.lock().unwrap_or_else(|e| e.into_inner()).last_started = Some(Instant::now());
+                self.recovery
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .last_started = Some(Instant::now());
             }
             Err(detail) => {
                 *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -163,7 +169,10 @@ impl BackendManager {
                 // terminal startup failure into an endless restart loop.
                 if !self.is_running() {
                     self.desired_running.store(false, Ordering::SeqCst);
-                    self.recovery.lock().unwrap_or_else(|e| e.into_inner()).disabled = true;
+                    self.recovery
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .disabled = true;
                 }
             }
         }
@@ -327,10 +336,19 @@ impl BackendManager {
             return None;
         }
         let _lifecycle = self.lifecycle.lock().ok()?;
-        let exited = self.child.lock().ok()?.as_mut().and_then(|child| child.try_wait().ok()).flatten();
+        let exited = self
+            .child
+            .lock()
+            .ok()?
+            .as_mut()
+            .and_then(|child| child.try_wait().ok())
+            .flatten();
         if exited.is_none() {
             let mut recovery = self.recovery.lock().ok()?;
-            if recovery.last_started.is_some_and(|started| started.elapsed() >= RECOVERY_STABLE_FOR) {
+            if recovery
+                .last_started
+                .is_some_and(|started| started.elapsed() >= RECOVERY_STABLE_FOR)
+            {
                 recovery.last_auto_recovery = None;
                 recovery.disabled = false;
             }
@@ -339,16 +357,29 @@ impl BackendManager {
         *self.child.lock().ok()? = None;
         *self.instance.lock().ok()? = None;
         let mut recovery = self.recovery.lock().ok()?;
-        if recovery.disabled || recovery.last_auto_recovery.is_some_and(|at| at.elapsed() < RECOVERY_STABLE_FOR) {
+        if recovery.disabled
+            || recovery
+                .last_auto_recovery
+                .is_some_and(|at| at.elapsed() < RECOVERY_STABLE_FOR)
+        {
             recovery.disabled = true;
             self.desired_running.store(false, Ordering::SeqCst);
             let detail = format!("后端进程已退出（{exited:?}），5 分钟内重复退出，已停止自动恢复。请查看诊断后手动重启。");
-            *self.diagnostics.lock().ok()? = vec![DiagnosticItem::Error { key: "service".into(), message: "本地服务重复退出".into(), detail: Some(detail.clone()) }];
+            *self.diagnostics.lock().ok()? = vec![DiagnosticItem::Error {
+                key: "service".into(),
+                message: "本地服务重复退出".into(),
+                detail: Some(detail.clone()),
+            }];
             return Some(Err(detail));
         }
         recovery.last_auto_recovery = Some(Instant::now());
         drop(recovery);
-        let config = match self.config.clone().map(Ok).unwrap_or_else(LaunchConfig::discover) {
+        let config = match self
+            .config
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(LaunchConfig::discover)
+        {
             Ok(config) => config,
             Err(error) => return Some(Err(error)),
         };
@@ -998,10 +1029,24 @@ mod lifecycle_tests {
     fn confirmed_exit_recovers_once_then_stops_on_a_second_rapid_exit() {
         let manager = fixture(false);
         let first = manager.start().unwrap();
-        manager.child.lock().unwrap().as_mut().unwrap().kill().unwrap();
+        manager
+            .child
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .kill()
+            .unwrap();
         let recovered = wait_for_exit(&manager).unwrap();
         assert_ne!(recovered.pid, first.pid);
-        manager.child.lock().unwrap().as_mut().unwrap().kill().unwrap();
+        manager
+            .child
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .kill()
+            .unwrap();
         let error = wait_for_exit(&manager).unwrap_err();
         assert!(error.contains("5 分钟内重复退出"));
         assert!(!manager.desired_running.load(Ordering::SeqCst));

@@ -56,7 +56,7 @@ const NICK_TTL_MS = 10 * 60_000;
 
 /**
  * 区分抖音非 0 status_code 的根因：#56 第二部分——
- * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查 Cookie；
+ * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查抖音授权；
  * 仅结构异常（连 status_code 都无法解析）→ PLATFORM_CHANGED 真接口变更。
  */
 function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): AppError {
@@ -66,10 +66,10 @@ function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): App
   const credentialLike = code === 10011 || /请求参数|服务繁忙|请稍后|登录|风控|verify|RiskControl/i.test(message);
   // 已携带 Cookie 时的 10011 是明确凭证失效信号，可作为平台级失败处理。
   if (code === 10011 && hasCookie) {
-    return new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', { retryable: false });
+    return new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', { retryable: false });
   }
   if (credentialLike || !hasCookie) {
-    return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，Cookie 可能已失效，请到设置页更新' : '平台访问受限，请配置抖音 Cookie', { retryable: false });
+    return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，抖音授权可能已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权', { retryable: false });
   }
   return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
 }
@@ -171,7 +171,7 @@ export class DouyinAdapter implements PlatformAdapter {
       if (res.status === 401 || res.status === 403) {
         throw new AppError(
           cookie ? 'DOUYIN_COOKIE_EXPIRED' : 'PLATFORM_ACCESS_RESTRICTED',
-          cookie ? '抖音 Cookie 已失效，请到设置页更新' : '平台访问受限，请检查 Cookie 配置',
+          cookie ? '抖音授权已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权',
           { retryable: false },
         );
       }
@@ -179,13 +179,13 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const text = await res.text();
     if (!text.trim()) {
-      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false });
+      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false });
     }
     let json: DouyinEnterResponse;
     try {
       json = JSON.parse(text) as DouyinEnterResponse;
     } catch {
-      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false });
+      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false });
     }
     return json;
   }
@@ -259,7 +259,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const flv = entry.stream_url?.flv_pull_url;
     if (!flv || Object.keys(flv).length === 0) {
-      return { status: 'restricted', ...base, ...(entry.title ? { streamTitle: entry.title } : {}), error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false }).toObject() };
+      return { status: 'restricted', ...base, ...(entry.title ? { streamTitle: entry.title } : {}), error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false }).toObject() };
     }
     return {
       status: 'live',
@@ -299,7 +299,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const flv = entry.stream_url?.flv_pull_url;
     if (!flv || Object.keys(flv).length === 0) {
-      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '无法获取直播流，可能需要 Cookie 或该房间受限', { retryable: false });
+      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '无法获取直播流，请检查抖音授权或房间访问限制', { retryable: false });
     }
     const picked = pickResolution(flv, quality);
     return {

@@ -116,7 +116,7 @@ export class Scheduler {
     this.douyinCookieExpired = true;
     const now = this.services.clock.iso();
     for (const room of this.services.rooms.list().filter((item) => item.platform === 'douyin')) {
-      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', {
+      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', {
         roomId: room.id,
         retryable: false,
       }).toObject();
@@ -128,7 +128,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: 'warning',
       source: 'platform',
-      message: 'DOUYIN_COOKIE_EXPIRED: 抖音 Cookie 已失效，请到设置页更新',
+      message: 'DOUYIN_COOKIE_EXPIRED: 抖音授权已失效，请到设置页重新授权',
       occurredAt: now,
       errorCode: 'DOUYIN_COOKIE_EXPIRED',
     });
@@ -306,7 +306,11 @@ export class Scheduler {
     }
     const err = status.error ?? new AppError(
       status.status === 'restricted' ? 'PLATFORM_ACCESS_RESTRICTED' : 'NETWORK_UNAVAILABLE',
-      status.status === 'restricted' ? '平台访问受限，请检查 Cookie 配置' : '平台请求失败',
+      status.status === 'restricted'
+        ? room.platform === 'douyin'
+          ? '平台访问受限，请检查抖音授权'
+          : '平台访问受限，请检查 Cookie 配置'
+        : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
     if (room.platform === 'douyin' && err.code === 'DOUYIN_COOKIE_EXPIRED') {

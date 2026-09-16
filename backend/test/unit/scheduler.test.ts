@@ -523,7 +523,7 @@ describe('Scheduler', () => {
         calls += 1;
         return {
           status: 'restricted',
-          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新').toObject(),
+          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权').toObject(),
         };
       },
       async getStreamUrl() {

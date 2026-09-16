@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -38,7 +39,11 @@ import { useNotificationStore } from "../../stores/notificationStore";
 import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
-import { validateDirectory } from "../../api/settings";
+import {
+  fetchDouyinCookieStatus,
+  validateDirectory,
+  type DouyinCookieStatus,
+} from "../../api/settings";
 import { testNotification } from "../../api/notification";
 import { exportConfig, importConfig } from "../../api/config";
 import {
@@ -127,6 +132,9 @@ export default function SettingsPage() {
   const [exporting, setExporting] = useState(false);
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
+  const [douyinAuthorizing, setDouyinAuthorizing] = useState(false);
+  const [douyinCookieStatus, setDouyinCookieStatus] =
+    useState<DouyinCookieStatus | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
@@ -148,6 +156,32 @@ export default function SettingsPage() {
     void fetchStatus();
     void loadNotifications().catch(() => undefined);
   }, [load, fetchAlerts, fetchStatus, loadNotifications]);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetchDouyinCookieStatus()
+      .then((result) => {
+        if (!disposed) setDouyinCookieStatus(result);
+      })
+      // A network failure must not label a previously valid authorization as
+      // failed. The next settings visit will retry the verification.
+      .catch(() => {
+        if (!disposed) setDouyinCookieStatus("unknown");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return bridge.onDouyinAuthorized(() => {
+      void load();
+      void fetchDouyinCookieStatus()
+        .then(setDouyinCookieStatus)
+        .catch(() => setDouyinCookieStatus("unknown"));
+      message.success("抖音授权已完成");
+    });
+  }, [load, message]);
 
   useEffect(() => {
     if (settings && settings.theme) {
@@ -311,6 +345,20 @@ export default function SettingsPage() {
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
       return false;
+    }
+  };
+
+  const startDouyinAuthorization = async () => {
+    setDouyinAuthorizing(true);
+    try {
+      await bridge.startDouyinAuthorization();
+      message.info("请在新窗口完成抖音登录，完成后回到此处确认。");
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "无法打开抖音授权窗口",
+      );
+    } finally {
+      setDouyinAuthorizing(false);
     }
   };
 
@@ -648,82 +696,140 @@ export default function SettingsPage() {
                   className="lr-settings-section__title"
                   level={4}
                 >
-                  抖音 Cookie
+                  抖音授权
                 </Typography.Title>
-                <Typography.Paragraph
-                  className="lr-settings-section__hint"
-                  type="secondary"
-                >
-                  抖音直播间需登录 Cookie 才能观看与录制。
-                  <br />
-                  获取方式：进入网页版抖音 → 登录 → 随便进入一个直播间 → F12
-                  打开开发者工具 → 网络（Network） 面板 → 刷新直播间页面 →
-                  点开任意{" "}
-                  <Typography.Text code>live.douyin.com</Typography.Text> 请求 →
-                  在「请求标头」中复制 Cookie 后方<b>整段</b>值 →
-                  粘贴到下方输入框。
-                  <span className="lr-network-help">
-                    <Tooltip
-                      styles={{
-                        root: {
-                          width: "min(600px, calc(100vw - 48px))",
-                          maxWidth: "none",
-                        },
-                      }}
-                      title={
-                        <img
-                          style={{
-                            width: "100%",
-                            maxWidth: "none",
-                          }}
-                          alt="从网络面板保存 Cookie 的教程"
-                          className="lr-cookie-tutorial-image"
-                          src={saveCookieTutorial}
-                        />
+                <div className="lr-douyin-auth-card">
+                  <div className="lr-douyin-auth-card__heading">
+                    <div>
+                      <Typography.Text strong>
+                        授权后即可检测和录制抖音直播间，两步授权：
+                      </Typography.Text>
+                    </div>
+                    <Tag
+                      color={
+                        douyinCookieStatus === "invalid"
+                          ? "error"
+                          : settings?.douyinCookie.hasCookie
+                            ? "success"
+                            : "default"
                       }
-                      placement="top"
                     >
+                      {douyinCookieStatus === "invalid"
+                        ? "授权失败"
+                        : settings?.douyinCookie.hasCookie
+                          ? "已授权"
+                          : "未授权"}
+                    </Tag>
+                  </div>
+                  {bridge.isDesktop ? (
+                    <div className="lr-douyin-auth-card__actions">
                       <Button
-                        aria-label="查看网络面板 Cookie 教程"
-                        className="lr-inline-icon-button"
-                        size="small"
-                        type="text"
-                        icon={<QuestionCircleOutlined />}
-                      />
-                    </Tooltip>
-                  </span>
-                  <br />
-                  <b>
-                    Cookie
-                    仅存本机钥匙串，不会显示或上传，请勿泄露他人，粘贴到下方后自动保存。
-                  </b>
-                </Typography.Paragraph>
-                <Form.Item
-                  name="douyinCookie"
-                  extra={
-                    settings?.douyinCookie.hasCookie
-                      ? "已保存，留空则不修改"
-                      : undefined
-                  }
-                >
-                  <Input.Password
-                    placeholder={
-                      settings?.douyinCookie.hasCookie
-                        ? "••••••"
-                        : "输入抖音 Cookie（可选）"
-                    }
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-                <Button
-                  disabled={!settings?.douyinCookie.hasCookie}
-                  onClick={() => {
-                    form.setFieldValue("douyinCookie", "");
-                    void persist(form.getFieldsValue() as SettingsInput, true);
-                  }}
-                >
-                  清除已存 Cookie
-                </Button>
+                        type="primary"
+                        size="medium"
+                        loading={douyinAuthorizing}
+                        onClick={() => void startDouyinAuthorization()}
+                      >
+                        登录并授权
+                      </Button>
+                      <div className="lr-douyin-auth-card__step">
+                        <span>1. 在新窗口中登录抖音</span>
+                        <span>2. 窗口底部点击“我已完成登录”</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <Typography.Text type="secondary">
+                      请使用桌面客户端完成一键授权，或通过下方手动方式导入。
+                    </Typography.Text>
+                  )}
+                  <Typography.Text
+                    className="lr-douyin-auth-card__privacy"
+                    type="secondary"
+                  >
+                    Cookie 仅存在本地，不会上传或提供给他人，可随时
+                    <Button
+                      className="lr-douyin-auth-card__clear"
+                      size="small"
+                      type="text"
+                      danger
+                      disabled={!settings?.douyinCookie.hasCookie}
+                      onClick={() => {
+                        form.setFieldValue("douyinCookie", "");
+                        void persist(
+                          form.getFieldsValue() as SettingsInput,
+                          true,
+                        );
+                      }}
+                    >
+                      清除
+                    </Button>
+                    ，请放心。
+                  </Typography.Text>
+                </div>
+                <Collapse
+                  className="lr-douyin-manual"
+                  ghost
+                  items={[
+                    {
+                      key: "manual-cookie",
+                      label: "手动粘贴 Cookie（高级）",
+                      children: (
+                        <div className="lr-douyin-manual__content">
+                          <Typography.Paragraph type="secondary">
+                            进入网页版抖音并登录，打开任意直播间后按 F12 →
+                            网络（Network） → 刷新页面 → 点开任意{" "}
+                            <Typography.Text code>
+                              live.douyin.com
+                            </Typography.Text>{" "}
+                            请求 → 在「请求标头」复制完整 Cookie 并粘贴。
+                            <span className="lr-network-help">
+                              <Tooltip
+                                styles={{
+                                  root: {
+                                    width: "min(600px, calc(100vw - 48px))",
+                                    maxWidth: "none",
+                                  },
+                                }}
+                                title={
+                                  <img
+                                    alt="从网络面板保存 Cookie 的教程"
+                                    className="lr-cookie-tutorial-image"
+                                    src={saveCookieTutorial}
+                                  />
+                                }
+                                placement="top"
+                              >
+                                <Button
+                                  aria-label="查看网络面板 Cookie 教程"
+                                  className="lr-inline-icon-button"
+                                  size="small"
+                                  type="text"
+                                  icon={<QuestionCircleOutlined />}
+                                />
+                              </Tooltip>
+                            </span>
+                          </Typography.Paragraph>
+                          <Form.Item
+                            name="douyinCookie"
+                            extra={
+                              settings?.douyinCookie.hasCookie
+                                ? "已保存；留空则不修改"
+                                : undefined
+                            }
+                          >
+                            <Input.Password
+                              placeholder={
+                                settings?.douyinCookie.hasCookie
+                                  ? "••••••"
+                                  : "粘贴完整抖音 Cookie"
+                              }
+                              autoComplete="new-password"
+                            />
+                          </Form.Item>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </Form>
             <DirectoryPicker

@@ -1,0 +1,2 @@
+- Prefers Chinese for communication and analysis. Confidence: 0.75
+- Prefers analysis-only mode (no code modifications) when investigating bugs or errors. Confidence: 0.4

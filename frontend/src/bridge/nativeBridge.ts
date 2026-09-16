@@ -21,6 +21,8 @@ export interface NativeBridge {
   restartService(): Promise<BootEvent>;
   getDiagnostics(): Promise<DiagnosticItem[]>;
   getWindowVisible(): Promise<boolean>;
+  startDouyinAuthorization(): Promise<void>;
+  onDouyinAuthorized(cb: () => void): () => void;
   quit(): Promise<void>;
   notify(title: string, body: string): Promise<void>;
   pickDirectory(): Promise<string | null>;
@@ -88,6 +90,20 @@ class TauriBridge implements NativeBridge {
 
   async getWindowVisible(): Promise<boolean> {
     try { return await this.invoke<boolean>('get_window_visible'); } catch { return true; }
+  }
+
+  async startDouyinAuthorization(): Promise<void> {
+    await this.invoke<void>('start_douyin_authorization');
+  }
+
+  onDouyinAuthorized(cb: () => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<void>('douyin:authorized', () => { if (!disposed) cb(); });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
   }
 
   async quit(): Promise<void> {
@@ -242,6 +258,12 @@ class BrowserBridge implements NativeBridge {
   }
 
   async getWindowVisible(): Promise<boolean> { return !document.hidden; }
+
+  async startDouyinAuthorization(): Promise<void> {
+    throw new Error('应用内授权仅限桌面客户端');
+  }
+
+  onDouyinAuthorized(_cb: () => void): () => void { return () => {}; }
 
   async quit(): Promise<void> {
     /* 浏览器模式忽略 */

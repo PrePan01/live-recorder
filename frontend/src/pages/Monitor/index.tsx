@@ -242,7 +242,7 @@ const RoomCard = memo(function RoomCard({
                   underline
                   onClick={() => navigate("/settings#douyin-cookie")}
                 >
-                  Cookie 配置
+                  抖音授权
                 </Typography.Link>
               </>
             ) : (

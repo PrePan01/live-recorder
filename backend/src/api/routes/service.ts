@@ -56,9 +56,9 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     items.push(await withTimeout(async () => {
       const hasCookie = Boolean(await services.secretStore.get(DOUYIN_COOKIE_KEY));
       if (hasCookie) {
-        return { key: 'cookie', label: '平台凭证', status: 'ok', detail: '抖音 Cookie 已配置', fixHint: '' };
+        return { key: 'cookie', label: '抖音授权', status: 'ok', detail: '抖音授权已配置', fixHint: '' };
       }
-      return { key: 'cookie', label: '平台凭证', status: 'warn', detail: '抖音 Cookie 未配置，抖音房间可能受限', fixHint: '在设置页填写抖音 Cookie' };
+      return { key: 'cookie', label: '抖音授权', status: 'warn', detail: '抖音未授权，抖音房间可能受限', fixHint: '在设置页完成抖音授权' };
     }));
 
     // ④ 磁盘空间。

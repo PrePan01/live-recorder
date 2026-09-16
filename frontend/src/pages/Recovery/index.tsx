@@ -37,7 +37,7 @@ const SEVERITY_META: Record<string, { color: string; text: string }> = {
 
 const ACTION_LABEL: Record<string, string> = {
   retry: '重试录制',
-  refresh_cookie: '刷新 Cookie',
+  refresh_cookie: '重新授权抖音',
   cleanup: '清理磁盘',
   test_smtp: '测试邮件',
   restart_service: '重启服务',

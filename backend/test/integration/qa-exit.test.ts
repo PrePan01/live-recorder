@@ -140,7 +140,7 @@ describe('QA stage-B exit: security', () => {
     const { app } = buildApp(services);
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-cookie-rest-'));
     (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
-      { status: 'restricted', error: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查 Cookie 配置', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false } },
+      { status: 'restricted', error: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查抖音授权', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false } },
     ]);
     await app.inject({
       method: 'PUT', url: '/api/v1/settings', headers: HOST,

@@ -228,7 +228,11 @@ fn download_client(timeout: Duration) -> Result<Client, String> {
         .map_err(|e| e.to_string())
 }
 /// 拉取指定清单 URL（网络类失败按指数退避重试）。
-fn fetch_manifest_bytes(source: &str, attempts: usize, timeout: Duration) -> Result<Vec<u8>, String> {
+fn fetch_manifest_bytes(
+    source: &str,
+    attempts: usize,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut last = String::new();
     for attempt in 0..attempts {
         let fetched = client(timeout).and_then(|http| {
@@ -308,7 +312,10 @@ fn mirror_asset_url(filename: &str) -> Option<String> {
     if filename.is_empty() || filename.contains(['/', '\\']) {
         return None;
     }
-    Some(format!("{MIRROR_ORIGIN}/{}", encode_uri_component(filename)))
+    Some(format!(
+        "{MIRROR_ORIGIN}/{}",
+        encode_uri_component(filename)
+    ))
 }
 
 /// 由版本 + 文件名构造 GitHub 兜底地址。
@@ -316,7 +323,10 @@ fn github_asset_url(version: &str, filename: &str) -> Option<String> {
     if filename.is_empty() || filename.contains(['/', '\\']) {
         return None;
     }
-    Some(format!("{RELEASE_PREFIX}v{version}/{}", encode_uri_component(filename)))
+    Some(format!(
+        "{RELEASE_PREFIX}v{version}/{}",
+        encode_uri_component(filename)
+    ))
 }
 
 /// 安装包下载候选（#28）：S3 镜像(HTTPS) 优先提速，GitHub(HTTPS) 兜底；最后附上清单原始 URL（防御）。
@@ -342,7 +352,9 @@ fn encode_uri_component(value: &str) -> String {
     value
         .bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
             _ => format!("%{b:02X}"),
         })
         .collect()
@@ -358,8 +370,16 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     let key = platform();
     // 候选清单：CDN（大陆快）优先，GitHub 兜底。
     let sources: Vec<Result<Vec<u8>, String>> = [
-        (MIRROR_MANIFEST_URL, CDN_MANIFEST_ATTEMPTS, Duration::from_secs(CDN_MANIFEST_TIMEOUT_SECS)),
-        (MANIFEST_URL, GITHUB_MANIFEST_ATTEMPTS, Duration::from_secs(GITHUB_MANIFEST_TIMEOUT_SECS)),
+        (
+            MIRROR_MANIFEST_URL,
+            CDN_MANIFEST_ATTEMPTS,
+            Duration::from_secs(CDN_MANIFEST_TIMEOUT_SECS),
+        ),
+        (
+            MANIFEST_URL,
+            GITHUB_MANIFEST_ATTEMPTS,
+            Duration::from_secs(GITHUB_MANIFEST_TIMEOUT_SECS),
+        ),
     ]
     .into_iter()
     .map(|(source, attempts, timeout)| fetch_manifest_bytes(source, attempts, timeout))
@@ -772,21 +792,38 @@ mod tests {
             serde_json::to_vec(&m).unwrap()
         };
         // CDN 旧版 + GitHub 更高版 → 取 GitHub（不漏更新）。
-        let got = resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.121"))])
-            .unwrap()
-            .unwrap();
+        let got = resolve_updates(
+            "0.5.120",
+            key,
+            vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.121"))],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(got.version, "0.5.121");
         // CDN 有更高版本 → 直接用 CDN（GitHub 不可达也不影响）。
-        let got = resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.121")), Err("down".to_string())])
-            .unwrap()
-            .unwrap();
+        let got = resolve_updates(
+            "0.5.120",
+            key,
+            vec![Ok(bytes("0.5.121")), Err("down".to_string())],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(got.version, "0.5.121");
         // CDN 无效 + GitHub 不可达 → Err（不得假阴性 Ok(None)）。
-        assert!(resolve_updates("0.5.120", key, vec![Ok(b"<html>".to_vec()), Err("down".to_string())]).is_err());
+        assert!(resolve_updates(
+            "0.5.120",
+            key,
+            vec![Ok(b"<html>".to_vec()), Err("down".to_string())]
+        )
+        .is_err());
         // 两源均有效但都无更新 → Ok(None)。
-        assert!(resolve_updates("0.5.120", key, vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.120"))])
-            .unwrap()
-            .is_none());
+        assert!(resolve_updates(
+            "0.5.120",
+            key,
+            vec![Ok(bytes("0.5.120")), Ok(bytes("0.5.120"))]
+        )
+        .unwrap()
+        .is_none());
     }
     #[test]
     fn rejects_unsafe_asset() {
@@ -819,7 +856,9 @@ mod tests {
         );
         assert_eq!(
             github_asset_url("0.5.112", "Live.Recorder_0.5.112_aarch64.dmg"),
-            Some(format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_aarch64.dmg")),
+            Some(format!(
+                "{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_aarch64.dmg"
+            )),
         );
         // 文件名含路径分隔符 → 拒绝（防目录穿越）。
         assert!(mirror_asset_url("../evil.dmg").is_none());

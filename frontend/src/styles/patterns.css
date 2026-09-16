@@ -5,6 +5,85 @@
 .lr-settings-section--credential {
   scroll-margin-top: 20px;
 }
+.lr-douyin-auth-card {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 10px;
+  padding: 16px;
+  border: 1px solid var(--lr-border);
+  background: var(--lr-surface-alt);
+}
+.lr-douyin-auth-card__heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.lr-douyin-auth-card__heading > div {
+  display: grid;
+  gap: 3px;
+}
+.lr-douyin-auth-card__heading .ant-typography {
+  font-size: 13px;
+}
+.lr-douyin-auth-card__heading .ant-tag {
+  flex: none;
+  margin-inline-end: 0;
+}
+.lr-douyin-auth-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+}
+.lr-douyin-auth-card__step {
+  display: grid;
+  gap: 2px;
+  color: var(--lr-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.lr-douyin-auth-card__actions .ant-btn-link {
+  padding-inline: 0;
+}
+.lr-douyin-auth-card__privacy.ant-typography {
+  font-size: 12px;
+}
+.lr-douyin-auth-card__clear.ant-btn {
+  height: auto;
+  min-height: 0;
+  margin-inline: 2px;
+  padding: 2px 3px;
+  font-size: 12px;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+.lr-douyin-manual.ant-collapse {
+  margin-top: 2px;
+  border-block: 1px solid var(--lr-border);
+  border-inline: 0;
+}
+.lr-douyin-manual .ant-collapse-header {
+  padding-inline: 0 !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+.lr-douyin-manual .ant-collapse-content-box {
+  padding: 0 0 14px !important;
+}
+.lr-douyin-manual__content > .ant-typography {
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.lr-douyin-manual__content .ant-form-item {
+  margin-bottom: 10px;
+}
+@media (max-width: 480px) {
+  .lr-douyin-auth-card__actions > .ant-btn:first-child {
+    width: 100%;
+  }
+}
 .lr-room-card__error-link {
   color: inherit !important;
 }
@@ -271,9 +350,15 @@
   top: 0;
   bottom: 0;
 }
-.lr-live-prediction-timeline__band--high { background: color-mix(in srgb, var(--lr-yellow) 88%, var(--lr-ink)); }
-.lr-live-prediction-timeline__band--medium { background: color-mix(in srgb, var(--lr-yellow) 61%, var(--lr-surface)); }
-.lr-live-prediction-timeline__band--low { background: color-mix(in srgb, var(--lr-yellow) 28%, var(--lr-surface-alt)); }
+.lr-live-prediction-timeline__band--high {
+  background: color-mix(in srgb, var(--lr-yellow) 88%, var(--lr-ink));
+}
+.lr-live-prediction-timeline__band--medium {
+  background: color-mix(in srgb, var(--lr-yellow) 61%, var(--lr-surface));
+}
+.lr-live-prediction-timeline__band--low {
+  background: color-mix(in srgb, var(--lr-yellow) 28%, var(--lr-surface-alt));
+}
 .lr-live-prediction-timeline__now {
   position: absolute;
   top: -3px;
@@ -305,9 +390,15 @@
   transform: translateX(-1px);
 }
 .lr-live-prediction-timeline__observation--platform,
-.lr-live-prediction-timeline__observation--transition { opacity: 0.9; }
-.lr-live-prediction-timeline__observation--initial_live { opacity: 0.48; }
-.lr-live-prediction-timeline__observation--legacy { opacity: 0.3; }
+.lr-live-prediction-timeline__observation--transition {
+  opacity: 0.9;
+}
+.lr-live-prediction-timeline__observation--initial_live {
+  opacity: 0.48;
+}
+.lr-live-prediction-timeline__observation--legacy {
+  opacity: 0.3;
+}
 .lr-live-status-title__viewport {
   flex: 1 1 auto;
   min-width: 0;
@@ -325,11 +416,17 @@
   animation: lr-live-title-marquee 12s linear infinite;
 }
 @keyframes lr-live-title-marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(calc(-50% - 1rem)); }
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 1rem));
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lr-live-status-title__marquee { animation: none; }
+  .lr-live-status-title__marquee {
+    animation: none;
+  }
 }
 .lr-room-card:nth-child(3n + 1) {
   border-top-color: var(--lr-pink) !important;
@@ -366,7 +463,10 @@
 .lr-room-card__actions--compact .ant-btn {
   padding-inline: 8px;
 }
-.lr-room-card__actions--compact .ant-btn .anticon + .lr-room-card__action-label {
+.lr-room-card__actions--compact
+  .ant-btn
+  .anticon
+  + .lr-room-card__action-label {
   margin-inline-start: 0;
 }
 .lr-room-card__actions--compact .lr-room-card__action-label {
