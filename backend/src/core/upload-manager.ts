@@ -1003,7 +1003,14 @@ export class UploadManager {
 
   private emit(jobId: string): void {
     const job = this.repo.get(jobId);
-    if (job) this.services.events.emit({ type: 'upload:updated', data: job });
+    if (!job) return;
+    this.services.events.emit({ type: 'upload:updated', data: job });
+    if (job.status === 'failed') {
+      const recording = this.services.recordings.get(job.recordingId);
+      void this.services.notifier.notify('upload_failed', recording?.roomId ?? job.recordingId, {
+        title: recording?.roomName ?? recording?.streamTitle ?? job.recordingId,
+      });
+    }
   }
 }
 

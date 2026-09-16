@@ -110,7 +110,7 @@ export default function Setup() {
                 校验
               </Button>
             </Space.Compact>
-            {dirState.valid === true && <Typography.Text type="success">目录可写，可以使用</Typography.Text>}
+            {dirState.valid === true && <Typography.Text type="success">目录可用，可以使用</Typography.Text>}
             {dirState.valid === false && <Typography.Text type="danger">{dirState.message ?? '目录不可用'}</Typography.Text>}
             <DirectoryPicker
               open={pickerOpen}

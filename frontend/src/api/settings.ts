@@ -13,6 +13,13 @@ export async function fetchSettings(): Promise<Settings> {
   return data.settings;
 }
 
+export type DouyinCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
+
+export async function fetchDouyinCookieStatus(): Promise<DouyinCookieStatus> {
+  const { data } = await http.get<{ status: DouyinCookieStatus }>('/settings/douyin-cookie-status', { timeout: 12_000 });
+  return data.status;
+}
+
 export async function updateSettings(input: SettingsInput): Promise<Settings> {
   const { data } = await http.put<{ settings: Settings }>('/settings', input);
   return data.settings;

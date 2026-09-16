@@ -52,6 +52,31 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     return reply.send({ settings: view });
   });
 
+  // The desktop Douyin login webview obtains HttpOnly cookies through the native
+  // cookie store.  Keep its write path deliberately narrow: it must not need to
+  // round-trip the complete settings form just to persist an authorization.
+  app.post('/api/v1/settings/douyin-cookie', async (req, reply) => {
+    const body = (req.body ?? {}) as { cookie?: unknown };
+    if (typeof body.cookie !== 'string') {
+      throw new AppError('CONFIG_INVALID', '未读取到抖音登录凭证，请先在授权窗口完成登录后重试');
+    }
+    const cookie = normalizeDouyinCookie(body.cookie);
+    validateDouyinCookie(cookie);
+    await services.secretStore.set(DOUYIN_COOKIE_KEY, cookie);
+    void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return reply.send({ settings: view });
+  });
+
+  // Settings loads this separately from the normal settings view so a slow or
+  // temporarily unreachable Douyin endpoint never delays the entire page.
+  app.get('/api/v1/settings/douyin-cookie-status', async (_req, reply) => {
+    const cookie = await services.secretStore.get(DOUYIN_COOKIE_KEY);
+    if (!cookie) return reply.send({ status: 'missing' });
+    return reply.send({ status: await checkDouyinCookieStatus(cookie) });
+  });
+
   app.post('/api/v1/settings/validate-directory', async (req, reply) => {
     const body = (req.body ?? {}) as { directory?: string };
     const dir = typeof body.directory === 'string' ? body.directory : '';
@@ -178,6 +203,31 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     services.events.emit({ type: 'settings:updated', data: view });
     return reply.send({ pipeline: merged });
   });
+}
+
+type DouyinCookieStatus = 'valid' | 'invalid' | 'unknown';
+
+/** Verify a stored login session without exposing the cookie or response body. */
+async function checkDouyinCookieStatus(cookie: string): Promise<DouyinCookieStatus> {
+  try {
+    const response = await fetch('https://creator.douyin.com/web/api/media/user/info', {
+      headers: {
+        Cookie: cookie,
+        Referer: 'https://creator.douyin.com/',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return 'unknown';
+    const body = await response.json() as { status_code?: unknown };
+    if (body.status_code === 0) return 'valid';
+    // Douyin returns 8 for an anonymous or expired web session.  Treat the
+    // explicit credential/risk signal as invalid as well.
+    if (body.status_code === 8 || body.status_code === 10011) return 'invalid';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /** 浏览器开发者工具有时会把 `Cookie:` 前缀或换行一并复制，规范化后再发给抖音。 */

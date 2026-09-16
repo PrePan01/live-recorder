@@ -115,8 +115,6 @@ describe('RecorderManager', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
     expect(preview.frames.get(room.id)! >= 1).toBe(true);
     expect(preview.closed).toContainEqual({ roomId: room.id, code: 1000, reason: 'ended' });
-    const mailer = services.mailer as FakeMailer;
-    expect(mailer.sent.some((m) => m.subject.includes('已开播'))).toBe(true);
   });
 
   it('does not emit recording:updated every second during recording (perf: 前端本地时长 ticker 替代，FE 采纳 #165 性能建议③)', async () => {

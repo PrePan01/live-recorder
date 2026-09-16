@@ -7,7 +7,8 @@ use std::{fs, sync::Mutex};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, LogicalSize, Manager, State,
+    window::WindowBuilder,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl,
 };
 
 use backend::BackendManager;
@@ -27,6 +28,11 @@ impl ShellState {
 
 const BOOT_EVENT: &str = "boot:state";
 const WINDOW_VISIBILITY_EVENT: &str = "window:visibility";
+const DOUYIN_AUTHORIZED_EVENT: &str = "douyin:authorized";
+const DOUYIN_AUTH_WINDOW: &str = "douyin-auth";
+const DOUYIN_CONTROLS_WEBVIEW: &str = "douyin-auth-controls";
+const DOUYIN_LOGIN_WEBVIEW: &str = "douyin-auth-login-page";
+const DOUYIN_LOGIN_URL: &str = "https://www.douyin.com/";
 
 // Store logical pixels so the window keeps a sensible size when the display's
 // scale factor changes (for example, moving between Retina and non-Retina
@@ -117,6 +123,156 @@ fn main_window_visible(app: &AppHandle) -> bool {
 
 fn emit_window_visibility(app: &AppHandle) {
     let _ = app.emit(WINDOW_VISIBILITY_EVENT, main_window_visible(app));
+}
+
+fn show_douyin_auth_windows(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_window(DOUYIN_AUTH_WINDOW) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    // The local confirmation page is the primary webview.  The real Douyin
+    // page is a child webview above it, leaving a fixed confirmation bar at
+    // the bottom of the *same* native window.
+    let auth_window = WindowBuilder::new(app, DOUYIN_AUTH_WINDOW)
+        .title("抖音授权")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(720.0, 520.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("无法打开抖音授权窗口: {e}"))?;
+    let login_url = DOUYIN_LOGIN_URL
+        .parse()
+        .map_err(|e| format!("抖音登录地址无效: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(DOUYIN_LOGIN_WEBVIEW, WebviewUrl::External(login_url)),
+            LogicalPosition::new(0.0, 0.0),
+            // Keep this slightly shorter than the window so the local
+            // confirmation page remains visible along the bottom.
+            LogicalSize::new(980.0, 644.0),
+        )
+        .map_err(|e| format!("无法加载抖音登录页面: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("douyin-auth.html".into())),
+            LogicalPosition::new(0.0, 644.0),
+            LogicalSize::new(980.0, 76.0),
+        )
+        .map_err(|e| format!("无法加载抖音授权确认栏: {e}"))?;
+    Ok(())
+}
+
+fn close_douyin_auth_windows(app: &AppHandle) {
+    if let Some(window) = app.get_window(DOUYIN_AUTH_WINDOW) {
+        let _ = window.close();
+    }
+}
+
+#[tauri::command]
+async fn start_douyin_authorization(app: AppHandle) -> Result<(), String> {
+    // WebView2 can deadlock when a child webview is created synchronously from
+    // an invoke handler. Use a worker thread on both desktop runtimes; Tauri
+    // dispatches the native window work to the appropriate UI thread.
+    tauri::async_runtime::spawn_blocking(move || show_douyin_auth_windows(&app))
+        .await
+        .map_err(|e| format!("创建抖音授权窗口任务异常: {e}"))?
+}
+
+fn douyin_cookie_header(app: &AppHandle) -> Result<String, String> {
+    let window = app
+        .get_webview(DOUYIN_LOGIN_WEBVIEW)
+        .ok_or_else(|| "授权窗口已关闭，请重新打开后完成登录".to_string())?;
+    // Read the entire native store rather than only www.douyin.com: the login
+    // flow may finish on live.douyin.com, whose host-only login cookie is not
+    // returned for the www URL. This API includes HttpOnly cookies.
+    let mut pairs: Vec<String> = window
+        .cookies()
+        .map_err(|e| format!("无法读取抖音登录凭证: {e}"))?
+        .into_iter()
+        .filter(|cookie| {
+            cookie
+                .domain()
+                .is_none_or(|domain| domain.trim_start_matches('.').ends_with("douyin.com"))
+        })
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect();
+    pairs.sort();
+    pairs.dedup();
+    if !pairs.iter().any(|pair| pair.starts_with("sessionid=") || pair.starts_with("sessionid_ss=")) {
+        return Err("尚未检测到抖音登录态。请先在上方窗口登录抖音，再点击“完成登录并授权”。".to_string());
+    }
+    if !pairs.iter().any(|pair| pair.starts_with("ttwid=")) {
+        return Err("登录凭证尚未完整写入。请等待几秒后刷新抖音页面，再点击“完成登录并授权”。".to_string());
+    }
+    Ok(pairs.join("; "))
+}
+
+fn verify_douyin_login(cookie: &str) -> Result<(), String> {
+    // Presence of sessionid alone is not proof of an active session: Douyin
+    // leaves expired credentials in the native cookie store after logout. Its
+    // creator endpoint returns status_code=0 only for an authenticated user and
+    // 8 for an anonymous/expired session.
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("无法创建抖音登录校验请求: {e}"))?
+        .get("https://creator.douyin.com/web/api/media/user/info")
+        .header("Cookie", cookie)
+        .header("Referer", "https://creator.douyin.com/")
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .send()
+        .map_err(|e| format!("无法确认抖音登录状态，请检查网络后重试: {e}"))?;
+    if !response.status().is_success() {
+        return Err("无法确认抖音登录状态，请稍后重试。授权未保存。".to_string());
+    }
+    let status_code = response
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|body| body.get("status_code").and_then(|value| value.as_i64()));
+    match status_code {
+        Some(0) => Ok(()),
+        Some(8) => Err("抖音当前未登录或登录已失效。请在上方网页登录后再授权。".to_string()),
+        _ => Err("暂时无法确认抖音登录状态。请完成网页登录后稍候重试；授权未保存。".to_string()),
+    }
+}
+
+fn save_douyin_cookie(cookie: String) -> Result<(), String> {
+    verify_douyin_login(&cookie)?;
+    let instance = backend::fetch_ready().ok_or_else(|| "本地服务尚未就绪，请稍候重试".to_string())?;
+    let response = reqwest::blocking::Client::new()
+        .post(format!("{}/api/v1/settings/douyin-cookie", instance.base_url))
+        .json(&serde_json::json!({ "cookie": cookie }))
+        .send()
+        .map_err(|e| format!("保存抖音授权失败: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let detail = response
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|body| body.pointer("/error/message").and_then(|value| value.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| format!("服务返回 {status}"));
+    Err(format!("保存抖音授权失败: {detail}"))
+}
+
+#[tauri::command]
+async fn complete_douyin_authorization(app: AppHandle) -> Result<(), String> {
+    // WebView2 can deadlock when cookies are read synchronously on its event
+    // thread. Run both native cookie access and the local HTTP write off-thread.
+    let handle = app.clone();
+    let cookie = tauri::async_runtime::spawn_blocking(move || douyin_cookie_header(&handle))
+        .await
+        .map_err(|e| format!("读取抖音授权任务异常: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || save_douyin_cookie(cookie))
+        .await
+        .map_err(|e| format!("保存抖音授权任务异常: {e}"))??;
+    close_douyin_auth_windows(&app);
+    let _ = app.emit(DOUYIN_AUTHORIZED_EVENT, ());
+    Ok(())
 }
 
 /// 唤起主窗口（托盘 open / 单实例恢复 / macOS Dock Reopen 共用）：
@@ -295,6 +451,21 @@ pub fn run() {
                 if window.label() == "main" {
                     save_main_window_size(&window.app_handle(), *size);
                 }
+                if window.label() == DOUYIN_AUTH_WINDOW {
+                    // The remote child webview occupies all but the bottom
+                    // confirmation bar, including after user resizes.
+                    if let Ok(scale_factor) = window.scale_factor() {
+                        let logical = size.to_logical::<f64>(scale_factor);
+                        if let Some(login) = window.app_handle().get_webview(DOUYIN_LOGIN_WEBVIEW) {
+                            let _ = login.set_size(LogicalSize::new(logical.width, (logical.height - 76.0).max(320.0)));
+                        }
+                        if let Some(controls) = window.app_handle().get_webview(DOUYIN_CONTROLS_WEBVIEW) {
+                            let bar_top = (logical.height - 76.0).max(320.0);
+                            let _ = controls.set_position(LogicalPosition::new(0.0, bar_top));
+                            let _ = controls.set_size(LogicalSize::new(logical.width, 76.0));
+                        }
+                    }
+                }
                 emit_window_visibility(&window.app_handle());
             }
             if matches!(event, tauri::WindowEvent::Focused(_)) {
@@ -313,6 +484,8 @@ pub fn run() {
             restart_service,
             get_diagnostics,
             get_window_visible,
+            start_douyin_authorization,
+            complete_douyin_authorization,
             quit_app,
         ])
         .setup(|app| {

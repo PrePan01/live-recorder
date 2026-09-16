@@ -116,7 +116,7 @@ export class Scheduler {
     this.douyinCookieExpired = true;
     const now = this.services.clock.iso();
     for (const room of this.services.rooms.list().filter((item) => item.platform === 'douyin')) {
-      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新', {
+      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', {
         roomId: room.id,
         retryable: false,
       }).toObject();
@@ -128,7 +128,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: 'warning',
       source: 'platform',
-      message: 'DOUYIN_COOKIE_EXPIRED: 抖音 Cookie 已失效，请到设置页更新',
+      message: 'DOUYIN_COOKIE_EXPIRED: 抖音授权已失效，请到设置页重新授权',
       occurredAt: now,
       errorCode: 'DOUYIN_COOKIE_EXPIRED',
     });
@@ -239,26 +239,9 @@ export class Scheduler {
           source: 'initial_live', lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
         });
       }
-      const notifications = {
-        ...DEFAULT_NOTIFICATION_PREFERENCE,
-        ...(this.services.settings.load()?.notifications ?? {}),
-      };
-      // 仅在已确认离线后的下一次开播通知：首次检测/重启时的未知状态不补发。
-      if (
-        room.lastLiveStatus === 'offline' &&
-        checkedRoom.enabled &&
-        checkedRoom.liveNotificationEnabled &&
-        notifications.desktopEnabled &&
-        notifications.liveStarted
-      ) {
-        this.services.events.emit({
-          type: 'live:started',
-          data: {
-            roomId: checkedRoom.id,
-            displayName: checkedRoom.displayName.trim() || status.displayName?.trim() || checkedRoom.url,
-          },
-        });
-      }
+      const shouldNotifyLiveStarted = room.lastLiveStatus === 'offline'
+        && checkedRoom.enabled
+        && checkedRoom.liveNotificationEnabled;
       // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -273,10 +256,16 @@ export class Scheduler {
       if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
         this.emitRoom(room.id);
+        if (shouldNotifyLiveStarted) {
+          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName });
+        }
         return;
       }
       try {
-        await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        const started = await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        if (shouldNotifyLiveStarted) {
+          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName, autoRecordingStarted: started });
+        }
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: appErr.toObject() });
@@ -299,7 +288,11 @@ export class Scheduler {
     }
     const err = status.error ?? new AppError(
       status.status === 'restricted' ? 'PLATFORM_ACCESS_RESTRICTED' : 'NETWORK_UNAVAILABLE',
-      status.status === 'restricted' ? '平台访问受限，请检查 Cookie 配置' : '平台请求失败',
+      status.status === 'restricted'
+        ? room.platform === 'douyin'
+          ? '平台访问受限，请检查抖音授权'
+          : '平台访问受限，请检查 Cookie 配置'
+        : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
     if (room.platform === 'douyin' && err.code === 'DOUYIN_COOKIE_EXPIRED') {
@@ -330,8 +323,6 @@ export class Scheduler {
     const now = this.services.clock.now();
     const today = localDate(now);
     if (this.forecastDate !== today) { this.forecastRecordedFor.clear(); this.forecastRetry.clear(); this.forecastDate = today; }
-    const key = `${roomId}:${today}`;
-    if (this.forecastRecordedFor.has(key)) return;
     const latestEventId = this.services.liveEvents.latestId(roomId);
     const retry = this.forecastRetry.get(roomId);
     if (retry && now < retry.at && retry.latestEventId === latestEventId) return;
@@ -353,9 +344,11 @@ export class Scheduler {
     if (prediction.kind !== 'next' || !prediction.rawLikelihood || !prediction.likelihood || !prediction.windowStartTimestamp || !prediction.windowEndTimestamp) return;
     const start = Date.parse(prediction.windowStartTimestamp);
     if (localDate(start) !== today || start <= now) return;
+    const key = `${roomId}:${today}:${prediction.windowStartTimestamp}`;
+    if (this.forecastRecordedFor.has(key)) return;
     this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.likelihood, rawProbability: prediction.rawLikelihood,
       windowStartAt: prediction.windowStartTimestamp, windowEndAt: prediction.windowEndTimestamp, generatedAt: this.services.clock.iso() });
-    // INSERT OR IGNORE can mean another run already persisted this room-day.
+    // INSERT OR IGNORE can mean another run already persisted this room/day/window.
     // Either way a concrete forecast exists before the in-memory key is set.
     this.forecastRecordedFor.add(key);
   }

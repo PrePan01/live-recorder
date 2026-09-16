@@ -33,6 +33,11 @@ const PREVIEW_HEADER_MAX = 64 * 1024;
 /** 近期尾部滚动缓冲上限：接近实时位置的最近媒体（含近期关键帧），让重开预览可从实时附近起播且时间戳连续。 */
 const PREVIEW_TAIL_MAX = 1024 * 1024;
 const PREVIEW_SOCKET_MAX_PENDING_BYTES = 4 * 1024 * 1024;
+/**
+ * 关闭/重开弹窗、播放器自愈重连时，旧 WebSocket 会短暂先于新连接关闭。
+ * 保留上游流一小段时间，避免“停止旧流”和“启动新流”交错后新客户端无帧可收。
+ */
+export const PREVIEW_IDLE_GRACE_MS = 2_000;
 
 /** 是否为视频关键帧 FLV 标签：type=9（视频）且 data[0] 高 4 位 FrameType==1。 */
 function isKeyframeTag(tag: Buffer): boolean {
@@ -159,6 +164,7 @@ export const PREVIEW_MAX_SESSIONS = 4;
 
 export class PreviewManager {
   private rooms = new Map<string, PreviewRoom>();
+  private emptyRoomTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 某房间最后一个预览客户端断开时回调（用于停止 preview-only 拉流）。 */
   onRoomEmpty: ((roomId: string) => void) | null = null;
 
@@ -175,6 +181,7 @@ export class PreviewManager {
   }
 
   addClient(roomId: string, ws: WebSocket): void {
+    this.clearEmptyRoomTimer(roomId);
     let room = this.rooms.get(roomId);
     if (!room) {
       room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0 };
@@ -195,10 +202,27 @@ export class PreviewManager {
       room!.sockets.delete(ws);
       // 保留房间与流头缓冲：录制/预览流活动期间客户端重开仍能初始化（#193 重开预览卡连接视频流）。
       // 房间的移除由流生命周期负责：closeRoom（流结束）/resetRoom（新段）清理。
-      if (room!.sockets.size === 0) {
-        this.onRoomEmpty?.(roomId);
-      }
+      if (room!.sockets.size === 0) this.deferRoomEmpty(roomId);
     });
+  }
+
+  private clearEmptyRoomTimer(roomId: string): void {
+    const timer = this.emptyRoomTimers.get(roomId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.emptyRoomTimers.delete(roomId);
+  }
+
+  private deferRoomEmpty(roomId: string): void {
+    this.clearEmptyRoomTimer(roomId);
+    const timer = setTimeout(() => {
+      this.emptyRoomTimers.delete(roomId);
+      // 新客户端可能在旧 socket close 后立即连入；只有宽限期结束时仍无人观看
+      // 才停止 preview-only 上游流。
+      if ((this.rooms.get(roomId)?.sockets.size ?? 0) === 0)
+        this.onRoomEmpty?.(roomId);
+    }, PREVIEW_IDLE_GRACE_MS);
+    this.emptyRoomTimers.set(roomId, timer);
   }
 
   broadcastFrame(roomId: string, chunk: Buffer): void {
@@ -253,6 +277,7 @@ export class PreviewManager {
 
   /** 录制正常结束或断流：先下发 stream_end，再按对应关闭码收口。 */
   closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void {
+    this.clearEmptyRoomTimer(roomId);
     const room = this.rooms.get(roomId);
     if (!room) return;
     for (const ws of room.sockets) {
@@ -294,6 +319,7 @@ export class PreviewManager {
   }
 
   closeRoomWithError(roomId: string, code: number): void {
+    this.clearEmptyRoomTimer(roomId);
     const room = this.rooms.get(roomId);
     if (!room) return;
     for (const ws of room.sockets) {

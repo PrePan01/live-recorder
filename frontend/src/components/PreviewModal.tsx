@@ -34,8 +34,8 @@ import {
   fetchHighlightBufferStatus,
 } from "../api/rooms";
 
-const MIN_WIDTH = 560;
-const MAX_WIDTH = 1200;
+const MIN_WIDTH = 640;
+const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
 const PICTURE_IN_PICTURE_HEIGHT = 203;
 type PlayerBounds = { left: number; top: number; width: number };
@@ -69,13 +69,13 @@ export default function PreviewModal({
   const highlightEnabled = useSettingsStore(
     (s) => s.settings?.highlightEnabled ?? true,
   );
-  // 普通观看默认占视口约 70%，同时为窄屏和超宽屏设置合理边界；直播墙全屏可传入显式宽度。
+  // 普通观看默认占视口约 80%，同时为窄屏和超宽屏设置合理边界；直播墙全屏可传入显式宽度。
   const [width, setWidth] = useState(
     () =>
       defaultWidth ??
       Math.min(
         MAX_WIDTH,
-        Math.max(MIN_WIDTH, Math.round(window.innerWidth * 0.7)),
+        Math.max(MIN_WIDTH, Math.round(window.innerWidth * 0.8)),
       ),
   );
   const [recentStop, setRecentStop] = useState(false);
@@ -427,6 +427,7 @@ export default function PreviewModal({
         }
         footer={null}
         width={width}
+        className="lr-preview-modal"
         centered
         destroyOnHidden
         closable={false}

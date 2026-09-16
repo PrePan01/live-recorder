@@ -68,6 +68,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           DELETE FROM rooms;
           DELETE FROM alerts;
           DELETE FROM settings;
+          DELETE FROM sqlite_sequence;
         `);
       })();
       committed = true;

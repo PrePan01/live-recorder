@@ -8,7 +8,7 @@ import type { UploadJob } from '../api/openlist';
 
 export type ServerEvent =
   | { type: 'room:updated'; room: Room }
-  | { type: 'live:started'; notification: { roomId: string; displayName: string } }
+  | { type: 'desktop:notification'; notification: { title: string; body: string } }
   | { type: 'recording:updated'; recording: Recording }
   | { type: 'alert:created'; alert: Alert }
   | { type: 'alert:updated'; alert: Alert }
@@ -20,7 +20,7 @@ export type ServerEvent =
 
 export const SSE_EVENT_NAMES = [
   'room:updated',
-  'live:started',
+  'desktop:notification',
   'recording:updated',
   'alert:created',
   'alert:updated',

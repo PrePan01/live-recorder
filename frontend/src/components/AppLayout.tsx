@@ -15,6 +15,9 @@ import { useAppTheme } from "../theme";
 import AppVersion from "./AppVersion";
 import LazyRouteErrorBoundary from "./LazyRouteErrorBoundary";
 import { preloadRoute } from "../routes/preload";
+import PreviewModal from "./PreviewModal";
+import { usePreviewStore } from "../stores/previewStore";
+import { useRoomStore } from "../stores/roomStore";
 
 const { Sider, Content, Footer } = Layout;
 
@@ -82,6 +85,11 @@ export default function AppLayout() {
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const { mode } = useAppTheme();
+  const activeModal = usePreviewStore((s) => s.activeModal);
+  const closeModal = usePreviewStore((s) => s.closeModal);
+  const activeModalRoom = useRoomStore((s) =>
+    activeModal ? s.rooms.find((room) => room.id === activeModal.roomId) : null,
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [sidebarBelowBreakpoint, setSidebarBelowBreakpoint] = useState(false);
 
@@ -209,6 +217,15 @@ export default function AppLayout() {
       >
         <StatusBar />
       </Footer>
+      {activeModal && activeModalRoom ? (
+        <PreviewModal
+          room={activeModalRoom}
+          titlePrefix={activeModal.titlePrefix}
+          defaultWidth={activeModal.defaultWidth}
+          enableHighlights={activeModal.enableHighlights}
+          onClose={closeModal}
+        />
+      ) : null}
     </Layout>
   );
 }

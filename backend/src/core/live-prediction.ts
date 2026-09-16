@@ -1,6 +1,7 @@
 export type PredictionConfidence = 'high' | 'medium' | 'low';
+export type PredictionAccuracy = 'high' | 'fairly_high' | 'medium' | 'fairly_low' | 'low';
 export type PredictionKind = 'unavailable' | 'observation' | 'typical' | 'next';
-export type PredictionBasis = 'weekday' | 'day_type' | 'interval' | 'all';
+export type PredictionBasis = 'daily' | 'weekday' | 'day_type' | 'interval' | 'all';
 export type PredictionTimeGranularity = 'exact' | 'quarter_hour' | 'approximate' | 'period';
 export type PredictionObservationQuality = 'platform' | 'transition' | 'initial_live' | 'legacy';
 export interface DetectedLiveEvent {
@@ -39,7 +40,14 @@ export interface LivePrediction {
   /** Uncalibrated selected-window probability, used as the calibration bucket. */
   rawLikelihood: PredictionConfidence | null;
   probabilityKnown: boolean;
+  /** Five-level display accuracy; existing three-level prediction logic remains unchanged. */
+  accuracy: PredictionAccuracy | null;
+  /** Distinct local dates with polling coverage in the model window. */
+  coverageDays: number;
+  /** Provenance of the observations used by the selected time window. */
+  timeSource: 'platform' | 'detected' | 'recording' | 'mixed' | null;
   lastRecordedAt: string | null;
+  lastRecordedTimestamp: string | null;
   lastRecordedQuality?: PredictionObservationQuality;
   nextDateEnd?: string | null;
   typicalDayType?: string | null;
@@ -70,10 +78,15 @@ interface Model {
   interval?: number;
   intervalEnd?: number;
   lastDay?: number;
+  datedReady?: boolean;
 }
 const WINDOW_DAYS = 60;
 const MIN_WINDOW = 30;
 const MIN_DAYS = 2;
+// Two matching weekdays are enough to suggest a usual time, but too little
+// evidence to claim that the next opening is a full week away. A third
+// matching date promotes the habit to a dated weekday forecast.
+const MIN_DATED_WEEKDAY_DAYS = 3;
 const MIN_SESSION_GAP = 45;
 const MINUTE_MS = 60_000;
 interface CoverageRange {
@@ -184,8 +197,12 @@ export function calculateLivePrediction(input: {
     likelihood: null,
     rawLikelihood: null,
     probabilityKnown: false,
+    accuracy: null,
+    coverageDays: coveredCalendarDays(coverageRanges(input.coverage ?? [])),
+    timeSource: null,
     ...(latest ? { lastRecordedQuality: latest.quality } : {}),
     lastRecordedAt: latest ? hhmm(minuteOfDay(latest.recordedAt)) : null,
+    lastRecordedTimestamp: latest ? new Date(latest.recordedAt).toISOString() : null,
     recentObservations: items.slice(-8).map((o) => ({ time: hhmm(minuteOfDay(o.estimatedAt)), quality: o.quality })),
   };
   if (!items.length) return { ...base, notice: '检测到更多开播后显示预测' };
@@ -227,7 +244,8 @@ export function calculateLivePrediction(input: {
         : null;
     const bucket = raw ? input.calibration?.[raw] : undefined;
     const calibrated = bucket && bucket.total >= 5 ? probabilityFromRate((bucket.hits + 1) / (bucket.total + 2)) : raw;
-    return { slot: s, confidence, raw, likelihood: calibrated ? lowerConfidence(calibrated, confidence) : ('low' as const) };
+    const likelihood = calibrated ? lowerConfidence(calibrated, confidence) : ('low' as const);
+    return { slot: s, confidence, raw, likelihood, accuracy: predictionAccuracy(bucket, confidence, distinctDays(s.items)) };
   });
   const view = views.find((v) => v.slot === slot)!;
   const startTimestamp = date ? atMinute(date, slot.representative) : null;
@@ -251,7 +269,11 @@ export function calculateLivePrediction(input: {
     nextDate: date ? localDate(date.getTime()) : null,
     nextDateEnd: selected?.dateEnd ? localDate(selected.dateEnd.getTime()) : null,
     typicalDayType:
-      !date && new Set(items.map((o) => dayType(new Date(o.day).getDay()))).size === 1 ? dayType(new Date(items[0]!.day).getDay()) : null,
+      !date &&
+      basedOnDays >= MIN_DATED_WEEKDAY_DAYS &&
+      new Set(items.map((o) => dayType(new Date(o.day).getDay()))).size === 1
+        ? dayType(new Date(items[0]!.day).getDay())
+        : null,
     startTimestamp: startTimestamp?.toISOString() ?? null,
     windowStartTimestamp: windowStartTimestamp?.toISOString() ?? null,
     windowEndTimestamp: windowEndTimestamp?.toISOString() ?? null,
@@ -268,6 +290,8 @@ export function calculateLivePrediction(input: {
     likelihood: view.likelihood,
     rawLikelihood: view.raw,
     probabilityKnown: view.raw !== null,
+    accuracy: view.accuracy,
+    timeSource: timeSourceFor(slot.items),
     notice: null,
   };
 }
@@ -287,8 +311,18 @@ function modelCandidates(items: Occurrence[], now: number, coverage: CoverageRan
   }
   const models: Model[] = [];
   const weekdaySlots = new Map([...weekdays].map(([dow, group]) => [dow, slotsForItems(group, now)]));
-  for (const [key, group] of weekdays)
-    if (distinctDays(group) >= MIN_DAYS) models.push({ basis: 'weekday', key, items: group, slots: weekdaySlots.get(key)! });
+  for (const [key, group] of weekdays) {
+    if (distinctDays(group) < MIN_DAYS) continue;
+    const slots = weekdaySlots.get(key)!;
+    models.push({
+      basis: 'weekday',
+      key,
+      items: group,
+      slots,
+      datedReady:
+        distinctDays(group) >= MIN_DATED_WEEKDAY_DAYS || coverageSupportsSparseWeekday(group, items, dominantSlot(slots)!, coverage),
+    });
+  }
   for (const [key, group] of types) {
     const dows = [...new Set(group.map((o) => new Date(o.day).getDay()))];
     // A broad fallback is appropriate for sparse onboarding history, or a
@@ -300,9 +334,47 @@ function modelCandidates(items: Occurrence[], now: number, coverage: CoverageRan
     if (dows.some((dow) => circularDistance(dominantSlot(weekdaySlots.get(dow)!)!.representative, main.representative) > 90)) continue;
     models.push({ basis: 'day_type', key, items: group, slots });
   }
+  const daily = dailyModel(items, now);
+  if (daily) models.push(daily);
   const cadence = intervalModel(items, now, coverage);
   if (cadence) models.push(cadence);
   return models;
+}
+function dailyModel(items: Occurrence[], now: number): Model | null {
+  const days = [...new Set(items.map((item) => item.day))].sort((a, b) => a - b);
+  if (days.length < 3) return null;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  if (calendarDay(today.getTime()) - calendarDay(days[days.length - 1]!) > 1) return null;
+  const run = [days[days.length - 1]!];
+  for (let index = days.length - 2; index >= 0; index--) {
+    if (calendarDay(run[0]!) - calendarDay(days[index]!) !== 1) break;
+    run.unshift(days[index]!);
+  }
+  if (run.length < 3) return null;
+  const runDays = new Set(run);
+  const recent = items.filter((item) => runDays.has(item.day));
+  const slots = slotsForItems(recent, now);
+  if (!slots.length || slots.some((slot) => distinctDays(slot.items) < MIN_DAYS)) return null;
+  const main = dominantSlot(slots)!;
+  if (main.end - main.start > 180) return null;
+  return { basis: 'daily', key: 'daily', items: recent, slots, lastDay: run[run.length - 1]!, datedReady: true };
+}
+function coverageSupportsSparseWeekday(
+  weekdayItems: Occurrence[],
+  allItems: Occurrence[],
+  slot: Slot,
+  coverage: CoverageRange[],
+): boolean {
+  const days = [...new Set(weekdayItems.map((item) => item.day))].sort((a, b) => a - b);
+  if (days.length !== 2) return false;
+  const eventDays = new Set(allItems.map((item) => item.day));
+  let coveredEmptyDays = 0;
+  for (let date = atCalendarOffset(new Date(days[0]!), 1); date.getTime() < days[1]!; date = atCalendarOffset(date, 1)) {
+    if (eventDays.has(date.getTime())) continue;
+    if (coversRanges(coverage, atMinute(date, slot.start).getTime(), atMinute(date, slot.end).getTime())) coveredEmptyDays++;
+  }
+  return coveredEmptyDays >= 3;
 }
 function atCalendarOffset(date: Date, offset: number): Date {
   const d = new Date(date);
@@ -353,6 +425,23 @@ function intervalModel(items: Occurrence[], now: number, coverage: CoverageRange
 function selectUpcomingModel(models: Model[], now: number): { model: Model; date: Date; slot: Slot; dateEnd?: Date } | null {
   let best: { model: Model; date: Date; slot: Slot; start: number } | null = null;
   const multipleSessions = new Map(models.map((model) => [model, hasRecurringDailySessions(model.slots)]));
+  const weekdayModels = models.filter((model) => model.basis === 'weekday');
+  const daily = models.find((model) => model.basis === 'daily');
+  if (daily) {
+    const dailySessions = multipleSessions.get(daily)!;
+    for (let offset = -1; offset <= 1; offset++) {
+      const date = new Date(now);
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() + offset);
+      for (const slot of offset >= 1 && !dailySessions ? [dominantSlot(daily.slots)!] : daily.slots) {
+        const start = atMinute(date, slot.start).getTime(),
+          end = atMinute(date, slot.end).getTime();
+        if (end < now) continue;
+        if (slot.items.some((item) => item.day === date.getTime() && openingEvidenceInWindow(item.event, start, end) === 'hit')) continue;
+        return { model: daily, date, slot };
+      }
+    }
+  }
   const cadence = models.find((m) => m.basis === 'interval');
   if (cadence && cadence.lastDay !== undefined && cadence.interval) {
     let date = atCalendarOffset(new Date(cadence.lastDay), cadence.interval);
@@ -375,6 +464,17 @@ function selectUpcomingModel(models: Model[], now: number): { model: Model; date
     const model =
       models.find((m) => m.basis === 'weekday' && m.key === dow) ?? models.find((m) => m.basis === 'day_type' && m.key === dayType(dow));
     if (!model) continue;
+    // With only two observations of one weekday, keep the learned time as a
+    // typical-time hint instead of asserting that the next opening is a week
+    // away. Same-day remaining sessions are still useful, and multiple
+    // observed weekday models constitute a broader weekly schedule.
+    if (
+      offset >= 1 &&
+      model.basis === 'weekday' &&
+      weekdayModels.length === 1 &&
+      !model.datedReady
+    )
+      continue;
     const dailySessions = multipleSessions.get(model)!;
     for (const slot of offset >= 1 && !dailySessions ? [dominantSlot(model.slots)!] : model.slots) {
       const start = atMinute(date, slot.start).getTime(),
@@ -407,7 +507,9 @@ function probabilityForSlot(
     date.setDate(date.getDate() - offset);
     const dow = date.getDay();
     const matches =
-      model.basis === 'interval'
+      model.basis === 'daily'
+        ? true
+        : model.basis === 'interval'
         ? !!model.interval && (calendarDay(target.getTime()) - calendarDay(date.getTime())) % model.interval === 0
         : model.basis === 'weekday'
           ? dow === target.getDay()
@@ -628,6 +730,25 @@ function weightedQuantile(items: Occurrence[], q: number, value: (o: Occurrence)
 function distinctDays(items: Occurrence[]): number {
   return new Set(items.map((o) => o.day)).size;
 }
+function coveredCalendarDays(ranges: CoverageRange[]): number {
+  const days = new Set<number>();
+  for (const range of ranges) {
+    if (range.end <= range.start) continue;
+    const date = new Date(range.start);
+    date.setHours(0, 0, 0, 0);
+    while (date.getTime() < range.end) {
+      days.add(date.getTime());
+      date.setDate(date.getDate() + 1);
+    }
+  }
+  return days.size;
+}
+function timeSourceFor(items: Occurrence[]): LivePrediction['timeSource'] {
+  const sources = new Set(
+    items.map((item) => (item.quality === 'platform' ? 'platform' : item.event.source === 'recording' ? 'recording' : 'detected')),
+  );
+  return sources.size === 1 ? ([...sources][0] as Exclude<LivePrediction['timeSource'], 'mixed' | null>) : 'mixed';
+}
 function dominantSlot(slots: Slot[]): Slot | undefined {
   return slots.reduce<Slot | undefined>((a, b) => (!a || b.weight > a.weight ? b : a), undefined);
 }
@@ -640,6 +761,19 @@ function dayType(dow: number): string {
 }
 function probabilityFromRate(rate: number): PredictionConfidence {
   return rate >= 0.5 ? 'high' : rate >= 0.25 ? 'medium' : 'low';
+}
+function predictionAccuracy(
+  calibration: { hits: number; total: number } | undefined,
+  confidence: PredictionConfidence,
+  days: number,
+): PredictionAccuracy {
+  if (calibration && calibration.total >= 5) {
+    const rate = (calibration.hits + 1) / (calibration.total + 2);
+    return rate >= 0.8 ? 'high' : rate >= 0.65 ? 'fairly_high' : rate >= 0.45 ? 'medium' : rate >= 0.25 ? 'fairly_low' : 'low';
+  }
+  if (confidence === 'high') return days >= 8 ? 'high' : 'fairly_high';
+  if (confidence === 'medium') return 'medium';
+  return days >= 3 ? 'fairly_low' : 'low';
 }
 function lowerConfidence(a: PredictionConfidence, b: PredictionConfidence): PredictionConfidence {
   const order = { low: 0, medium: 1, high: 2 };

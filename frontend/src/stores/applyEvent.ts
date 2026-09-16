@@ -10,7 +10,7 @@ import { useUploadStore } from './uploadStore';
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
-    case 'live:started':
+    case 'desktop:notification':
       // 由 SSE 接收层直接交给原生通知桥接；无需写入应用状态。
       break;
     case 'room:updated':

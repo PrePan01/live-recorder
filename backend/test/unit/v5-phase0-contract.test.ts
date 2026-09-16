@@ -282,12 +282,12 @@ describe('V5 notifications + live prediction contract', () => {
     const inj = host(app);
 
     const def = (await inj({ method: 'GET', url: '/api/v1/settings/notifications' })).json();
-    expect(def.notifications.desktopEnabled).toBe(true);
+    expect(def.notifications.desktop.liveStarted).toBe(true);
     expect(def.notifications.dedupeWindowMinutes).toBe(30);
 
-    const set = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: false, liveStarted: true, dedupeWindowMinutes: 60 } });
+    const set = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktop: { liveStarted: false }, email: { liveStarted: true }, dedupeWindowMinutes: 60 } });
     expect(set.statusCode).toBe(200);
-    expect(set.json().notifications.desktopEnabled).toBe(false);
+    expect(set.json().notifications.desktop.liveStarted).toBe(false);
     expect(set.json().notifications.dedupeWindowMinutes).toBe(60);
 
     const bad = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 9999 } });

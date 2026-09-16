@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
-import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference } from '../../types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference, type NotificationEventPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
 import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
@@ -11,7 +11,27 @@ export type { LivePrediction, PredictionConfidence } from '../../core/live-predi
 export function notificationPreference(services: Services): NotificationPreference {
   const settings = services.settings.load() as AppSettings | null;
   const stored = settings?.notifications;
-  return { ...DEFAULT_NOTIFICATION_PREFERENCE, ...(stored ?? {}) };
+  const legacy = stored as (Partial<NotificationEventPreference> & { desktopEnabled?: boolean; dedupeWindowMinutes?: number }) | undefined;
+  if (stored && !('desktop' in stored)) {
+    const desktopEnabled = legacy?.desktopEnabled ?? true;
+    return {
+      desktop: {
+        liveStarted: desktopEnabled && (legacy?.liveStarted ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.liveStarted),
+        recordingStarted: desktopEnabled && (legacy?.recordingStarted ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingStarted),
+        recordingEnded: desktopEnabled && (legacy?.recordingEnded ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingEnded),
+        recordingFailed: desktopEnabled && (legacy?.recordingFailed ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingFailed),
+        diskSpaceLow: desktopEnabled && (legacy?.diskSpaceLow ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.diskSpaceLow),
+        uploadFailed: desktopEnabled && (legacy?.uploadFailed ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.uploadFailed),
+      },
+      email: { ...DEFAULT_NOTIFICATION_PREFERENCE.email },
+      dedupeWindowMinutes: legacy?.dedupeWindowMinutes ?? DEFAULT_NOTIFICATION_PREFERENCE.dedupeWindowMinutes,
+    };
+  }
+  return {
+    desktop: { ...DEFAULT_NOTIFICATION_PREFERENCE.desktop, ...(stored?.desktop ?? {}) },
+    email: { ...DEFAULT_NOTIFICATION_PREFERENCE.email, ...(stored?.email ?? {}) },
+    dedupeWindowMinutes: stored?.dedupeWindowMinutes ?? DEFAULT_NOTIFICATION_PREFERENCE.dedupeWindowMinutes,
+  };
 }
 
 /**
@@ -43,7 +63,11 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
   app.put('/api/v1/settings/notifications', async (req, reply) => {
     const body = (req.body ?? {}) as Partial<NotificationPreference>;
     const current = notificationPreference(services);
-    const merged: NotificationPreference = { ...current, ...body };
+    const merged: NotificationPreference = {
+      desktop: { ...current.desktop, ...(body.desktop ?? {}) },
+      email: { ...current.email, ...(body.email ?? {}) },
+      dedupeWindowMinutes: body.dedupeWindowMinutes ?? current.dedupeWindowMinutes,
+    };
     const err = validateNotifications(merged);
     if (err) throw err;
     const settings = services.settings.load() as AppSettings | null;
@@ -71,7 +95,7 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
         email = 'failed';
       }
     }
-    return reply.send({ ok: true, desktop: prefs.desktopEnabled, email });
+    return reply.send({ ok: true, desktop: true, email });
   });
 
   // 开播预测使用近 60 天观测；没有观测历史时才低权重回退到旧录像开始时间。
@@ -85,8 +109,10 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
 
 /** V5 通知偏好校验：返回 AppError 或 null。 */
 export function validateNotifications(prefs: NotificationPreference): AppError | null {
-  for (const k of ['desktopEnabled', 'liveStarted', 'recordingStarted', 'recordingEnded', 'recordingFailed', 'diskSpaceLow', 'uploadFailed'] as const) {
-    if (typeof prefs[k] !== 'boolean') return new AppError('CONFIG_INVALID', `${k} 必须为布尔值`);
+  for (const channel of ['desktop', 'email'] as const) {
+    for (const k of ['liveStarted', 'recordingStarted', 'recordingEnded', 'recordingFailed', 'diskSpaceLow', 'uploadFailed'] as const) {
+      if (typeof prefs[channel]?.[k] !== 'boolean') return new AppError('CONFIG_INVALID', `${channel}.${k} 必须为布尔值`);
+    }
   }
   if (typeof prefs.dedupeWindowMinutes !== 'number' || prefs.dedupeWindowMinutes < 1 || prefs.dedupeWindowMinutes > 1440) {
     return new AppError('CONFIG_INVALID', 'dedupeWindowMinutes 需在 1-1440 之间');
