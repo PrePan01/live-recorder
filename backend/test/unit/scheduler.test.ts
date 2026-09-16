@@ -335,6 +335,48 @@ describe('Scheduler', () => {
     expect(recs.some((r) => r.state === 'recording')).toBe(false);
   });
 
+  it('keeps an active recording visible after an immediate live recheck', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-sch-recheck-'));
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/64', displayName: 'recheck' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    expect(services.manager.enrichRoom(services.rooms.get(room.id)!).activeRecording).not.toBeNull();
+  });
+
+  it('keeps an active recording visible when an immediate recheck fails', async () => {
+    const { services, clock } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-sch-recheck-error-'));
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/65', displayName: 'recheck error' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
+      { status: 'restricted' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    expect(services.rooms.get(room.id)!.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+  });
+
   it('autoRecord=false (global, room inherits) blocks auto-start AND manual /check (#63/#77 unified)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-autorec-'));
