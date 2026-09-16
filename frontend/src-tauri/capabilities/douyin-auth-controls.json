@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "douyin-auth-controls",
+  "description": "Only the local confirmation bar in the Douyin authorization window may invoke app commands.",
+  "webviews": ["douyin-auth-controls"],
+  "permissions": ["core:default"]
+}

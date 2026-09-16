@@ -468,6 +468,46 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings: desktop authorization endpoint saves only a complete Douyin cookie', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const request = (cookie: unknown) => app.inject({
+      method: 'POST',
+      url: '/api/v1/settings/douyin-cookie',
+      headers: { host: '127.0.0.1:43120' },
+      payload: { cookie },
+    });
+
+    const missingLogin = await request('ttwid=xyz');
+    expect(missingLogin.statusCode).toBe(422);
+    expect(missingLogin.json().error.message).toContain('sessionid');
+
+    const saved = await request('ttwid=xyz; sessionid=abc123; odin_tt=extra');
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().settings.douyinCookie.hasCookie).toBe(true);
+    expect(JSON.stringify(saved.json())).not.toContain('abc123');
+    await app.close();
+  });
+
+  it('settings: reports an explicitly expired Douyin login as invalid', async () => {
+    const services = newServices();
+    await services.secretStore.set('douyin.cookie', 'ttwid=xyz;sessionid=expired');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status_code: 8 }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { app } = buildApp(services);
+    try {
+      const result = await app.inject({
+        method: 'GET', url: '/api/v1/settings/douyin-cookie-status', headers: { host: '127.0.0.1:43120' },
+      });
+      expect(result.statusCode).toBe(200);
+      expect(result.json().status).toBe('invalid');
+      expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+      await app.close();
+    }
+  });
+
   it('settings: douyin cookie validation rejects incomplete cookies (missing ttwid/sessionid) (#30)', async () => {
     const services = newServices();
     const { app } = buildApp(services);

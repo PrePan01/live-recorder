@@ -6,7 +6,8 @@ import {
   clockMinutes,
   timelineShowsNow,
   predictionTitle,
-  predictionLikelihoodText,
+  lastOpeningValue,
+  predictionAccuracyText,
   predictionDisplayLikelihood,
   timelineBands,
 } from "../utils/livePrediction";
@@ -17,6 +18,11 @@ const CONF_META = {
   low: { text: "低" },
 };
 type Prediction = RoomInsight["prediction"];
+
+function predictionOpeningValue(text: string): string | null {
+  if (!text || text === "暂无预测") return null;
+  return text.replace(/^预计/, "").replace(/^常在/, "").replace(/开播$/, "").trim() || null;
+}
 
 function PredictionTimeline({ prediction }: { prediction: Prediction }) {
   const slots = prediction.slots.flatMap((slot) =>
@@ -93,11 +99,13 @@ function PredictionPopover({
   titleText: string;
   children: ReactNode;
 }) {
+  const predictionValue = predictionOpeningValue(titleText);
+  const lastValue = lastOpeningValue(prediction);
   const title = (
     <>
       <span>开播预测</span>
       <span className="lr-live-prediction-popover__likelihood">
-        {predictionLikelihoodText(prediction, likelihood)}
+        {predictionAccuracyText(prediction, likelihood)}
       </span>
     </>
   );
@@ -106,7 +114,18 @@ function PredictionPopover({
       title={title}
       content={
         <>
-          <div className="lr-live-prediction-popover__usual">{titleText}</div>
+          {predictionValue && (
+            <div className="lr-live-prediction-popover__time-row">
+              <span>预计开播</span>
+              <span>{predictionValue}</span>
+            </div>
+          )}
+          {lastValue && (
+            <div className="lr-live-prediction-popover__time-row">
+              <span>上次开播</span>
+              <span>{lastValue}</span>
+            </div>
+          )}
           <PredictionTimeline prediction={prediction} />
         </>
       }

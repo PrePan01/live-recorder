@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import * as notifyApi from '../api/notification';
-import type { NotificationPreference } from '../types/notification';
+import type { NotificationPreference, NotificationPreferenceInput } from '../types/notification';
 
 interface NotificationState {
   preferences: NotificationPreference | null;
   loading: boolean;
   load: () => Promise<void>;
-  save: (input: Partial<NotificationPreference>) => Promise<void>;
+  save: (input: NotificationPreferenceInput) => Promise<void>;
   setPreferences: (p: NotificationPreference) => void;
 }
 

@@ -142,18 +142,18 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
     const services = newServices();
     const { app } = buildApp(services);
     const inj = host(app);
-    const badBool = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: 'yes' } });
+    const badBool = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktop: { liveStarted: 'yes' } } });
     expect(badBool.statusCode).toBe(422);
     expect(badBool.json().error.code).toBe('CONFIG_INVALID');
     const badDedupe = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { dedupeWindowMinutes: 0 } });
     expect(badDedupe.statusCode).toBe(422);
-    const ok = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { recordingEnded: true, uploadFailed: false, dedupeWindowMinutes: 45 } });
+    const ok = await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktop: { recordingEnded: true }, email: { uploadFailed: false }, dedupeWindowMinutes: 45 } });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().notifications.recordingEnded).toBe(true);
-    expect(ok.json().notifications.uploadFailed).toBe(false);
+    expect(ok.json().notifications.desktop.recordingEnded).toBe(true);
+    expect(ok.json().notifications.email.uploadFailed).toBe(false);
     expect(ok.json().notifications.dedupeWindowMinutes).toBe(45);
     // 部分更新合并：未提交的字段保留默认
-    expect(ok.json().notifications.liveStarted).toBe(true);
+    expect(ok.json().notifications.desktop.liveStarted).toBe(true);
     await app.close();
   });
 
@@ -177,12 +177,12 @@ describe('QA V5 notifications + live prediction gaps (#112)', () => {
     const { app } = buildApp(services);
     const inj = host(app);
     const base = await inj({ method: 'GET', url: '/api/v1/settings' });
-    expect(base.json().settings.notifications.desktopEnabled).toBe(true);
-    await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktopEnabled: false } });
+    expect(base.json().settings.notifications.desktop.liveStarted).toBe(true);
+    await inj({ method: 'PUT', url: '/api/v1/settings/notifications', payload: { desktop: { liveStarted: false } } });
     const after = (await inj({ method: 'GET', url: '/api/v1/settings' })).json();
-    expect(after.settings.notifications.desktopEnabled).toBe(false);
+    expect(after.settings.notifications.desktop.liveStarted).toBe(false);
     const direct = (await inj({ method: 'GET', url: '/api/v1/settings/notifications' })).json();
-    expect(direct.notifications.desktopEnabled).toBe(false);
+    expect(direct.notifications.desktop.liveStarted).toBe(false);
     await app.close();
   });
 });

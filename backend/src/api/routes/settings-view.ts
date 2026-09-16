@@ -2,6 +2,7 @@ import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, SettingsView } from '../../types/index.js';
 import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { notificationPreference } from './notifications.js';
 
 export async function settingsView(services: Services): Promise<SettingsView> {
   const stored = services.settings.load();
@@ -21,7 +22,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     mail,
     douyinCookie: { hasCookie: hasDouyinCookie },
     theme: settings.theme ?? 'system',
-    notifications: settings.notifications ?? structuredClone(DEFAULT_SETTINGS.notifications),
+    notifications: notificationPreference(services),
     pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),
     namingRule: settings.namingRule ?? DEFAULT_SETTINGS.namingRule,
     confirmAfterComplete: settings.confirmAfterComplete ?? false,

@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -25,7 +26,6 @@ import {
   UploadOutlined,
   CheckCircleOutlined,
   SyncOutlined,
-  NotificationOutlined,
   QuestionCircleOutlined,
   GlobalOutlined,
   BugOutlined,
@@ -38,8 +38,11 @@ import { useNotificationStore } from "../../stores/notificationStore";
 import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
-import { validateDirectory } from "../../api/settings";
-import { testNotification } from "../../api/notification";
+import {
+  fetchDouyinCookieStatus,
+  validateDirectory,
+  type DouyinCookieStatus,
+} from "../../api/settings";
 import { exportConfig, importConfig } from "../../api/config";
 import {
   fetchSelfCheck,
@@ -57,6 +60,7 @@ import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes, formatTime } from "../../utils/format";
 import type { SettingsInput } from "../../types/settings";
+import type { NotificationEventPreference } from "../../types/notification";
 import saveCookieTutorial from "../../assets/img/save_cookie.png";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -83,6 +87,17 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 };
 const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
 const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
+const NOTIFICATION_EVENTS: Array<{
+  key: keyof NotificationEventPreference;
+  label: string;
+}> = [
+  { key: "liveStarted", label: "开播提醒" },
+  { key: "recordingStarted", label: "录制开始" },
+  { key: "recordingEnded", label: "录制结束" },
+  { key: "recordingFailed", label: "录制失败" },
+  { key: "diskSpaceLow", label: "磁盘空间不足" },
+  { key: "uploadFailed", label: "上传失败" },
+];
 
 function openExternalUrl(url: string): void {
   if (bridge.isDesktop) {
@@ -98,6 +113,7 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
+  const emailNotificationsEnabled = settings?.mail.enabled ?? false;
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
   const { preference, setPreference } = useAppTheme();
@@ -127,6 +143,9 @@ export default function SettingsPage() {
   const [exporting, setExporting] = useState(false);
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
+  const [douyinAuthorizing, setDouyinAuthorizing] = useState(false);
+  const [douyinCookieStatus, setDouyinCookieStatus] =
+    useState<DouyinCookieStatus | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
@@ -148,6 +167,32 @@ export default function SettingsPage() {
     void fetchStatus();
     void loadNotifications().catch(() => undefined);
   }, [load, fetchAlerts, fetchStatus, loadNotifications]);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetchDouyinCookieStatus()
+      .then((result) => {
+        if (!disposed) setDouyinCookieStatus(result);
+      })
+      // A network failure must not label a previously valid authorization as
+      // failed. The next settings visit will retry the verification.
+      .catch(() => {
+        if (!disposed) setDouyinCookieStatus("unknown");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return bridge.onDouyinAuthorized(() => {
+      void load();
+      void fetchDouyinCookieStatus()
+        .then(setDouyinCookieStatus)
+        .catch(() => setDouyinCookieStatus("unknown"));
+      message.success("抖音授权已完成");
+    });
+  }, [load, message]);
 
   useEffect(() => {
     if (settings && settings.theme) {
@@ -194,7 +239,7 @@ export default function SettingsPage() {
     if (!dir) return;
     try {
       await validateDirectory(dir);
-      setDirMsg({ ok: true, text: "目录可写" });
+      setDirMsg({ ok: true, text: "目录可用" });
     } catch (e) {
       setDirMsg({
         ok: false,
@@ -254,18 +299,10 @@ export default function SettingsPage() {
     }
   }, [recordingFormat, checks, ffmpegCheck]);
 
-  const sendTest = async () => {
+  const sendDesktopTest = async () => {
     try {
-      const res = await testNotification();
-      const parts: string[] = [];
-      if (res.desktop) {
-        await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
-        parts.push("桌面通知已发送");
-      } else parts.push("桌面通知未开启");
-      if (res.email === "sent") parts.push("邮件已发送");
-      else if (res.email === "skipped") parts.push("SMTP 未配置，邮件跳过");
-      else if (res.email === "failed") parts.push("邮件发送失败");
-      message[res.email === "failed" ? "warning" : "success"](parts.join("；"));
+      await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
+      message.success("桌面通知已发送");
     } catch (e) {
       message.error(
         e instanceof ApiError
@@ -311,6 +348,20 @@ export default function SettingsPage() {
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
       return false;
+    }
+  };
+
+  const startDouyinAuthorization = async () => {
+    setDouyinAuthorizing(true);
+    try {
+      await bridge.startDouyinAuthorization();
+      message.info("请在新窗口完成抖音登录，完成后回到此处确认。");
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "无法打开抖音授权窗口",
+      );
+    } finally {
+      setDouyinAuthorizing(false);
     }
   };
 
@@ -379,6 +430,24 @@ export default function SettingsPage() {
             设置与告警
           </Typography.Title>
         </div>
+        <Space className="lr-page-actions" wrap>
+          <Button
+            size="small"
+            icon={<DownloadOutlined />}
+            loading={exporting}
+            onClick={() => void onExport()}
+          >
+            导出配置
+          </Button>
+          <Button
+            size="small"
+            icon={<UploadOutlined />}
+            loading={importing}
+            onClick={() => fileRef.current?.click()}
+          >
+            导入配置
+          </Button>
+        </Space>
       </div>
       {diskDanger ? (
         <Alert
@@ -394,26 +463,6 @@ export default function SettingsPage() {
           <Card
             className="lr-settings-card lr-settings-card--primary"
             title="服务设置"
-            extra={
-              <Space>
-                <Button
-                  size="small"
-                  icon={<DownloadOutlined />}
-                  loading={exporting}
-                  onClick={() => void onExport()}
-                >
-                  导出配置
-                </Button>
-                <Button
-                  size="small"
-                  icon={<UploadOutlined />}
-                  loading={importing}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  导入配置
-                </Button>
-              </Space>
-            }
           >
             <Form
               className="lr-settings-form"
@@ -650,82 +699,140 @@ export default function SettingsPage() {
                   className="lr-settings-section__title"
                   level={4}
                 >
-                  抖音 Cookie
+                  抖音授权
                 </Typography.Title>
-                <Typography.Paragraph
-                  className="lr-settings-section__hint"
-                  type="secondary"
-                >
-                  抖音直播间需登录 Cookie 才能观看与录制。
-                  <br />
-                  获取方式：进入网页版抖音 → 登录 → 随便进入一个直播间 → F12
-                  打开开发者工具 → 网络（Network） 面板 → 刷新直播间页面 →
-                  点开任意{" "}
-                  <Typography.Text code>live.douyin.com</Typography.Text> 请求 →
-                  在「请求标头」中复制 Cookie 后方<b>整段</b>值 →
-                  粘贴到下方输入框。
-                  <span className="lr-network-help">
-                    <Tooltip
-                      styles={{
-                        root: {
-                          width: "min(600px, calc(100vw - 48px))",
-                          maxWidth: "none",
-                        },
-                      }}
-                      title={
-                        <img
-                          style={{
-                            width: "100%",
-                            maxWidth: "none",
-                          }}
-                          alt="从网络面板保存 Cookie 的教程"
-                          className="lr-cookie-tutorial-image"
-                          src={saveCookieTutorial}
-                        />
+                <div className="lr-douyin-auth-card">
+                  <div className="lr-douyin-auth-card__heading">
+                    <div>
+                      <Typography.Text strong>
+                        授权后即可检测和录制抖音直播间，两步授权：
+                      </Typography.Text>
+                    </div>
+                    <Tag
+                      color={
+                        douyinCookieStatus === "invalid"
+                          ? "error"
+                          : settings?.douyinCookie.hasCookie
+                            ? "success"
+                            : "default"
                       }
-                      placement="top"
                     >
+                      {douyinCookieStatus === "invalid"
+                        ? "授权失败"
+                        : settings?.douyinCookie.hasCookie
+                          ? "已授权"
+                          : "未授权"}
+                    </Tag>
+                  </div>
+                  {bridge.isDesktop ? (
+                    <div className="lr-douyin-auth-card__actions">
                       <Button
-                        aria-label="查看网络面板 Cookie 教程"
-                        className="lr-inline-icon-button"
-                        size="small"
-                        type="text"
-                        icon={<QuestionCircleOutlined />}
-                      />
-                    </Tooltip>
-                  </span>
-                  <br />
-                  <b>
-                    Cookie
-                    仅存本机钥匙串，不会显示或上传，请勿泄露他人，粘贴到下方后自动保存。
-                  </b>
-                </Typography.Paragraph>
-                <Form.Item
-                  name="douyinCookie"
-                  extra={
-                    settings?.douyinCookie.hasCookie
-                      ? "已保存，留空则不修改"
-                      : undefined
-                  }
-                >
-                  <Input.Password
-                    placeholder={
-                      settings?.douyinCookie.hasCookie
-                        ? "••••••"
-                        : "输入抖音 Cookie（可选）"
-                    }
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-                <Button
-                  disabled={!settings?.douyinCookie.hasCookie}
-                  onClick={() => {
-                    form.setFieldValue("douyinCookie", "");
-                    void persist(form.getFieldsValue() as SettingsInput, true);
-                  }}
-                >
-                  清除已存 Cookie
-                </Button>
+                        type="primary"
+                        size="medium"
+                        loading={douyinAuthorizing}
+                        onClick={() => void startDouyinAuthorization()}
+                      >
+                        登录并授权
+                      </Button>
+                      <div className="lr-douyin-auth-card__step">
+                        <span>1. 在新窗口中登录抖音</span>
+                        <span>2. 窗口底部点击“我已完成登录”</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <Typography.Text type="secondary">
+                      请使用桌面客户端完成一键授权，或通过下方手动方式导入。
+                    </Typography.Text>
+                  )}
+                  <Typography.Text
+                    className="lr-douyin-auth-card__privacy"
+                    type="secondary"
+                  >
+                    Cookie 仅存在本地，不会上传或提供给他人，可随时
+                    <Button
+                      className="lr-douyin-auth-card__clear"
+                      size="small"
+                      type="text"
+                      danger
+                      disabled={!settings?.douyinCookie.hasCookie}
+                      onClick={() => {
+                        form.setFieldValue("douyinCookie", "");
+                        void persist(
+                          form.getFieldsValue() as SettingsInput,
+                          true,
+                        );
+                      }}
+                    >
+                      清除
+                    </Button>
+                    ，请放心。
+                  </Typography.Text>
+                </div>
+                <Collapse
+                  className="lr-douyin-manual"
+                  ghost
+                  items={[
+                    {
+                      key: "manual-cookie",
+                      label: "手动粘贴 Cookie（高级）",
+                      children: (
+                        <div className="lr-douyin-manual__content">
+                          <Typography.Paragraph type="secondary">
+                            进入网页版抖音并登录，打开任意直播间后按 F12 →
+                            网络（Network） → 刷新页面 → 点开任意{" "}
+                            <Typography.Text code>
+                              live.douyin.com
+                            </Typography.Text>{" "}
+                            请求 → 在「请求标头」复制完整 Cookie 并粘贴。
+                            <span className="lr-network-help">
+                              <Tooltip
+                                styles={{
+                                  root: {
+                                    width: "min(600px, calc(100vw - 48px))",
+                                    maxWidth: "none",
+                                  },
+                                }}
+                                title={
+                                  <img
+                                    alt="从网络面板保存 Cookie 的教程"
+                                    className="lr-cookie-tutorial-image"
+                                    src={saveCookieTutorial}
+                                  />
+                                }
+                                placement="top"
+                              >
+                                <Button
+                                  aria-label="查看网络面板 Cookie 教程"
+                                  className="lr-inline-icon-button"
+                                  size="small"
+                                  type="text"
+                                  icon={<QuestionCircleOutlined />}
+                                />
+                              </Tooltip>
+                            </span>
+                          </Typography.Paragraph>
+                          <Form.Item
+                            name="douyinCookie"
+                            extra={
+                              settings?.douyinCookie.hasCookie
+                                ? "已保存；留空则不修改"
+                                : undefined
+                            }
+                          >
+                            <Input.Password
+                              placeholder={
+                                settings?.douyinCookie.hasCookie
+                                  ? "••••••"
+                                  : "粘贴完整抖音 Cookie"
+                              }
+                              autoComplete="new-password"
+                            />
+                          </Form.Item>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             </Form>
             <DirectoryPicker
@@ -765,11 +872,8 @@ export default function SettingsPage() {
           <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
-          <Card className="lr-settings-card" title="OpenList 自动上传">
+          <Card className="lr-settings-card" title="自动上传">
             <OpenListConfigCard />
-          </Card>
-          <Card className="lr-settings-card" title="邮件通知（服务商预设）">
-            <EmailConfigCard />
           </Card>
           <ResetSettingsCard
             onExport={onExport}
@@ -785,16 +889,7 @@ export default function SettingsPage() {
         <Col xs={24} lg={10}>
           <Card
             className="lr-settings-card lr-notification-card"
-            title="桌面通知"
-            extra={
-              <Button
-                size="small"
-                icon={<NotificationOutlined />}
-                onClick={() => void sendTest()}
-              >
-                发送测试
-              </Button>
-            }
+            title="通知设置"
           >
             <Space
               className="lr-notification-settings"
@@ -802,101 +897,43 @@ export default function SettingsPage() {
               style={{ width: "100%" }}
               size={16}
             >
-              <Row className="lr-notification-grid" gutter={[12, 12]}>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.desktopEnabled ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ desktopEnabled: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>启用桌面通知</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.liveStarted ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ liveStarted: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>开播提醒</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingStarted ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingStarted: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制开始</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingEnded ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingEnded: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制结束</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingFailed ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingFailed: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制失败</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.uploadFailed ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ uploadFailed: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>上传失败</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.diskSpaceLow ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ diskSpaceLow: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>磁盘空间不足</span>
-                  </Space>
-                </Col>
-              </Row>
+              <div className="lr-notification-matrix">
+                <div className="lr-notification-matrix__header">通知事件</div>
+                <div className="lr-notification-matrix__header">桌面通知</div>
+                <div className="lr-notification-matrix__header">邮件通知</div>
+                {NOTIFICATION_EVENTS.map(({ key, label }) => (
+                  <div className="lr-notification-matrix__row" key={key}>
+                    <span>{label}</span>
+                    <div className="lr-notification-matrix__cell">
+                      <Switch
+                        checked={preferences?.desktop[key] ?? false}
+                        onChange={(value) =>
+                          void saveNotifications({
+                            desktop: {
+                              [key]: value,
+                            } as Partial<NotificationEventPreference>,
+                          }).catch(() => message.error("保存失败"))
+                        }
+                      />
+                    </div>
+                    <div className="lr-notification-matrix__cell">
+                      <Switch
+                        checked={preferences?.email[key] ?? false}
+                        disabled={!emailNotificationsEnabled}
+                        onChange={(value) =>
+                          void saveNotifications({
+                            email: {
+                              [key]: value,
+                            } as Partial<NotificationEventPreference>,
+                          }).catch(() => message.error("保存失败"))
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
               <Form.Item
-                label="通知去重窗口（分钟）"
+                label="通知去重时间（分钟）"
                 style={{ marginBottom: 0 }}
               >
                 <InputNumber
@@ -912,13 +949,16 @@ export default function SettingsPage() {
                   }}
                 />
               </Form.Item>
-              <Typography.Paragraph
-                type="secondary"
-                style={{ marginBottom: 0 }}
-              >
-                桌面通知使用系统通知能力；邮件告警需在「SMTP
-                邮件告警」配置并启用。
-              </Typography.Paragraph>
+              <Button size="small" onClick={() => void sendDesktopTest()}>
+                发送桌面测试
+              </Button>
+              <div className="lr-notification-email-config">
+                <Typography.Title level={5}>邮件服务</Typography.Title>
+                <Typography.Paragraph type="secondary">
+                  邮件通知需要启用下方总开关；测试邮件不受开关影响。
+                </Typography.Paragraph>
+                <EmailConfigCard />
+              </div>
             </Space>
           </Card>
           <Card

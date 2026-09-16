@@ -6,6 +6,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
+import { FakeMailer } from '../../src/mail/mailer.js';
 import type { AppSettings } from '../../src/types/index.js';
 import { AppError } from '../../src/types/error.js';
 
@@ -63,20 +64,24 @@ describe('Scheduler', () => {
     services.settings.save({
       ...baseSettings(),
       autoRecord: false,
+      mail: { enabled: true, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'u@x.com', recipients: ['me@x.com'] },
       notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
     });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
-    const notices: Array<{ roomId: string; displayName: string }> = [];
+    const notices: Array<{ title: string; body: string }> = [];
     services.events.on((event) => {
-      if (event.type === 'live:started') notices.push(event.data);
+      if (event.type === 'desktop:notification') notices.push(event.data);
     });
 
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
 
-    expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '您订阅的 主播A 已开播' }]);
+    const mailer = services.mailer as FakeMailer;
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 您订阅的 主播A 已开播');
     expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
   });
 
@@ -92,7 +97,7 @@ describe('Scheduler', () => {
     const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
     adapter.setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
     const notices: string[] = [];
-    services.events.on((event) => { if (event.type === 'live:started') notices.push(event.data.roomId); });
+    services.events.on((event) => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
 
     await services.scheduler.triggerImmediateCheck(initiallyLive.id);
     await services.scheduler.triggerImmediateCheck(gated.id);
@@ -518,7 +523,7 @@ describe('Scheduler', () => {
         calls += 1;
         return {
           status: 'restricted',
-          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音 Cookie 已失效，请到设置页更新').toObject(),
+          error: new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权').toObject(),
         };
       },
       async getStreamUrl() {

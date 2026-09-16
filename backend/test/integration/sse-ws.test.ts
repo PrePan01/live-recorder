@@ -200,7 +200,37 @@ describe('WebSocket preview', () => {
     // 断开最后一个客户端 → 预览拉流停止。
     ws.close();
     await closed;
-    for (let i = 0; i < 20 && server.services.manager.isPreviewStreaming(room.id); i += 1) {
+    for (let i = 0; i < 60 && server.services.manager.isPreviewStreaming(room.id); i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(false);
+    await server.close();
+  });
+
+  it('keeps an idle preview stream alive across a rapid WebSocket reopen', async () => {
+    const server = await listen();
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/152', displayName: 'rapid-reopen' });
+    server.services.rooms.setLiveStatus(room.id, 'live');
+    (server.services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's152', streamTitle: 'T' }]);
+
+    const first = connect(server.url, room.id);
+    await first.opened;
+    for (let i = 0; i < 20 && !server.services.manager.isPreviewStreaming(room.id); i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+
+    first.ws.close();
+    await first.closed;
+    const second = connect(server.url, room.id);
+    await second.opened;
+    // 旧连接的 close 事件不能把刚重开的预览流停掉。
+    await new Promise((r) => setTimeout(r, 100));
+    expect(server.services.manager.isPreviewStreaming(room.id)).toBe(true);
+
+    second.ws.close();
+    await second.closed;
+    for (let i = 0; i < 60 && server.services.manager.isPreviewStreaming(room.id); i += 1) {
       await new Promise((r) => setTimeout(r, 50));
     }
     expect(server.services.manager.isPreviewStreaming(room.id)).toBe(false);

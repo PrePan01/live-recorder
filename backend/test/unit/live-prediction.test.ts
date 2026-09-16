@@ -214,6 +214,35 @@ describe('live prediction', () => {
     expect(after.rawLikelihood).toBe('high');
     expect(after.todayProbability).toBe('low');
     expect(after.likelihood).toBe('low');
+    expect(after.accuracy).toBe('low');
+  });
+
+  it.each([
+    [5, 'high'],
+    [4, 'fairly_high'],
+    [3, 'medium'],
+    [1, 'fairly_low'],
+    [0, 'low'],
+  ] as const)('maps %i of 5 historical hits to five-level accuracy %s', (hits, accuracy) => {
+    const dates = ['2026-08-21', '2026-08-28', '2026-09-04', '2026-09-11'];
+    const events = dates.map((day) => ({
+      detectedAt: new Date(`${day}T20:00:00`).toISOString(),
+      source: 'platform' as const,
+      platformStartedAt: new Date(`${day}T20:00:00`).toISOString(),
+    }));
+    const coverage = dates.map((day) => ({
+      startAt: new Date(`${day}T19:00:00`).toISOString(),
+      endAt: new Date(`${day}T21:00:00`).toISOString(),
+    }));
+    const result = calculateLivePrediction({
+      roomId: 'room_1',
+      now: new Date('2026-09-18T15:00:00').getTime(),
+      generatedAt,
+      events,
+      coverage,
+      calibration: { high: { hits, total: 5 } },
+    });
+    expect(result.accuracy).toBe(accuracy);
   });
 
   it('includes only a compact trace of recent observations for the popover', () => {

@@ -1,6 +1,5 @@
 import type { RoomInsight } from "../api/rooms";
 type Prediction = RoomInsight["prediction"];
-const CONF = { high: "高", medium: "中", low: "低" };
 export function clockMinutes(value: string): number {
   const [h, m] = value.replace("次日 ", "").split(":").map(Number);
   return (value.startsWith("次日 ") ? 1440 : 0) + h * 60 + m;
@@ -68,11 +67,41 @@ function dateLabel(date: Date, now: Date): string {
       ? `下${weekday}`
       : `${date.getMonth() + 1}月${date.getDate()}日`;
 }
-export function predictionLikelihoodText(
+export function predictionAccuracyText(
   prediction: Prediction,
   value: Prediction["likelihood"],
 ): string {
-  return `可能性${CONF[predictionDisplayLikelihood(prediction, value)]}`;
+  const fallback = predictionDisplayLikelihood(prediction, value);
+  const accuracy = prediction.accuracy ?? fallback;
+  const labels = {
+    high: "高",
+    fairly_high: "较高",
+    medium: "中",
+    fairly_low: "较低",
+    low: "低",
+  } as const;
+  return `预测准确性${labels[accuracy]}`;
+}
+
+export function lastOpeningValue(
+  prediction: Pick<Prediction, "lastRecordedAt" | "lastRecordedTimestamp">,
+  now = new Date(),
+): string | null {
+  if (!prediction.lastRecordedAt) return null;
+  if (!prediction.lastRecordedTimestamp) return prediction.lastRecordedAt;
+  const date = new Date(prediction.lastRecordedTimestamp);
+  if (!Number.isFinite(date.getTime())) return prediction.lastRecordedAt;
+  const calendarDay = (value: Date) => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
+  const weekStart = calendarDay(now) - ((now.getDay() + 6) % 7) * 86400000;
+  const dateDay = calendarDay(date);
+  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()];
+  const label =
+    dateDay >= weekStart && dateDay < weekStart + 7 * 86400000
+      ? weekday
+      : date.getFullYear() === now.getFullYear()
+        ? `${date.getMonth() + 1}月${date.getDate()}日`
+        : `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+  return `${label} ${hhmm(date)}`;
 }
 export function predictionDisplayLikelihood(
   prediction: Pick<Prediction, "probabilityKnown">,

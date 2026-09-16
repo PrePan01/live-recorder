@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
 const pkg = JSON.parse(
@@ -19,6 +20,16 @@ export default defineConfig({
   // 需用相对路径（#138 QA 定位白屏根因）。
   base: './',
   plugins: [react()],
+  // The native Douyin authorization window has a small local confirmation webview in addition
+  // to the remote login webview, so it needs its own packaged HTML entry.
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        'douyin-auth': fileURLToPath(new URL('./douyin-auth.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     port: 5173,
     // 5173 被占用时显性报错而非静默漂移到 5174——避免「服务未就绪/找不到端口」困惑（PM 建议，多 dev 实例不能并存）。

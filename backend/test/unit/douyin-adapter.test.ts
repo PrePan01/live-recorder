@@ -177,7 +177,7 @@ describe('DouyinAdapter', () => {
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=expired');
     expect(result.status).toBe('restricted');
     expect(result.error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
-    expect(result.error?.message).toContain('Cookie');
+    expect(result.error?.message).toContain('抖音授权');
   });
 
   it('maps unexpected structure without cookie signal to PLATFORM_CHANGED', async () => {

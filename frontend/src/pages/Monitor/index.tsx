@@ -43,7 +43,6 @@ import RoomStats from "../../components/RoomStats";
 import RoomHealth from "../../components/RoomHealth";
 import LiveStatusTag from "../../components/LiveStatusTag";
 import LivePredictionBadge from "../../components/LivePredictionBadge";
-import PreviewModal from "../../components/PreviewModal";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import type { Platform, Room } from "../../types/room";
@@ -243,7 +242,7 @@ const RoomCard = memo(function RoomCard({
                   underline
                   onClick={() => navigate("/settings#douyin-cookie")}
                 >
-                  Cookie 配置
+                  抖音授权
                 </Typography.Link>
               </>
             ) : (
@@ -360,23 +359,9 @@ export default function Monitor() {
     reorderRooms,
     reorderBusy,
   } = useRoomStore();
-  const openPreview = usePreviewStore((s) => s.open);
-  const closePreview = usePreviewStore((s) => s.close);
+  const openPreviewModal = usePreviewStore((s) => s.openModal);
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
-  const [watching, setWatching] = useState<Room | null>(null);
-  const watchingRef = useRef(watching);
-  useEffect(() => {
-    watchingRef.current = watching;
-  }, [watching]);
-  // 离开监控页（路由切换/卸载）时释放预览会话，避免 openRoomIds 泄漏。
-  useEffect(
-    () => () => {
-      const w = watchingRef.current;
-      if (w) closePreview(w.id);
-    },
-    [closePreview],
-  );
   const [view, setView] = useState<"卡片" | "列表">(() =>
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
@@ -505,13 +490,12 @@ export default function Monitor() {
 
   const handleWatch = useCallback(
     (room: Room) => {
-      if (!openPreview(room.id)) {
+      if (!openPreviewModal({ roomId: room.id })) {
         message.warning(describeError("PREVIEW_LIMIT_REACHED"));
         return;
       }
-      setWatching(room);
     },
-    [message, openPreview],
+    [message, openPreviewModal],
   );
 
   const onCheckRoom = useCallback(
@@ -884,15 +868,6 @@ export default function Monitor() {
           </Row>
         </RoomSortableProvider>
       )}
-      {watching ? (
-        <PreviewModal
-          room={watching}
-          onClose={() => {
-            closePreview(watching.id);
-            setWatching(null);
-          }}
-        />
-      ) : null}
     </div>
   );
 }
