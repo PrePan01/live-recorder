@@ -279,7 +279,7 @@ export default function Wall() {
         <PreviewModal
           room={fullscreen}
           titlePrefix="全屏"
-          defaultWidth={880}
+          defaultWidth={1080}
           enableHighlights={false}
           onClose={() => setFullscreen(null)}
         />

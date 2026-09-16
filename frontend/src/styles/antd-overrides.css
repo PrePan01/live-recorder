@@ -601,6 +601,10 @@ textarea.ant-input,
   font-family: var(--lr-display);
   font-weight: 900;
 }
+/* 视频观看弹窗以画面为主：压缩标题栏，为默认放大的播放器腾出空间。 */
+.lr-preview-modal .ant-modal-header {
+  padding-block: 10px !important;
+}
 .ant-modal-footer {
   border-top: 1px solid var(--lr-ink);
   padding-top: 14px;
