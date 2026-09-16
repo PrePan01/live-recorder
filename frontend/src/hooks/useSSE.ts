@@ -13,7 +13,6 @@ import { applyServerEvent } from '../stores/applyEvent';
 import { bridge, useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
 import { useRoomStore } from '../stores/roomStore';
-import { sendLiveStartedDesktopNotification } from '../utils/liveNotification';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
 
@@ -26,8 +25,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
   switch (type) {
     case 'room:updated':
       return { type, room: payload as unknown as Room };
-    case 'live:started':
-      return { type, notification: payload as { roomId: string; displayName: string } };
+    case 'desktop:notification':
+      return { type, notification: payload as { title: string; body: string } };
     case 'recording:updated':
       return { type, recording: payload as unknown as Recording };
     case 'alert:created':
@@ -68,8 +67,8 @@ export function useSSE() {
       try {
         const payload = JSON.parse(raw) as Record<string, unknown>;
         const event = toServerEvent(type, payload);
-        if (event.type === 'live:started') {
-          void sendLiveStartedDesktopNotification(bridge, event.notification).catch(() => undefined);
+        if (event.type === 'desktop:notification') {
+          void bridge.notify(event.notification.title, event.notification.body).catch(() => undefined);
         } else {
           applyServerEvent(event);
         }

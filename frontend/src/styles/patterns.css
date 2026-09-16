@@ -95,11 +95,61 @@
   font-family: var(--lr-display);
   font-weight: 900;
 }
-.lr-notification-grid > .ant-col > .ant-space {
+.lr-notification-matrix {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 112px 112px;
+  border: 1px solid var(--lr-border);
+}
+.lr-notification-matrix__row {
+  display: contents;
+}
+.lr-notification-matrix__header {
+  padding: 10px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+  border-bottom: 1px solid var(--lr-border);
+}
+.lr-notification-matrix__header:nth-child(2),
+.lr-notification-matrix__header:nth-child(3) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.lr-notification-matrix__row > * {
+  padding: 10px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--lr-border);
+}
+.lr-notification-matrix__cell {
   display: flex;
-  min-height: 40px;
-  padding: 8px 10px;
-  background: var(--lr-surface-alt);
+  align-items: center;
+}
+.lr-notification-matrix__row:last-child > * {
+  border-bottom: 0;
+}
+.lr-notification-email-config {
+  padding-top: 8px;
+}
+.lr-notification-email-config .ant-typography {
+  margin-top: 0;
+}
+@media (max-width: 767px) {
+  .lr-notification-matrix {
+    grid-template-columns: minmax(0, 1fr) 96px 96px;
+  }
+}
+@media (max-width: 480px) {
+  .lr-notification-matrix {
+    grid-template-columns: minmax(0, 1fr) 90px 90px;
+  }
+  .lr-notification-matrix__header,
+  .lr-notification-matrix__row > * {
+    padding: 9px 6px;
+    font-size: 12px;
+  }
 }
 .lr-stats-grid > .ant-col {
   display: flex;

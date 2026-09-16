@@ -26,7 +26,6 @@ import {
   UploadOutlined,
   CheckCircleOutlined,
   SyncOutlined,
-  NotificationOutlined,
   QuestionCircleOutlined,
   GlobalOutlined,
   BugOutlined,
@@ -44,7 +43,6 @@ import {
   validateDirectory,
   type DouyinCookieStatus,
 } from "../../api/settings";
-import { testNotification } from "../../api/notification";
 import { exportConfig, importConfig } from "../../api/config";
 import {
   fetchSelfCheck,
@@ -62,6 +60,7 @@ import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes, formatTime } from "../../utils/format";
 import type { SettingsInput } from "../../types/settings";
+import type { NotificationEventPreference } from "../../types/notification";
 import saveCookieTutorial from "../../assets/img/save_cookie.png";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -88,6 +87,17 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 };
 const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
 const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
+const NOTIFICATION_EVENTS: Array<{
+  key: keyof NotificationEventPreference;
+  label: string;
+}> = [
+  { key: "liveStarted", label: "开播提醒" },
+  { key: "recordingStarted", label: "录制开始" },
+  { key: "recordingEnded", label: "录制结束" },
+  { key: "recordingFailed", label: "录制失败" },
+  { key: "diskSpaceLow", label: "磁盘空间不足" },
+  { key: "uploadFailed", label: "上传失败" },
+];
 
 function openExternalUrl(url: string): void {
   if (bridge.isDesktop) {
@@ -103,6 +113,7 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
+  const emailNotificationsEnabled = settings?.mail.enabled ?? false;
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
   const { preference, setPreference } = useAppTheme();
@@ -288,18 +299,10 @@ export default function SettingsPage() {
     }
   }, [recordingFormat, checks, ffmpegCheck]);
 
-  const sendTest = async () => {
+  const sendDesktopTest = async () => {
     try {
-      const res = await testNotification();
-      const parts: string[] = [];
-      if (res.desktop) {
-        await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
-        parts.push("桌面通知已发送");
-      } else parts.push("桌面通知未开启");
-      if (res.email === "sent") parts.push("邮件已发送");
-      else if (res.email === "skipped") parts.push("SMTP 未配置，邮件跳过");
-      else if (res.email === "failed") parts.push("邮件发送失败");
-      message[res.email === "failed" ? "warning" : "success"](parts.join("；"));
+      await bridge.notify("Live Recorder提醒", "这是一条桌面通知测试消息");
+      message.success("桌面通知已发送");
     } catch (e) {
       message.error(
         e instanceof ApiError
@@ -872,9 +875,6 @@ export default function SettingsPage() {
           <Card className="lr-settings-card" title="自动上传">
             <OpenListConfigCard />
           </Card>
-          <Card className="lr-settings-card" title="邮件通知">
-            <EmailConfigCard />
-          </Card>
           <ResetSettingsCard
             onExport={onExport}
             exporting={exporting}
@@ -889,16 +889,7 @@ export default function SettingsPage() {
         <Col xs={24} lg={10}>
           <Card
             className="lr-settings-card lr-notification-card"
-            title="桌面通知"
-            extra={
-              <Button
-                size="small"
-                icon={<NotificationOutlined />}
-                onClick={() => void sendTest()}
-              >
-                发送测试
-              </Button>
-            }
+            title="通知设置"
           >
             <Space
               className="lr-notification-settings"
@@ -906,99 +897,41 @@ export default function SettingsPage() {
               style={{ width: "100%" }}
               size={16}
             >
-              <Row className="lr-notification-grid" gutter={[12, 12]}>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.desktopEnabled ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ desktopEnabled: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>启用桌面通知</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.liveStarted ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ liveStarted: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>开播提醒</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingStarted ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingStarted: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制开始</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingEnded ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingEnded: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制结束</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.recordingFailed ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ recordingFailed: v }).catch(
-                          () => message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>录制失败</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.uploadFailed ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ uploadFailed: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>上传失败</span>
-                  </Space>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Space>
-                    <Switch
-                      checked={preferences?.diskSpaceLow ?? false}
-                      onChange={(v) =>
-                        void saveNotifications({ diskSpaceLow: v }).catch(() =>
-                          message.error("保存失败"),
-                        )
-                      }
-                    />
-                    <span>磁盘空间不足</span>
-                  </Space>
-                </Col>
-              </Row>
+              <div className="lr-notification-matrix">
+                <div className="lr-notification-matrix__header">通知事件</div>
+                <div className="lr-notification-matrix__header">桌面通知</div>
+                <div className="lr-notification-matrix__header">邮件通知</div>
+                {NOTIFICATION_EVENTS.map(({ key, label }) => (
+                  <div className="lr-notification-matrix__row" key={key}>
+                    <span>{label}</span>
+                    <div className="lr-notification-matrix__cell">
+                      <Switch
+                        checked={preferences?.desktop[key] ?? false}
+                        onChange={(value) =>
+                          void saveNotifications({
+                            desktop: {
+                              [key]: value,
+                            } as Partial<NotificationEventPreference>,
+                          }).catch(() => message.error("保存失败"))
+                        }
+                      />
+                    </div>
+                    <div className="lr-notification-matrix__cell">
+                      <Switch
+                        checked={preferences?.email[key] ?? false}
+                        disabled={!emailNotificationsEnabled}
+                        onChange={(value) =>
+                          void saveNotifications({
+                            email: {
+                              [key]: value,
+                            } as Partial<NotificationEventPreference>,
+                          }).catch(() => message.error("保存失败"))
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
               <Form.Item
                 label="通知去重时间（分钟）"
                 style={{ marginBottom: 0 }}
@@ -1016,6 +949,16 @@ export default function SettingsPage() {
                   }}
                 />
               </Form.Item>
+              <Button size="small" onClick={() => void sendDesktopTest()}>
+                发送桌面测试
+              </Button>
+              <div className="lr-notification-email-config">
+                <Typography.Title level={5}>邮件服务</Typography.Title>
+                <Typography.Paragraph type="secondary">
+                  邮件通知需要启用下方总开关；测试邮件不受开关影响。
+                </Typography.Paragraph>
+                <EmailConfigCard />
+              </div>
             </Space>
           </Card>
           <Card

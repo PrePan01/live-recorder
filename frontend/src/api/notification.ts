@@ -1,5 +1,5 @@
 import { http } from './client';
-import type { LivePrediction, NotificationPreference } from '../types/notification';
+import type { LivePrediction, NotificationPreference, NotificationPreferenceInput } from '../types/notification';
 
 export async function fetchNotifications(): Promise<NotificationPreference> {
   const { data } = await http.get<{ notifications: NotificationPreference }>('/settings/notifications');
@@ -7,7 +7,7 @@ export async function fetchNotifications(): Promise<NotificationPreference> {
 }
 
 export async function updateNotifications(
-  input: Partial<NotificationPreference>,
+  input: NotificationPreferenceInput,
 ): Promise<NotificationPreference> {
   const { data } = await http.put<{ notifications: NotificationPreference }>('/settings/notifications', input);
   return data.notifications;

@@ -2,7 +2,7 @@ import type { Alert, Diagnostic, ExportJob, Recording, RecordingSchedule, Room, 
 
 export type AppEvent =
   | { type: 'room:updated'; data: Room }
-  | { type: 'live:started'; data: { roomId: string; displayName: string } }
+  | { type: 'desktop:notification'; data: { title: string; body: string } }
   | { type: 'recording:updated'; data: Recording }
   | { type: 'alert:created'; data: Alert }
   | { type: 'alert:updated'; data: Alert }

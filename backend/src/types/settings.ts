@@ -76,10 +76,7 @@ export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';
 /** 命名模板支持的变量（#115）。 */
 export const NAMING_VARS = ['room', 'platform', 'date', 'time', 'quality', 'roomId'] as const;
 
-/** V5 通知偏好：各事件开关 + 去重窗口；邮件 SMTP 配置仍走 mail（mail.enabled 生效时才发邮件）。 */
-export interface NotificationPreference {
-  /** 桌面/系统通知总开关（FE 侧经 Tauri 通知；BE 持久化偏好）。 */
-  desktopEnabled: boolean;
+export interface NotificationEventPreference {
   /** 开播提醒：直播检测到开播时通知。 */
   liveStarted: boolean;
   /** 录制开始提醒。 */
@@ -92,18 +89,19 @@ export interface NotificationPreference {
   diskSpaceLow: boolean;
   /** 上传失败提醒（OpenList 等）。 */
   uploadFailed: boolean;
-  /** 去重窗口（分钟）：同房间同类事件在该窗口内只发一次。 */
+}
+
+/** 通知偏好按投递渠道保存；邮件还需 mail.enabled 和有效 SMTP 配置。 */
+export interface NotificationPreference {
+  desktop: NotificationEventPreference;
+  email: NotificationEventPreference;
   dedupeWindowMinutes: number;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCE: NotificationPreference = {
-  desktopEnabled: true,
-  liveStarted: true,
-  recordingStarted: true,
-  recordingEnded: false,
-  recordingFailed: true,
-  diskSpaceLow: true,
-  uploadFailed: true,
+  desktop: { liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true },
+  // 保持历史邮件实际覆盖范围；新增事件默认不额外发送邮件。
+  email: { liveStarted: true, recordingStarted: false, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: false },
   dedupeWindowMinutes: 30,
 };
 

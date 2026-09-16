@@ -454,6 +454,7 @@ export class RecorderManager {
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recording.id)! });
     this.emitServiceStatus();
+    await this.notifier.notify('recording_started', room.id, { title: room.displayName });
     return true;
   }
 
@@ -532,6 +533,7 @@ export class RecorderManager {
       this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
       this.services.events.emit({ type: 'recording:updated', data: recording });
       this.emitServiceStatus();
+      await this.notifier.notify('recording_started', room.id, { title: room.displayName });
 
       void this.runSession(room, recording.id, stream, filePath, session, 0).catch(() => undefined);
       return true;
@@ -748,6 +750,7 @@ export class RecorderManager {
     if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
+    await this.notifier.notify('recording_ended', room.id, { title: room.displayName });
     // 异步校验文件完整性，不阻塞录制完成响应（#220 询问保留时进入待确认态挂起管线/上传）。
     this.finishOrConfirm(recordingId);
   }

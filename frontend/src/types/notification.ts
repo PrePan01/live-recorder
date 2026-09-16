@@ -1,12 +1,22 @@
-export interface NotificationPreference {
-  desktopEnabled: boolean;
+export interface NotificationEventPreference {
   liveStarted: boolean;
   recordingStarted: boolean;
   recordingEnded: boolean;
   recordingFailed: boolean;
   diskSpaceLow: boolean;
   uploadFailed: boolean;
+}
+
+export interface NotificationPreference {
+  desktop: NotificationEventPreference;
+  email: NotificationEventPreference;
   dedupeWindowMinutes: number;
+}
+
+export interface NotificationPreferenceInput {
+  desktop?: Partial<NotificationEventPreference>;
+  email?: Partial<NotificationEventPreference>;
+  dedupeWindowMinutes?: number;
 }
 
 export type LivePredictionConfidence = 'high' | 'medium' | 'low';

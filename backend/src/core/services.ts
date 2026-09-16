@@ -36,6 +36,7 @@ import { Scheduler } from './scheduler.js';
 import { PipelineManager } from './pipeline-manager.js';
 import { UploadManager } from './upload-manager.js';
 import { ExportManager } from './export-manager.js';
+import { notificationPreference } from '../api/routes/notifications.js';
 
 export type AdapterMode = 'fake' | 'real';
 
@@ -164,7 +165,9 @@ export function buildServices(opts: BuildOptions = {}): Services {
     clock,
     services.alerts,
     () => services.settings.load()?.mail ?? null,
-    () => (services.settings.load()?.dedupeWindowMinutes ?? 30) * 60 * 1000,
+    () => notificationPreference(services),
+    services.events,
+    () => notificationPreference(services).dedupeWindowMinutes * 60 * 1000,
   );
   services.manager = new RecorderManager(services, services.notifier);
   services.scheduler = new Scheduler(services, services.manager);

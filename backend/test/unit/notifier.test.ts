@@ -3,7 +3,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { Notifier } from '../../src/core/notifier.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
-import type { MailConfig } from '../../src/types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type MailConfig } from '../../src/types/index.js';
 
 const MAIL: MailConfig = { enabled: true, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'f', recipients: ['a@b.c'] };
 
@@ -15,7 +15,7 @@ function newServices(): { services: Services; clock: FakeClock } {
 describe('Notifier', () => {
   it('sends one mail per event/room and dedupes within the 30min window', async () => {
     const { services, clock } = newServices();
-    const notifier = new Notifier(services.mailer, clock, services.alerts, () => MAIL);
+    const notifier = new Notifier(services.mailer, clock, services.alerts, () => MAIL, () => DEFAULT_NOTIFICATION_PREFERENCE, services.events);
     const mailer = services.mailer as FakeMailer;
 
     await notifier.notify('live_started', 'room1', { title: '主播A' });
@@ -45,11 +45,11 @@ describe('Notifier', () => {
   it('skips when mail is disabled and only alerts on SMTP failure', async () => {
     const { services, clock } = newServices();
     const mailer = services.mailer as FakeMailer;
-    const disabled = new Notifier(services.mailer, clock, services.alerts, () => ({ ...MAIL, enabled: false }));
+    const disabled = new Notifier(services.mailer, clock, services.alerts, () => ({ ...MAIL, enabled: false }), () => DEFAULT_NOTIFICATION_PREFERENCE, services.events);
     await disabled.notify('live_started', 'room1');
     expect(mailer.sent).toHaveLength(0);
 
-    const enabled = new Notifier(services.mailer, clock, services.alerts, () => MAIL);
+    const enabled = new Notifier(services.mailer, clock, services.alerts, () => MAIL, () => DEFAULT_NOTIFICATION_PREFERENCE, services.events);
     mailer.failNext = true;
     await enabled.notify('disk_space_low', 'room1');
     expect(mailer.sent).toHaveLength(0);

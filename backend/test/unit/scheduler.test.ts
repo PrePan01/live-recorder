@@ -69,16 +69,16 @@ describe('Scheduler', () => {
     });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
-    const notices: Array<{ roomId: string; displayName: string }> = [];
+    const notices: Array<{ title: string; body: string }> = [];
     services.events.on((event) => {
-      if (event.type === 'live:started') notices.push(event.data);
+      if (event.type === 'desktop:notification') notices.push(event.data);
     });
 
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
 
-    expect(notices).toEqual([{ roomId: room.id, displayName: '主播A' }]);
+    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '您订阅的 主播A 已开播' }]);
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 您订阅的 主播A 已开播');
@@ -97,7 +97,7 @@ describe('Scheduler', () => {
     const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
     adapter.setScript([{ status: 'live' }, { status: 'offline' }, { status: 'live' }]);
     const notices: string[] = [];
-    services.events.on((event) => { if (event.type === 'live:started') notices.push(event.data.roomId); });
+    services.events.on((event) => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
 
     await services.scheduler.triggerImmediateCheck(initiallyLive.id);
     await services.scheduler.triggerImmediateCheck(gated.id);
