@@ -535,6 +535,38 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       CREATE INDEX idx_prediction_coverage_intervals_end ON prediction_coverage_intervals(room_id, end_at);
     `,
   },
+  {
+    // A room may have multiple independently calibrated opening windows on
+    // the same date. Preserve legacy rows while replacing the old room/day
+    // uniqueness constraint with room/day/window uniqueness.
+    version: 30,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE prediction_forecasts_v30 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          room_id TEXT NOT NULL,
+          target_date TEXT NOT NULL,
+          probability TEXT NOT NULL CHECK(probability IN ('high', 'medium', 'low')),
+          generated_at TEXT NOT NULL,
+          outcome TEXT CHECK(outcome IN ('hit', 'miss', 'unknown')),
+          resolved_at TEXT,
+          raw_probability TEXT,
+          window_start_at TEXT,
+          window_end_at TEXT
+        );
+        INSERT INTO prediction_forecasts_v30
+          (id, room_id, target_date, probability, generated_at, outcome, resolved_at, raw_probability, window_start_at, window_end_at)
+        SELECT id, room_id, target_date, probability, generated_at, outcome, resolved_at, raw_probability, window_start_at, window_end_at
+        FROM prediction_forecasts;
+        DROP TABLE prediction_forecasts;
+        ALTER TABLE prediction_forecasts_v30 RENAME TO prediction_forecasts;
+        CREATE UNIQUE INDEX idx_prediction_forecasts_room_date_window
+          ON prediction_forecasts(room_id, target_date, COALESCE(window_start_at, ''));
+        CREATE INDEX idx_prediction_forecasts_pending ON prediction_forecasts(outcome, target_date);
+        CREATE INDEX idx_prediction_forecasts_room_date ON prediction_forecasts(room_id, target_date DESC);
+      `);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

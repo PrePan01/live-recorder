@@ -16,6 +16,25 @@ function seedCoverage(services: ReturnType<typeof setup>['services'], roomId: st
   services.db.prepare('INSERT INTO prediction_coverage_intervals (room_id,start_at,end_at) VALUES (?,?,?)').run(roomId, startAt, endAt);
 }
 describe('prediction calibration regressions', () => {
+  it('records separate calibration rows for two predicted sessions on one date', () => {
+    const { services, clock, room } = setup('2026-09-15T17:00:00');
+    for (const day of ['2026-09-01', '2026-09-08']) {
+      for (const time of ['18:00', '20:00'])
+        services.liveEvents.record(room.id, iso(day, time), { source: 'platform', platformStartedAt: iso(day, time) });
+      seedCoverage(services, room.id, iso(day, '17:45'), iso(day, '20:15'));
+    }
+    const record = () => (services.scheduler as unknown as { recordTodayForecast(roomId: string): void }).recordTodayForecast(room.id);
+    record();
+    services.liveEvents.record(room.id, iso('2026-09-15', '18:00'), { source: 'platform', platformStartedAt: iso('2026-09-15', '18:00') });
+    clock.advance(2 * 60 * 60_000);
+    record();
+    const forecasts = services.predictionCalibration.pendingBefore('2026-09-16');
+    expect(forecasts.map((forecast) => forecast.windowStartAt).sort()).toEqual([
+      iso('2026-09-15', '17:45'),
+      iso('2026-09-15', '19:45'),
+    ]);
+    services.db.close();
+  });
   it('records a forecast with two independent dates and retries after an earlier insufficient check', async () => {
     const { services, clock, room } = setup('2026-09-14T08:00:00');
     const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;

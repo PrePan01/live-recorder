@@ -22,6 +22,22 @@ const predict = (when: string, events: DetectedLiveEvent[]) => {
   });
 };
 describe('additional real-life habits', () => {
+  it('recognizes a recent daily habit across the weekday/weekend boundary', () => {
+    const p = predict(
+      '2026-09-14T12:00:00',
+      ['2026-09-11', '2026-09-12', '2026-09-13'].map((d) => opening(d)),
+    );
+    expect(p.basis).toBe('daily');
+    expect(p.nextDate).toBe('2026-09-14');
+    expect(p.likelihood).toBe('low');
+  });
+  it('does not mistake non-consecutive dates for a daily habit', () => {
+    const p = predict(
+      '2026-09-15T12:00:00',
+      ['2026-09-10', '2026-09-12', '2026-09-14'].map((d) => opening(d)),
+    );
+    expect(p.basis).not.toBe('daily');
+  });
   it('predicts an every-other-day habit across different weekdays', () => {
     const p = predict(
       '2026-09-15T12:00:00',

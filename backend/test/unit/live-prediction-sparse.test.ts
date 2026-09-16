@@ -21,6 +21,45 @@ describe('sparse intermittent monitoring', () => {
     expect(p.timeGranularity).toBe('quarter_hour');
     expect(p.likelihood).toBe('low');
   });
+  it('requires a third matching weekday before dating the forecast to next week', () => {
+    const p = calculateLivePrediction({
+      roomId: 'sparse',
+      events: [opening('2026-09-01'), opening('2026-09-08')],
+      now: new Date('2026-09-09T12:00:00').getTime(),
+      generatedAt: '',
+    });
+    expect(p.kind).toBe('typical');
+    expect(p.basis).toBe('all');
+    expect(p.nextDate).toBeNull();
+  });
+  it('promotes two matching weekdays when intervening days were actually monitored', () => {
+    const coverage = ['2026-09-02', '2026-09-03', '2026-09-04'].map((day) => ({
+      startAt: iso(day, '19:45'),
+      endAt: iso(day, '20:15'),
+    }));
+    const p = calculateLivePrediction({
+      roomId: 'sparse',
+      events: [opening('2026-09-01'), opening('2026-09-08')],
+      coverage,
+      now: new Date('2026-09-09T12:00:00').getTime(),
+      generatedAt: '',
+    });
+    expect(p.kind).toBe('next');
+    expect(p.basis).toBe('weekday');
+    expect(p.nextDate).toBe('2026-09-15');
+    expect(p.coverageDays).toBe(3);
+  });
+  it('dates an established weekday habit after three matching dates', () => {
+    const p = calculateLivePrediction({
+      roomId: 'sparse',
+      events: [opening('2026-08-25'), opening('2026-09-01'), opening('2026-09-08')],
+      now: new Date('2026-09-09T12:00:00').getTime(),
+      generatedAt: '',
+    });
+    expect(p.kind).toBe('next');
+    expect(p.basis).toBe('weekday');
+    expect(p.nextDate).toBe('2026-09-15');
+  });
   it('retains both sparse time extremes plus a bounded margin', () => {
     const p = predict([opening('2026-09-01', '19:00'), opening('2026-09-08', '21:00')]);
     expect([p.windowStart, p.windowEnd]).toEqual(['18:30', '21:30']);

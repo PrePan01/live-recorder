@@ -330,8 +330,6 @@ export class Scheduler {
     const now = this.services.clock.now();
     const today = localDate(now);
     if (this.forecastDate !== today) { this.forecastRecordedFor.clear(); this.forecastRetry.clear(); this.forecastDate = today; }
-    const key = `${roomId}:${today}`;
-    if (this.forecastRecordedFor.has(key)) return;
     const latestEventId = this.services.liveEvents.latestId(roomId);
     const retry = this.forecastRetry.get(roomId);
     if (retry && now < retry.at && retry.latestEventId === latestEventId) return;
@@ -353,9 +351,11 @@ export class Scheduler {
     if (prediction.kind !== 'next' || !prediction.rawLikelihood || !prediction.likelihood || !prediction.windowStartTimestamp || !prediction.windowEndTimestamp) return;
     const start = Date.parse(prediction.windowStartTimestamp);
     if (localDate(start) !== today || start <= now) return;
+    const key = `${roomId}:${today}:${prediction.windowStartTimestamp}`;
+    if (this.forecastRecordedFor.has(key)) return;
     this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.likelihood, rawProbability: prediction.rawLikelihood,
       windowStartAt: prediction.windowStartTimestamp, windowEndAt: prediction.windowEndTimestamp, generatedAt: this.services.clock.iso() });
-    // INSERT OR IGNORE can mean another run already persisted this room-day.
+    // INSERT OR IGNORE can mean another run already persisted this room/day/window.
     // Either way a concrete forecast exists before the in-memory key is set.
     this.forecastRecordedFor.add(key);
   }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   predictionTitle,
-  predictionLikelihoodText,
+  lastOpeningValue,
+  predictionAccuracyText,
   timelineBands,
   timelineShowsNow,
 } from "./livePrediction";
@@ -33,6 +34,41 @@ function prediction(
   };
 }
 describe("live prediction display", () => {
+  it("uses a weekday for the latest opening in the current week", () => {
+    expect(
+      lastOpeningValue(
+        prediction({
+          lastRecordedAt: "20:15",
+          lastRecordedTimestamp: new Date("2026-09-15T20:15:00").toISOString(),
+          lastRecordedQuality: "platform",
+        }),
+        new Date("2026-09-16T12:00:00"),
+      ),
+    ).toBe("周二 20:15");
+  });
+  it("uses a calendar date for the latest opening before the current week", () => {
+    expect(
+      lastOpeningValue(
+        prediction({
+          lastRecordedAt: "20:15",
+          lastRecordedTimestamp: new Date("2026-09-12T20:15:00").toISOString(),
+          lastRecordedQuality: "transition",
+        }),
+        new Date("2026-09-14T12:00:00"),
+      ),
+    ).toBe("9月12日 20:15");
+  });
+  it("does not treat the previous Sunday as part of a Monday's current week", () => {
+    expect(
+      lastOpeningValue(
+        prediction({
+          lastRecordedAt: "23:30",
+          lastRecordedTimestamp: new Date("2026-09-13T23:30:00").toISOString(),
+        }),
+        new Date("2026-09-14T12:00:00"),
+      ),
+    ).toBe("9月13日 23:30");
+  });
   it("recognizes an imminent opening before the predicted window begins", () => {
     expect(
       predictionTitle(
@@ -93,15 +129,21 @@ describe("live prediction display", () => {
       ),
     ).toBe("预计下周六 19:50–20:30 开播");
   });
-  it("uses simple possibility labels and keeps insufficient coverage low", () => {
-    expect(predictionLikelihoodText(prediction(), "low")).toBe("可能性低");
-    expect(predictionLikelihoodText(prediction(), "high")).toBe("可能性低");
+  it("uses five-level accuracy labels and maps older responses", () => {
+    expect(predictionAccuracyText(prediction(), "low")).toBe("预测准确性低");
+    expect(predictionAccuracyText(prediction(), "high")).toBe("预测准确性低");
     expect(
-      predictionLikelihoodText(prediction({ probabilityKnown: true }), "low"),
-    ).toBe("可能性低");
+      predictionAccuracyText(prediction({ probabilityKnown: true }), "low"),
+    ).toBe("预测准确性低");
     expect(
-      predictionLikelihoodText(prediction({ probabilityKnown: true }), "high"),
-    ).toBe("可能性高");
+      predictionAccuracyText(prediction({ probabilityKnown: true }), "high"),
+    ).toBe("预测准确性高");
+    expect(
+      predictionAccuracyText(prediction({ accuracy: "fairly_high" }), "low"),
+    ).toBe("预测准确性较高");
+    expect(
+      predictionAccuracyText(prediction({ accuracy: "fairly_low" }), "high"),
+    ).toBe("预测准确性较低");
   });
   it("splits the timeline on both sides of midnight without dropping the early band", () => {
     expect(

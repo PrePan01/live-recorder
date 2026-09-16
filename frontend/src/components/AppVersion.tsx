@@ -67,7 +67,7 @@ export default function AppVersion() {
     <div className="lr-app-version">
       <Tooltip title={title}>
         <button className="lr-version-button" type="button" onClick={() => void click()} aria-label={title} aria-busy={checking}>
-          {bridge.isDesktop ? state?.currentVersion || installedVersion : browserVersion ?? ''}
+          {state?.update ? '有新版本！' : bridge.isDesktop ? state?.currentVersion || installedVersion : browserVersion ?? ''}
           {state?.update && <span className="lr-version-track" role={state.phase === 'downloading' ? 'progressbar' : undefined}
             aria-label="安装包下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={state.phase === 'downloading' ? percent : undefined}>
             <span style={{ width: `${state.phase === 'downloading' ? percent : 100}%` }} />

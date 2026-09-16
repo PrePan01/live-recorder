@@ -14,13 +14,16 @@ export type LivePredictionConfidence = 'high' | 'medium' | 'low';
 export interface LivePrediction {
   roomId: string;
   kind: 'unavailable' | 'observation' | 'typical' | 'next';
-  basis: 'weekday' | 'day_type' | 'interval' | 'all' | null;
+  basis: 'daily' | 'weekday' | 'day_type' | 'interval' | 'all' | null;
   nextDate: string | null;
   startTimestamp?: string | null;
   windowStartTimestamp?: string | null;
   windowEndTimestamp?: string | null;
   rawLikelihood?: "high" | "medium" | "low" | null;
   probabilityKnown?: boolean;
+  accuracy?: 'high' | 'fairly_high' | 'medium' | 'fairly_low' | 'low' | null;
+  coverageDays?: number;
+  timeSource?: 'platform' | 'detected' | 'recording' | 'mixed' | null;
   sampleCount: number;
   timeGranularity: 'exact' | 'quarter_hour' | 'approximate' | 'period' | null;
   windowStart: string | null;
@@ -30,6 +33,7 @@ export interface LivePrediction {
   todayProbability: LivePredictionConfidence | null;
   likelihood: LivePredictionConfidence | null;
   lastRecordedAt: string | null;
+    lastRecordedTimestamp?: string | null;
     lastRecordedQuality?: "platform" | "transition" | "initial_live" | "legacy";
     nextDateEnd?: string | null;
     typicalDayType?: string | null;
