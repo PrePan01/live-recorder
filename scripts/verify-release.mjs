@@ -26,8 +26,10 @@ function run(label, command, args, cwd = root) {
 }
 
 try {
-  run('Install backend dependencies', npm, ['--prefix', 'backend', 'ci']);
-  run('Install frontend dependencies', npm, ['--prefix', 'frontend', 'ci']);
+  // 显式带上 --include=dev：外部环境若带 NODE_ENV=production，npm ci 会跳过 devDependencies，
+  // 紧接着的 tsc/vitest 就会 command not found。
+  run('Install backend dependencies', npm, ['--prefix', 'backend', 'ci', '--include=dev']);
+  run('Install frontend dependencies', npm, ['--prefix', 'frontend', 'ci', '--include=dev']);
   run('Compile backend', npm, ['--prefix', 'backend', 'run', 'build']);
   run('Verify backend', npm, ['--prefix', 'backend', 'test']);
   run('Verify frontend', npm, ['--prefix', 'frontend', 'test']);

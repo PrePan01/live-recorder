@@ -490,12 +490,28 @@ export class RecorderManager {
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
     if (this.services.resetting) return false;
     if (this.active.has(room.id) || this.starting.has(room.id)) return false;
+    // 并发额度必须在这里、且在第一个 await 之前占用：调度器按 PLATFORM_CHECK_CONCURRENCY
+    // 并发检测多个房间，若等目录探测/磁盘检查/取流这些异步步骤做完再判额度，同一轮一起
+    // 开播的房间会全部通过检查，实际并发数超过 maxConcurrentRecordings。
+    if (this.recordingsHeld() >= this.settings().maxConcurrentRecordings) {
+      const err = new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: room.id, retryable: true });
+      this.raiseAlert('warning', 'recorder', err);
+      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
+      return false;
+    }
     this.starting.add(room.id);
     try {
       return await this.maybeStartRecordingInternal(room, status, opts);
     } finally {
       this.starting.delete(room.id);
     }
+  }
+
+  /** 已占用的录制额度：已落库的在录 + 正在启动但尚未产生录制行的房间。 */
+  private recordingsHeld(): number {
+    let starting = 0;
+    for (const id of this.starting) if (!this.active.has(id)) starting += 1;
+    return this.services.recordings.activeCount() + starting;
   }
 
   private async maybeStartRecordingInternal(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
@@ -506,13 +522,6 @@ export class RecorderManager {
       // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
       this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
-      return false;
-    }
-
-    if (this.services.recordings.activeCount() >= settings.maxConcurrentRecordings) {
-      const err = new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: room.id, retryable: true });
-      this.raiseAlert('warning', 'recorder', err);
-      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
       return false;
     }
 

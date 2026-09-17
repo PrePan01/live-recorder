@@ -5,7 +5,6 @@ import {
   HistoryOutlined,
   SettingOutlined,
   VideoCameraOutlined,
-  ToolOutlined,
   BarChartOutlined,
   AppstoreOutlined,
 } from "@ant-design/icons";

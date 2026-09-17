@@ -266,6 +266,32 @@ describe('RecorderManager', () => {
     services.scheduler.stop();
   });
 
+  it('starts at most maxConcurrentRecordings when rooms go live concurrently', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6c-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const rooms = ['21', '22', '23'].map((num, index) =>
+      services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/${num}`, displayName: `C${index + 1}` }),
+    );
+
+    // 调度器按 PLATFORM_CHECK_CONCURRENCY 并发检测房间，三个房间会在同一轮一起开播。
+    // 额度判定必须发生在第一个 await 之前，否则三个房间会全部通过检查、并发数超过上限。
+    const started = await Promise.all(
+      rooms.map((room, index) => services.manager.maybeStartRecording(room, { streamSessionId: `c${index + 1}` })),
+    );
+
+    expect(started.filter(Boolean)).toHaveLength(2);
+    expect(services.recordings.activeCount()).toBe(2);
+    const denied = rooms
+      .map((room) => services.rooms.get(room.id)!)
+      .filter((room) => room.lastError?.code === 'CONCURRENT_LIMIT_REACHED');
+    expect(denied).toHaveLength(1);
+    expect(services.alerts.list().filter((alert) => alert.errorCode === 'CONCURRENT_LIMIT_REACHED')).toHaveLength(1);
+
+    await Promise.all(rooms.map((room) => services.manager.stopRecording(room.id)));
+  });
+
   it('dedupes by streamSessionId', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6d-'));
