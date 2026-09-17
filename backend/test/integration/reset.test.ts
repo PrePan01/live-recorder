@@ -39,6 +39,10 @@ async function fixture() {
   `);
   services.db.prepare("INSERT INTO pipeline_runs (id, recording_id, config_snapshot, status) VALUES ('pipeline-test', ?, '{}', 'ok')").run(recording.id);
   services.db.exec("INSERT INTO pipeline_artifacts (id, run_id, step, status) VALUES ('artifact-test', 'pipeline-test', 'verify', 'ok')");
+  // 开播预测数据：live_events 引用 rooms，有它时重置必须先删再删房间（否则外键让整单回滚）。
+  services.liveEvents.record(room.id, '2026-01-01T12:00:00.000Z');
+  services.predictionCalibration.recordForecast({ roomId: room.id, targetDate: '2026-01-01', probability: 'high', generatedAt: '2026-01-01T00:00:00.000Z', rawProbability: 'high' });
+  services.predictionCalibration.recordCoverage(room.id, '2026-01-01', '2026-01-01T12:00:00.000Z');
   services.alerts.create({ level: 'warning', source: 'test', message: 'test', occurredAt: '2026-01-01' });
   for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) await services.secretStore.set(key, 'test-secret');
   const reset = (keepRecordings: boolean) => app.inject({
