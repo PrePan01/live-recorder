@@ -66,6 +66,21 @@ interface OpenListTaskInfo {
 /** OpenList 需要 2FA 一次性码时抛出的标识错误（job.error 含此标记，FE 据此弹窗输入验证码）。 */
 export const OPENLIST_2FA_REQUIRED = 'OpenList 需要 2FA 验证';
 
+/**
+ * OpenList 账号/密码（令牌）被拒时抛出的标识错误：重试必然再次被拒，
+ * 任务应直接落 failed 并点明凭据问题，而不是退避重试（用户只会一直看到「等待重试」）。
+ */
+export const OPENLIST_AUTH_FAILED = 'OpenList 认证失败';
+
+/** 401/403 = 凭据/权限被拒，重试无意义 → 抛标识错误交给 pump 直接判失败。 */
+function throwIfAuthFailure(res: Response, context: string): void {
+  if (res.status !== 401 && res.status !== 403) return;
+  const hint = res.status === 401
+    ? '账号或密码（令牌）错误，请到设置中核对后重新上传'
+    : '账号被拒绝访问，请检查账号或目标目录权限';
+  throw new Error(`${OPENLIST_AUTH_FAILED}：${hint}（${context} HTTP ${res.status}）`);
+}
+
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
 export class RealWebDavClient implements WebDavClient {
   private apiTokens = new Map<string, string | null>();
@@ -231,6 +246,7 @@ export class RealWebDavClient implements WebDavClient {
       });
       const payload = await res.json() as { code?: number; message?: string; data?: { task?: OpenListTaskInfo } };
       if (res.status === 401) this.apiTokens.delete(target.root);
+      throwIfAuthFailure(res, '创建上传任务');
       if (!res.ok || payload.code !== 200 || !payload.data?.task?.id) {
         throw new Error(`OpenList 创建上传任务失败${payload.message ? `：${payload.message}` : `（HTTP ${res.status}）`}`);
       }
@@ -253,8 +269,9 @@ export class RealWebDavClient implements WebDavClient {
           signal: AbortSignal.timeout(20_000),
         });
         const payload = await res.json() as { code?: number; message?: string; data?: OpenListTaskInfo };
+        if (res.status === 401) this.apiTokens.delete(target.root);
+        throwIfAuthFailure(res, '读取上传进度');
         if (!res.ok || payload.code !== 200 || !payload.data) {
-          if (res.status === 401) this.apiTokens.delete(target.root);
           throw new Error(payload.message || `HTTP ${res.status}`);
         }
         consecutivePollFailures = 0;
@@ -297,7 +314,7 @@ export class RealWebDavClient implements WebDavClient {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('OpenList 后台上传') || message.startsWith('OpenList 上传进度')) throw err;
+        if (message.startsWith('OpenList 后台上传') || message.startsWith('OpenList 上传进度') || message.includes(OPENLIST_AUTH_FAILED)) throw err;
         consecutivePollFailures += 1;
         // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutivePollFailures >= 10) {
@@ -358,6 +375,7 @@ export class RealWebDavClient implements WebDavClient {
         signal: AbortSignal.timeout(15_000),
       });
       // 405 是 WebDAV 对“目录已存在”的标准响应；2xx 表示创建成功。
+      throwIfAuthFailure(res, '创建目录');
       if (!res.ok && res.status !== 405) throw new Error(`WebDAV MKCOL ${res.status}`);
     }
   }
@@ -413,6 +431,8 @@ export class RealWebDavClient implements WebDavClient {
         duplex: 'half',
         signal: AbortSignal.timeout(this.options.uploadIdleTimeoutMs + 30_000),
       });
+      // 凭据错误不能当作「分片端点不支持」回退：否则会白白重传整个文件，且最终仍会被拒。
+      throwIfAuthFailure(res, '分片上传');
       if (!res.ok) return failUnsupported();
       if (index === 0) {
         try {
@@ -453,6 +473,7 @@ export class RealWebDavClient implements WebDavClient {
         },
         signal: AbortSignal.timeout(60_000),
       });
+      throwIfAuthFailure(completeRes, '合并分片');
       if (!completeRes.ok) return failUnsupported();
       const completePayload = await completeRes.json() as { code?: number; data?: { task?: { id?: string } } };
       const taskId = completePayload.data?.task?.id;
@@ -484,6 +505,7 @@ export class RealWebDavClient implements WebDavClient {
           signal: AbortSignal.timeout(20_000),
         });
         const payload = await res.json() as { data?: OpenListTaskInfo };
+        throwIfAuthFailure(res, '读取分片进度');
         if (!res.ok || !payload.data) throw new Error('task poll failed');
         consecutiveFailures = 0;
         const serverPct = Math.max(0, Math.min(100, Number(payload.data.progress) || 0));
@@ -505,7 +527,7 @@ export class RealWebDavClient implements WebDavClient {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('OpenList 分片')) throw err;
+        if (message.startsWith('OpenList 分片') || message.includes(OPENLIST_AUTH_FAILED)) throw err;
         consecutiveFailures += 1;
         // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutiveFailures >= 10) {
@@ -601,6 +623,7 @@ export class RealWebDavClient implements WebDavClient {
         duplex: 'half',
         signal: controller.signal,
       });
+      throwIfAuthFailure(res, 'WebDAV PUT');
       if (!res.ok) throw new Error(`WebDAV PUT ${res.status}`);
       onProgress(100);
     } catch (err) {
@@ -726,9 +749,10 @@ export class UploadManager {
     return { enabled: false, serverUrl: '', directoryTemplate: '{room}/{date}', username: '', deleteSourceAfterUpload: false, hasToken, ...stored };
   }
 
-  /** 录制完成时入队上传（openlist.enabled 且令牌已配置时）。 */
   /**
-   * automatic 仅由录制完成后的管线调用。手动上传即使全局开关打开，也绝不获得删除资格。
+   * automatic 仅由录制完成后的管线调用：受「自动上传」开关（openlist.enabled / 房间覆盖）约束。
+   * 手动上传（录制历史页「上传」按钮）是用户显式操作，只要求 OpenList 已配置（地址 + 令牌），
+   * 不受该开关影响；手动上传即使全局开关打开，也绝不获得删除资格。
    */
   async enqueue(recordingId: string, { automatic = false }: { automatic?: boolean } = {}): Promise<UploadJob | null> {
     const config = await this.config();
@@ -737,7 +761,8 @@ export class UploadManager {
     if (!rec || !rec.filePath) return null;
     const room = this.services.rooms.get(rec.roomId);
     const enabled = room?.uploadEnabled ?? config?.enabled ?? false;
-    if (!enabled || !config?.hasToken || !config.serverUrl) return null;
+    if (automatic && !enabled) return null;
+    if (!config?.hasToken || !config.serverUrl) return null;
     const existing = this.repo.jobForRecording(recordingId);
     // 幂等：recording 已有上传任务（任何状态，含 ok/failed/cancelled）→ 直接返回既有 job，不新建。
     if (existing) {
@@ -921,6 +946,13 @@ export class UploadManager {
       // 如「资源不存在/配额不足」）重试无意义——服务端任务已终态，退避重试必然再失败且徒增等待。
       // 与 #13 2FA 同理直接 failed，立即透传展示，让用户尽快看到明确原因。
       if (message.startsWith('OpenList 后台上传失败') || message.startsWith('OpenList 后台上传')) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
+      // 账号/密码（令牌）错误（401/403）：凭证不对时重试必然再被拒，
+      // 直接落「失败」并点明凭据问题，不再走 5s/15s/45s 退避——否则用户只会看到「等待重试」，真正原因被淹没。
+      if (message.includes(OPENLIST_AUTH_FAILED)) {
         this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
         this.emit(jobId);
         return;

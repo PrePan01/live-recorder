@@ -181,7 +181,7 @@ export function registerOpenListRoutes(
     }
     const job = await services.uploader.enqueue(id);
     if (!job)
-      throw new AppError("CONFIG_LOAD_FAILED", "OpenList 未启用或令牌未配置", {
+      throw new AppError("CONFIG_LOAD_FAILED", "OpenList 未配置：请先在设置中填写服务器地址与令牌", {
         recordingId: id,
       });
     return reply.send({ upload: job });
