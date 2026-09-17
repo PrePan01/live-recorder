@@ -406,7 +406,7 @@ export function nativePickDirectory(): Promise<string | null> {
       args = ['-e', 'POSIX path of (choose folder with prompt "选择录像保存目录")'];
     } else if (process.platform === 'win32') {
       command = 'powershell';
-      args = ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ $f.SelectedPath }"];
+      args = ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.SelectedPath)) }"];
     } else {
       command = 'zenity';
       args = ['--file-selection', '--directory'];
@@ -417,7 +417,15 @@ export function nativePickDirectory(): Promise<string | null> {
     child.on('error', () => resolve(null));
     child.on('close', () => {
       const picked = out.trim();
-      resolve(picked.length > 0 ? picked : null);
+      resolve(picked.length > 0 ? decodeDialogPath(picked) : null);
     });
   });
+}
+
+/**
+ * 还原对话框回传的路径。Windows 分支的 PowerShell 回传 base64：管道输出的编码由控制台
+ * 代码页决定，中文路径按 UTF-8 解码会乱码，base64 只含 ASCII 不受影响。
+ */
+function decodeDialogPath(raw: string): string {
+  return process.platform === 'win32' ? Buffer.from(raw, 'base64').toString('utf8') : raw;
 }
