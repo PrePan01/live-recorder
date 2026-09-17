@@ -5,6 +5,7 @@ export type ErrorCode =
   | 'DOUYIN_COOKIE_EXPIRED'
   | 'PLATFORM_CHANGED'
   | 'DIRECTORY_NOT_WRITABLE'
+  | 'RECORDING_DIRECTORY_INVALID'
   | 'DISK_SPACE_INSUFFICIENT'
   | 'CONCURRENT_LIMIT_REACHED'
   | 'RECORDING_NOT_AVAILABLE'
@@ -112,6 +113,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'DIAGNOSTIC_CONFLICT':
       return 409;
     case 'DIRECTORY_NOT_WRITABLE':
+    case 'RECORDING_DIRECTORY_INVALID':
       return 422;
     case 'SMTP_SEND_FAILED':
       return 502;

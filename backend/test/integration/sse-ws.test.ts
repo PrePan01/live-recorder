@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import { WebSocket } from 'ws';
@@ -10,7 +13,7 @@ function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
 }
 
-async function listen(): Promise<{ url: string; close: () => Promise<void>; services: Services; preview: { broadcastFrame: (r: string, b: Buffer) => void; closeRoom: (r: string, c: number, reason?: 'ended' | 'stream_lost') => void } }> {
+async function listen(): Promise<{ url: string; app: ReturnType<typeof buildApp>['app']; close: () => Promise<void>; services: Services; preview: { broadcastFrame: (r: string, b: Buffer) => void; closeRoom: (r: string, c: number, reason?: 'ended' | 'stream_lost') => void; recordingBootstrap: (roomId: string) => Buffer | null } }> {
   const services = newServices();
   const built = buildApp(services, { extraOrigins: ['http://localhost:5173'] });
   await built.app.listen({ host: '127.0.0.1', port: 0 });
@@ -18,6 +21,7 @@ async function listen(): Promise<{ url: string; close: () => Promise<void>; serv
   if (typeof address !== 'object' || address === null) throw new Error('no address');
   return {
     url: `http://127.0.0.1:${address.port}`,
+    app: built.app,
     services,
     preview: built.preview,
     close: async () => {
@@ -171,6 +175,53 @@ describe('WebSocket preview', () => {
     await server.services.manager.stopRecording(room.id);
     (server.services.clock as FakeClock).advance(1_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    await server.close();
+  });
+
+  it('leaves no active recording when the save directory cannot be created while a preview is open (直播墙点录制计数虚增回归)', async () => {
+    const server = await listen();
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-ws-baddir-'));
+    // 平台子目录位置被一个文件占用：基础目录检查通过，但共享预览写入前的 mkdir 必然失败。
+    await writeFile(path.join(base, 'bilibili'), 'x');
+    server.services.settings.save({
+      recordingDirectory: base,
+      maxConcurrentRecordings: 2,
+      quality: 'original',
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      dedupeWindowMinutes: 30,
+    });
+    const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9300', displayName: 'BadDir' });
+    server.services.rooms.setLiveStatus(room.id, 'live');
+    (server.services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's9300', streamTitle: 'T' }]);
+
+    const preview = connect(server.url, room.id);
+    await preview.opened;
+    // 等到预览流已捕获 FLV 头：点录制会走「复用预览流」的共享写入路径（原泄漏发生在这里）。
+    for (let i = 0; i < 40 && server.preview.recordingBootstrap(room.id)?.subarray(0, 3).toString() !== 'FLV'; i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(server.preview.recordingBootstrap(room.id)?.subarray(0, 3).toString()).toBe('FLV');
+
+    for (let i = 0; i < 3; i += 1) {
+      const res = await server.app.inject({
+        method: 'POST',
+        url: `/api/v1/rooms/${room.id}/start-recording`,
+        headers: { Host: '127.0.0.1:43120' },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('RECORDING_DIRECTORY_INVALID');
+      expect(res.json().error.message).toBe('保存目录无效，录制失败');
+      // 失败不能留下 pending 记录：计数虚增会挤占并发名额，之后彻底无法录制。
+      expect(server.services.recordings.activeCount()).toBe(0);
+    }
+    expect(server.services.recordings.list({ roomId: room.id }).items.every((r) => r.state === 'failed')).toBe(true);
+    expect(server.services.manager.isRoomActive(room.id)).toBe(false);
+
+    preview.ws.close();
+    await preview.closed;
     await server.close();
   });
 

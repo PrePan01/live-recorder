@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -461,6 +461,32 @@ describe('RecorderManager', () => {
       await settle(clock, 500);
     }
     await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+  });
+
+  it('rejects start when the save directory is unusable and never counts it as active (直播墙/预览点录制计数虚增回归)', async () => {
+    const clock = new FakeClock();
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-baddir-'));
+    // 用一个文件占用目录位置：mkdir 必然失败，且与权限无关（跨平台确定）。
+    const blocker = path.join(base, 'not-a-directory');
+    await writeFile(blocker, 'x');
+
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(path.join(blocker, 'recordings')));
+    (services.diskGuard as FakeDiskGuard).setSpace({ freeBytes: 1e12, totalBytes: 2e12 });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's-baddir', streamTitle: 'T' }]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9100', displayName: 'BadDir' });
+
+    for (let i = 0; i < 3; i += 1) {
+      // 每次点击都必须明确报错，并且不能留下 pending 记录——
+      // 否则「录制中」计数逐个累加，最终占满并发名额导致再也无法录制。
+      await expect(services.manager.maybeStartRecording(room, { streamSessionId: 's-baddir' })).rejects.toMatchObject({
+        code: 'RECORDING_DIRECTORY_INVALID',
+        message: '保存目录无效，录制失败',
+      });
+      expect(services.recordings.activeCount()).toBe(0);
+    }
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(0);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
 
   it('finishes intermediate segment processing on natural-end continue (mp4_after/上传 分段收尾)', async () => {

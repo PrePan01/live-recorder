@@ -274,6 +274,8 @@ describe('Scheduler', () => {
 
     services.scheduler.start();
     await settle(clock, 60_000);
+    // 启动链路含真实磁盘 I/O（保存目录校验 + 建目录），记录可能晚于一次 settle 才出现，按状态等待。
+    await waitFor(() => services.recordings.list().items.length === 1);
     const rec = services.recordings.list().items[0]!;
     await waitFor(() => services.manager.isRoomActive(room.id) && services.recordings.get(rec.id)!.state === 'recording');
     expect(services.recordings.list().items).toHaveLength(1);
