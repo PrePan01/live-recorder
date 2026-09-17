@@ -8,7 +8,7 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     window::WindowBuilder,
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl,
 };
 
 use backend::BackendManager;
@@ -547,9 +547,16 @@ async fn get_diagnostics(app: AppHandle) -> Vec<DiagnosticItem> {
 }
 
 #[tauri::command]
-fn quit_app(app: AppHandle, state: State<'_, ShellState>) {
+async fn quit_app(app: AppHandle) {
     // Graceful exit: stop the backend service first, then exit the app.
-    let _ = state.backend.stop();
+    // #233：停止服务含 SIGTERM + 等待子进程退出，属阻塞调用；在主线程执行会把整个
+    // 客户端卡住（直播墙等有活跃预览连接时尤其明显），必须移出主线程。
+    let handle = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<ShellState>();
+        let _ = state.backend.stop();
+    })
+    .await;
     app.exit(0);
 }
 
