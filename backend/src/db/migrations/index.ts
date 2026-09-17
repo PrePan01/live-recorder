@@ -589,6 +589,21 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       }
     },
   },
+  {
+    // 开播预测把「录制起点」当成弱开播证据参与计算，而录制起点来自录制历史。
+    // 录制历史不能随配置搬运（会在历史页里造出假记录），所以单独存一份只服务预测的证据，
+    // 换机/导入后预测才能和在原机器上算的一致。
+    version: 33,
+    sql: `
+      CREATE TABLE IF NOT EXISTS prediction_recording_sessions (
+        room_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        stream_session_id TEXT,
+        PRIMARY KEY(room_id, started_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_prediction_recording_sessions_room ON prediction_recording_sessions(room_id, started_at DESC);
+    `,
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

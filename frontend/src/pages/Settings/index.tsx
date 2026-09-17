@@ -641,9 +641,19 @@ export default function SettingsPage() {
       const parsed = JSON.parse(text) as { config?: unknown };
       if (!parsed.config) throw new Error("bad format");
       const result = await importConfig(parsed.config as never);
-      message.success(
-        `导入完成：设置${result.appliedSettings ? "已应用" : "未变更"}，房间新增 ${result.importedRooms} 个、跳过 ${result.skippedRooms} 个，告警 ${result.importedAlerts} 条`,
-      );
+      const parts = [
+        `设置${result.appliedSettings ? "已应用" : "未变更"}`,
+        `房间新增 ${result.importedRooms} 个、跳过 ${result.skippedRooms} 个`,
+        `告警 ${result.importedAlerts} 条`,
+      ];
+      if (result.prediction) {
+        const { matchedRooms, skippedRooms, events, forecasts } = result.prediction;
+        parts.push(
+          `开播预测：${matchedRooms} 个直播间、开播记录 ${events} 条、预测记录 ${forecasts} 条` +
+            (skippedRooms > 0 ? `（${skippedRooms} 个直播间未匹配已跳过）` : ""),
+        );
+      }
+      message.success(`导入完成：${parts.join("，")}`);
       await load();
     } catch (e) {
       message.error(

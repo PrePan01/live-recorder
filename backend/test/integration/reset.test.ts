@@ -43,6 +43,7 @@ async function fixture() {
   services.liveEvents.record(room.id, '2026-01-01T12:00:00.000Z');
   services.predictionCalibration.recordForecast({ roomId: room.id, targetDate: '2026-01-01', probability: 'high', generatedAt: '2026-01-01T00:00:00.000Z', rawProbability: 'high' });
   services.predictionCalibration.recordCoverage(room.id, '2026-01-01', '2026-01-01T12:00:00.000Z');
+  services.predictionCalibration.recordRecordingSession(room.id, '2026-01-01T11:00:00.000Z', 'sess-1');
   services.alerts.create({ level: 'warning', source: 'test', message: 'test', occurredAt: '2026-01-01' });
   for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) await services.secretStore.set(key, 'test-secret');
   const reset = (keepRecordings: boolean) => app.inject({
@@ -64,7 +65,7 @@ it('clears application data and credentials while preserving recordings and sche
   for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) expect(await services.secretStore.get(key)).toBeNull();
   const tables = services.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'schema_version'").all() as { name: string }[];
   for (const { name } of tables) expect(services.db.prepare(`SELECT COUNT(*) AS count FROM "${name}"`).get()).toEqual({ count: 0 });
-  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 32 });
+  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 33 });
   expect((await app.inject({ url: '/api/v1/health', headers: { host: '127.0.0.1:43120' } })).json().serviceStatus.setupCompleted).toBe(false);
 });
 

@@ -264,6 +264,7 @@ export class RoomRepository {
     this.db.prepare('DELETE FROM prediction_forecasts WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM prediction_coverage WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM prediction_coverage_intervals WHERE room_id = ?').run(id);
+    this.db.prepare('DELETE FROM prediction_recording_sessions WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
   }
 }

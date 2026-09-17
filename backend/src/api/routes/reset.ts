@@ -71,6 +71,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           DELETE FROM prediction_forecasts;
           DELETE FROM prediction_coverage;
           DELETE FROM prediction_coverage_intervals;
+          DELETE FROM prediction_recording_sessions;
           DELETE FROM rooms;
           DELETE FROM alerts;
           DELETE FROM settings;

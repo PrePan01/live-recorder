@@ -7,6 +7,7 @@ import { validateSettings } from '../../config/schema.js';
 import { settingsView } from './settings-view.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import { nativePickSaveFile } from './settings.js';
+import { exportPredictionArchive, importPredictionArchive, type PredictionArchive, type PredictionImportSummary } from '../../core/prediction-archive.js';
 
 export interface ExportConfig {
   version: 1;
@@ -14,6 +15,8 @@ export interface ExportConfig {
   settings: Awaited<ReturnType<typeof settingsView>>;
   rooms: ReturnType<Services['rooms']['list']>;
   alerts: ReturnType<Services['alerts']['list']>;
+  /** 开播预测的样本与校准数据；按 platform+url 归属，导入时映射到本地房间。 */
+  prediction: PredictionArchive;
 }
 
 export interface ImportConfigInput {
@@ -21,6 +24,7 @@ export interface ImportConfigInput {
   settings?: Partial<AppSettings>;
   rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean }>;
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
+  prediction?: unknown;
 }
 
 async function buildExportConfig(services: Services): Promise<ExportConfig> {
@@ -30,6 +34,7 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
     settings: await settingsView(services),
     rooms: services.rooms.list(),
     alerts: services.alerts.list(),
+    prediction: exportPredictionArchive(services),
   };
 }
 
@@ -102,6 +107,15 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
         throw new AppError('CONFIG_LOAD_FAILED', '房间导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
       }
     }
+    // 预测数据必须排在房间导入之后：房间先落地，样本才能按 platform+url 找到归属。
+    let prediction: PredictionImportSummary | null = null;
+    if (incoming.prediction !== undefined) {
+      try {
+        prediction = importPredictionArchive(services, incoming.prediction);
+      } catch {
+        throw new AppError('CONFIG_LOAD_FAILED', '开播预测数据导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
+      }
+    }
     let importedAlerts = 0;
     if (Array.isArray(incoming.alerts)) {
       try {
@@ -118,6 +132,6 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     if (appliedSettings) {
       services.events.emit({ type: 'settings:updated', data: await settingsView(services) });
     }
-    return reply.send({ ok: true, appliedSettings, importedRooms, skippedRooms, importedAlerts });
+    return reply.send({ ok: true, appliedSettings, importedRooms, skippedRooms, importedAlerts, prediction });
   });
 }
