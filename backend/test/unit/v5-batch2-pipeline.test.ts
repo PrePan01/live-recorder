@@ -1011,11 +1011,13 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     }
   });
 
-  it('put: 任务进度卡滞且远端核验失败 → 抛「进度长时间无变化」（不再静默卡 99%）', async () => {
+  it('put: 任务进度卡滞且远端核验始终失败 → 确认期过完才抛「等待云端落盘超时」（不再静默卡 99%）', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-task-stall-'));
     const file = path.join(dir, 'a.flv');
     await writeFile(file, 'flvdata');
-    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 2_000, taskStallTimeoutMs: 50, verifyDelaysMs: [0, 50] });
+    // 卡滞 50ms + 确认期 50ms：进度一直不动、远端也始终没有文件，才允许判失败；
+    // 兜底上限给足，确保走的是"卡滞 + 确认期"这条判据，而不是总时长。
+    const client = new RealWebDavClient({ taskPollIntervalMs: 1, taskPollTimeoutMs: 60_000, taskStallTimeoutMs: 50, taskStallGraceMs: 50, verifyDelaysMs: [0], verifyTimeoutMs: 500 });
     const orig = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
       const url = String(input);
@@ -1027,7 +1029,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
       return new Response('', { status: 500 });
     }) as typeof fetch;
     try {
-      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('进度长时间无变化');
+      await expect(client.put('https://dav.example.com/dav/archive/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('OpenList 等待云端落盘超时');
     } finally {
       globalThis.fetch = orig;
     }

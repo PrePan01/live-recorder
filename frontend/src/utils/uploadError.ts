@@ -6,6 +6,7 @@ export type UploadErrorCode =
   | 'OPENLIST_TASK_FAILED'
   | 'OPENLIST_TASK_NOT_FOUND'
   | 'OPENLIST_AUTH_FAILED'
+  | 'OPENLIST_TASK_TIMEOUT'
   | 'WEBDAV_405'
   | 'WEBDAV_504'
   | 'SOURCE_DELETED'
@@ -35,7 +36,8 @@ const ERROR_MATCHERS: Array<{ code: UploadErrorCode; test: RegExp; action: strin
   { code: 'TOKEN_MISSING', test: /令牌未配置/, action: 'OpenList 令牌未配置，请在设置中保存令牌后重新上传。' },
   { code: 'CONFIG_OR_FILE_MISSING', test: /配置或文件缺失|录制无文件|文件缺失/, action: 'OpenList 配置或本地录像文件已不存在，无法继续该上传任务。' },
   { code: 'NETWORK', test: /fetch failed|ENOTFOUND|ECONNREFUSED/, action: '无法连接 OpenList，请检查服务地址、网络和反向代理后重新上传。' },
-  { code: 'STALLED', test: /长时间无响应|超时|停滞|进度长时间无变化/, action: '上传长时间没有响应，请检查 OpenList 云盘驱动及反向代理超时设置。' },
+  { code: 'OPENLIST_TASK_TIMEOUT', test: /OpenList 等待云端落盘超时/, action: '等待 OpenList 把文件写入云盘超时。它可能仍在后台上传，请稍后到 OpenList 核对文件是否完整，确认缺失后再重新上传。' },
+  { code: 'STALLED', test: /长时间无响应|超时|停滞|进度长时间无变化/, action: '上传长时间没有响应。OpenList 或反向代理可能已超时，文件也可能仍在云端写入，请先在 OpenList 核对，再决定是否重新上传。' },
   { code: 'LEGACY', test: /duplex option is required/, action: '当前任务来自旧版本上传实现，请升级应用后点击"重新上传"。' },
 ];
 
