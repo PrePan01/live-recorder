@@ -955,7 +955,7 @@ export default function SettingsPage() {
                     status={bilibiliCredentialStatus}
                     hasCookie={settings?.bilibiliCookie.hasCookie ?? false}
                     authorizing={bilibiliAuthorizing}
-                    unauthorizedHint="未登录时最高只能录到 720p"
+                    unauthorizedHint="未登录时最高只能观看、录制 720p"
                     cookieField="bilibiliCookie"
                     manualHost="live.bilibili.com"
                     manualPlaceholder="粘贴完整B站 Cookie"
@@ -972,7 +972,8 @@ export default function SettingsPage() {
                   className="lr-credential-list__privacy"
                   type="secondary"
                 >
-                  Cookie 仅保存在本地，不会上传或提供给他人，请放心。
+                  Cookie
+                  仅保存在本地，不会上传或提供给他人，可随时清除，请放心。
                 </Typography.Text>
               </div>
             </Form>

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { App, Button, Modal, Select, Space, Typography } from "antd";
 import {
   FullscreenOutlined,
@@ -7,12 +14,33 @@ import {
 } from "@ant-design/icons";
 import { useRoomStore } from "../../stores/roomStore";
 import { usePreviewStore } from "../../stores/previewStore";
-import { getWallCapacity, useWallStore } from "../../stores/wallStore";
+import {
+  applyGridLayout,
+  getWallCapacity,
+  getWallLayout,
+  useWallStore,
+  type WallGrid as GridLayout,
+} from "../../stores/wallStore";
 import WallGrid from "../../components/WallGrid";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import type { Room } from "../../types/room";
+import { recordRecentErrorAction } from "../../utils/errorDiagnostics";
 import styles from "./index.module.css";
 import { enterWallFullscreen as requestWallFullscreen } from "./fullscreen";
+
+const GRID_OPTIONS = [
+  { label: "2x2", value: "2x2" },
+  { label: "3x3", value: "3x3" },
+  {
+    label: (
+      <span className={styles.gridOptionLabel}>
+        <span className={styles.gridOptionTitle}>3×1</span>
+        <small>支持镜像</small>
+      </span>
+    ),
+    value: "3x1",
+  },
+] satisfies { label: ReactNode; value: GridLayout }[];
 
 export default function Wall() {
   const { message } = App.useApp();
@@ -41,7 +69,7 @@ export default function Wall() {
   const setGrid = useWallStore((s) => s.setGrid);
   const addRooms = useWallStore((s) => s.addRooms);
   const addRoomToSlot = useWallStore((s) => s.addRoomToSlot);
-  const removeWallRoom = useWallStore((s) => s.removeRoom);
+  const removeWallSlot = useWallStore((s) => s.removeSlot);
   const reconcile = useWallStore((s) => s.reconcile);
   const [addOpen, setAddOpen] = useState(false);
   const [pickedIds, setPickedIds] = useState<string[]>([]);
@@ -60,14 +88,17 @@ export default function Wall() {
     )
       return;
     fullscreenBusy.current = true;
+    recordRecentErrorAction("wall:enter-fullscreen");
     try {
       const restore = await requestWallFullscreen(videoAreaRef.current);
       if (!mounted.current) await restore();
       else {
         restoreFullscreen.current = restore;
         setWallFullscreen(true);
+        recordRecentErrorAction("wall:fullscreen-active");
       }
     } catch {
+      recordRecentErrorAction("wall:enter-fullscreen-failed");
       message.error("无法进入全屏，请重试");
     } finally {
       fullscreenBusy.current = false;
@@ -77,11 +108,14 @@ export default function Wall() {
   const exitWallFullscreen = useCallback(async () => {
     if (fullscreenBusy.current || !restoreFullscreen.current) return;
     fullscreenBusy.current = true;
+    recordRecentErrorAction("wall:exit-fullscreen");
     try {
       await restoreFullscreen.current();
       restoreFullscreen.current = null;
       setWallFullscreen(false);
+      recordRecentErrorAction("wall:fullscreen-exited");
     } catch {
+      recordRecentErrorAction("wall:exit-fullscreen-failed");
       message.error("无法退出全屏，请重试");
     } finally {
       fullscreenBusy.current = false;
@@ -138,12 +172,19 @@ export default function Wall() {
     [wallRoomIds, roomById],
   );
 
+  const layout = getWallLayout(grid);
+  // 允许重复的布局（3x1）里，已经在墙上的直播间仍要出现在候选里，否则加不了第二格。
   const available = useMemo(
-    () => rooms.filter((r) => r.enabled && !wallRoomIds.includes(r.id)),
-    [rooms, wallRoomIds],
+    () =>
+      rooms.filter(
+        (r) =>
+          r.enabled && (layout.allowDuplicates || !wallRoomIds.includes(r.id)),
+      ),
+    [rooms, wallRoomIds, layout.allowDuplicates],
   );
 
   const capacity = getWallCapacity(grid);
+  const fill = layout.fill;
   const roomCount = wallRoomIds.filter(Boolean).length;
   const remainingSlots = Math.max(0, capacity - roomCount);
 
@@ -167,21 +208,26 @@ export default function Wall() {
     setSlotPicker(null);
   };
 
-  const handleRemove = (room: Room) => {
-    closeWallPreview(room.id);
-    removeWallRoom(room.id);
+  const handleRemove = (room: Room, slot: number) => {
+    // 该房间可能还占着别的格子（3x1），只有最后一格被移除时才释放预览会话。
+    const stillOnWall = wallRoomIds.some(
+      (id, index) => id === room.id && index !== slot,
+    );
+    removeWallSlot(slot);
+    if (!stillOnWall) closeWallPreview(room.id);
     setPickedIds([]);
   };
 
   const handleGridChange = (value: string | number) => {
-    const nextGrid = value as "2x2" | "3x3";
-    // Keep preview bookkeeping in sync with rooms removed when 3x3 is
-    // reduced to 2x2. The grid store performs the actual slot truncation.
-    if (nextGrid === "2x2") {
-      wallRoomIds.slice(getWallCapacity(nextGrid)).forEach((roomId) => {
-        if (roomId) closeWallPreview(roomId);
-      });
-    }
+    const nextGrid = value as GridLayout;
+    // 新布局既会缩容、也可能去掉重复项（3x1 -> 其它）。所有不再出现在墙上的
+    // 房间都要释放预览，否则 openRoomIds 会泄漏。槽位截断由 store 负责。
+    const kept = new Set(
+      applyGridLayout(wallRoomIds, nextGrid).filter(Boolean),
+    );
+    wallRoomIds.forEach((roomId) => {
+      if (roomId && !kept.has(roomId)) closeWallPreview(roomId);
+    });
     setGrid(nextGrid);
   };
 
@@ -199,14 +245,15 @@ export default function Wall() {
   };
 
   return (
-    <div className="lr-page">
+    <div className={`lr-page ${fill ? styles.fillPage : ""}`}>
       <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           多路直播墙
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
           <MemphisRadioGroup
-            options={["2x2", "3x3"]}
+            className={styles.gridSelector}
+            options={GRID_OPTIONS}
             value={grid}
             onChange={(event) => handleGridChange(event.target.value)}
           />
@@ -233,6 +280,7 @@ export default function Wall() {
         <WallGrid
           rooms={wallRooms}
           grid={grid}
+          wallFullscreen={wallFullscreen}
           onFullscreen={handleRoomFullscreen}
           onRemove={handleRemove}
           onEmptySlotClick={setSlotPicker}
@@ -284,6 +332,9 @@ export default function Wall() {
         title="添加直播间"
         open={slotPicker !== null}
         footer={null}
+        // 选择框非受控：不销毁的话上一次选中的直播间会留到下次打开，
+        // 再次点同一个房间不触发 onChange，看起来就是「点了没反应」。
+        destroyOnHidden
         onCancel={() => setSlotPicker(null)}
       >
         <Select

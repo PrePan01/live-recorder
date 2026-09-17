@@ -223,7 +223,10 @@ const RoomCard = memo(function RoomCard({
         }
       >
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-          <LiveStatusTag status={room.lastLiveStatus} streamTitle={room.currentStreamTitle} />
+          <LiveStatusTag
+            status={room.lastLiveStatus}
+            streamTitle={room.currentStreamTitle}
+          />
           {autoRecordEnabled ? (
             <Tag color="blue" style={{ marginInlineEnd: 0 }}>
               自动录
@@ -263,22 +266,18 @@ const RoomCard = memo(function RoomCard({
             type="warning"
             style={{ marginBottom: 10, marginTop: 0, fontSize: 12 }}
           >
-            最高只能录到 {qualityLabel(bestAvailable)}
             {offerBilibiliLogin ? (
-              <>
-                ，
-                <Typography.Link
-                  className="lr-room-card__error-link"
-                  underline
-                  // .ant-typography 自带 font-size，不继承本行的 12px，会显得比同行文字大。
-                  style={{ fontSize: "inherit" }}
-                  onClick={() => navigate("/settings#bilibili-cookie")}
-                >
-                  登录B站
-                </Typography.Link>
-                可录更高
-              </>
+              <Typography.Link
+                className="lr-room-card__error-link"
+                underline
+                // .ant-typography 自带 font-size，不继承本行的 12px，会显得比同行文字大。
+                style={{ fontSize: "inherit" }}
+                onClick={() => navigate("/settings#bilibili-cookie")}
+              >
+                登录B站
+              </Typography.Link>
             ) : null}
+            前最高只能观看、录制 {qualityLabel(bestAvailable)}
           </Typography.Paragraph>
         ) : null}
         {room.lastError ? (
@@ -546,7 +545,8 @@ export default function Monitor() {
   );
 
   const platformRooms = rooms.filter(
-    (r) => r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
+    (r) =>
+      r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
   );
   const liveCount = platformRooms.filter(
     (r) => r.lastLiveStatus === "live",
@@ -927,7 +927,9 @@ export default function Monitor() {
                   }
                   insight={insights[room.id]}
                   qualityPreference={settings?.quality ?? null}
-                  bilibiliAuthorized={settings?.bilibiliCookie.hasCookie ?? false}
+                  bilibiliAuthorized={
+                    settings?.bilibiliCookie.hasCookie ?? false
+                  }
                   onRecord={onRecordRoom}
                   onFavorite={onFavoriteRoom}
                   layout="card"
