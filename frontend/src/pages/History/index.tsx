@@ -381,7 +381,8 @@ export default function History() {
           // 仅用录制发起时的期望画质快照判断回退；无快照（迁移前旧记录）不提示，避免用当前设置误判（PrePan）。
           const expected = r.expectedQuality;
           if (!expected || expected === q) return label;
-          const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，该直播间未提供该画质，已按实际可用画质 ${label} 录制`;
+          // 不臆断原因：B站「房间有原画但账号未登录/无权限」与「房间本身无该档位」都可能走到这里。
+          const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，本次实际录制画质为 ${label}（该直播间未提供该档位，或当前账号未取得该清晰度权限）`;
           return (
             <Tooltip title={hint}>
               <span style={{ cursor: "help" }}>
@@ -500,7 +501,7 @@ export default function History() {
                     type="link"
                     onClick={() => handleUploadErrorDetail(r)}
                   >
-                    查看详情
+                    查看
                   </Button>
                 </Space>
               )
@@ -679,9 +680,7 @@ export default function History() {
         />
         <DatePicker.RangePicker
           value={dateRange}
-          onChange={(v) =>
-            setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)
-          }
+          onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
         />
         <Button loading={exporting} onClick={() => void handleExportCsv()}>
           导出 CSV

@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -260,10 +260,36 @@ describe('RecorderManager', () => {
     const r3State = services.rooms.get(r3.id)!;
     expect(r3State.monitorState).toBe('idle');
     expect(r3State.lastError?.code).toBe('CONCURRENT_LIMIT_REACHED');
-    expect(services.alerts.list().some((a) => a.message.includes('CONCURRENT_LIMIT_REACHED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'CONCURRENT_LIMIT_REACHED')).toBe(true);
     expect(services.manager.isRoomActive(r1.id)).toBe(true);
     expect(services.manager.isRoomActive(r2.id)).toBe(true);
     services.scheduler.stop();
+  });
+
+  it('starts at most maxConcurrentRecordings when rooms go live concurrently', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6c-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const rooms = ['21', '22', '23'].map((num, index) =>
+      services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/${num}`, displayName: `C${index + 1}` }),
+    );
+
+    // 调度器按 PLATFORM_CHECK_CONCURRENCY 并发检测房间，三个房间会在同一轮一起开播。
+    // 额度判定必须发生在第一个 await 之前，否则三个房间会全部通过检查、并发数超过上限。
+    const started = await Promise.all(
+      rooms.map((room, index) => services.manager.maybeStartRecording(room, { streamSessionId: `c${index + 1}` })),
+    );
+
+    expect(started.filter(Boolean)).toHaveLength(2);
+    expect(services.recordings.activeCount()).toBe(2);
+    const denied = rooms
+      .map((room) => services.rooms.get(room.id)!)
+      .filter((room) => room.lastError?.code === 'CONCURRENT_LIMIT_REACHED');
+    expect(denied).toHaveLength(1);
+    expect(services.alerts.list().filter((alert) => alert.errorCode === 'CONCURRENT_LIMIT_REACHED')).toHaveLength(1);
+
+    await Promise.all(rooms.map((room) => services.manager.stopRecording(room.id)));
   });
 
   it('dedupes by streamSessionId', async () => {
@@ -368,7 +394,7 @@ describe('RecorderManager', () => {
     expect(services.rooms.get(room.id)!.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent.some((m) => m.subject.includes('磁盘空间不足'))).toBe(true);
-    expect(services.alerts.list().some((a) => a.message.includes('DISK_SPACE_INSUFFICIENT'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
   });
 
   it('stopRecording completes the current segment with code 1000', async () => {
@@ -461,6 +487,32 @@ describe('RecorderManager', () => {
       await settle(clock, 500);
     }
     await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+  });
+
+  it('rejects start when the save directory is unusable and never counts it as active (直播墙/预览点录制计数虚增回归)', async () => {
+    const clock = new FakeClock();
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-baddir-'));
+    // 用一个文件占用目录位置：mkdir 必然失败，且与权限无关（跨平台确定）。
+    const blocker = path.join(base, 'not-a-directory');
+    await writeFile(blocker, 'x');
+
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(path.join(blocker, 'recordings')));
+    (services.diskGuard as FakeDiskGuard).setSpace({ freeBytes: 1e12, totalBytes: 2e12 });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 's-baddir', streamTitle: 'T' }]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9100', displayName: 'BadDir' });
+
+    for (let i = 0; i < 3; i += 1) {
+      // 每次点击都必须明确报错，并且不能留下 pending 记录——
+      // 否则「录制中」计数逐个累加，最终占满并发名额导致再也无法录制。
+      await expect(services.manager.maybeStartRecording(room, { streamSessionId: 's-baddir' })).rejects.toMatchObject({
+        code: 'RECORDING_DIRECTORY_INVALID',
+        message: '保存目录无效，录制失败',
+      });
+      expect(services.recordings.activeCount()).toBe(0);
+    }
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(0);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
 
   it('finishes intermediate segment processing on natural-end continue (mp4_after/上传 分段收尾)', async () => {

@@ -2,6 +2,8 @@ export const MAIL_PASSWORD_KEY = 'mail.password';
 
 export const DOUYIN_COOKIE_KEY = 'douyin.cookie';
 
+export const BILIBILI_COOKIE_KEY = 'bilibili.cookie';
+
 export const OPENLIST_TOKEN_KEY = 'openlist.token';
 
 /** 生产环境钥匙串服务名（正式客户端）。 */

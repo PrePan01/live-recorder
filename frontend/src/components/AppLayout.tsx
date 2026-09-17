@@ -5,7 +5,6 @@ import {
   HistoryOutlined,
   SettingOutlined,
   VideoCameraOutlined,
-  ToolOutlined,
   BarChartOutlined,
   AppstoreOutlined,
 } from "@ant-design/icons";
@@ -62,13 +61,13 @@ const ITEMS = [
     icon: <BarChartOutlined />,
     label: <span onPointerEnter={() => preloadRoute("/stats")}>统计看板</span>,
   },
-  {
+  /*{
     key: "/recovery",
     icon: <ToolOutlined />,
     label: (
       <span onPointerEnter={() => preloadRoute("/recovery")}>自愈工作台</span>
     ),
-  },
+  },*/
   {
     key: "/settings",
     icon: <SettingOutlined />,
@@ -90,7 +89,8 @@ export default function AppLayout() {
   const activeModalRoom = useRoomStore((s) =>
     activeModal ? s.rooms.find((room) => room.id === activeModal.roomId) : null,
   );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [sidebarCollapsed, setSidebarCollapsed] =
+    useState(readSidebarCollapsed);
   const [sidebarBelowBreakpoint, setSidebarBelowBreakpoint] = useState(false);
 
   useEffect(() => {

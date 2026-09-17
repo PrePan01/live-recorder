@@ -1,87 +1,88 @@
 .lr-settings-section {
-  padding: 18px 0 2px;
+  padding: 16px 0 0;
   border-top: 1px solid var(--lr-ink);
 }
 .lr-settings-section--credential {
   scroll-margin-top: 20px;
 }
-.lr-douyin-auth-card {
+/* 平台授权：一行一个平台，平台/状态/动作三栏对齐，两个平台可直接横向对比。 */
+.lr-credential-list {
+  border: 1px solid var(--lr-ink);
+}
+.lr-credential-row {
+  scroll-margin-top: 20px;
+}
+.lr-credential-row + .lr-credential-row {
+  border-top: 1px solid var(--lr-ink);
+}
+.lr-credential-row__main {
   display: grid;
-  gap: 14px;
-  margin: 0 0 10px;
-  padding: 16px;
-  border: 1px solid var(--lr-border);
-  background: var(--lr-surface-alt);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
 }
-.lr-douyin-auth-card__heading {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-.lr-douyin-auth-card__heading > div {
+.lr-credential-row__platform {
   display: grid;
-  gap: 3px;
+  gap: 4px;
+  justify-items: start;
+  align-content: center;
+  min-width: 88px;
 }
-.lr-douyin-auth-card__heading .ant-typography {
-  font-size: 13px;
-}
-.lr-douyin-auth-card__heading .ant-tag {
-  flex: none;
-  margin-inline-end: 0;
-}
-.lr-douyin-auth-card__actions {
+.lr-credential-row__name {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
+  gap: 8px;
   align-items: center;
 }
-.lr-douyin-auth-card__step {
-  display: grid;
-  gap: 2px;
-  color: var(--lr-text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
+.lr-credential-row__state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
 }
-.lr-douyin-auth-card__actions .ant-btn-link {
-  padding-inline: 0;
-}
-.lr-douyin-auth-card__privacy.ant-typography {
+.lr-credential-row__state > .ant-typography {
   font-size: 12px;
 }
-.lr-douyin-auth-card__clear.ant-btn {
-  height: auto;
-  min-height: 0;
-  margin-inline: 2px;
-  padding: 2px 3px;
-  font-size: 12px;
-  line-height: inherit;
-  vertical-align: baseline;
+.lr-credential-row__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
-.lr-douyin-manual.ant-collapse {
-  margin-top: 2px;
-  border-block: 1px solid var(--lr-border);
+.lr-credential-list__privacy.ant-typography {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.lr-credential-manual.ant-collapse {
+  border-block: 0;
+  /* 与上方授权区用虚线分隔：这里是可选的补充手段，不是同一层信息。 */
+  border-top: 1px dashed var(--lr-border);
   border-inline: 0;
 }
-.lr-douyin-manual .ant-collapse-header {
-  padding-inline: 0 !important;
+.lr-credential-manual .ant-collapse-header {
+  padding: 8px 16px !important;
   font-size: 12px;
   font-weight: 600;
 }
-.lr-douyin-manual .ant-collapse-content-box {
-  padding: 0 0 14px !important;
+.lr-credential-manual .ant-collapse-content-box {
+  padding: 0 16px 12px !important;
 }
-.lr-douyin-manual__content > .ant-typography {
+.lr-credential-manual__content > .ant-typography {
   margin-bottom: 12px;
   font-size: 12px;
   line-height: 1.65;
 }
-.lr-douyin-manual__content .ant-form-item {
-  margin-bottom: 10px;
+.lr-credential-manual__content .ant-form-item {
+  margin-bottom: 4px;
 }
 @media (max-width: 480px) {
-  .lr-douyin-auth-card__actions > .ant-btn:first-child {
-    width: 100%;
+  .lr-credential-row__main {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+  .lr-credential-row__actions > .ant-btn:first-child {
+    flex: 1;
   }
 }
 .lr-room-card__error-link {

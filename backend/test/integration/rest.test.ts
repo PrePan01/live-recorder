@@ -544,6 +544,150 @@ describe('REST contract v1.1 (fake stack)', () => {
     await app.close();
   });
 
+  it('settings: bilibili cookie is stored in the secret store and never echoed back', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-bili-cookie-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original' as const,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+    };
+    const before = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' } });
+    expect(before.json().settings.bilibiliCookie.hasCookie).toBe(false);
+
+    const put = await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: { ...base, bilibiliCookie: 'SESSDATA=abc123;DedeUserID=42' },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().settings.bilibiliCookie.hasCookie).toBe(true);
+
+    const after = await app.inject({ method: 'GET', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' } });
+    expect(after.json().settings.bilibiliCookie.hasCookie).toBe(true);
+    expect(JSON.stringify(after.json())).not.toContain('SESSDATA');
+    expect(services.settings.getRaw('settings')).not.toContain('bilibiliCookie');
+
+    const clear = await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: { ...base, bilibiliCookie: '' },
+    });
+    expect(clear.json().settings.bilibiliCookie.hasCookie).toBe(false);
+    await app.close();
+  });
+
+  it('settings: bilibili cookie validation rejects incomplete cookies (missing SESSDATA/DedeUserID)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-bili-cookie-val-'));
+    const base = {
+      recordingDirectory: dir,
+      maxConcurrentRecordings: 2,
+      quality: 'original' as const,
+      checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+      retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+      diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+      mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+    };
+    const put = (bilibiliCookie: string) => app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: { ...base, bilibiliCookie },
+    });
+
+    // 方式一 document.cookie 取不到 HttpOnly 的 SESSDATA → 缺少关键字段被拒。
+    const noSessdata = await put('buvid3=xyz;DedeUserID=42');
+    expect(noSessdata.statusCode).toBe(422);
+    expect(noSessdata.json().error.code).toBe('CONFIG_INVALID');
+    expect(noSessdata.json().error.message).toContain('SESSDATA');
+
+    // 有 SESSDATA 但凭证组不完整（缺 DedeUserID）→ 拒绝。
+    const noDede = await put('buvid3=xyz;SESSDATA=abc123');
+    expect(noDede.statusCode).toBe(422);
+    expect(noDede.json().error.message).toContain('DedeUserID');
+
+    // 完整 Cookie → 接受。
+    const ok = await put('buvid3=xyz;SESSDATA=abc123;DedeUserID=42');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().settings.bilibiliCookie.hasCookie).toBe(true);
+    await app.close();
+  });
+
+  it('settings: saving a new bilibili cookie immediately checks every bilibili room', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-bili-cookie-check-'));
+    const enabledBilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'enabled' });
+    const disabledBilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2', displayName: 'disabled', enabled: false });
+    const douyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/3', displayName: 'douyin' });
+
+    const put = await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: { host: '127.0.0.1:43120' },
+      payload: {
+        recordingDirectory: dir,
+        maxConcurrentRecordings: 2,
+        quality: 'original',
+        checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+        retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+        diskGuard: { minFreeBytes: 1024, minFreePercent: 5 },
+        mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+        bilibiliCookie: 'buvid3=xyz;SESSDATA=abc123;DedeUserID=42',
+      },
+    });
+
+    expect(put.statusCode).toBe(200);
+    expect(services.rooms.get(enabledBilibili.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(disabledBilibili.id)?.lastCheckedAt).toBeTruthy();
+    expect(services.rooms.get(douyin.id)?.lastCheckedAt).toBeNull();
+    await app.close();
+  });
+
+  it('settings: desktop authorization endpoint saves only a complete Bilibili cookie', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const request = (cookie: unknown) => app.inject({
+      method: 'POST',
+      url: '/api/v1/settings/bilibili-cookie',
+      headers: { host: '127.0.0.1:43120' },
+      payload: { cookie },
+    });
+
+    const missingLogin = await request('buvid3=xyz;DedeUserID=42');
+    expect(missingLogin.statusCode).toBe(422);
+    expect(missingLogin.json().error.message).toContain('SESSDATA');
+
+    const saved = await request('buvid3=xyz; SESSDATA=abc123; DedeUserID=42; bili_jct=csrf');
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().settings.bilibiliCookie.hasCookie).toBe(true);
+    expect(JSON.stringify(saved.json())).not.toContain('abc123');
+    await app.close();
+  });
+
+  it('settings: reports an explicitly expired Bilibili login as invalid', async () => {
+    const services = newServices();
+    await services.secretStore.set('bilibili.cookie', 'SESSDATA=expired;DedeUserID=42');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ code: -101, data: { isLogin: false } }),
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const { app } = buildApp(services);
+    try {
+      const result = await app.inject({
+        method: 'GET', url: '/api/v1/settings/bilibili-cookie-status', headers: { host: '127.0.0.1:43120' },
+      });
+      expect(result.statusCode).toBe(200);
+      expect(result.json().status).toBe('invalid');
+      expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+      await app.close();
+    }
+  });
+
   it('recordings pagination + open, alerts flow', async () => {
     const services = newServices();
     const { app } = buildApp(services);
@@ -652,12 +796,12 @@ describe('REST contract v1.1 (fake stack)', () => {
     const { app } = buildApp(services);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'r' });
     const err = new AppError('RECORDING_START_FAILED', '启动失败', { roomId: room.id });
-    const alert = services.alerts.create({ level: 'error', source: 'recorder', message: `${err.code}: ${err.message}`, occurredAt: services.clock.iso(), roomId: room.id, errorCode: err.code });
+    const alert = services.alerts.create({ level: 'error', source: 'recorder', message: err.message, occurredAt: services.clock.iso(), roomId: room.id, errorCode: err.code });
     const alerts = await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } });
     const item = alerts.json().alerts.find((a: { id: string }) => a.id === alert.id);
     expect(item.roomId).toBe(room.id);
     expect(item.errorCode).toBe('RECORDING_START_FAILED');
-    expect(item.message).toContain('RECORDING_START_FAILED');
+    expect(item.message).toBe('启动失败');
     await app.close();
   });
 

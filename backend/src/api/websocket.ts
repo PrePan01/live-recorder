@@ -318,27 +318,32 @@ export class PreviewManager {
     return room.extractor.snapshot();
   }
 
-  closeRoomWithError(roomId: string, code: number): void {
-    this.clearEmptyRoomTimer(roomId);
-    const room = this.rooms.get(roomId);
-    if (!room) return;
-    for (const ws of room.sockets) {
-      try {
-        ws.close(code);
-      } catch {
-        // 忽略
+  /**
+   * 退出/重启收束：关闭所有预览房间并销毁底层连接。
+   * 升级后的 socket 不在 HTTP 服务器的连接跟踪里，`server.close()` 会一直等它们直到进程被强杀，
+   * 而 forceCloseConnections 只销毁普通连接；只发关闭帧不足以让 server.close() 返回，
+   * 必须主动 terminate（直播墙开着预览退出/重启卡住的根因）。
+   */
+  closeAll(code: number): void {
+    for (const roomId of [...this.rooms.keys()]) {
+      this.clearEmptyRoomTimer(roomId);
+      const room = this.rooms.get(roomId);
+      if (!room) continue;
+      for (const ws of room.sockets) {
+        try {
+          ws.close(code);
+          ws.terminate();
+        } catch {
+          // 忽略已断开的连接
+        }
       }
+      this.rooms.delete(roomId);
     }
-    this.rooms.delete(roomId);
   }
 
   /** 当前活跃预览会话数（按房间）。 */
   get activeCount(): number {
     return this.rooms.size;
-  }
-
-  trackedRooms(): string[] {
-    return [...this.rooms.keys()];
   }
 }
 

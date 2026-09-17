@@ -156,11 +156,16 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerSse(app, services, sse);
 
   const ws = attachWebSocketUpgrade(services, preview, app.server, extraOrigins, () => instance?.port ?? port);
+  // preClose 先于 Fastify 内部的 server.close() 执行：预览 WebSocket 升级后脱离 HTTP 连接跟踪，
+  // 留给 onClose 会太晚——server.close() 会一直等这些连接（forceCloseConnections 只销毁普通连接），
+  // 直播墙开着预览时退出/重启服务就被拖到 Rust 侧超时强杀（#直播墙退出卡住）。
+  app.addHook('preClose', async () => {
+    ws.dispose();
+    preview.closeAll(1001);
+  });
   app.addHook('onClose', async () => {
     services.scheduler.stop();
-    ws.dispose();
     sse.stop();
-    for (const roomId of preview.trackedRooms()) preview.closeRoomWithError(roomId, 1001);
     services.db.close();
   });
 

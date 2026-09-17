@@ -8,7 +8,7 @@ import { SystemClock } from './clock.js';
 import { AppEventBus } from './events.js';
 import { MemorySecretStore } from '../security/memory-store.js';
 import { KeytarSecretStore } from '../security/keychain-store.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY } from '../security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY } from '../security/keys.js';
 import { FakePlatformAdapter } from '../platform/fake-adapter.js';
 import { BilibiliAdapter } from '../platform/bilibili.js';
 import { DouyinAdapter } from '../platform/douyin.js';
@@ -69,7 +69,7 @@ export interface Services {
   exporter: ExportManager;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
-  /** 平台会话凭证（v1.3：抖音 Cookie），非该平台返回 undefined。 */
+  /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
   platformCookie(platform: 'bilibili' | 'douyin'): Promise<string | undefined>;
 }
 
@@ -149,7 +149,12 @@ export function buildServices(opts: BuildOptions = {}): Services {
     mailer: undefined as unknown as Mailer,
     adapterFor: (platform) => adapters[platform],
     engineFor: () => (mode === 'real' ? new StreamRecordingEngine() : fakeEngine),
-    platformCookie: async (platform) => (platform === 'douyin' ? (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined : undefined),
+    platformCookie: async (platform) => {
+      if (platform === 'douyin') return (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined;
+      // B站未登录时服务端只提供 720p 及以下档位，登录 Cookie（SESSDATA）是获取蓝光/原画的唯一途径。
+      if (platform === 'bilibili') return (await secretStore.get(BILIBILI_COOKIE_KEY)) ?? undefined;
+      return undefined;
+    },
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
     scheduler: undefined as unknown as Scheduler,

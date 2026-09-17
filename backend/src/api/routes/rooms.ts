@@ -56,6 +56,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
     const calibrationProfiles = services.predictionCalibration.profiles(roomIds, localDateFromMs(now - 60 * 24 * 60 * 60 * 1000));
     const coverage = services.predictionCalibration.intervals(roomIds, from60);
+    // 录制起点是预测的弱证据：本机录制历史 + 随配置导入的录制起点证据，合并后再去重。
+    const recordingSessions = services.predictionCalibration.recordingSessions(roomIds, from60);
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
     const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
     for (const row of rows) grouped.get(row.room_id)?.push(row);
@@ -76,7 +78,10 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
         prediction: calculateLivePrediction({
           roomId: id,
           events,
-          fallbackEvents: recordingFallbackEvents(records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id }))),
+          fallbackEvents: recordingFallbackEvents([
+            ...records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id })),
+            ...(recordingSessions.get(id) ?? []),
+          ]),
           now,
           generatedAt: services.clock.iso(),
           calibration: calibrationProfiles.get(id),

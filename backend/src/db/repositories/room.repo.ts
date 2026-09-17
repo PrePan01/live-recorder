@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import { AppError, type ErrorObject, type LiveStatus, type MonitorState, type Platform, type Room, type TitleSource, type Tag } from '../../types/index.js';
+import { AppError, type ErrorObject, type LiveStatus, type MonitorState, type Platform, type Quality, type Room, type TitleSource, type Tag } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 import type { TagRepository } from './tag.repo.js';
 
@@ -14,6 +14,7 @@ interface RoomRow {
   live_notification_enabled: number;
   last_live_status: string | null;
   current_stream_title: string | null;
+  available_qualities: string | null;
   upload_enabled: number | null;
   title_source: string | null;
   title_updated_at: string | null;
@@ -35,6 +36,16 @@ function parseError(raw: string | null): ErrorObject | null {
   }
 }
 
+function parseQualities(raw: string | null): Quality[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed.filter((q) => typeof q === 'string') as Quality[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
   return {
     id: row.id,
@@ -47,6 +58,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     currentStreamTitle: row.current_stream_title,
+    availableQualities: parseQualities(row.available_qualities),
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
     titleSource: (row.title_source as TitleSource) ?? null,
     titleUpdatedAt: row.title_updated_at,
@@ -108,6 +120,7 @@ export class RoomRepository {
       liveNotificationEnabled: input.liveNotificationEnabled ?? false,
       lastLiveStatus: null,
       currentStreamTitle: null,
+      availableQualities: [],
       uploadEnabled: null,
       titleSource: null,
       titleUpdatedAt: null,
@@ -223,6 +236,13 @@ export class RoomRepository {
       .run(status, nowIso(), id);
   }
 
+  /** 保存本次检测到的可录清晰度；空数组表示未知（未开播/平台未给出），不展示过期的「最高可录」。 */
+  setAvailableQualities(id: string, qualities: Quality[]): void {
+    this.db
+      .prepare(`UPDATE rooms SET available_qualities = ?, updated_at = ? WHERE id = ?`)
+      .run(qualities.length > 0 ? JSON.stringify(qualities) : null, nowIso(), id);
+  }
+
   /** 保存本场直播的房间标题；离线/受限时清除，避免展示过期标题。 */
   setCurrentStreamTitle(id: string, title: string | null): void {
     this.db
@@ -244,6 +264,7 @@ export class RoomRepository {
     this.db.prepare('DELETE FROM prediction_forecasts WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM prediction_coverage WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM prediction_coverage_intervals WHERE room_id = ?').run(id);
+    this.db.prepare('DELETE FROM prediction_recording_sessions WHERE room_id = ?').run(id);
     this.db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
   }
 }

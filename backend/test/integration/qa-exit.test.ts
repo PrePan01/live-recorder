@@ -2,6 +2,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { WebSocket } from 'ws';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
@@ -164,7 +165,7 @@ describe('QA stage-B exit: security', () => {
     expect(room.monitorState).toBe('failed');
     expect(room.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
     expect(room.lastError?.retryable).toBe(false);
-    const alert = services.alerts.list().find((a) => a.message.includes('PLATFORM_ACCESS_RESTRICTED'));
+    const alert = services.alerts.list().find((a) => a.errorCode === 'PLATFORM_ACCESS_RESTRICTED');
     expect(alert).toBeDefined();
     expect(alert!.level).toBe('warning');
     await app.close();
@@ -264,7 +265,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     expect(room.monitorState).toBe('idle');
     expect(room.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
     expect(services.recordings.list({ roomId }).items).toHaveLength(0);
-    expect(services.alerts.list().some((a) => a.message.includes('DISK_SPACE_INSUFFICIENT'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
     await app.close();
   });
 });
@@ -361,5 +362,37 @@ describe('QA stage-B exit: graceful shutdown with open SSE connections', () => {
     await app.close();
     expect(Date.now() - started).toBeLessThan(2_000);
     req.destroy();
+  });
+
+  it('app.close resolves promptly with open preview WebSockets (直播墙退出卡住根因)', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as { port: number }).port;
+
+    // 预览 WebSocket 升级后不在 HTTP 连接跟踪内：forceCloseConnections 不销毁它们，
+    // 只有在 server.close() 之前主动断开才能让 close() 返回（否则一直等到进程被强杀）。
+    const sockets: WebSocket[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const room = services.rooms.create({
+        platform: 'bilibili',
+        url: `https://live.bilibili.com/${9100 + i}`,
+        displayName: `wall-${i}`,
+      });
+      services.rooms.setState(room.id, 'recording');
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/preview/${room.id}`, {
+        headers: { Host: '127.0.0.1:43120' },
+      });
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => resolve());
+        ws.on('error', reject);
+      });
+      sockets.push(ws);
+    }
+
+    const started = Date.now();
+    await app.close();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    for (const ws of sockets) ws.terminate();
   });
 });

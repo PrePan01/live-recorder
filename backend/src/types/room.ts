@@ -1,4 +1,5 @@
 import type { ErrorObject } from './error.js';
+import type { Quality } from './recording.js';
 import type { Tag } from './tag.js';
 
 export type Platform = 'bilibili' | 'douyin';
@@ -33,6 +34,12 @@ export interface Room {
   lastLiveStatus: LiveStatus | null;
   /** 最近一次检测到的当前直播间标题；仅在开播时保留。 */
   currentStreamTitle: string | null;
+  /**
+   * 最近一次检测时该房间实际能录到的清晰度（平台按账号登录态/房间权限给出）。
+   * 用于在录制前就告知用户「最高只能录到多少」——未登录 B站 时平台只给低清晰度，
+   * 不提前说明的话用户会以为按设置录制，录完才发现画质不符。未开播时为空。
+   */
+  availableQualities: Quality[];
   monitorState: MonitorState;
   lastCheckedAt: string | null;
   lastError: ErrorObject | null;

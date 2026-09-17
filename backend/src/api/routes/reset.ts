@@ -4,9 +4,9 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import { AppError } from '../../types/error.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
 
-const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY];
+const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY];
 
 export function registerResetRoutes(app: FastifyInstance, services: Services, otherWrites: () => number): void {
   app.post('/api/v1/settings/reset', async (req, reply) => {
@@ -65,6 +65,13 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           DELETE FROM room_tags;
           DELETE FROM tags;
           DELETE FROM recordings;
+          -- 开播预测的样本/校准/覆盖数据随房间一起清空；live_events 有指向 rooms 的外键，
+          -- 必须先删，否则下面的 DELETE FROM rooms 会整单失败、重置什么都清不掉。
+          DELETE FROM live_events;
+          DELETE FROM prediction_forecasts;
+          DELETE FROM prediction_coverage;
+          DELETE FROM prediction_coverage_intervals;
+          DELETE FROM prediction_recording_sessions;
           DELETE FROM rooms;
           DELETE FROM alerts;
           DELETE FROM settings;

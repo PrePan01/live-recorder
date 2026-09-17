@@ -20,13 +20,14 @@ export default defineConfig({
   // 需用相对路径（#138 QA 定位白屏根因）。
   base: './',
   plugins: [react()],
-  // The native Douyin authorization window has a small local confirmation webview in addition
-  // to the remote login webview, so it needs its own packaged HTML entry.
+  // The native Douyin/Bilibili authorization windows each have a small local confirmation
+  // webview in addition to the remote login webview, so they need their own packaged HTML entries.
   build: {
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         'douyin-auth': fileURLToPath(new URL('./douyin-auth.html', import.meta.url)),
+        'bilibili-auth': fileURLToPath(new URL('./bilibili-auth.html', import.meta.url)),
       },
     },
   },

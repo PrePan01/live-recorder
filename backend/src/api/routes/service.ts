@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { access, constants } from 'node:fs/promises';
 import type { Services } from '../../core/services.js';
-import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { resolveBin } from '../../utils/ffmpeg.js';
 
 const CHECK_TIMEOUT_MS = 3_000;
@@ -23,7 +23,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '0.5.136',
+        version: '0.5.143',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored?.recordingDirectory?.length),
         disk,
@@ -59,6 +59,15 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
         return { key: 'cookie', label: '抖音授权', status: 'ok', detail: '抖音授权已配置', fixHint: '' };
       }
       return { key: 'cookie', label: '抖音授权', status: 'warn', detail: '抖音未授权，抖音房间可能受限', fixHint: '在设置页完成抖音授权' };
+    }));
+
+    // ③b B站授权只影响清晰度档位：未授权时服务端最高只提供 720p。
+    items.push(await withTimeout(async () => {
+      const hasCookie = Boolean(await services.secretStore.get(BILIBILI_COOKIE_KEY));
+      if (hasCookie) {
+        return { key: 'bilibili-cookie', label: 'B站授权', status: 'ok', detail: 'B站授权已配置，可按登录权限获取清晰度', fixHint: '' };
+      }
+      return { key: 'bilibili-cookie', label: 'B站授权', status: 'warn', detail: 'B站未授权，录像清晰度最高 720p', fixHint: '在设置页完成B站授权' };
     }));
 
     // ④ 磁盘空间。
