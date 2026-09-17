@@ -3,8 +3,8 @@ node_modules/
 dist/
 *.local
 .env
-backend/bilibili/
-backend/douyin/
+bilibili/
+douyin/
 release/
 .idea/
 *.tsbuildinfo

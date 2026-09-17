@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices } from '../../src/core/services.js';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../src/security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../src/security/keys.js';
 
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -39,8 +39,13 @@ async function fixture() {
   `);
   services.db.prepare("INSERT INTO pipeline_runs (id, recording_id, config_snapshot, status) VALUES ('pipeline-test', ?, '{}', 'ok')").run(recording.id);
   services.db.exec("INSERT INTO pipeline_artifacts (id, run_id, step, status) VALUES ('artifact-test', 'pipeline-test', 'verify', 'ok')");
+  // 开播预测数据：live_events 引用 rooms，有它时重置必须先删再删房间（否则外键让整单回滚）。
+  services.liveEvents.record(room.id, '2026-01-01T12:00:00.000Z');
+  services.predictionCalibration.recordForecast({ roomId: room.id, targetDate: '2026-01-01', probability: 'high', generatedAt: '2026-01-01T00:00:00.000Z', rawProbability: 'high' });
+  services.predictionCalibration.recordCoverage(room.id, '2026-01-01', '2026-01-01T12:00:00.000Z');
+  services.predictionCalibration.recordRecordingSession(room.id, '2026-01-01T11:00:00.000Z', 'sess-1');
   services.alerts.create({ level: 'warning', source: 'test', message: 'test', occurredAt: '2026-01-01' });
-  for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY]) await services.secretStore.set(key, 'test-secret');
+  for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) await services.secretStore.set(key, 'test-secret');
   const reset = (keepRecordings: boolean) => app.inject({
     method: 'POST', url: '/api/v1/settings/reset',
     headers: { host: '127.0.0.1:43120' },
@@ -57,10 +62,10 @@ it('clears application data and credentials while preserving recordings and sche
   expect(services.settings.load()).toBeNull();
   expect(services.rooms.list()).toHaveLength(0);
   expect(services.recordings.list().items).toHaveLength(0);
-  for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, OPENLIST_TOKEN_KEY]) expect(await services.secretStore.get(key)).toBeNull();
+  for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) expect(await services.secretStore.get(key)).toBeNull();
   const tables = services.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'schema_version'").all() as { name: string }[];
   for (const { name } of tables) expect(services.db.prepare(`SELECT COUNT(*) AS count FROM "${name}"`).get()).toEqual({ count: 0 });
-  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 30 });
+  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 33 });
   expect((await app.inject({ url: '/api/v1/health', headers: { host: '127.0.0.1:43120' } })).json().serviceStatus.setupCompleted).toBe(false);
 });
 

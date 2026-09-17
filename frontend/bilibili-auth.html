@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>抖音授权</title>
+    <title>B站授权</title>
     <style>
       :root { color: #172033; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif; }
       html, body { width: 100%; height: 100%; overflow: hidden; }
       body { margin: 0; background: #fff; }
       main { position: fixed; right: 0; bottom: 0; left: 0; min-height: 76px; box-sizing: border-box; display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-top: 1px solid #e6eaf0; }
       #hint { flex: 1; }
-      button { border: 0; border-radius: 7px; padding: 9px 14px; color: #fff; background: #fe2c55; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+      button { border: 0; border-radius: 7px; padding: 9px 14px; color: #fff; background: #00aeec; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
       button:disabled { opacity: .65; cursor: wait; }
       #status { color: #d4380d; max-width: 390px; }
     </style>
@@ -21,6 +21,6 @@
       <button id="complete" type="button">完成登录并授权</button>
       <span id="status" role="status" aria-live="polite"></span>
     </main>
-    <script type="module" src="/src/douyin-auth.ts"></script>
+    <script type="module" src="/src/bilibili-auth.ts"></script>
   </body>
 </html>

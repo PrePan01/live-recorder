@@ -1,5 +1,5 @@
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { mkdir, unlink } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import path from 'node:path';
 import { AppError } from '../types/error.js';
@@ -10,6 +10,7 @@ import { remuxFlvToMp4 } from '../recorder/remux.js';
 import type { RecordingEvent } from '../recorder/engine.js';
 import { FlvTimestampNormalizer } from '../recorder/stream-recorder.js';
 import { HighlightBuffer } from '../recorder/highlight-buffer.js';
+import { ulid } from '../utils/id.js';
 import type { Notifier } from './notifier.js';
 import type { Services } from './services.js';
 
@@ -401,17 +402,28 @@ export class RecorderManager {
       quality: actualQuality,
       expectedQuality: settings.quality,
     });
-    const filePath = recordingFilePath(
-      settings.recordingDirectory,
-      room.platform,
-      room.displayName || room.id,
-      recording.startedAt,
-      settings.recordingFormat,
-      settings.namingRule,
-      actualQuality,
-      room.id,
-    );
-    await mkdir(path.dirname(filePath), { recursive: true });
+    let filePath: string;
+    try {
+      filePath = recordingFilePath(
+        settings.recordingDirectory,
+        room.platform,
+        room.displayName || room.id,
+        recording.startedAt,
+        settings.recordingFormat,
+        settings.namingRule,
+        actualQuality,
+        room.id,
+      );
+      await mkdir(path.dirname(filePath), { recursive: true });
+    } catch (error) {
+      // 已经落了记录就必须收尾：留着 pending 记录会让「录制中」计数虚增并占用并发名额。
+      const err = error instanceof AppError
+        ? error
+        : new AppError('RECORDING_DIRECTORY_INVALID', '保存目录无效，录制失败', { roomId: room.id, recordingId: recording.id });
+      const failed = this.services.recordings.update(recording.id, { state: 'failed', endedAt: this.services.clock.iso(), failureReason: err.toObject() });
+      this.services.events.emit({ type: 'recording:updated', data: failed });
+      throw err;
+    }
     const writer = createWriteStream(filePath);
     const session: ActiveSession = {
       recordingId: recording.id,
@@ -458,16 +470,48 @@ export class RecorderManager {
     return true;
   }
 
+  /**
+   * 录制开始前的保存目录可用性检查（与 /settings/validate-directory 同口径）。
+   * 必须在创建录制记录之前失败：目录无效时若先落一条 pending 记录，
+   * 「录制中」计数会随每次点击累加，还会持续占用并发名额导致后续无法录制。
+   */
+  private async assertRecordingDirectoryUsable(directory: string, roomId: string): Promise<void> {
+    try {
+      await mkdir(directory, { recursive: true });
+      const probe = path.join(directory, `.lr-probe-${ulid()}`);
+      await writeFile(probe, 'x', { flag: 'wx' });
+      await unlink(probe);
+    } catch {
+      throw new AppError('RECORDING_DIRECTORY_INVALID', '保存目录无效，录制失败', { roomId });
+    }
+  }
+
   /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
   async maybeStartRecording(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
     if (this.services.resetting) return false;
     if (this.active.has(room.id) || this.starting.has(room.id)) return false;
+    // 并发额度必须在这里、且在第一个 await 之前占用：调度器按 PLATFORM_CHECK_CONCURRENCY
+    // 并发检测多个房间，若等目录探测/磁盘检查/取流这些异步步骤做完再判额度，同一轮一起
+    // 开播的房间会全部通过检查，实际并发数超过 maxConcurrentRecordings。
+    if (this.recordingsHeld() >= this.settings().maxConcurrentRecordings) {
+      const err = new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: room.id, retryable: true });
+      this.raiseAlert('warning', 'recorder', err);
+      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
+      return false;
+    }
     this.starting.add(room.id);
     try {
       return await this.maybeStartRecordingInternal(room, status, opts);
     } finally {
       this.starting.delete(room.id);
     }
+  }
+
+  /** 已占用的录制额度：已落库的在录 + 正在启动但尚未产生录制行的房间。 */
+  private recordingsHeld(): number {
+    let starting = 0;
+    for (const id of this.starting) if (!this.active.has(id)) starting += 1;
+    return this.services.recordings.activeCount() + starting;
   }
 
   private async maybeStartRecordingInternal(room: Room, status: { streamSessionId?: string; streamTitle?: string }, opts: { manual?: boolean } = {}): Promise<boolean> {
@@ -481,14 +525,8 @@ export class RecorderManager {
       return false;
     }
 
-    if (this.services.recordings.activeCount() >= settings.maxConcurrentRecordings) {
-      const err = new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: room.id, retryable: true });
-      this.raiseAlert('warning', 'recorder', err);
-      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: err });
-      return false;
-    }
-
     if (settings.recordingDirectory.length > 0) {
+      await this.assertRecordingDirectoryUsable(settings.recordingDirectory, room.id);
       const space = await this.services.diskGuard.inspect(settings.recordingDirectory);
       const total = space.totalBytes || 1;
       const low = space.freeBytes < settings.diskGuard.minFreeBytes || (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
@@ -910,7 +948,7 @@ export class RecorderManager {
     const alert = this.services.alerts.create({
       level,
       source,
-      message: `${err.code}: ${err.message}`,
+      message: err.message,
       occurredAt: this.services.clock.iso(),
       roomId: err.roomId,
       errorCode: err.code,

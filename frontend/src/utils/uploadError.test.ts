@@ -11,6 +11,8 @@ describe('classifyUploadError', () => {
     { input: 'OpenList 后台上传失败：任务不存在', code: 'OPENLIST_TASK_NOT_FOUND' },
     { input: 'OpenList 后台上传已取消：用户取消', code: 'OPENLIST_TASK_FAILED' },
     { input: 'OpenList 认证失败：Invalid token', code: 'OPENLIST_AUTH_FAILED' },
+    { input: 'OpenList 认证失败：账号或密码（令牌）错误，请到设置中核对后重新上传（WebDAV PUT 401）', code: 'OPENLIST_AUTH_FAILED' },
+    { input: 'OpenList 认证失败：账号被拒绝访问，请检查账号或目标目录权限（创建目录 HTTP 403）', code: 'OPENLIST_AUTH_FAILED' },
     { input: 'WebDAV PUT 405: Method Not Allowed', code: 'WEBDAV_405' },
     { input: 'WebDAV PUT 504: Gateway Timeout', code: 'WEBDAV_504' },
     { input: '源文件已删除，无法上传', code: 'SOURCE_DELETED' },

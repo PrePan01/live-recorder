@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
-import { OPENLIST_2FA_REQUIRED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
+import { OPENLIST_2FA_REQUIRED, OPENLIST_AUTH_FAILED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
 
 async function waitFor(fn: () => boolean, timeoutMs = 8000): Promise<void> {
   const start = Date.now();
@@ -164,6 +164,42 @@ describe('OpenList 成功后删除本地源文件', () => {
     await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
     await expect(access(file)).resolves.toBeUndefined();
     expect(services.recordings.get(rec.id)?.filePath).toBe(file);
+  });
+
+  it('allows a manual upload while automatic upload is disabled (自动上传开关不影响录制历史页手动上传)', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const { rec } = await createRecording(services, 'manual-noauto');
+    // 关闭「自动上传」，但 OpenList 本身已配置好（地址 + 令牌）。
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: false, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u', deleteSourceAfterUpload: false } } as never);
+    await services.secretStore.set('openlist.token', 'tok');
+
+    // 自动上传仍受开关约束：关闭时录制完成不入队。
+    expect(await services.uploader.enqueue(rec.id, { automatic: true })).toBeNull();
+
+    // 手动上传是显式操作，与开关无关。
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
+    await waitFor(() => services.uploader.uploadRepo.get(res.json().upload.id)?.status === 'ok');
+    await app.close();
+  });
+
+  it('still refuses a manual upload when OpenList is not configured at all', async () => {
+    const services = newServices();
+    services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const { rec } = await createRecording(services, 'manual-noconf');
+
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
+    expect(res.statusCode).toBe(500);
+    // 报错必须指向真正的缺失项，不能再说「未启用」（开关已与手动上传无关）。
+    expect(res.json().error.message).toContain('OpenList 未配置');
+    await app.close();
   });
 
   it('never deletes a source when OpenList reports an upload failure', async () => {
@@ -669,6 +705,55 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     expect(signalWasAbortedWhileWaiting).toBe(false);
   });
 
+  it('reports wrong credentials as a non-retryable auth failure (401 不再退避重试)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-auth-'));
+    const file = path.join(dir, 'u.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient();
+    const orig = globalThis.fetch;
+    // 账号/密码错误：OpenList 对 MKCOL 与 PUT 一律回 401。
+    globalThis.fetch = (async () => new Response('', { status: 401 })) as typeof fetch;
+    let message = '';
+    try {
+      await client.put('https://dav.example.com/dav/x.flv', file, 'u', 'wrong', () => undefined);
+    } catch (err) {
+      message = (err as Error).message;
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(message).toContain(OPENLIST_AUTH_FAILED);
+    // 失败原因必须点明凭据问题，而不是一个裸的 HTTP 状态码。
+    expect(message).toContain('账号或密码（令牌）错误');
+  });
+
+  it('fails an upload immediately with the credential reason instead of "等待重试"', async () => {
+    const services = newServices();
+    // 客户端在凭据被拒时抛出标识错误（与 RealWebDavClient 一致）。
+    services.uploader = new UploadManager(services, {
+      async put() {
+        throw new Error(`${OPENLIST_AUTH_FAILED}：账号或密码（令牌）错误，请到设置中核对后重新上传（WebDAV PUT 401）`);
+      },
+    });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-authf-'));
+    const file = path.join(dir, 'auth.flv');
+    await writeFile(file, 'data');
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9400', displayName: 'auth' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'auth1', streamTitle: 't' });
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as never);
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}', username: 'u' } } as never);
+    await services.secretStore.set('openlist.token', 'wrong');
+
+    const job = await services.uploader.enqueue(rec.id);
+    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'failed');
+    const after = services.uploader.uploadRepo.get(job!.id)!;
+    // 直接失败：不得进入 5s/15s/45s 退避（否则界面显示「等待重试」）。
+    expect(after.error).toContain('账号或密码');
+    expect(after.error).not.toContain('自动重试');
+    // 失败不动本地源文件。
+    await expect(access(file)).resolves.toBeUndefined();
+  });
+
   it('treats an ambiguous PUT 504 as success when PROPFIND confirms the complete remote file', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-dav-verify-'));
     const file = path.join(dir, 'verified.flv');
@@ -976,16 +1061,38 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     const orig = globalThis.fetch;
     let mkcolAttempts = 0;
     globalThis.fetch = (async (input, init) => {
-      if (init?.method === 'MKCOL') { mkcolAttempts += 1; return new Response('', { status: 403 }); }
+      if (init?.method === 'MKCOL') { mkcolAttempts += 1; return new Response('', { status: 500 }); }
       if (init?.method === 'PROPFIND') return new Response('', { status: 207 });
       return new Response('', { status: 500 });
     }) as typeof fetch;
     try {
-      await expect(client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV MKCOL 403');
+      await expect(client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive')).rejects.toThrow('WebDAV MKCOL 500');
       expect(mkcolAttempts).toBeGreaterThan(0);
     } finally {
       globalThis.fetch = orig;
     }
+  });
+
+  it('put: MKCOL 403（无写目录权限）→ 归为不可重试的访问被拒，而非通用 MKCOL 错误', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-mkcol-403-'));
+    const file = path.join(dir, 'a.flv');
+    await writeFile(file, 'flvdata');
+    const client = new RealWebDavClient({ multipartEnabled: false, taskApiEnabled: false });
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_input, init) => {
+      if (init?.method === 'MKCOL') return new Response('', { status: 403 });
+      return new Response('', { status: 500 });
+    }) as typeof fetch;
+    let message = '';
+    try {
+      await client.put('https://dav.example.com/dav/archive/sub/a.flv', file, 'u', 'p', () => undefined, 'https://dav.example.com/dav/archive');
+    } catch (err) {
+      message = (err as Error).message;
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(message).toContain(OPENLIST_AUTH_FAILED);
+    expect(message).toContain('拒绝访问');
   });
 
   it('put: 远端目录被删除后再次上传会重新执行 MKCOL（避免资源不存在）', async () => {

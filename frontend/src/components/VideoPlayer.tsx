@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Spin } from "antd";
 import mpegts from "mpegts.js";
 import { previewWsUrl } from "../api/client";
@@ -15,14 +15,27 @@ export interface VideoPlayerProps {
   muted?: boolean;
   /** 平台：douyin 无 Cookie 受限时加载超时给明确提示 */
   platform?: "bilibili" | "douyin";
+  /** 竖屏墙：不写死宽高比，画面撑满容器高度并按真实比例显示。 */
+  fill?: boolean;
+  /** 直播墙窗口模式中供重复格子镜像主画面。 */
+  onVideoElementChange?: (element: HTMLVideoElement | null) => void;
 }
 
 export default function VideoPlayer({
   roomId,
   muted = true,
   platform,
+  fill = false,
+  onVideoElementChange,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const attachVideoRef = useCallback(
+    (element: HTMLVideoElement | null) => {
+      videoRef.current = element;
+      onVideoElementChange?.(element);
+    },
+    [onVideoElementChange],
+  );
   // 重连时保留同一个 video 元素，避免清空用户已调整的音量和当前画面。
   const hasEverPlayedRef = useRef(false);
   const currentRoomIdRef = useRef(roomId);
@@ -136,7 +149,10 @@ export default function VideoPlayer({
       hasPlayed = false;
       const instance = mpegts.createPlayer(
         { type: "flv", url: previewWsUrl(roomId), isLive: true },
-        { enableStashBuffer: false, liveBufferLatencyChasing: true },
+        {
+          enableStashBuffer: false,
+          liveBufferLatencyChasing: true,
+        },
       );
       player = instance;
       instance.attachMediaElement(videoRef.current);
@@ -189,7 +205,12 @@ export default function VideoPlayer({
 
   return (
     <div
-      style={{ position: "relative", background: "#000", overflow: "hidden" }}
+      style={{
+        position: "relative",
+        background: "#000",
+        overflow: "hidden",
+        ...(fill ? { height: "100%" } : null),
+      }}
     >
       {state === "loading" && !hasEverPlayedRef.current && (
         <div
@@ -222,7 +243,7 @@ export default function VideoPlayer({
         </div>
       )}
       <video
-        ref={videoRef}
+        ref={attachVideoRef}
         controls
         muted={muted}
         autoPlay
@@ -232,7 +253,10 @@ export default function VideoPlayer({
         onPlaying={() => setState("playing")}
         style={{
           width: "100%",
-          aspectRatio: "16 / 9",
+          // 竖屏墙不预设比例：占满格子，画面按流自己的宽高比留边显示。
+          ...(fill
+            ? { height: "100%", objectFit: "contain" as const }
+            : { aspectRatio: "16 / 9" }),
           display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />

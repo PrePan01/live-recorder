@@ -126,7 +126,8 @@ rmSync(bundle, { recursive: true, force: true });
 if (process.env.LR_SKIP_BACKEND_RESTORE !== '1') {
   console.log('[package] 恢复后端完整依赖（npm ci）…');
   try {
-    run('npm', ['ci'], backendDir);
+    // --include=dev：外部环境若带 NODE_ENV=production，npm ci 只装生产依赖，开发环境会缺 tsc/vitest。
+    run('npm', ['ci', '--include=dev'], backendDir);
   } catch {
     console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
   }

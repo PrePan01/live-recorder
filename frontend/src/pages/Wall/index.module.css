@@ -2,6 +2,32 @@
   min-width: 0;
 }
 
+.gridSelector :global(.ant-radio-button-wrapper),
+.gridSelector :global(.ant-radio-button-wrapper-checked) {
+  min-width: 78px;
+}
+
+/* 副标题只提供能力提示，不额外引入边框或色块，以免抢走布局切换本身的注意力。 */
+.gridOptionLabel {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  line-height: 1;
+}
+
+.gridOptionTitle {
+  font-size: 12px;
+}
+
+.gridOptionLabel small {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  opacity: 0.55;
+}
+
 .videoArea:fullscreen,
 .fullscreen {
   background: var(--lr-bg);
@@ -42,4 +68,24 @@
 .fullscreen video {
   max-height: calc(100dvh / var(--wall-rows) - 2px);
   object-fit: contain;
+}
+
+/*
+ * 竖屏布局：页面变成占满内容区高度的一列，网格吃掉头部剩下的全部高度。
+ * 这样单行格子不需要写死像素高度（换字号/主题不会错位），也不会撑出滚动条。
+ */
+.fillPage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.fillPage :global(.lr-page-header) {
+  flex: 0 0 auto;
+}
+
+.fillPage .videoArea {
+  flex: 1 1 auto;
+  min-height: 0;
 }

@@ -567,6 +567,43 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       `);
     },
   },
+  {
+    // 监控卡片要展示「最高可录」：未登录 B站 时平台只给低清晰度，存下来才能在录制前告知用户，
+    // 而不是等录完翻历史才发现画质不符。与 current_stream_title 同为检测派生的缓存字段。
+    version: 31,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'available_qualities'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN available_qualities TEXT;`);
+    },
+  },
+  {
+    // 告警消息不再拼接错误码（errorCode 已独立存储，UI 也不再展示），
+    // 清理存量库里带 `CODE: ` 前缀的历史消息，避免升级后仍显示令人困惑的英文错误码。
+    version: 32,
+    up: (db) => {
+      const rows = db.prepare(`SELECT id, message FROM alerts WHERE message LIKE '%: %'`).all() as Array<{ id: string; message: string }>;
+      const update = db.prepare('UPDATE alerts SET message = ? WHERE id = ?');
+      for (const row of rows) {
+        const stripped = row.message.replace(/^[A-Z][A-Z_]{4,}: /, '');
+        if (stripped !== row.message) update.run(stripped, row.id);
+      }
+    },
+  },
+  {
+    // 开播预测把「录制起点」当成弱开播证据参与计算，而录制起点来自录制历史。
+    // 录制历史不能随配置搬运（会在历史页里造出假记录），所以单独存一份只服务预测的证据，
+    // 换机/导入后预测才能和在原机器上算的一致。
+    version: 33,
+    sql: `
+      CREATE TABLE IF NOT EXISTS prediction_recording_sessions (
+        room_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        stream_session_id TEXT,
+        PRIMARY KEY(room_id, started_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_prediction_recording_sessions_room ON prediction_recording_sessions(room_id, started_at DESC);
+    `,
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

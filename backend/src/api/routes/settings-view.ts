@@ -1,7 +1,7 @@
 import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, SettingsView } from '../../types/index.js';
-import { DOUYIN_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { notificationPreference } from './notifications.js';
 
 export async function settingsView(services: Services): Promise<SettingsView> {
@@ -9,6 +9,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
   const settings: AppSettings = stored ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
   const passwordSet = await services.secretStore.has(MAIL_PASSWORD_KEY);
   const hasDouyinCookie = await services.secretStore.has(DOUYIN_COOKIE_KEY);
+  const hasBilibiliCookie = await services.secretStore.has(BILIBILI_COOKIE_KEY);
   const mail = { ...settings.mail, passwordSet };
   return {
     recordingDirectory: settings.recordingDirectory,
@@ -21,6 +22,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     diskGuard: settings.diskGuard,
     mail,
     douyinCookie: { hasCookie: hasDouyinCookie },
+    bilibiliCookie: { hasCookie: hasBilibiliCookie },
     theme: settings.theme ?? 'system',
     notifications: notificationPreference(services),
     pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),

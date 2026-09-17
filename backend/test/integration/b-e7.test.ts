@@ -137,7 +137,7 @@ describe('B-E7 error code catalog (v1.2, 19 codes)', () => {
     expect(room.monitorState).toBe('failed');
     expect(room.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
     expect(room.lastError?.retryable).toBe(false);
-    expect(services.alerts.list().some((a) => a.message.includes('PLATFORM_ACCESS_RESTRICTED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'PLATFORM_ACCESS_RESTRICTED')).toBe(true);
     await app.close();
   });
 });
@@ -164,16 +164,16 @@ describe('B-E7 migration upgrade', () => {
   it('reopens an on-disk DB, applies nothing new and preserves data', async () => {
     const file = path.join(await mkdtemp(path.join(tmpdir(), 'lr-mig-')), 'live-recorder.db');
     let db = openDatabase(file);
-    expect(runMigrations(db)).toBe(30);
+    expect(runMigrations(db)).toBe(33);
     const room = new RoomRepository(db).create({ platform: 'bilibili', url: 'https://live.bilibili.com/9000', displayName: '旧数据' });
     const rec = new RecordingRepository(db).create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sx', streamTitle: '旧录制' });
-    expect(currentSchemaVersion(db)).toBe(30);
+    expect(currentSchemaVersion(db)).toBe(33);
     db.close();
 
     db = openDatabase(file);
-    expect(currentSchemaVersion(db)).toBe(30);
+    expect(currentSchemaVersion(db)).toBe(33);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(30);
+    expect(currentSchemaVersion(db)).toBe(33);
     const rooms = new RoomRepository(db);
     expect(rooms.list()).toHaveLength(1);
     expect(rooms.get(room.id)?.displayName).toBe('旧数据');

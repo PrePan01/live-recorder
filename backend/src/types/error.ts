@@ -5,6 +5,7 @@ export type ErrorCode =
   | 'DOUYIN_COOKIE_EXPIRED'
   | 'PLATFORM_CHANGED'
   | 'DIRECTORY_NOT_WRITABLE'
+  | 'RECORDING_DIRECTORY_INVALID'
   | 'DISK_SPACE_INSUFFICIENT'
   | 'CONCURRENT_LIMIT_REACHED'
   | 'RECORDING_NOT_AVAILABLE'
@@ -28,6 +29,7 @@ export type ErrorCode =
   | 'PIPELINE_CONFIG_INVALID'
   | 'CHECK_FAILED'
   | 'CONFIG_INVALID'
+  | 'CONFIG_EXPORT_FAILED'
   | 'RECORDING_EMPTY'
   | 'RECORDING_REMUX_FAILED';
 
@@ -112,6 +114,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'DIAGNOSTIC_CONFLICT':
       return 409;
     case 'DIRECTORY_NOT_WRITABLE':
+    case 'RECORDING_DIRECTORY_INVALID':
       return 422;
     case 'SMTP_SEND_FAILED':
       return 502;
@@ -121,6 +124,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'SERVICE_UNAVAILABLE':
       return 503;
     case 'CONFIG_LOAD_FAILED':
+    case 'CONFIG_EXPORT_FAILED':
       return 500;
     case 'RESOURCE_NOT_FOUND':
       return 404;

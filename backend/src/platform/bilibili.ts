@@ -136,9 +136,12 @@ export class BilibiliAdapter implements PlatformAdapter {
     return { ...(uname ? { uname } : {}), ...(title ? { title } : {}) };
   }
 
-  /** 取流：优先 http_stream/flv + avc；在全部可用 codec 中选择最接近目标档位的流。
-   *  #xxx 修复：不再只取首个有 URL 的 codec（常为最高档/原画）——选择 actualQn ≤ target 的最高档，
-   *  若无可选（目标档不可用）则取最低可用档，保证「选 360p/720p 不会录成原画」。 */
+  /** 取流：优先 http_stream/flv + avc；在全部 codec 中选择最接近目标档位的流。
+   *
+   *  画质一律以 `current_qn` 为准：那是服务端对本次 `qn` 请求的实际答复，最终 URL 里的 `qn` 参数
+   *  与它一致。`accept_qn` 只是该流「支持」的档位清单，**匿名请求同样会列出 10000（原画）**——
+   *  用它推断实际画质会把「服务端其实只给了超清」谎报成「原画」，用户看到原画却录到低档。
+   *  实测（未登录，qn=10000）：accept_qn=[10000,400,250] 而 current_qn=250、URL qn=250。 */
   private pickStream(data: BiliPlayResponse, targetQn: number): { url: string; format: 'flv' | 'hls'; actualQn: number } | null {
     const streams = data.data?.playurl_info?.playurl?.stream ?? [];
     const ordered = [...streams].sort((a, b) => rankProtocol(a.protocol_name) - rankProtocol(b.protocol_name));
@@ -148,17 +151,16 @@ export class BilibiliAdapter implements PlatformAdapter {
       for (const fmt of formats) {
         const codecs = [...(fmt.codec ?? [])].sort((a, b) => rankCodec(a.codec_name) - rankCodec(b.codec_name));
         for (const codec of codecs) {
-          const current = codec.current_qn ?? 0;
-          const acceptable = codec.accept_qn ?? [current];
-          const picked = pickQn(acceptable, targetQn);
+          const granted = codec.current_qn ?? 0;
           const info = codec.url_info?.[0];
           if (!info?.host || !codec.base_url) continue;
           const isFlv = fmt.format_name === 'flv' || codec.base_url.includes('.flv');
           const candidate: { url: string; format: 'flv' | 'hls'; actualQn: number } = {
             url: `${info.host}${codec.base_url}${info.extra ?? ''}`,
             format: isFlv ? 'flv' : 'hls',
-            actualQn: picked || current,
+            actualQn: granted,
           };
+          // 多个 codec 的 current_qn 通常相同（画质由请求参数协商），此处仅作稳健的择优。
           if (!best || betterQnMatch(candidate.actualQn, best.actualQn, targetQn)) best = candidate;
         }
       }
@@ -166,17 +168,26 @@ export class BilibiliAdapter implements PlatformAdapter {
     return best;
   }
 
+  /**
+   * 「可用档位」= 该流支持的档位 ∩ 本次服务端实际授予的上限（current_qn）。
+   * 不做这层过滤时，匿名用户也会被告知「可用原画」，与本适配器的实际取流结果矛盾。
+   */
   private availableQns(data: BiliPlayResponse): number[] {
     const set = new Set<number>();
+    let ceiling = 0;
     for (const stream of data.data?.playurl_info?.playurl?.stream ?? []) {
       for (const fmt of stream.format ?? []) {
         for (const codec of fmt.codec ?? []) {
           for (const qn of codec.accept_qn ?? []) set.add(qn);
-          if (codec.current_qn) set.add(codec.current_qn);
+          if (codec.current_qn) {
+            set.add(codec.current_qn);
+            ceiling = Math.max(ceiling, codec.current_qn);
+          }
         }
       }
     }
-    return [...set].sort((a, b) => b - a);
+    if (ceiling <= 0) return [...set].sort((a, b) => b - a);
+    return [...set].filter((qn) => qn <= ceiling).sort((a, b) => b - a);
   }
 
   async checkLiveStatus(roomUrl: string, cookie?: string): Promise<LiveStatusResult> {
@@ -202,7 +213,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     }
     const hasStream = Boolean(data.data.playurl_info?.playurl?.stream?.length);
     if (!hasStream) {
-      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查 Cookie 配置', { retryable: false }).toObject() };
+      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查B站授权', { retryable: false }).toObject() };
     }
     // B站每次开播的 live_time 不同，用它标识本场直播，避免把同一房间的多次开播误判为同一场。
     const liveTime = data.data.live_time;
@@ -214,7 +225,7 @@ export class BilibiliAdapter implements PlatformAdapter {
       ...(startedAt ? { platformStartedAt: startedAt } : {}),
       streamTitle: title,
       ...(uname ? { displayName: uname } : {}),
-      availableQualities: this.availableQns(data).map(qnToQuality),
+      availableQualities: [...new Set(this.availableQns(data).map(qnToQuality))],
     };
   }
 
@@ -233,7 +244,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     }
     const picked = this.pickStream(data, BILI_QN[quality]);
     if (!picked) {
-      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '无法获取直播流，可能需要 Cookie 或该房间受限', { retryable: false });
+      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '无法获取直播流，请检查B站授权或该房间访问限制', { retryable: false });
     }
     return {
       url: picked.url,
@@ -261,14 +272,6 @@ function rankCodec(name: string | undefined): number {
   if (name === 'avc') return 0;
   if (name === 'hevc') return 1;
   return 2;
-}
-
-function pickQn(accept: number[], target: number): number {
-  const sorted = [...accept].sort((a, b) => b - a);
-  const exactOrLower = sorted.find((q) => q <= target);
-  // 目标档位不可用时的回退：取最低可用档（最接近目标），而不是最高档（原画）——
-  // 否则设置 360p/720p 录制而房间未提供该档时会直接录成原画（PrePan：非原画录制历史仍显示原画）。
-  return exactOrLower ?? sorted[sorted.length - 1] ?? 0;
 }
 
 /** 档位匹配比较：a 优于 b 当且仅当——a ≤ target（命中目标或更低）时优先；同侧取更接近 target 的。 */

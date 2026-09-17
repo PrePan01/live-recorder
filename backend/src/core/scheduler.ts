@@ -111,6 +111,16 @@ export class Scheduler {
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
   }
 
+  /**
+   * B站授权更新后的复检：B站 的登录态只影响可选清晰度档位，不会返回凭证失效错误，
+   * 因此无需抖音那样的熔断复位，仅等待旧 Cookie 的在途请求收口后重新发起检测。
+   */
+  async recheckBilibiliRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.list().filter((room) => room.platform === 'bilibili');
+    await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
+  }
+
   private markDouyinCookieExpired(): void {
     if (this.douyinCookieExpired) return;
     this.douyinCookieExpired = true;
@@ -128,7 +138,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: 'warning',
       source: 'platform',
-      message: 'DOUYIN_COOKIE_EXPIRED: 抖音授权已失效，请到设置页重新授权',
+      message: '抖音授权已失效，请到设置页重新授权',
       occurredAt: now,
       errorCode: 'DOUYIN_COOKIE_EXPIRED',
     });
@@ -198,7 +208,7 @@ export class Scheduler {
         ? err
         : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
       this.setCheckFailure(room.id, appErr.toObject());
-      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
       this.services.events.emit({ type: 'alert:created', data: alert });
     }
   }
@@ -227,6 +237,12 @@ export class Scheduler {
       this.services.rooms.setCurrentStreamTitle(
         room.id,
         status.status === 'live' ? status.streamTitle ?? null : null,
+      );
+      // 未登录 B站 时平台只给低清晰度。提前把「这个房间现在能录到什么」存下来，
+      // 让监控卡片在按下录制之前就能说明，而不是录完翻历史才发现画质不符。
+      this.services.rooms.setAvailableQualities(
+        room.id,
+        status.status === 'live' ? status.availableQualities ?? [] : [],
       );
     }
     if (status.status === 'live' || status.status === 'offline') {
@@ -287,7 +303,7 @@ export class Scheduler {
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.setCheckFailure(room.id, appErr.toObject());
-        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
       return;
@@ -308,7 +324,7 @@ export class Scheduler {
       status.status === 'restricted'
         ? room.platform === 'douyin'
           ? '平台访问受限，请检查抖音授权'
-          : '平台访问受限，请检查 Cookie 配置'
+          : '平台访问受限，请检查B站授权'
         : '平台请求失败',
       { roomId: room.id, retryable: status.status !== 'restricted' },
     ).toObject();
@@ -320,7 +336,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: status.status === 'restricted' ? 'warning' : 'error',
       source: 'platform',
-      message: `${err.code}: ${err.message}`,
+      message: err.message,
       occurredAt: this.services.clock.iso(),
       roomId: room.id,
       errorCode: err.code,

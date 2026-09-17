@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
+import { exportConfigToPath } from '../../src/api/routes/config.js';
 
 const HOST = { host: '127.0.0.1:43120' };
 
@@ -104,6 +105,29 @@ describe('v1.4 config export/import', () => {
     expect(services.settings.load()?.recordingDirectory).toBe(dir);
     expect(services.rooms.list().some((r) => r.url === 'https://live.douyin.com/9')).toBe(true);
     await app.close();
+  });
+
+  it('export-file keeps the native save dialog out of tests', async () => {
+    const { app } = buildApp(newServices());
+    const res = await app.inject({ method: 'POST', url: '/api/v1/config/export-file', headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, saved: false, path: null, reason: 'cancelled' });
+    await app.close();
+  });
+
+  it('writes the exported config to the chosen path with a .json suffix', async () => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-export-'));
+    services.alerts.create({ level: 'warning', source: 'disk', message: '空间低', occurredAt: '2026-08-28T00:00:00.000Z' });
+
+    const written = await exportConfigToPath(services, path.join(dir, 'backup'));
+    expect(path.basename(written)).toBe('backup.json');
+    const parsed = JSON.parse(await readFile(written, 'utf8'));
+    expect(parsed.config.version).toBe(1);
+    expect(parsed.config.alerts).toHaveLength(1);
+
+    const kept = await exportConfigToPath(services, path.join(dir, 'again.JSON'));
+    expect(path.basename(kept)).toBe('again.JSON');
   });
 
   it('rejects invalid settings on import', async () => {

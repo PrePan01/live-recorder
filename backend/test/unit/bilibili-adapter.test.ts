@@ -61,6 +61,17 @@ format_name: 'flv',
   };
 }
 
+/**
+ * 取 livePayload() 里的第一个 flv codec，便于按真实接口语义调整档位字段。
+ * `current_qn` 是服务端对本次 qn 请求的实际答复（真话），`accept_qn` 只是该流支持的档位清单。
+ */
+function flvCodec(payload: unknown): Record<string, unknown> {
+  const p = payload as {
+    data: { playurl_info: { playurl: { stream: { format: { codec: Record<string, unknown>[] }[] }[] } } };
+  };
+  return p.data.playurl_info.playurl.stream[0].format[0].codec[0];
+}
+
 describe('BilibiliAdapter', () => {
   it('validates, normalizes and parses room urls', () => {
     const a = new BilibiliAdapter();
@@ -82,6 +93,20 @@ describe('BilibiliAdapter', () => {
     expect(result.streamTitle).toBe('测试直播间');
     expect(result.displayName).toBe('测试主播');
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
+  });
+
+  /**
+   * accept_qn 里含 10000 不代表能拿到原画：未登录时服务端授予的上限（current_qn=250）才是真话。
+   * 不加这层过滤，界面/契约会告诉匿名用户「可用原画」。
+   */
+  it('availableQualities 不超过服务端实际授予的上限（未登录不谎报原画）', async () => {
+    const payload = livePayload();
+    flvCodec(payload).accept_qn = [10000, 400, 250];
+    flvCodec(payload).current_qn = 250;
+    const a = new BilibiliAdapter(mockFetcher(() => payload));
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(result.status).toBe('live');
+    expect(result.availableQualities).toEqual(['720p']);
   });
 
   it('uses a unique fallback session id when live_time is absent', async () => {
@@ -161,28 +186,46 @@ describe('BilibiliAdapter', () => {
     expect(result.headers?.['User-Agent']).toBeTruthy();
   });
 
-  it('getStreamUrl selects best quality not exceeding the target', async () => {
-    const a = new BilibiliAdapter(mockFetcher(() => livePayload()));
+  it('getStreamUrl reports the tier the server actually granted', async () => {
+    const payload = livePayload();
+    // 服务端按请求授予 400：current_qn 与最终 URL 的 qn 参数一致。
+    flvCodec(payload).current_qn = 400;
+    const a = new BilibiliAdapter(mockFetcher(() => payload));
     const result = await a.getStreamUrl('https://live.bilibili.com/123456', '1080p');
     expect(result.actualQuality).toBe('1080p');
   });
 
-  it('getStreamUrl falls back to the highest available when target is unavailable', async () => {
+  it('getStreamUrl falls back to the granted tier when the target is unavailable', async () => {
     const payload = livePayload();
-    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { accept_qn: number[] }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].accept_qn = [80];
-    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { current_qn: number }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].current_qn = 80;
+    flvCodec(payload).accept_qn = [80];
+    flvCodec(payload).current_qn = 80;
     const a = new BilibiliAdapter(mockFetcher(() => payload));
     const result = await a.getStreamUrl('https://live.bilibili.com/123456', 'original');
     expect(result.actualQuality).toBe('360p');
   });
 
-  it('getStreamUrl 选非原画档位：目标档不可用时回退到最低可用而非原画（PrePan 缺陷）', async () => {
+  /**
+   * 回归：未登录时 accept_qn 依然会列出 10000（原画），但服务端只给 250（超清）。
+   * 曾用 accept_qn 推断画质 → 历史页显示「原画」而文件其实是超清，且 expectedQuality 一致性
+   * 提示也不会触发（谎报与设置一致）。必须以 current_qn 为准。
+   */
+  it('getStreamUrl 未登录时报告服务端实际授予的档位而非 accept_qn 里的原画（回归）', async () => {
     const payload = livePayload();
-    // 房间不提供 360p（accept_qn 无 80），且首个 codec 为原画档（current=10000）。
-    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { accept_qn: number[] }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].accept_qn = [10000, 400, 150];
-    (payload as { data: { playurl_info: { playurl: { stream: { format: { codec: { current_qn: number }[] }[] }[] } } } }).data.playurl_info.playurl.stream[0].format[0].codec[0].current_qn = 10000;
+    // 实测匿名响应：accept_qn=[10000,400,250]、current_qn=250、URL 的 qn=250。
+    flvCodec(payload).accept_qn = [10000, 400, 250];
+    flvCodec(payload).current_qn = 250;
     const a = new BilibiliAdapter(mockFetcher(() => payload));
-    // 请求 360p：回退到最低可用 150（720p），而不是原画 10000。
+    const result = await a.getStreamUrl('https://live.bilibili.com/123456', 'original');
+    expect(result.actualQuality).toBe('720p');
+    expect(result.actualQuality).not.toBe('original');
+  });
+
+  it('getStreamUrl reports the granted tier even when it exceeds the requested one', async () => {
+    const payload = livePayload();
+    // 服务端可能给得比请求更高（匿名实测：请求 qn=150 仍返回 current_qn=250）。
+    flvCodec(payload).accept_qn = [10000, 400, 250];
+    flvCodec(payload).current_qn = 250;
+    const a = new BilibiliAdapter(mockFetcher(() => payload));
     const result = await a.getStreamUrl('https://live.bilibili.com/123456', '360p');
     expect(result.actualQuality).toBe('720p');
   });
@@ -190,7 +233,7 @@ describe('BilibiliAdapter', () => {
   it('getStreamUrl 多 codec 时选择最接近目标档位的流（而非首个原画 codec）', async () => {
     const payload = livePayload();
     const p = payload as { data: { playurl_info: { playurl: { stream: { format: { codec: Array<Record<string, unknown>> }[] }[] }[] } } };
-    // 构造两个 codec：第一个仅原画（accept=[10000]），第二个含 720p（accept=[10000,150] current=150）。
+    // 构造两个 codec：第一个仅原画（current=10000），第二个服务端授予 720p（current=150）。
     p.data.playurl_info.playurl.stream[0].format[0].codec = [
       { codec_name: 'avc', current_qn: 10000, accept_qn: [10000], base_url: '/live/avc_orig.flv', url_info: [{ host: 'https://b1.example.com', extra: '' }] },
       { codec_name: 'hevc', current_qn: 150, accept_qn: [10000, 150], base_url: '/live/hevc_720.flv', url_info: [{ host: 'https://b2.example.com', extra: '' }] },

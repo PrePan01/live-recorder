@@ -59,6 +59,26 @@ describe('Scheduler', () => {
     expect(services.rooms.get(room.id)!.currentStreamTitle).toBeNull();
   });
 
+  /**
+   * 监控卡片要在录制前说明「这个房间最高能录到什么」。离线时必须清空，
+   * 否则会把上一场的档位当成当前状态展示（未登录 B站 时尤其误导）。
+   */
+  it('stores the qualities the room can actually record and clears them once offline', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播B' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', availableQualities: ['720p'] },
+      { status: 'offline' },
+    ]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.availableQualities).toEqual(['720p']);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.availableQualities).toEqual([]);
+  });
+
   it('emits one live-started event only for an offline-to-live transition with all notification gates enabled', async () => {
     const { services } = newServices();
     services.settings.save({
@@ -254,6 +274,8 @@ describe('Scheduler', () => {
 
     services.scheduler.start();
     await settle(clock, 60_000);
+    // 启动链路含真实磁盘 I/O（保存目录校验 + 建目录），记录可能晚于一次 settle 才出现，按状态等待。
+    await waitFor(() => services.recordings.list().items.length === 1);
     const rec = services.recordings.list().items[0]!;
     await waitFor(() => services.manager.isRoomActive(room.id) && services.recordings.get(rec.id)!.state === 'recording');
     expect(services.recordings.list().items).toHaveLength(1);
@@ -275,7 +297,8 @@ describe('Scheduler', () => {
     expect(after.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
     const alerts = services.alerts.list({ unresolvedOnly: true });
     expect(alerts[0]!.level).toBe('warning');
-    expect(alerts[0]!.message).toContain('PLATFORM_ACCESS_RESTRICTED');
+    expect(alerts[0]!.errorCode).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(alerts[0]!.message).toBe('平台访问受限，请检查B站授权');
   });
 
   it('manual triggerImmediateCheck re-records the same broadcast after a manual stop', async () => {
@@ -498,7 +521,7 @@ describe('Scheduler', () => {
     const after = services.rooms.get(room.id)!;
     expect(after.monitorState).toBe('failed');
     expect(after.lastError?.code).toBe('RECORDING_START_FAILED');
-    expect(services.alerts.list().some((a) => a.message.includes('RECORDING_START_FAILED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'RECORDING_START_FAILED')).toBe(true);
   });
 
   it('does not leave a room stuck in checking when checkLiveStatus throws (DB 缺列/平台异常容错)', async () => {
@@ -523,7 +546,7 @@ describe('Scheduler', () => {
     expect(after.monitorState).toBe('failed');
     expect(after.lastError?.code).toBe('CHECK_FAILED');
     expect(after.lastError?.message).toContain('no such column');
-    expect(services.alerts.list().some((a) => a.message.includes('CHECK_FAILED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'CHECK_FAILED')).toBe(true);
   });
 
   it('passes the configured douyin cookie to the adapter on check', async () => {

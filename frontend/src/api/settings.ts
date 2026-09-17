@@ -20,6 +20,13 @@ export async function fetchDouyinCookieStatus(): Promise<DouyinCookieStatus> {
   return data.status;
 }
 
+export type BilibiliCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
+
+export async function fetchBilibiliCookieStatus(): Promise<BilibiliCookieStatus> {
+  const { data } = await http.get<{ status: BilibiliCookieStatus }>('/settings/bilibili-cookie-status', { timeout: 12_000 });
+  return data.status;
+}
+
 export async function updateSettings(input: SettingsInput): Promise<Settings> {
   const { data } = await http.put<{ settings: Settings }>('/settings', input);
   return data.settings;

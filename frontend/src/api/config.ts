@@ -2,6 +2,7 @@ import { http } from './client';
 import type {
   BrowseDirectoriesResult,
   ExportConfig,
+  ExportConfigFileResult,
   ImportConfigInput,
   ImportResult,
 } from '../types/config';
@@ -22,6 +23,12 @@ export async function pickDirectory(): Promise<string | null> {
 export async function exportConfig(): Promise<ExportConfig> {
   const { data } = await http.get<{ config: ExportConfig }>('/config/export');
   return data.config;
+}
+
+export async function exportConfigToFile(): Promise<ExportConfigFileResult> {
+  // 系统“另存为”窗口等待用户选择或取消，不受普通请求的 10 秒超时限制。
+  const { data } = await http.post<ExportConfigFileResult>('/config/export-file', undefined, { timeout: 0 });
+  return data;
 }
 
 export async function importConfig(input: ImportConfigInput): Promise<ImportResult> {

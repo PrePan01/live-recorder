@@ -20,6 +20,12 @@ export interface PredictionCoverage {
   firstCheckedAt: string;
   lastCheckedAt: string;
 }
+
+/** 录制起点：预测把它当成弱开播证据（source: 'recording'）。 */
+export interface PredictionRecordingSession {
+  startedAt: string;
+  streamSessionId: string | null;
+}
 export type CalibrationProfile = Partial<Record<PredictionConfidence, { hits: number; total: number }>>;
 
 /** Local-only forecast bookkeeping. It never participates in recording or platform polling. */
@@ -90,6 +96,39 @@ export class PredictionCalibrationRepository {
       result.set(row.roomId, items);
     }
     return result;
+  }
+
+  /** 录制起点证据（按房间分组，供预测与导出使用）。 */
+  recordingSessions(roomIds: string[], from: string): Map<string, PredictionRecordingSession[]> {
+    const result = new Map<string, PredictionRecordingSession[]>();
+    if (roomIds.length === 0) return result;
+    const placeholders = roomIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT room_id AS roomId, started_at AS startedAt, stream_session_id AS streamSessionId FROM prediction_recording_sessions WHERE room_id IN (${placeholders}) AND started_at >= ? ORDER BY started_at`,
+      )
+      .all(...roomIds, from) as Array<PredictionRecordingSession & { roomId: string }>;
+    for (const row of rows) {
+      const items = result.get(row.roomId) ?? [];
+      items.push({ startedAt: row.startedAt, streamSessionId: row.streamSessionId });
+      result.set(row.roomId, items);
+    }
+    return result;
+  }
+
+  /** 记录一条录制起点证据；已存在同一时刻则忽略（导入幂等的关键）。 */
+  recordRecordingSession(roomId: string, startedAt: string, streamSessionId: string | null): boolean {
+    return (
+      this.db
+        .prepare('INSERT OR IGNORE INTO prediction_recording_sessions (room_id, started_at, stream_session_id) VALUES (?, ?, ?)')
+        .run(roomId, startedAt, streamSessionId).changes > 0
+    );
+  }
+
+  allRecordingSessions(): Array<PredictionRecordingSession & { roomId: string }> {
+    return this.db
+      .prepare('SELECT room_id AS roomId, started_at AS startedAt, stream_session_id AS streamSessionId FROM prediction_recording_sessions ORDER BY started_at')
+      .all() as Array<PredictionRecordingSession & { roomId: string }>;
   }
 
   pendingBefore(targetDate: string): PredictionForecast[] {

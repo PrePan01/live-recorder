@@ -11,17 +11,32 @@ import { PlatformLogoTag } from "../PlatformLogo.tsx";
 import LiveStatusTag from "../LiveStatusTag.tsx";
 import type { Room } from "../../types/room.ts";
 import styles from "./index.module.css";
+import VideoMirror from "./VideoMirror.tsx";
 
 const VideoPlayer = lazy(() => import("../VideoPlayer.tsx"));
 
 export interface WallLiveCardProps {
   room: Room;
+  /** 竖屏布局：卡片撑满格子，画面按真实比例自适应而非套 16:9。 */
+  fill?: boolean;
+  /** 所在槽位：同一个直播间可以占多格，移除时要用槽位区分。 */
+  slot: number;
+  isMirror?: boolean;
+  mirrorSource?: HTMLVideoElement | null;
+  wallFullscreen?: boolean;
+  onVideoElementChange?: (element: HTMLVideoElement | null) => void;
   onFullscreen: (room: Room) => void;
-  onRemove: (room: Room) => void;
+  onRemove: (room: Room, slot: number) => void;
 }
 
 export default function Index({
   room,
+  fill = false,
+  slot,
+  isMirror = false,
+  mirrorSource,
+  wallFullscreen = false,
+  onVideoElementChange,
   onFullscreen,
   onRemove,
 }: WallLiveCardProps) {
@@ -60,7 +75,7 @@ export default function Index({
 
   return (
     <div
-      className={styles.card}
+      className={`${styles.card} ${fill ? styles.cardFill : ""}`}
       onMouseEnter={showTitle}
       onMouseMove={showTitle}
       onMouseLeave={hideTitle}
@@ -78,7 +93,8 @@ export default function Index({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            padding: "0 8px",
+            padding: "0 5px",
+            maxWidth: "8rem",
           }}
         >
           {room.displayName}
@@ -87,14 +103,16 @@ export default function Index({
         <Space size={0}>
           {room.lastLiveStatus === "live" ? (
             <>
-              <Button
-                className={styles.textButton}
-                type="text"
-                size="small"
-                aria-label={muted ? "取消静音" : "静音"}
-                icon={muted ? <MutedOutlined /> : <SoundOutlined />}
-                onClick={() => setMuted((value) => !value)}
-              ></Button>
+              {!isMirror && (
+                <Button
+                  className={styles.textButton}
+                  type="text"
+                  size="small"
+                  aria-label={muted ? "取消静音" : "静音"}
+                  icon={muted ? <MutedOutlined /> : <SoundOutlined />}
+                  onClick={() => setMuted((value) => !value)}
+                />
+              )}
               <Button
                 className={`${styles.textButton} ${styles.fullscreenButton}`}
                 type="text"
@@ -115,7 +133,7 @@ export default function Index({
           />
           <Popconfirm
             title="移除该路？录制不受影响"
-            onConfirm={() => onRemove(room)}
+            onConfirm={() => onRemove(room, slot)}
           >
             <Button
               className={styles.textButton}
@@ -131,19 +149,28 @@ export default function Index({
         <Suspense
           fallback={<Spin style={{ display: "block", margin: "40px auto" }} />}
         >
-          <VideoPlayer
-            key={`${room.id}-${reloadTick}`}
-            roomId={room.id}
-            platform={room.platform}
-            muted={muted}
-          />
+          {isMirror ? (
+            <VideoMirror
+              source={mirrorSource ?? null}
+              layoutVersion={wallFullscreen}
+            />
+          ) : (
+            <VideoPlayer
+              key={`${room.id}-${reloadTick}`}
+              roomId={room.id}
+              platform={room.platform}
+              muted={isMirror ? true : muted}
+              fill={fill}
+              onVideoElementChange={onVideoElementChange}
+            />
+          )}
         </Suspense>
       ) : (
         <div
           style={{
             display: "grid",
             placeItems: "center",
-            aspectRatio: "16 / 9",
+            ...(fill ? { height: "100%" } : { aspectRatio: "16 / 9" }),
             background: "var(--lr-bg-secondary, rgba(0,0,0,0.04))",
           }}
         >

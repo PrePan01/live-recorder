@@ -23,6 +23,8 @@ export interface NativeBridge {
   getWindowVisible(): Promise<boolean>;
   startDouyinAuthorization(): Promise<void>;
   onDouyinAuthorized(cb: () => void): () => void;
+  startBilibiliAuthorization(): Promise<void>;
+  onBilibiliAuthorized(cb: () => void): () => void;
   quit(): Promise<void>;
   notify(title: string, body: string): Promise<void>;
   pickDirectory(): Promise<string | null>;
@@ -101,6 +103,20 @@ class TauriBridge implements NativeBridge {
     let disposed = false;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const off = await listen<void>('douyin:authorized', () => { if (!disposed) cb(); });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }
+
+  async startBilibiliAuthorization(): Promise<void> {
+    await this.invoke<void>('start_bilibili_authorization');
+  }
+
+  onBilibiliAuthorized(cb: () => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<void>('bilibili:authorized', () => { if (!disposed) cb(); });
       if (disposed) off(); else unlisten = off;
     });
     return () => { disposed = true; unlisten?.(); };
@@ -264,6 +280,12 @@ class BrowserBridge implements NativeBridge {
   }
 
   onDouyinAuthorized(_cb: () => void): () => void { return () => {}; }
+
+  async startBilibiliAuthorization(): Promise<void> {
+    throw new Error('应用内授权仅限桌面客户端');
+  }
+
+  onBilibiliAuthorized(_cb: () => void): () => void { return () => {}; }
 
   async quit(): Promise<void> {
     /* 浏览器模式忽略 */
