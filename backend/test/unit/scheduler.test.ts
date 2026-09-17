@@ -297,7 +297,8 @@ describe('Scheduler', () => {
     expect(after.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
     const alerts = services.alerts.list({ unresolvedOnly: true });
     expect(alerts[0]!.level).toBe('warning');
-    expect(alerts[0]!.message).toContain('PLATFORM_ACCESS_RESTRICTED');
+    expect(alerts[0]!.errorCode).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(alerts[0]!.message).toBe('平台访问受限，请检查B站授权');
   });
 
   it('manual triggerImmediateCheck re-records the same broadcast after a manual stop', async () => {
@@ -520,7 +521,7 @@ describe('Scheduler', () => {
     const after = services.rooms.get(room.id)!;
     expect(after.monitorState).toBe('failed');
     expect(after.lastError?.code).toBe('RECORDING_START_FAILED');
-    expect(services.alerts.list().some((a) => a.message.includes('RECORDING_START_FAILED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'RECORDING_START_FAILED')).toBe(true);
   });
 
   it('does not leave a room stuck in checking when checkLiveStatus throws (DB 缺列/平台异常容错)', async () => {
@@ -545,7 +546,7 @@ describe('Scheduler', () => {
     expect(after.monitorState).toBe('failed');
     expect(after.lastError?.code).toBe('CHECK_FAILED');
     expect(after.lastError?.message).toContain('no such column');
-    expect(services.alerts.list().some((a) => a.message.includes('CHECK_FAILED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'CHECK_FAILED')).toBe(true);
   });
 
   it('passes the configured douyin cookie to the adapter on check', async () => {

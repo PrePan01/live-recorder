@@ -576,6 +576,19 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN available_qualities TEXT;`);
     },
   },
+  {
+    // 告警消息不再拼接错误码（errorCode 已独立存储，UI 也不再展示），
+    // 清理存量库里带 `CODE: ` 前缀的历史消息，避免升级后仍显示令人困惑的英文错误码。
+    version: 32,
+    up: (db) => {
+      const rows = db.prepare(`SELECT id, message FROM alerts WHERE message LIKE '%: %'`).all() as Array<{ id: string; message: string }>;
+      const update = db.prepare('UPDATE alerts SET message = ? WHERE id = ?');
+      for (const row of rows) {
+        const stripped = row.message.replace(/^[A-Z][A-Z_]{4,}: /, '');
+        if (stripped !== row.message) update.run(stripped, row.id);
+      }
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

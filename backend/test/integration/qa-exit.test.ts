@@ -165,7 +165,7 @@ describe('QA stage-B exit: security', () => {
     expect(room.monitorState).toBe('failed');
     expect(room.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
     expect(room.lastError?.retryable).toBe(false);
-    const alert = services.alerts.list().find((a) => a.message.includes('PLATFORM_ACCESS_RESTRICTED'));
+    const alert = services.alerts.list().find((a) => a.errorCode === 'PLATFORM_ACCESS_RESTRICTED');
     expect(alert).toBeDefined();
     expect(alert!.level).toBe('warning');
     await app.close();
@@ -265,7 +265,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     expect(room.monitorState).toBe('idle');
     expect(room.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
     expect(services.recordings.list({ roomId }).items).toHaveLength(0);
-    expect(services.alerts.list().some((a) => a.message.includes('DISK_SPACE_INSUFFICIENT'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
     await app.close();
   });
 });

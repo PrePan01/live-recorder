@@ -138,7 +138,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: 'warning',
       source: 'platform',
-      message: 'DOUYIN_COOKIE_EXPIRED: 抖音授权已失效，请到设置页重新授权',
+      message: '抖音授权已失效，请到设置页重新授权',
       occurredAt: now,
       errorCode: 'DOUYIN_COOKIE_EXPIRED',
     });
@@ -208,7 +208,7 @@ export class Scheduler {
         ? err
         : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
       this.setCheckFailure(room.id, appErr.toObject());
-      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
       this.services.events.emit({ type: 'alert:created', data: alert });
     }
   }
@@ -303,7 +303,7 @@ export class Scheduler {
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.setCheckFailure(room.id, appErr.toObject());
-        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: `${appErr.code}: ${appErr.message}`, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
       return;
@@ -336,7 +336,7 @@ export class Scheduler {
     const alert = this.services.alerts.create({
       level: status.status === 'restricted' ? 'warning' : 'error',
       source: 'platform',
-      message: `${err.code}: ${err.message}`,
+      message: err.message,
       occurredAt: this.services.clock.iso(),
       roomId: room.id,
       errorCode: err.code,

@@ -62,6 +62,7 @@ import ResetSettingsCard from "../../components/ResetSettingsCard";
 import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes, formatTime } from "../../utils/format";
+import { ALERT_LEVEL_META, alertSourceText } from "../../utils/alertText";
 import type { SettingsInput } from "../../types/settings";
 import type { Platform } from "../../types/room";
 import type { NotificationEventPreference } from "../../types/notification";
@@ -72,11 +73,6 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: "dark", label: "深色" },
   { value: "system", label: "跟随系统" },
 ];
-const LEVEL_COLOR: Record<string, string> = {
-  info: "blue",
-  warning: "orange",
-  error: "red",
-};
 const CHECK_COLOR: Record<SelfCheckStatus, string> = {
   ok: "success",
   fail: "error",
@@ -1204,7 +1200,7 @@ export default function SettingsPage() {
                     a.resolved
                       ? [<Tag key="done">已读</Tag>]
                       : [
-                          a.roomId && a.failureReason ? (
+                          a.roomId && a.errorCode ? (
                             <Button
                               key="retry"
                               size="small"
@@ -1241,21 +1237,16 @@ export default function SettingsPage() {
                   <List.Item.Meta
                     title={
                       <Space>
-                        <Tag color={LEVEL_COLOR[a.level]}>{a.level}</Tag>
+                        <Tag color={ALERT_LEVEL_META[a.level].color}>
+                          {ALERT_LEVEL_META[a.level].text}
+                        </Tag>
                         <Typography.Text>{a.message}</Typography.Text>
                       </Space>
                     }
                     description={
-                      <Space orientation="vertical" size={0}>
-                        <Typography.Text type="secondary">
-                          {a.source} · {formatTime(a.occurredAt)}
-                        </Typography.Text>
-                        {a.failureReason ? (
-                          <Typography.Text type="danger">
-                            [{a.failureReason.code}] {a.failureReason.message}
-                          </Typography.Text>
-                        ) : null}
-                      </Space>
+                      <Typography.Text type="secondary">
+                        {alertSourceText(a.source)} · {formatTime(a.occurredAt)}
+                      </Typography.Text>
                     }
                   />
                 </List.Item>

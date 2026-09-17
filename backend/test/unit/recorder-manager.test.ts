@@ -260,7 +260,7 @@ describe('RecorderManager', () => {
     const r3State = services.rooms.get(r3.id)!;
     expect(r3State.monitorState).toBe('idle');
     expect(r3State.lastError?.code).toBe('CONCURRENT_LIMIT_REACHED');
-    expect(services.alerts.list().some((a) => a.message.includes('CONCURRENT_LIMIT_REACHED'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'CONCURRENT_LIMIT_REACHED')).toBe(true);
     expect(services.manager.isRoomActive(r1.id)).toBe(true);
     expect(services.manager.isRoomActive(r2.id)).toBe(true);
     services.scheduler.stop();
@@ -368,7 +368,7 @@ describe('RecorderManager', () => {
     expect(services.rooms.get(room.id)!.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent.some((m) => m.subject.includes('磁盘空间不足'))).toBe(true);
-    expect(services.alerts.list().some((a) => a.message.includes('DISK_SPACE_INSUFFICIENT'))).toBe(true);
+    expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
   });
 
   it('stopRecording completes the current segment with code 1000', async () => {

@@ -796,12 +796,12 @@ describe('REST contract v1.1 (fake stack)', () => {
     const { app } = buildApp(services);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'r' });
     const err = new AppError('RECORDING_START_FAILED', '启动失败', { roomId: room.id });
-    const alert = services.alerts.create({ level: 'error', source: 'recorder', message: `${err.code}: ${err.message}`, occurredAt: services.clock.iso(), roomId: room.id, errorCode: err.code });
+    const alert = services.alerts.create({ level: 'error', source: 'recorder', message: err.message, occurredAt: services.clock.iso(), roomId: room.id, errorCode: err.code });
     const alerts = await app.inject({ method: 'GET', url: '/api/v1/alerts?unresolvedOnly=1', headers: { host: '127.0.0.1:43120' } });
     const item = alerts.json().alerts.find((a: { id: string }) => a.id === alert.id);
     expect(item.roomId).toBe(room.id);
     expect(item.errorCode).toBe('RECORDING_START_FAILED');
-    expect(item.message).toContain('RECORDING_START_FAILED');
+    expect(item.message).toBe('启动失败');
     await app.close();
   });
 

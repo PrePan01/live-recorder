@@ -939,7 +939,7 @@ export class RecorderManager {
     const alert = this.services.alerts.create({
       level,
       source,
-      message: `${err.code}: ${err.message}`,
+      message: err.message,
       occurredAt: this.services.clock.iso(),
       roomId: err.roomId,
       errorCode: err.code,

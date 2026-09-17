@@ -15,6 +15,7 @@ import { useServiceStore } from "../stores/serviceStore";
 import { useAppearanceStore } from "../stores/appearanceStore";
 import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
 import { formatBytes, formatRelative } from "../utils/format";
+import { alertSourceText } from "../utils/alertText";
 import GlobalSearch from "./GlobalSearch";
 
 export default function StatusBar() {
@@ -142,7 +143,7 @@ export default function StatusBar() {
                     a.resolved
                       ? []
                       : [
-                          a.roomId && a.failureReason ? (
+                          a.roomId && a.errorCode ? (
                             <Button
                               key="retry"
                               size="small"
@@ -171,16 +172,10 @@ export default function StatusBar() {
                   <List.Item.Meta
                     title={a.message}
                     description={
-                      <Space orientation="vertical" size={0}>
-                        <span>
-                          {a.source} · {formatRelative(a.occurredAt)}
-                        </span>
-                        {a.failureReason ? (
-                          <Typography.Text type="danger">
-                            [{a.failureReason.code}] {a.failureReason.message}
-                          </Typography.Text>
-                        ) : null}
-                      </Space>
+                      <span>
+                        {alertSourceText(a.source)} ·{" "}
+                        {formatRelative(a.occurredAt)}
+                      </span>
                     }
                   />
                 </List.Item>
