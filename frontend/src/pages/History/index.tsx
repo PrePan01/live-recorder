@@ -501,7 +501,7 @@ export default function History() {
                     type="link"
                     onClick={() => handleUploadErrorDetail(r)}
                   >
-                    查看详情
+                    查看
                   </Button>
                 </Space>
               )
@@ -680,9 +680,7 @@ export default function History() {
         />
         <DatePicker.RangePicker
           value={dateRange}
-          onChange={(v) =>
-            setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)
-          }
+          onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
         />
         <Button loading={exporting} onClick={() => void handleExportCsv()}>
           导出 CSV

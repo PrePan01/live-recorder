@@ -248,7 +248,7 @@ export default function Wall() {
     <div className={`lr-page ${fill ? styles.fillPage : ""}`}>
       <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
-          多路直播墙
+          直播墙
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
           <MemphisRadioGroup
