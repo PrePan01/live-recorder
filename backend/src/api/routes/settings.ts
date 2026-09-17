@@ -429,3 +429,47 @@ export function nativePickDirectory(): Promise<string | null> {
 function decodeDialogPath(raw: string): string {
   return process.platform === 'win32' ? Buffer.from(raw, 'base64').toString('utf8') : raw;
 }
+
+export type SaveFilePick =
+  | { status: 'saved'; path: string }
+  | { status: 'cancelled' }
+  | { status: 'unsupported' };
+
+/** 系统原生“另存为”选择器；用户取消返回 cancelled，无原生对话框可用时返回 unsupported。 */
+export function nativePickSaveFile(defaultName: string): Promise<SaveFilePick> {
+  return new Promise((resolve) => {
+    let command: string;
+    let args: string[];
+    if (process.platform === 'darwin') {
+      command = 'osascript';
+      args = ['-e', `POSIX path of (choose file name with prompt "选择配置文件保存位置" default name "${defaultName}")`];
+    } else if (process.platform === 'win32') {
+      command = 'powershell';
+      args = [
+        '-NoProfile',
+        '-Command',
+        `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.SaveFileDialog; $f.FileName='${defaultName}'; $f.DefaultExt='json'; $f.Filter='JSON 文件 (*.json)|*.json'; if($f.ShowDialog() -eq 'OK'){ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.FileName)) }`,
+      ];
+    } else {
+      command = 'zenity';
+      args = ['--file-selection', '--save', '--confirm-overwrite', `--filename=${defaultName}`];
+    }
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let out = '';
+    let unsupported = false;
+    child.stdout.on('data', (d) => (out += String(d)));
+    child.on('error', () => {
+      unsupported = true;
+      resolve({ status: 'unsupported' });
+    });
+    child.on('close', () => {
+      if (unsupported) return;
+      const picked = out.trim();
+      if (picked.length === 0) {
+        resolve({ status: 'cancelled' });
+        return;
+      }
+      resolve({ status: 'saved', path: decodeDialogPath(picked) });
+    });
+  });
+}

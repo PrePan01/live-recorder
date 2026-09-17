@@ -45,7 +45,11 @@ import {
   type BilibiliCookieStatus,
   type DouyinCookieStatus,
 } from "../../api/settings";
-import { exportConfig, importConfig } from "../../api/config";
+import {
+  exportConfig,
+  exportConfigToFile,
+  importConfig,
+} from "../../api/config";
 import {
   fetchSelfCheck,
   type SelfCheckItem,
@@ -597,20 +601,30 @@ export default function SettingsPage() {
     debounceRef.current = setTimeout(() => void persist(all), 500);
   };
 
+  /** 无系统“另存为”窗口可用时的兜底：走浏览器下载。 */
+  const downloadConfig = async () => {
+    const config = await exportConfig();
+    const blob = new Blob([JSON.stringify({ config }, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `live-recorder-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success("配置已导出");
+  };
+
   const onExport = async () => {
     setExporting(true);
     try {
-      const config = await exportConfig();
-      const blob = new Blob([JSON.stringify({ config }, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `live-recorder-config-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      message.success("配置已导出（密码/Cookie 不含值，导入后需重配）");
+      const result = await exportConfigToFile();
+      if (result.saved) {
+        message.success(`配置已导出到 ${result.path}`);
+      } else if (result.reason === "no-dialog") {
+        await downloadConfig();
+      }
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "导出失败",

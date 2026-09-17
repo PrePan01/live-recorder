@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { nativePickDirectory } from '../../src/api/routes/settings.js';
+import { nativePickDirectory, nativePickSaveFile } from '../../src/api/routes/settings.js';
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
@@ -31,6 +31,40 @@ function run(
 function powershellOutput(value: string): Buffer {
   return Buffer.from(`${Buffer.from(value, 'utf8').toString('base64')}\r\n`);
 }
+
+const saveDialog = () => nativePickSaveFile('live-recorder-config-2026-09-17.json');
+
+describe('nativePickSaveFile', () => {
+  it('restores the base64 path PowerShell reports on Windows', async () => {
+    const windowsPath = 'C:\\Users\\张三\\Desktop\\配置备份.json';
+    const result = await run('win32', saveDialog, (child) => {
+      child.stdout.emit('data', powershellOutput(windowsPath));
+      child.emit('close');
+    });
+    expect(result).toEqual({ status: 'saved', path: windowsPath });
+  });
+
+  it('reads the plain POSIX path osascript reports on macOS', async () => {
+    const result = await run('darwin', saveDialog, (child) => {
+      child.stdout.emit('data', '/Users/me/Desktop/配置备份.json\n');
+      child.emit('close');
+    });
+    expect(result).toEqual({ status: 'saved', path: '/Users/me/Desktop/配置备份.json' });
+  });
+
+  it('treats an empty result as a cancelled dialog', async () => {
+    const result = await run('darwin', saveDialog, (child) => child.emit('close'));
+    expect(result).toEqual({ status: 'cancelled' });
+  });
+
+  it('reports a missing dialog binary as unsupported', async () => {
+    const result = await run('linux', saveDialog, (child) => {
+      child.emit('error', new Error('spawn zenity ENOENT'));
+      child.emit('close');
+    });
+    expect(result).toEqual({ status: 'unsupported' });
+  });
+});
 
 describe('nativePickDirectory', () => {
   it('restores the base64 directory PowerShell reports on Windows', async () => {

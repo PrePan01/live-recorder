@@ -17,6 +17,7 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   NETWORK_UNAVAILABLE: '网络不可用',
   RECORDING_FILE_CORRUPTED: '录制文件损坏',
   CONFIG_LOAD_FAILED: '配置加载失败',
+  CONFIG_EXPORT_FAILED: '配置导出失败，请检查所选位置是否可写',
   // RESOURCE_NOT_FOUND 不设固定文案：v1.2 口径 FE 直接渲染服务端 message
   STREAM_FORMAT_CHANGED: '流格式变更，已自动切换续录',
   PREVIEW_LIMIT_REACHED: '预览数已达上限（9 路）',

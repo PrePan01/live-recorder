@@ -29,6 +29,7 @@ export type ErrorCode =
   | 'PIPELINE_CONFIG_INVALID'
   | 'CHECK_FAILED'
   | 'CONFIG_INVALID'
+  | 'CONFIG_EXPORT_FAILED'
   | 'RECORDING_EMPTY'
   | 'RECORDING_REMUX_FAILED';
 
@@ -123,6 +124,7 @@ export function httpStatusFor(code: ErrorCode): number {
     case 'SERVICE_UNAVAILABLE':
       return 503;
     case 'CONFIG_LOAD_FAILED':
+    case 'CONFIG_EXPORT_FAILED':
       return 500;
     case 'RESOURCE_NOT_FOUND':
       return 404;

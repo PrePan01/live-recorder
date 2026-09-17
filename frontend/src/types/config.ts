@@ -24,6 +24,14 @@ export interface ExportConfig {
   alerts: Alert[];
 }
 
+/** v1.4：导出到用户选定路径的结果（reason 为 no-dialog 时需前端兜底下载） */
+export interface ExportConfigFileResult {
+  ok: boolean;
+  saved: boolean;
+  path: string | null;
+  reason: 'cancelled' | 'no-dialog' | null;
+}
+
 /** v1.4：配置导入输入（settings 为完整视图，密钥值不导入） */
 export interface ImportConfigInput {
   version?: number;
