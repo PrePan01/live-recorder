@@ -4,7 +4,7 @@ import { AppError } from '../types/error.js';
 import type { RecorderManager } from './recorder-manager.js';
 import type { Services } from './services.js';
 import { dueSchedules } from '../api/routes/schedules.js';
-import { calculateLivePrediction, coversPredictionWindow, openingEvidenceInWindow } from './live-prediction.js';
+import { calculateLivePrediction, coversPredictionWindow, openingEvidenceInWindow, recordingCoverageIntervals, type PredictionCoverageInterval } from './live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const PLATFORM_CHECK_CONCURRENCY = 2;
@@ -365,7 +365,7 @@ export class Scheduler {
     const prediction = calculateLivePrediction({
       roomId, events, now, generatedAt: this.services.clock.iso(),
       calibration: this.services.predictionCalibration.profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000)).get(roomId),
-      coverage: this.services.predictionCalibration.intervals([roomId], from).get(roomId),
+      coverage: this.coverageWithRecordings(roomId, from, now),
     });
     // Retry at the current window's end even when the normal throttle has not
     // elapsed, so the next session can be considered without stale dates.
@@ -385,11 +385,38 @@ export class Scheduler {
     this.forecastRecordedFor.add(key);
   }
 
+  /**
+   * 监控覆盖 + 录制区间。录制中主播已经在播，期间不会再有新的开播，
+   * 因此录制区间等价于同等强度的覆盖——自动录制会暂停轮询，不补上这一段，
+   * 同一场提前开播会因为「有没有开自动录制」得到两种判定。
+   */
+  private coverageWithRecordings(roomId: string, from: string, now: number): PredictionCoverageInterval[] {
+    // 直接查而不是走 recordings.list：后者有 100 条上限，录制分段多的房间会被截断，
+    // 覆盖不完整又会把命中率带偏。
+    const recordings = this.services.db
+      .prepare('SELECT started_at AS startedAt, ended_at AS endedAt FROM recordings WHERE room_id = ? AND started_at >= ? ORDER BY started_at')
+      .all(roomId, from) as Array<{ startedAt: string; endedAt: string | null }>;
+    return [
+      ...(this.services.predictionCalibration.intervals([roomId], from).get(roomId) ?? []),
+      ...recordingCoverageIntervals(recordings, now),
+    ];
+  }
+
   private async finalizePastPredictions(): Promise<void> {
     const now = this.services.clock.now();
     const today = localDate(now);
     if (now - this.predictionsFinalizedAt < 60_000) return;
     this.predictionsFinalizedAt = now;
+    // 同一批里同房间只查一次录制。
+    const coverageCache = new Map<string, PredictionCoverageInterval[]>();
+    const coverageFor = (roomId: string): PredictionCoverageInterval[] => {
+      const cached = coverageCache.get(roomId);
+      if (cached) return cached;
+      const from60 = new Date(now - 60 * 24 * 60 * 60 * 1_000).toISOString();
+      const merged = this.coverageWithRecordings(roomId, from60, now);
+      coverageCache.set(roomId, merged);
+      return merged;
+    };
     for (const forecast of this.services.predictionCalibration.pendingBefore(today)) {
       if (!forecast.windowStartAt || !forecast.windowEndAt || !forecast.rawProbability) {
         this.services.predictionCalibration.resolve(forecast.id, 'unknown', this.services.clock.iso()); continue;
@@ -400,7 +427,7 @@ export class Scheduler {
       const events = this.services.liveEvents.listBetween(forecast.roomId, forecast.windowStartAt, new Date(end + 10 * 60_000).toISOString());
       const evidence = events.map(event => openingEvidenceInWindow(event,start,end));
       const opened = evidence.includes('hit');
-      const coverage = this.services.predictionCalibration.intervals([forecast.roomId], forecast.windowStartAt).get(forecast.roomId) ?? [];
+      const coverage = coverageFor(forecast.roomId);
       const ambiguous = evidence.includes('unknown');
       const outcome = opened ? 'hit' : !ambiguous && coversPredictionWindow(coverage, start, end) ? 'miss' : 'unknown';
       this.services.predictionCalibration.resolve(forecast.id, outcome, this.services.clock.iso());

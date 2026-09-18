@@ -145,6 +145,8 @@ export interface RoomInsight {
   prediction: {
     kind: "unavailable" | "observation" | "typical" | "next";
     basis: "daily" | "weekday" | "day_type" | "interval" | "all" | null;
+    intervalDays?: number | null;
+    intervalDaysMax?: number | null;
     nextDate: string | null;
     startTimestamp?: string | null;
     windowStartTimestamp?: string | null;
@@ -158,7 +160,6 @@ export interface RoomInsight {
     timeGranularity: "exact" | "quarter_hour" | "approximate" | "period" | null;
     windowStart: string | null;
     windowEnd: string | null;
-    expectedEndAt: string | null;
     slots: Array<{
       startAt: string;
       endAt: string;

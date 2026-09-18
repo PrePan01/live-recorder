@@ -25,6 +25,8 @@ export interface LivePrediction {
   roomId: string;
   kind: 'unavailable' | 'observation' | 'typical' | 'next';
   basis: 'daily' | 'weekday' | 'day_type' | 'interval' | 'all' | null;
+  intervalDays?: number | null;
+  intervalDaysMax?: number | null;
   nextDate: string | null;
   startTimestamp?: string | null;
   windowStartTimestamp?: string | null;
@@ -38,7 +40,6 @@ export interface LivePrediction {
   timeGranularity: 'exact' | 'quarter_hour' | 'approximate' | 'period' | null;
   windowStart: string | null;
   windowEnd: string | null;
-  expectedEndAt: string | null;
   slots: Array<{ startAt: string; endAt: string; likelihood: LivePredictionConfidence; probabilityKnown?: boolean }>;
   todayProbability: LivePredictionConfidence | null;
   likelihood: LivePredictionConfidence | null;

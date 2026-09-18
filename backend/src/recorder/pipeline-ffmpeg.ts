@@ -1,10 +1,7 @@
-import { spawn } from 'node:child_process';
-import { resolveBin } from '../utils/ffmpeg.js';
 import { mkdir, stat, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
-
-const FFMPEG_TIMEOUT_MS = 180_000;
+import { discardTemp, finalizeMp4, runFfmpegTracked } from './ffmpeg-run.js';
 
 export function ffmpegThreadCount(logicalCores = availableParallelism()): number {
   return Math.max(1, Math.min(4, Math.floor(Math.max(1, logicalCores) / 2)));
@@ -16,24 +13,10 @@ interface FfmpegResult {
   stderr: string;
 }
 
-export function runFfmpeg(args: string[], timeoutMs = FFMPEG_TIMEOUT_MS): Promise<FfmpegResult> {
-  return new Promise((resolve) => {
-    const child = spawn(resolveBin('ffmpeg'), args, { windowsHide: true });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      resolve({ ok: false, code: null, stderr: 'timeout' });
-    }, timeoutMs);
-    let stderr = '';
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve({ ok: false, code: -1, stderr: 'ffmpeg not found' });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0, code, stderr });
-    });
-  });
+/** 按进度判定卡死，慢盘上的大文件不会被固定超时打断。 */
+export async function runFfmpeg(args: string[]): Promise<FfmpegResult> {
+  const res = await runFfmpegTracked(args);
+  return { ok: res.ok, code: res.code, stderr: res.stderr };
 }
 
 export interface CoverResult {
@@ -72,17 +55,19 @@ export interface CompressResult {
   sizeBytes: number;
 }
 
-/** 压缩转封装：crf 为 null 时仅 remux（copy）；否则重编码 H.264。 */
+/** 压缩转封装：crf 为 null 时仅 remux（copy）；否则重编码 H.264。产物校验通过才落地，失败不留半成品。 */
 export async function compressOrRemux(inputPath: string, crf: number | null): Promise<CompressResult | null> {
   // mp4 且无需压缩：已是目标格式，无需处理（调用方标 skipped，不影响管线 finalStatus）。
   if (/\.mp4$/i.test(inputPath) && crf === null) return null;
   const outPath = inputPath.replace(/\.(flv|ts|mp4)$/i, crf === null ? '_remux.mp4' : '_c.mp4');
   if (outPath === inputPath) return null;
+  const tempPath = `${outPath}.part`;
+  await discardTemp(tempPath);
   const args = crf === null
-    ? ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outPath]
-    : ['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', outPath];
-  const res = await runFfmpeg(args, 300_000);
-  if (!res.ok) return null;
+    ? ['-y', '-i', inputPath, '-c', 'copy', '-f', 'mp4', tempPath]
+    : ['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath];
+  const res = await runFfmpeg(args);
+  if (!res.ok || !(await finalizeMp4(tempPath, outPath))) return null;
   const st = await stat(outPath).catch(() => null);
   return st ? { outPath, sizeBytes: st.size } : null;
 }
