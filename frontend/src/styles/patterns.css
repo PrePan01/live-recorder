@@ -410,6 +410,15 @@
 .lr-live-prediction-timeline__band--low {
   background: color-mix(in srgb, var(--lr-yellow) 28%, var(--lr-surface-alt));
 }
+/* 可能性算不出来（分母不足）：底色照旧，只叠一层斜纹，跟"算出来很低"区分开。
+   斜纹取底槽自己的颜色（--lr-surface-alt），看起来就是"这段还没填上"，并自动跟随主题。 */
+.lr-live-prediction-timeline__band--unknown {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--lr-surface-alt) 0 2px,
+    transparent 2px 6px
+  );
+}
 .lr-live-prediction-timeline__now {
   position: absolute;
   top: -3px;

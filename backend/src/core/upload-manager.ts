@@ -26,9 +26,14 @@ interface WebDavClientOptions {
   /** 优先使用 OpenList 官方后台任务上传，以获得服务端落盘进度。 */
   taskApiEnabled: boolean;
   taskPollIntervalMs: number;
+  /** 总等待上限，只作兜底：真正的失败判据是「进度长期无变化 + 确认期仍无文件」。 */
   taskPollTimeoutMs: number;
-  /** #228：后台上传任务进度长时间无变化的卡滞判定窗口；超过则用远端文件核验兜底判定。 */
+  /** 后台任务进度无变化的判定窗口；超过则先做远端核验。 */
   taskStallTimeoutMs: number;
+  /** 卡滞后的确认期：云端往往仍在写入，这期间周期性核验，仍无文件才算失败。 */
+  taskStallGraceMs: number;
+  /** 确认期内两次远端核验的最小间隔，避免每秒 PROPFIND。 */
+  taskVerifyIntervalMs: number;
   /** #229 分片并发上传：启用开关与参数（大小单位字节）。 */
   multipartEnabled: boolean;
   multipartThresholdBytes: number;
@@ -44,9 +49,13 @@ const DEFAULT_WEBDAV_OPTIONS: WebDavClientOptions = {
   verifyTimeoutMs: 20_000,
   taskApiEnabled: true,
   taskPollIntervalMs: 1_000,
-  // #228：后台上传任务等待上限 6h 过长 → 30min；配合 taskStallTimeoutMs 卡滞判定，避免 99% 无限挂起。
-  taskPollTimeoutMs: 30 * 60_000,
+  // 超大录像在「OpenList → 云盘」这段很容易跑过半小时，而任务确实还在推进。
+  // 总上限只作兜底（避免真挂死的任务永远占着队列），不再用它判失败；
+  // #228 想解决的「卡在 99% 无限挂起」由 taskStallTimeoutMs + 确认期承担。
+  taskPollTimeoutMs: 6 * 60 * 60_000,
   taskStallTimeoutMs: 10 * 60_000,
+  taskStallGraceMs: 30 * 60_000,
+  taskVerifyIntervalMs: 60_000,
   // #229 分片并发上传：≥50MB 走 multipart（8MB×4 并发），能力探测失败自动回退单 PUT。
   multipartEnabled: true,
   multipartThresholdBytes: 50 * 1024 * 1024,
@@ -79,6 +88,63 @@ function throwIfAuthFailure(res: Response, context: string): void {
     ? '账号或密码（令牌）错误，请到设置中核对后重新上传'
     : '账号被拒绝访问，请检查账号或目标目录权限';
   throw new Error(`${OPENLIST_AUTH_FAILED}：${hint}（${context} HTTP ${res.status}）`);
+}
+
+/**
+ * 等待云端落盘超时的标识错误。此时 OpenList 侧往往仍在后台上传，
+ * 自动重试只会把整个大文件再传一遍，因此交给用户核对后再决定（pump 据此不重试）。
+ */
+export const OPENLIST_TASK_TIMEOUT = 'OpenList 等待云端落盘超时';
+
+/** 兜底上限的人话写法：不足一小时按分钟说，避免出现「等待超过 0 小时」。 */
+function describeWaitCeiling(ms: number): string {
+  const hours = Math.round(ms / 3_600_000);
+  return hours >= 1 ? `${hours} 小时` : `${Math.max(1, Math.round(ms / 60_000))} 分钟`;
+}
+
+/**
+ * 「OpenList 后台落盘」的等待策略。
+ *
+ * 判失败只看**有没有进展**，不看已经等了多久：超大录像在慢速网盘上很容易超过半小时，
+ * 而任务确实还在推进，按总时长判失败会把它误杀（云端还在传，应用已经报错）。
+ * 进度长期不动时先做远端核验；核验不到再给一段确认期——反向代理/OpenList 端常常
+ * 已经收完数据、仍在写盘——确认期过完仍无文件才算失败。
+ *
+ * 时间函数可注入，便于按时间去确定性测试这套判定。
+ */
+export class TaskWaitPolicy {
+  private stalledSince: number | null = null;
+  private lastVerifyAt = 0;
+
+  constructor(
+    private readonly stallMs: number,
+    private readonly graceMs: number,
+    private readonly verifyIntervalMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  /** 每次轮询后调用；progressive 表示本次进度有变化（有进展就重新开始计时）。 */
+  observe(progressive: boolean): void {
+    this.stalledSince = progressive ? null : (this.stalledSince ?? this.now());
+  }
+
+  /** 卡滞后按间隔取一次远端核验机会；未卡滞或间隔未到返回 false。 */
+  dueForVerify(): boolean {
+    if (this.stalledSince === null) return false;
+    const now = this.now();
+    if (now - this.stalledSince < this.stallMs) return false;
+    if (now - this.lastVerifyAt < this.verifyIntervalMs) return false;
+    this.lastVerifyAt = now;
+    return true;
+  }
+
+  /** 卡滞与确认期都过完，才算真的失败。 */
+  get exhausted(): boolean {
+    return (
+      this.stalledSince !== null &&
+      this.now() - this.stalledSince >= this.stallMs + this.graceMs
+    );
+  }
 }
 
 /** 真实 WebDAV 上传：PUT 直传 OpenList（HTTP 基本认证，令牌作密码）。 */
@@ -256,10 +322,15 @@ export class RealWebDavClient implements WebDavClient {
     }
 
     onProgress(50);
+    const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const startedAt = Date.now();
+    const wait = new TaskWaitPolicy(
+      this.options.taskStallTimeoutMs,
+      this.options.taskStallGraceMs,
+      this.options.taskVerifyIntervalMs,
+    );
     let consecutivePollFailures = 0;
     let lastServerPct = -1;
-    let lastProgressChangeAt = Date.now();
     while (Date.now() - startedAt < this.options.taskPollTimeoutMs) {
       await this.delay(this.options.taskPollIntervalMs);
       try {
@@ -288,37 +359,36 @@ export class RealWebDavClient implements WebDavClient {
           throw new Error(`OpenList 后台上传${task.state === 'canceled' ? '已取消' : '失败'}${task.error ? `：${task.error}` : ''}`);
         }
         // #16：服务端任务虽未翻 failed，但已携带错误信息（如云盘「资源配额不足」/写入失败）——
-        // 立即透传失败，不再等 10min 卡滞判定，避免用户长时间困惑在固定百分比（QA/PrePan：卡 74% 困惑）。
+        // 立即透传失败，不再等卡滞判定，避免用户长时间困惑在固定百分比（QA/PrePan：卡 74% 困惑）。
         if (task.error) {
           throw new Error(`OpenList 后台上传失败：${task.error}`);
         }
-        // #228：进度卡滞判定——服务端任务仍在 running 但进度长时间无变化时，
-        // 用远端文件核验兜底：文件已完整落盘则判定成功，否则给出明确失败原因。
         // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded（OpenList 部分驱动不翻态）时，
-        // 立即远端核验即可判定成功，不必再等 taskStallTimeoutMs 卡滞窗口（避免「最终确认」长时间挂起）。
+        // 立即远端核验即可判定成功，不必再等卡滞窗口（避免「最终确认」长时间挂起）。
         if (serverPct >= 100) {
-          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) {
             onProgress(100);
             return true;
           }
         }
-        if (serverPct !== lastServerPct) {
-          lastServerPct = serverPct;
-          lastProgressChangeAt = Date.now();
-        } else if (Date.now() - lastProgressChangeAt >= this.options.taskStallTimeoutMs) {
-          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
-            onProgress(100);
-            return true;
-          }
-          throw new Error('OpenList 上传进度长时间无变化，请检查云端存储是否正常（文件可能未完整落盘）');
+        wait.observe(serverPct !== lastServerPct);
+        lastServerPct = serverPct;
+        // 进度长期不动时先核验远端；核验不到再给一段确认期——云端往往仍在写入，
+        // 确认期过完才判失败，避免把「慢慢在传」误杀成失败（云端还在传、应用已报错）。
+        if (wait.dueForVerify() && await this.remoteFileMatches(remotePath, size, authorization)) {
+          onProgress(100);
+          return true;
+        }
+        if (wait.exhausted) {
+          throw new Error(`${OPENLIST_TASK_TIMEOUT}：云端进度长时间无变化，文件也可能仍在写入，请稍后在 OpenList 核对`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('OpenList 后台上传') || message.startsWith('OpenList 上传进度') || message.includes(OPENLIST_AUTH_FAILED)) throw err;
+        if (message.startsWith('OpenList 后台上传') || message.includes(OPENLIST_TASK_TIMEOUT) || message.includes(OPENLIST_AUTH_FAILED)) throw err;
         consecutivePollFailures += 1;
         // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutivePollFailures >= 10) {
-          if (await this.remoteFileMatches(remotePath, size, `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`)) {
+          if (await this.remoteFileMatches(remotePath, size, authorization)) {
             onProgress(100);
             return true;
           }
@@ -326,7 +396,12 @@ export class RealWebDavClient implements WebDavClient {
         }
       }
     }
-    throw new Error('OpenList 后台上传任务等待超时');
+    // 兜底上限到点前再核验一次：OpenList 可能早已写完，只是任务状态没翻。
+    if (await this.remoteFileMatches(remotePath, size, authorization)) {
+      onProgress(100);
+      return true;
+    }
+    throw new Error(`${OPENLIST_TASK_TIMEOUT}：等待超过 ${describeWaitCeiling(this.options.taskPollTimeoutMs)}，文件可能仍在写入，请稍后在 OpenList 核对`);
   }
 
   /**
@@ -493,8 +568,12 @@ export class RealWebDavClient implements WebDavClient {
     const base = target ? target.root : '';
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString('base64')}`;
     const startedAt = Date.now();
+    const wait = new TaskWaitPolicy(
+      this.options.taskStallTimeoutMs,
+      this.options.taskStallGraceMs,
+      this.options.taskVerifyIntervalMs,
+    );
     let lastServerPct = -1;
-    let lastProgressChangeAt = Date.now();
     let consecutiveFailures = 0;
     while (Date.now() - startedAt < this.options.taskPollTimeoutMs) {
       await this.delay(this.options.taskPollIntervalMs);
@@ -509,25 +588,30 @@ export class RealWebDavClient implements WebDavClient {
         if (!res.ok || !payload.data) throw new Error('task poll failed');
         consecutiveFailures = 0;
         const serverPct = Math.max(0, Math.min(100, Number(payload.data.progress) || 0));
-        onProgress(Math.min(99, 50 + Math.floor(serverPct * 0.49)));
+        // 与单 PUT 路径一致：写入完成（serverPct=100）但任务未翻态时透传 100，让 FE 显示「最终确认」。
+        onProgress(serverPct >= 100 ? 100 : Math.min(99, 50 + Math.floor(serverPct * 0.49)));
         if (payload.data.state === 'succeeded') return;
         if (payload.data.state === 'failed' || payload.data.state === 'canceled') {
           throw new Error(`OpenList 分片合并/落盘${payload.data.state === 'canceled' ? '已取消' : '失败'}${payload.data.error ? `：${payload.data.error}` : ''}`);
+        }
+        // 与单 PUT 路径一致：任务未翻 failed 但已带错误信息时立即透传，不再空等。
+        if (payload.data.error) {
+          throw new Error(`OpenList 分片合并/落盘失败：${payload.data.error}`);
         }
         // #24：云盘写入完成（serverPct>=100）但任务未翻 succeeded 时，立即远端核验判定成功。
         if (serverPct >= 100) {
           if (await this.remoteFileMatches(remotePath, size, authorization)) return;
         }
-        if (serverPct !== lastServerPct) {
-          lastServerPct = serverPct;
-          lastProgressChangeAt = Date.now();
-        } else if (Date.now() - lastProgressChangeAt >= this.options.taskStallTimeoutMs) {
-          if (await this.remoteFileMatches(remotePath, size, authorization)) return;
-          throw new Error('OpenList 分片合并/落盘进度长时间无变化，请检查云端存储');
+        wait.observe(serverPct !== lastServerPct);
+        lastServerPct = serverPct;
+        // 与单 PUT 路径一致：判失败看有没有进展，不看总共等了多久。
+        if (wait.dueForVerify() && await this.remoteFileMatches(remotePath, size, authorization)) return;
+        if (wait.exhausted) {
+          throw new Error(`${OPENLIST_TASK_TIMEOUT}：分片合并/落盘进度长时间无变化，文件也可能仍在写入，请稍后在 OpenList 核对`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('OpenList 分片') || message.includes(OPENLIST_AUTH_FAILED)) throw err;
+        if (message.startsWith('OpenList 分片') || message.includes(OPENLIST_TASK_TIMEOUT) || message.includes(OPENLIST_AUTH_FAILED)) throw err;
         consecutiveFailures += 1;
         // 短暂的反向代理/网络抖动不应让已经在 OpenList 中运行的任务被误判失败。
         if (consecutiveFailures >= 10) {
@@ -536,7 +620,9 @@ export class RealWebDavClient implements WebDavClient {
         }
       }
     }
-    throw new Error('OpenList 分片合并/落盘等待超时');
+    // 兜底上限到点前再核验一次：OpenList 可能早已写完，只是任务状态没翻。
+    if (await this.remoteFileMatches(remotePath, size, authorization)) return;
+    throw new Error(`${OPENLIST_TASK_TIMEOUT}：分片合并/落盘等待超过 ${describeWaitCeiling(this.options.taskPollTimeoutMs)}，文件可能仍在写入，请稍后在 OpenList 核对`);
   }
 
   async put(remotePath: string, localPath: string, username: string, token: string, onProgress: (pct: number) => void, serverUrl?: string): Promise<void> {
@@ -953,6 +1039,13 @@ export class UploadManager {
       // 账号/密码（令牌）错误（401/403）：凭证不对时重试必然再被拒，
       // 直接落「失败」并点明凭据问题，不再走 5s/15s/45s 退避——否则用户只会看到「等待重试」，真正原因被淹没。
       if (message.includes(OPENLIST_AUTH_FAILED)) {
+        this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
+        this.emit(jobId);
+        return;
+      }
+      // 等待云端落盘超时：OpenList 侧往往仍在后台上传，自动重试只会把整个大文件再传一遍。
+      // 与凭证错误同理直接落失败，让用户核对远端后再决定，而不是反复重传。
+      if (message.includes(OPENLIST_TASK_TIMEOUT)) {
         this.repo.update(jobId, { status: 'failed', retryCount: job.retryCount + 1, error: message });
         this.emit(jobId);
         return;

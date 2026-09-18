@@ -46,6 +46,10 @@ import {
   type DouyinCookieStatus,
 } from "../../api/settings";
 import {
+  credentialStatus,
+  type CredentialStatus,
+} from "../../utils/credentialStatus";
+import {
   exportConfig,
   exportConfigToFile,
   importConfig,
@@ -112,8 +116,6 @@ function openExternalUrl(url: string): void {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
-
-type CredentialStatus = "authorized" | "invalid" | "unauthorized";
 
 const CREDENTIAL_PLATFORM_LABEL: Record<Platform, string> = {
   douyin: "抖音",
@@ -310,18 +312,14 @@ export default function SettingsPage() {
   const [bilibiliCookieStatus, setBilibiliCookieStatus] =
     useState<BilibiliCookieStatus | null>(null);
   // 状态驱动渲染：探测结果优先于「本地是否存过」，失效的凭证不该显示成已登录。
-  const douyinCredentialStatus: CredentialStatus =
-    douyinCookieStatus === "invalid"
-      ? "invalid"
-      : settings?.douyinCookie.hasCookie
-        ? "authorized"
-        : "unauthorized";
-  const bilibiliCredentialStatus: CredentialStatus =
-    bilibiliCookieStatus === "invalid"
-      ? "invalid"
-      : settings?.bilibiliCookie.hasCookie
-        ? "authorized"
-        : "unauthorized";
+  const douyinCredentialStatus = credentialStatus(
+    douyinCookieStatus,
+    settings?.douyinCookie.hasCookie ?? false,
+  );
+  const bilibiliCredentialStatus = credentialStatus(
+    bilibiliCookieStatus,
+    settings?.bilibiliCookie.hasCookie ?? false,
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");

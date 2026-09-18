@@ -79,6 +79,49 @@ describe('prediction calibration regressions', () => {
     expect(services.db.prepare('SELECT outcome FROM prediction_forecasts').get()).toEqual({ outcome: 'unknown' });
     services.db.close();
   });
+  it('counts a recording as coverage so an early opening settles as a miss', async () => {
+    const { services, room } = setup('2026-09-15T08:00:00');
+    services.predictionCalibration.recordForecast({
+      roomId: room.id,
+      targetDate: '2026-09-14',
+      probability: 'low',
+      rawProbability: 'high',
+      generatedAt: iso('2026-09-14', '08:00'),
+      windowStartAt: iso('2026-09-14', '20:00'),
+      windowEndAt: iso('2026-09-14', '20:30'),
+    });
+    // 主播 18:30 就开播（早于窗口），自动录制启动后轮询暂停，
+    // 所以窗口内没有任何 coverage interval。
+    services.liveEvents.record(room.id, iso('2026-09-14', '18:35'), { source: 'platform', platformStartedAt: iso('2026-09-14', '18:30') });
+    seedCoverage(services, room.id, iso('2026-09-14', '17:00'), iso('2026-09-14', '18:35'));
+    const recording = services.recordings.create({ roomId: room.id, roomName: '预测测试', platform: 'bilibili', streamSessionId: 's1', streamTitle: 't' });
+    services.recordings.update(recording.id, { startedAt: iso('2026-09-14', '18:30'), endedAt: iso('2026-09-14', '21:00') });
+
+    await finalize(services);
+    // 录制期间主播已经在播，不可能是"没盯着"：窗口内没有新开播 → miss，不是 unknown。
+    expect(services.predictionCalibration.profiles([room.id], '2026-09-01').get(room.id)).toEqual({ high: { hits: 0, total: 1 } });
+    services.db.close();
+  });
+  it('is exactly the missing recording that would have turned that day into an unknown', async () => {
+    const { services, room } = setup('2026-09-15T08:00:00');
+    services.predictionCalibration.recordForecast({
+      roomId: room.id,
+      targetDate: '2026-09-14',
+      probability: 'low',
+      rawProbability: 'high',
+      generatedAt: iso('2026-09-14', '08:00'),
+      windowStartAt: iso('2026-09-14', '20:00'),
+      windowEndAt: iso('2026-09-14', '20:30'),
+    });
+    services.liveEvents.record(room.id, iso('2026-09-14', '18:35'), { source: 'platform', platformStartedAt: iso('2026-09-14', '18:30') });
+    seedCoverage(services, room.id, iso('2026-09-14', '17:00'), iso('2026-09-14', '18:35'));
+
+    await finalize(services);
+    // 没有录制区间时覆盖不足，只能落 unknown —— 这正是"开不开自动录制结论不同"的来源。
+    expect(services.db.prepare('SELECT outcome FROM prediction_forecasts').get()).toEqual({ outcome: 'unknown' });
+    services.db.close();
+  });
+
   it('settles a fully monitored empty window as a miss in its raw bucket', async () => {
     const { services, room } = setup();
     services.predictionCalibration.recordForecast({

@@ -19,6 +19,8 @@ describe('classifyUploadError', () => {
     { input: 'OpenList 令牌未配置', code: 'TOKEN_MISSING' },
     { input: '配置或文件缺失', code: 'CONFIG_OR_FILE_MISSING' },
     { input: 'fetch failed: ENOTFOUND openlist.bspartner.top', code: 'NETWORK' },
+    { input: 'OpenList 等待云端落盘超时：等待超过 6 小时，文件可能仍在写入，请稍后在 OpenList 核对', code: 'OPENLIST_TASK_TIMEOUT' },
+    { input: 'OpenList 等待云端落盘超时：云端进度长时间无变化，文件也可能仍在写入', code: 'OPENLIST_TASK_TIMEOUT' },
     { input: 'OpenList 上传进度长时间无变化，请检查云端存储是否正常', code: 'STALLED' },
     { input: 'duplex option is required', code: 'LEGACY' },
   ];

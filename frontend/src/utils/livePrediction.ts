@@ -92,15 +92,24 @@ export function lastOpeningValue(
   const date = new Date(prediction.lastRecordedTimestamp);
   if (!Number.isFinite(date.getTime())) return prediction.lastRecordedAt;
   const calendarDay = (value: Date) => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
-  const weekStart = calendarDay(now) - ((now.getDay() + 6) % 7) * 86400000;
+  const nowDay = calendarDay(now);
   const dateDay = calendarDay(date);
+  const dayOffset = (dateDay - nowDay) / 86400000;
+  const weekStart = nowDay - ((now.getDay() + 6) % 7) * 86400000;
   const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()];
+  // 日期说法与预测文案统一：近三天用相对日，本周内用星期，更远用日历日。
   const label =
-    dateDay >= weekStart && dateDay < weekStart + 7 * 86400000
-      ? weekday
-      : date.getFullYear() === now.getFullYear()
-        ? `${date.getMonth() + 1}月${date.getDate()}日`
-        : `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+    dayOffset === 0
+      ? "今天"
+      : dayOffset === -1
+        ? "昨天"
+        : dayOffset === -2
+          ? "前天"
+          : dateDay >= weekStart && dateDay < weekStart + 7 * 86400000
+            ? weekday
+            : date.getFullYear() === now.getFullYear()
+              ? `${date.getMonth() + 1}月${date.getDate()}日`
+              : `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   return `${label} ${hhmm(date)}`;
 }
 export function predictionDisplayLikelihood(
@@ -108,6 +117,27 @@ export function predictionDisplayLikelihood(
   value: Prediction["likelihood"],
 ): "high" | "medium" | "low" {
   return prediction.probabilityKnown === true ? (value ?? "low") : "low";
+}
+/**
+ * 标签颜色的档位。刻意与详情里那句「预测准确性」同源，否则会出现
+ * 颜色说高、点开却写低的自相矛盾。缺少 accuracy 的旧响应仍走原口径。
+ */
+export function predictionDisplayLevel(
+  prediction: Pick<Prediction, "accuracy" | "probabilityKnown">,
+  value: Prediction["likelihood"],
+): "high" | "medium" | "low" {
+  switch (prediction.accuracy) {
+    case "high":
+    case "fairly_high":
+      return "high";
+    case "medium":
+      return "medium";
+    case "fairly_low":
+    case "low":
+      return "low";
+    default:
+      return predictionDisplayLikelihood(prediction, value);
+  }
 }
 function period(minute: number): string {
   const h = (((minute % 1440) + 1440) % 1440) / 60;
@@ -126,10 +156,124 @@ function datedPeriod(label: string, value: string): string {
     ? `${label.slice(0, -1)}晚`
     : `${label}${value}`;
 }
+type PredictionTone = "firm" | "moderate" | "tentative";
+/**
+ * 把握词池：句式开头那个词由样本量决定，见过越多天说法越笃定。
+ * 刻意不看时间窗口宽窄——时间不准由粒度说法承担（给区间或时段），
+ * 不该表现成"不了解这个主播"，否则会出现"偶尔在 19:00 开播"配"预测准确性高"。
+ */
+const DATED_LEAD: Record<PredictionTone, string> = {
+  firm: "预计",
+  moderate: "大概",
+  tentative: "可能",
+};
+const HABIT_LEAD: Record<PredictionTone, string> = {
+  firm: "常在",
+  moderate: "一般",
+  tentative: "偶尔在",
+};
+/**
+ * 把握档直接吃后端的展示准确性——它已经不掺时间窗口宽窄，所以措辞、颜色、
+ * 详情里的「预测准确性」三处共用同一个口径，不会互相打脸。
+ * 刻意不吃 probabilityKnown：那是"这个概率算出来了没有"，不该把说法拉低。
+ * 旧响应没有 accuracy 时退回按样本天数分档。
+ */
+function toneFor(prediction: Prediction): PredictionTone {
+  switch (prediction.accuracy) {
+    case "high":
+    case "fairly_high":
+      return "firm";
+    case "medium":
+      return "moderate";
+    case "fairly_low":
+    case "low":
+      return "tentative";
+    default: {
+      const days = prediction.basedOnDays ?? 0;
+      if (days >= 4) return "firm";
+      return days >= 3 ? "moderate" : "tentative";
+    }
+  }
+}
+/** 时段在给定基准日上的起止；"次日 HH:mm" 会自然滚到第二天。 */
+function slotWindowOn(
+  day: Date,
+  slot: Prediction["slots"][number],
+): { start: Date; end: Date } {
+  const base = new Date(day);
+  base.setHours(0, 0, 0, 0);
+  const start = new Date(base);
+  start.setMinutes(clockMinutes(slot.startAt), 0, 0);
+  const end = new Date(base);
+  end.setMinutes(clockMinutes(slot.endAt), 0, 0);
+  if (end.getTime() < start.getTime()) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+/**
+ * 多个开播时段时，挑出还没过、且最近的那一场；都过了才顺延到次日。
+ * 窗口已经开始但没结束的不算过——主播可能就在这会儿开播，跳过反而漏掉最近一次。
+ */
+function upcomingSlot(
+  slots: Prediction["slots"],
+  anchor: Date,
+  now: Date,
+  allowNextDay: boolean,
+): { slot: Prediction["slots"][number]; start: Date; end: Date } | null {
+  for (const offset of allowNextDay ? [0, 1] : [0]) {
+    const day = new Date(anchor);
+    day.setDate(day.getDate() + offset);
+    const picked = slots
+      .map((slot) => ({ slot, ...slotWindowOn(day, slot) }))
+      .filter(({ end }) => end.getTime() >= now.getTime())
+      .sort((a, b) => a.start.getTime() - b.start.getTime())[0];
+    if (picked) return picked;
+  }
+  return null;
+}
+/**
+ * 多时段时不再罗列"有时…有时…"，而是直接说出下一场：
+ * 复用"有日期"那套句式渲染挑中的时段，避免两套模板各自漂移。
+ */
+function upcomingSlotTitle(prediction: Prediction, now: Date): string | null {
+  if (prediction.slots.length < 2 || prediction.nextDateEnd) return null;
+  const anchor = prediction.nextDate
+    ? new Date(`${prediction.nextDate}T00:00:00`)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // 已带日期的预测由后端决定日期，不在这里凭空顺延到次日。
+  const picked = upcomingSlot(
+    prediction.slots,
+    anchor,
+    now,
+    prediction.kind === "typical",
+  );
+  if (!picked) return null;
+  // 窗口已经开始时改说区间，免得把"已经开播的时段"写成未来的钟点。
+  const started = picked.start.getTime() < now.getTime();
+  return predictionTitle(
+    {
+      ...prediction,
+      kind: "next",
+      // 清空时段：有日期那套句式不读它，也避免再进一次挑选。
+      slots: [],
+      nextDate: localDate(picked.start),
+      nextDateEnd: null,
+      startAt: picked.slot.startAt,
+      windowStart: picked.slot.startAt,
+      windowEnd: picked.slot.endAt,
+      timeGranularity: started ? "approximate" : prediction.timeGranularity,
+      startTimestamp: picked.start.toISOString(),
+      windowStartTimestamp: picked.start.toISOString(),
+      windowEndTimestamp: picked.end.toISOString(),
+    },
+    now,
+  );
+}
 export function predictionTitle(
   prediction: Prediction,
   now = new Date(),
 ): string {
+  const upcoming = upcomingSlotTitle(prediction, now);
+  if (upcoming) return upcoming;
   const start = timestamp(prediction, "start"),
     windowStart = timestamp(prediction, "windowStart"),
     end = timestamp(prediction, "windowEnd");
@@ -141,7 +285,9 @@ export function predictionTitle(
     (to &&
       clockMinutes(to) - clockMinutes(from) > 180 &&
       period(clockMinutes(from)) === period(clockMinutes(to)));
+  const tone = toneFor(prediction);
   if (prediction.kind === "next" && start && end) {
+    const lead = DATED_LEAD[tone];
     const lastDate = prediction.nextDateEnd
       ? new Date(`${prediction.nextDateEnd}T00:00:00`)
       : null;
@@ -158,15 +304,15 @@ export function predictionTitle(
       return "预计即将开播";
     const label = dateLabel(start, now);
     if (lastDate)
-      return `预计${label}或${dateLabel(lastDate, now)}${period(start.getHours() * 60)}开播`;
+      return `${lead}${label}或${dateLabel(lastDate, now)}${period(start.getHours() * 60)}开播`;
     if (broad)
-      return `预计${datedPeriod(label, period(start.getHours() * 60))}开播`;
+      return `${lead}${datedPeriod(label, period(start.getHours() * 60))}开播`;
     if (prediction.timeGranularity === "exact")
-      return `预计${label}${start.getHours() < 6 ? "凌晨 " : " "}${hhmm(start)} 开播`;
+      return `${lead}${label}${start.getHours() < 6 ? "凌晨 " : " "}${hhmm(start)} 开播`;
     if (prediction.timeGranularity === "quarter_hour") {
       const rounded = new Date(start);
       rounded.setMinutes(Math.round(rounded.getMinutes() / 15) * 15, 0, 0);
-      return `预计${dateLabel(rounded, now)}${rounded.getHours() < 6 ? "凌晨 " : " "}${hhmm(rounded)} 左右开播`;
+      return `${lead}${dateLabel(rounded, now)}${rounded.getHours() < 6 ? "凌晨 " : " "}${hhmm(rounded)} 左右开播`;
     }
     const rangeStart = windowStart ?? start;
     const overnight = localDate(rangeStart) !== localDate(end);
@@ -176,7 +322,7 @@ export function predictionTitle(
         ? datedPeriod(rangeDate, "晚间")
         : rangeDate;
     const datedRange = `${hhmm(rangeStart)}–${overnight ? "次日 " : ""}${hhmm(end)}`;
-    return `预计${rangeLabel} ${datedRange} 开播`;
+    return `${lead}${rangeLabel} ${datedRange} 开播`;
   }
   const type =
     prediction.typicalDayType === "weekday"
@@ -184,14 +330,77 @@ export function predictionTitle(
       : prediction.typicalDayType === "weekend"
         ? "周末"
         : "";
+  const habit = HABIT_LEAD[tone];
   if (broad)
-    return `常在${type}${period(clockMinutes(prediction.startAt ?? from))}开播`;
+    return `${habit}${type}${period(clockMinutes(prediction.startAt ?? from))}开播`;
   if (
     prediction.timeGranularity === "exact" ||
     prediction.timeGranularity === "quarter_hour"
-  )
-    return `常在${type}${type ? " " : ""}${(prediction.startAt ?? from).replace("次日 ", "凌晨 ")} 左右开播`;
-  return `常在${type}${type ? " " : ""}${range} 开播`;
+  ) {
+    // 样本足且时间窗口很窄时才敢说"准时"；带星期几前缀时退回常规把握词。
+    const precise =
+      prediction.timeGranularity === "exact" && tone === "firm" && !type;
+    const word = precise ? "准时" : habit;
+    const clock = (prediction.startAt ?? from).replace("次日 ", "凌晨 ");
+    return `${word}${type} ${clock}${precise ? " " : " 左右"}开播`;
+  }
+  return `${habit}${type} ${range} 开播`;
+}
+/** 预测窗口的钟点说法，如 19:00–21:00、20:00、23:00–次日 01:00。 */
+function windowClockText(prediction: Prediction): string | null {
+  const from = prediction.windowStart ?? prediction.startAt;
+  const to = prediction.windowEnd;
+  if (!from) return null;
+  return !to || to === from ? from : `${from}–${to}`;
+}
+/** 去掉标签开头的把握词与结尾的"开播"，作为带日期的钟点说法。 */
+function titleClockText(prediction: Prediction, now: Date): string | null {
+  const leads = [...Object.values(DATED_LEAD), ...Object.values(HABIT_LEAD), "准时"];
+  const stripped = predictionTitle(prediction, now)
+    .replace(new RegExp(`^(${leads.join("|")})`), "")
+    .replace(/开播$/, "")
+    .trim();
+  if (!stripped || stripped === "即将" || stripped === "暂无预测") return null;
+  return stripped;
+}
+/**
+ * 距预测窗口起点还有多久的粗档说法，只分四档、不做假精度。
+ * 跨天或窗口已过时返回 null —— 否则"还要等一小时"会说谎。
+ */
+export function predictionCountdownText(
+  prediction: Prediction,
+  now = new Date(),
+): string | null {
+  const windowStart =
+    timestamp(prediction, "windowStart") ?? timestamp(prediction, "start");
+  if (!windowStart || localDate(windowStart) !== localDate(now)) return null;
+  const minutes = (windowStart.getTime() - now.getTime()) / 60000;
+  if (minutes < 0) return null;
+  const vague = toneFor(prediction) === "tentative";
+  const prefix = vague ? "可能还要等" : "大约还要等";
+  if (minutes <= 30) return "马上开播";
+  if (minutes <= 50) return `${prefix}半小时`;
+  if (minutes <= 100) return `${prefix}一小时`;
+  if (minutes <= 240) return `${prefix}两三小时`;
+  return null;
+}
+/**
+ * 详情里「预计开播」那行的值：同一天且窗口未过时给"时长 + 钟点"，
+ * 否则回退成带日期的钟点说法。放在详情里也规避了标签跳字的问题。
+ */
+export function predictionOpeningDetail(
+  prediction: Prediction,
+  now = new Date(),
+): string | null {
+  const countdown = predictionCountdownText(prediction, now);
+  if (countdown) {
+    const clock =
+      countdown === "马上开播"
+        ? prediction.windowStart ?? prediction.startAt
+        : windowClockText(prediction);
+    return clock ? `${countdown} · ${clock}` : countdown;
+  }
+  return titleClockText(prediction, now);
 }
 /** Split midnight windows into two bands on a 24-hour track. */
 export function timelineBands(
