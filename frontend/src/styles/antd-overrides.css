@@ -601,9 +601,22 @@ textarea.ant-input,
   font-family: var(--lr-display);
   font-weight: 900;
 }
-/* 视频观看弹窗以画面为主：压缩标题栏，为默认放大的播放器腾出空间。 */
+/* 视频观看弹窗以画面为主：标题栏固定 40px（含下方 3px 描边），为放大的播放器腾出空间。 */
 .lr-preview-modal .ant-modal-header {
-  padding-block: 10px !important;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding-block: 0 !important;
+}
+.lr-preview-modal .ant-modal-title {
+  flex: 1;
+  min-width: 0;
+}
+.lr-preview-modal__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .ant-modal-footer {
   border-top: 1px solid var(--lr-ink);
