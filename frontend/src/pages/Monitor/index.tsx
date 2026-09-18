@@ -522,7 +522,6 @@ export default function Monitor() {
       .then((status) => {
         if (!disposed) setBilibiliCookieStatus(status);
       })
-      // 探测失败（网络不通等）不能把正常的登录判成失效：保持未知，按本地是否存过渲染。
       .catch(() => {
         if (!disposed) setBilibiliCookieStatus("unknown");
       });
@@ -531,7 +530,6 @@ export default function Monitor() {
     };
   }, []);
 
-  // 只有确认已登录才算已授权：登录失效后本地 Cookie 仍在，只看存没存过会漏掉「登录B站」入口。
   const bilibiliAuthorized =
     credentialStatus(
       bilibiliCookieStatus,
