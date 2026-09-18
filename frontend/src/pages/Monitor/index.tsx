@@ -35,10 +35,15 @@ import {
   fetchRoomInsights,
   type RoomInsight,
 } from "../../api/rooms";
+import {
+  fetchBilibiliCookieStatus,
+  type BilibiliCookieStatus,
+} from "../../api/settings";
 import { PlatformIcon, PlatformLogoTag } from "../../components/PlatformLogo";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import { MonitorStateTag } from "../../components/StatusTags";
 import { formatRelative } from "../../utils/format";
+import { credentialStatus } from "../../utils/credentialStatus";
 import RoomStats from "../../components/RoomStats";
 import RoomHealth from "../../components/RoomHealth";
 import LiveStatusTag from "../../components/LiveStatusTag";
@@ -96,7 +101,6 @@ const compactActionTooltipStyles = {
   },
 };
 
-/** 清晰度由高到低，索引越小画质越高。 */
 const QUALITY_ORDER = ["original", "1080p", "720p", "360p"];
 const qualityRank = (q: string) => QUALITY_ORDER.indexOf(q);
 const qualityLabel = (q: string) => (q === "original" ? "原画" : q);
@@ -169,8 +173,6 @@ const RoomCard = memo(function RoomCard({
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
   const bestAvailable = bestQuality(room.availableQualities);
-  // 这行只在「B站 且录不到你设置的清晰度」时出现。
-  // 抖音没有「没登录就压清晰度」这回事，达标时也没有任何可做的事——两种情况都别打扰用户。
   const qualityShortfall =
     room.platform === "bilibili" &&
     bestAvailable !== null &&
@@ -270,7 +272,6 @@ const RoomCard = memo(function RoomCard({
               <Typography.Link
                 className="lr-room-card__error-link"
                 underline
-                // .ant-typography 自带 font-size，不继承本行的 12px，会显得比同行文字大。
                 style={{ fontSize: "inherit" }}
                 onClick={() => navigate("/settings#bilibili-cookie")}
               >
@@ -428,6 +429,9 @@ export default function Monitor() {
   const openPreviewModal = usePreviewStore((s) => s.openModal);
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
+  // B站登录态：整页只探测一次，结论给所有 B站卡片共用（不按房间重复请求）。
+  const [bilibiliCookieStatus, setBilibiliCookieStatus] =
+    useState<BilibiliCookieStatus | null>(null);
   const [view, setView] = useState<"卡片" | "列表">(() =>
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
@@ -511,6 +515,28 @@ export default function Monitor() {
   useEffect(() => {
     if (!settings) void loadSettings();
   }, [settings, loadSettings]);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetchBilibiliCookieStatus()
+      .then((status) => {
+        if (!disposed) setBilibiliCookieStatus(status);
+      })
+      // 探测失败（网络不通等）不能把正常的登录判成失效：保持未知，按本地是否存过渲染。
+      .catch(() => {
+        if (!disposed) setBilibiliCookieStatus("unknown");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  // 只有确认已登录才算已授权：登录失效后本地 Cookie 仍在，只看存没存过会漏掉「登录B站」入口。
+  const bilibiliAuthorized =
+    credentialStatus(
+      bilibiliCookieStatus,
+      settings?.bilibiliCookie.hasCookie ?? false,
+    ) === "authorized";
 
   const monitorRooms = rooms
     .filter((r) => r.enabled)
@@ -927,9 +953,7 @@ export default function Monitor() {
                   }
                   insight={insights[room.id]}
                   qualityPreference={settings?.quality ?? null}
-                  bilibiliAuthorized={
-                    settings?.bilibiliCookie.hasCookie ?? false
-                  }
+                  bilibiliAuthorized={bilibiliAuthorized}
                   onRecord={onRecordRoom}
                   onFavorite={onFavoriteRoom}
                   layout="card"

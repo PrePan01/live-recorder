@@ -9,6 +9,8 @@ import {
   lastOpeningValue,
   predictionAccuracyText,
   predictionDisplayLikelihood,
+  predictionDisplayLevel,
+  predictionOpeningDetail,
   timelineBands,
 } from "../utils/livePrediction";
 
@@ -18,11 +20,6 @@ const CONF_META = {
   low: { text: "低" },
 };
 type Prediction = RoomInsight["prediction"];
-
-function predictionOpeningValue(text: string): string | null {
-  if (!text || text === "暂无预测") return null;
-  return text.replace(/^预计/, "").replace(/^常在/, "").replace(/开播$/, "").trim() || null;
-}
 
 function PredictionTimeline({ prediction }: { prediction: Prediction }) {
   const slots = prediction.slots.flatMap((slot) =>
@@ -41,17 +38,22 @@ function PredictionTimeline({ prediction }: { prediction: Prediction }) {
       aria-label="24 小时开播可能时段"
     >
       <div className="lr-live-prediction-timeline__track">
-        {slots.map((slot) => (
-          <span
-            key={`${slot.startAt}-${slot.endAt}-${slot.start}`}
-            className={`lr-live-prediction-timeline__band lr-live-prediction-timeline__band--${slot.likelihood}`}
-            style={{
-              left: `${(slot.start / 1440) * 100}%`,
-              width: `${((slot.end - slot.start) / 1440) * 100}%`,
-            }}
-            aria-label={`${slot.startAt} 至 ${slot.endAt}，开播可能性${CONF_META[slot.likelihood].text}`}
-          />
-        ))}
+        {slots.map((slot) => {
+          // 该时段的可能性算不出来（分母不足）时底色不变，只叠一层灰色斜纹，
+          // 让"没测过"和"测出来很低"在视觉上分得开。
+          const unknown = slot.probabilityKnown !== true;
+          return (
+            <span
+              key={`${slot.startAt}-${slot.endAt}-${slot.start}`}
+              className={`lr-live-prediction-timeline__band lr-live-prediction-timeline__band--${slot.likelihood}${unknown ? " lr-live-prediction-timeline__band--unknown" : ""}`}
+              style={{
+                left: `${(slot.start / 1440) * 100}%`,
+                width: `${((slot.end - slot.start) / 1440) * 100}%`,
+              }}
+              aria-label={`${slot.startAt} 至 ${slot.endAt}，开播可能性${unknown ? "未知" : CONF_META[slot.likelihood].text}`}
+            />
+          );
+        })}
         {showNow && (
           <span
             className="lr-live-prediction-timeline__now"
@@ -91,15 +93,13 @@ function PredictionTimeline({ prediction }: { prediction: Prediction }) {
 function PredictionPopover({
   prediction,
   likelihood,
-  titleText,
   children,
 }: {
   prediction: Prediction;
   likelihood: "high" | "medium" | "low" | null;
-  titleText: string;
   children: ReactNode;
 }) {
-  const predictionValue = predictionOpeningValue(titleText);
+  const predictionValue = predictionOpeningDetail(prediction);
   const lastValue = lastOpeningValue(prediction);
   const title = (
     <>
@@ -185,15 +185,13 @@ export default function LivePredictionBadge({
     value,
     value.likelihood ?? value.confidence,
   );
+  // 颜色与详情那句「预测准确性」同源，避免颜色说高、点开却写低。
+  const level = predictionDisplayLevel(value, value.likelihood ?? value.confidence);
   const text = predictionTitle(value);
   return (
-    <PredictionPopover
-      prediction={value}
-      likelihood={likelihood}
-      titleText={text}
-    >
+    <PredictionPopover prediction={value} likelihood={likelihood}>
       <Tag
-        className={`lr-live-prediction-tag lr-live-prediction-tag--${likelihood}`}
+        className={`lr-live-prediction-tag lr-live-prediction-tag--${level}`}
       >
         <Typography.Text style={{ fontSize: 12 }}>{text}</Typography.Text>
       </Tag>

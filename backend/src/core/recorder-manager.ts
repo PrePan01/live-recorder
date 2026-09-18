@@ -6,7 +6,7 @@ import { AppError } from '../types/error.js';
 import type { AppSettings, ErrorObject, Room } from '../types/index.js';
 import { recordingFilePath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
-import { remuxFlvToMp4 } from '../recorder/remux.js';
+import { mp4PathFor, remuxFlvToMp4 } from '../recorder/remux.js';
 import type { RecordingEvent } from '../recorder/engine.js';
 import { FlvTimestampNormalizer } from '../recorder/stream-recorder.js';
 import { HighlightBuffer } from '../recorder/highlight-buffer.js';
@@ -83,6 +83,8 @@ export class RecorderManager {
 
   /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
   private confirmTimers = new Map<string, unknown>();
+  /** 正在转 MP4 的录制；分段收尾与录制完成可能各触发一次，必须避免两个 ffmpeg 抢同一份产物。 */
+  private remuxJobs = new Set<string>();
   /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
   private highlightBuffers = new Map<string, HighlightBuffer>();
 
@@ -727,8 +729,6 @@ export class RecorderManager {
     this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
     // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
     if (!settings.confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
-    // 分段完成（续录）：同样执行分段级收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传。
-    this.finishOrConfirm(recordingId);
 
     const rapid = settings.retry.delaysSeconds[attempt] ?? settings.retry.maxAttempts;
     if (attempt >= settings.retry.maxAttempts) {
@@ -752,6 +752,9 @@ export class RecorderManager {
         return;
       }
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
+      // 只有确认续录时才在这里收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传；
+      // 终止分支一律交给 completeRecording 收尾——每条录制只能收尾一次，重复会把转封装跑两轮甚至误报失败。
+      this.finishOrConfirm(recordingId);
       const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
       const recording = this.services.recordings.get(recordingId)!;
       const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality, expectedQuality: settings.quality });
@@ -889,23 +892,30 @@ export class RecorderManager {
   }
 
   /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。返回更新后的记录。
-   *  #225：失败自动重试（最多 3 次），仍失败则告警，让用户知道上传的将是 FLV，不静默。 */
+   *  #225：中断/失败自动重试 2 次，仍失败则告警，让用户知道上传的将是 FLV，不静默。 */
   private async remuxToMp4(rec: import('../types/index.js').Recording): Promise<import('../types/index.js').Recording | null> {
-    const MAX_REMUX_ATTEMPTS = 3;
-    for (let attempt = 1; attempt <= MAX_REMUX_ATTEMPTS; attempt += 1) {
-      try {
-        const mp4 = await remuxFlvToMp4(rec.filePath!);
-        if (mp4) return this.services.recordings.update(rec.id, { filePath: mp4 });
-      } catch {
-        // 尝试下一次
+    // 同一录制会被分段收尾与录制完成各触发一次：转封装进行中或已转好都跳过，避免重复告警和两个 ffmpeg 抢同一份产物。
+    if (this.remuxJobs.has(rec.id) || !mp4PathFor(rec.filePath ?? '')) return null;
+    this.remuxJobs.add(rec.id);
+    try {
+      const MAX_REMUX_RETRIES = 2;
+      for (let attempt = 0; attempt <= MAX_REMUX_RETRIES; attempt += 1) {
+        try {
+          const mp4 = await remuxFlvToMp4(rec.filePath!);
+          if (mp4) return this.services.recordings.update(rec.id, { filePath: mp4 });
+        } catch {
+          // 尝试下一次
+        }
+        if (attempt < MAX_REMUX_RETRIES) {
+          await new Promise<void>((resolve) => this.services.clock.setTimeout(resolve, 1_000));
+        }
       }
-      if (attempt < MAX_REMUX_ATTEMPTS) {
-        await new Promise<void>((resolve) => this.services.clock.setTimeout(resolve, 1_000));
-      }
+      // 重试用尽：告警 + 记录标记，用户能知道上传的是 FLV（不静默）。
+      this.raiseAlert('warning', 'recorder', new AppError('RECORDING_REMUX_FAILED', '转 MP4 失败（已重试），将保留并上传源 FLV', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
+      return null;
+    } finally {
+      this.remuxJobs.delete(rec.id);
     }
-    // 持久失败：告警 + 记录标记，用户能知道上传的是 FLV（不静默）。
-    this.raiseAlert('warning', 'recorder', new AppError('RECORDING_REMUX_FAILED', '转 MP4 失败（已重试），将保留并上传源 FLV', { recordingId: rec.id, roomId: rec.roomId, retryable: false }));
-    return null;
   }
 
   /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */

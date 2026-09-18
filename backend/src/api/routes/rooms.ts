@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Platform } from '../../types/index.js';
 import type { Services } from '../../core/services.js';
-import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
+import { calculateLivePrediction, recordingCoverageIntervals, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
 const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
 const INSIGHT_CACHE_TTL_MS = 30_000;
@@ -85,7 +85,15 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
           now,
           generatedAt: services.clock.iso(),
           calibration: calibrationProfiles.get(id),
-          coverage: coverage.get(id),
+          // 录制期间主播已在播，不会再有新开播：把它当作覆盖证据，
+          // 否则开着自动录制的房间会因为轮询暂停而丢掉这段判定。
+          coverage: [
+            ...(coverage.get(id) ?? []),
+            ...recordingCoverageIntervals(
+              records.map((record) => ({ startedAt: record.started_at, endedAt: record.ended_at })),
+              now,
+            ),
+          ],
         }),
       };
     }

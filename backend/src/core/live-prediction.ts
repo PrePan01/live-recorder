@@ -24,6 +24,10 @@ export interface LivePrediction {
   generatedAt: string;
   kind: PredictionKind;
   basis: PredictionBasis | null;
+  /** 间隔型开播的间隔天数；其余情况为 null。 */
+  intervalDays: number | null;
+  /** 间隔浮动时的上限；等于 intervalDays 表示间隔固定。 */
+  intervalDaysMax: number | null;
   /** Calendar date anchoring the window; times may explicitly carry 次日. */
   nextDate: string | null;
   startTimestamp: string | null;
@@ -33,7 +37,6 @@ export interface LivePrediction {
   timeGranularity: PredictionTimeGranularity | null;
   windowStart: string | null;
   windowEnd: string | null;
-  expectedEndAt: string | null;
   slots: Array<{ startAt: string; endAt: string; likelihood: PredictionConfidence; probabilityKnown: boolean }>;
   todayProbability: PredictionConfidence | null;
   likelihood: PredictionConfidence | null;
@@ -183,6 +186,8 @@ export function calculateLivePrediction(input: {
     generatedAt: input.generatedAt,
     kind: 'unavailable',
     basis: null,
+    intervalDays: null,
+    intervalDaysMax: null,
     nextDate: null,
     startTimestamp: null,
     windowStartTimestamp: null,
@@ -191,7 +196,6 @@ export function calculateLivePrediction(input: {
     timeGranularity: null,
     windowStart: null,
     windowEnd: null,
-    expectedEndAt: null,
     slots: [],
     todayProbability: null,
     likelihood: null,
@@ -283,6 +287,10 @@ export function calculateLivePrediction(input: {
     sampleCount: model.items.length,
     confidence: stale ? 'low' : view.confidence,
     timeGranularity: granularity,
+    // 间隔型才带间隔天数：前端据此才说得出「隔天 / 每三天」，而不是只能给日期。
+    // intervalDaysMax 与 intervalDays 不同，表示间隔会浮动（隔 2~3 天），不要声称固定。
+    intervalDays: model.basis === 'interval' ? model.interval ?? null : null,
+    intervalDaysMax: model.basis === 'interval' ? model.intervalEnd ?? model.interval ?? null : null,
     slots: views
       .sort((a, b) => b.slot.weight - a.slot.weight)
       .map((v) => ({ startAt: hhmm(v.slot.start), endAt: hhmm(v.slot.end), likelihood: v.likelihood, probabilityKnown: v.raw !== null })),
@@ -710,11 +718,18 @@ function hasRecurringDailySessions(slots: Slot[]): boolean {
   }
   return false;
 }
+/**
+ * 把握档只看「看得够不够、数据干不干净」，刻意不掺时间窗口宽窄。
+ *
+ * 时间飘应该只体现在时间说法上（给区间、给时段），不该把整体可信度一起拉低：
+ * 否则会出现「措辞很笃定（常在晚间开播）+ 颜色很淡」这种自相矛盾，
+ * 也会让前端的措辞和详情各拿一套口径。
+ */
 function confidenceFor(basis: PredictionBasis, slot: Slot): PredictionConfidence {
   const days = distinctDays(slot.items),
     quality = slot.items.reduce((s, o) => s + o.weight, 0) / slot.items.length;
-  if (basis !== 'all' && days >= 6 && slot.end - slot.start <= 60 && quality >= 0.7) return 'high';
-  if (days >= 4 && slot.end - slot.start <= 120 && quality >= 0.45) return 'medium';
+  if (basis !== 'all' && days >= 6 && quality >= 0.7) return 'high';
+  if (days >= 4 && quality >= 0.45) return 'medium';
   return 'low';
 }
 function weightedQuantile(items: Occurrence[], q: number, value: (o: Occurrence) => number): number {
@@ -849,6 +864,24 @@ export function recordingFallbackEvents(recordings: Array<{ startedAt: string; s
       seen.add(key);
       return [{ detectedAt: r.startedAt, source: 'recording' as const }];
     });
+}
+/**
+ * 录制区间即「已经在播」的证据：主播开着播时不会再有新的开播，因此等价于同等强度的监控覆盖。
+ *
+ * 自动录制会暂停轮询，不补上这一段，同一场提前开播会因为「有没有开自动录制」得到两种判定
+ * （开着录制落成 unknown，没开录制才算作正常的一天），命中率随之偏高。
+ */
+export function recordingCoverageIntervals(
+  recordings: Array<{ startedAt: string; endedAt?: string | null }>,
+  now: number,
+): PredictionCoverageInterval[] {
+  return recordings.flatMap((recording) => {
+    const start = Date.parse(recording.startedAt);
+    // 尚未结束的录制延续到此刻。
+    const end = recording.endedAt ? Date.parse(recording.endedAt) : now;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+    return [{ startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString() }];
+  });
 }
 function minuteOfDay(at: number): number {
   const d = new Date(at);

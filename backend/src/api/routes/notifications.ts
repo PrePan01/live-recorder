@@ -3,7 +3,7 @@ import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference, type NotificationEventPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
-import { calculateLivePrediction, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
+import { calculateLivePrediction, recordingCoverageIntervals, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
 export type { LivePrediction, PredictionConfidence } from '../../core/live-prediction.js';
 
@@ -46,7 +46,17 @@ export function livePrediction(services: Services, roomId: string): LivePredicti
     fallbackEvents: recordingFallbackEvents(recordings),
     now: services.clock.now(), generatedAt: services.clock.iso(),
     calibration: services.predictionCalibration.profiles([roomId], localDateFromMs(services.clock.now() - 60 * 24 * 60 * 60 * 1000)).get(roomId),
-    coverage: services.predictionCalibration.intervals([roomId], from).get(roomId),
+    // 录制期间主播已在播：把录制区间并入覆盖证据，避免轮询暂停被当成"没盯着"。
+    // 直接查而不是用已加载的 recordings 列表（有 100 条上限，会被截断）。
+    coverage: [
+      ...(services.predictionCalibration.intervals([roomId], from).get(roomId) ?? []),
+      ...recordingCoverageIntervals(
+        services.db
+          .prepare('SELECT started_at AS startedAt, ended_at AS endedAt FROM recordings WHERE room_id = ? AND started_at >= ? ORDER BY started_at')
+          .all(roomId, from) as Array<{ startedAt: string; endedAt: string | null }>,
+        services.clock.now(),
+      ),
+    ],
   });
 }
 
