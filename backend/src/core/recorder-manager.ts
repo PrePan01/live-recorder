@@ -1359,13 +1359,18 @@ export class RecorderManager {
           .adapterFor(room.platform)
           .checkLiveStatus(room.url, cookie);
         if (live.status === "offline") {
-          await this.completeRecording(
-            room,
+          // 连续两次都判未开播才收尾：单次空响应可能只是平台瞬时抖动，不该把正在录的收掉。
+          if (await this.confirmOffline(room, cookie)) {
+            await this.completeRecording(room, recordingId, session.size, "ended");
+            return;
+          }
+          cause = new AppError("NETWORK_UNAVAILABLE", "暂时无法确认直播状态", {
+            roomId: room.id,
             recordingId,
-            session.size,
-            "ended",
-          );
-          return;
+            retryable: true,
+          }).toObject();
+          effective = next;
+          continue;
         }
         // 探测失败/受限（error/restricted）只是没问到确定结论，不代表下播：继续重试，不据此收尾。
         if (live.status !== "live") {
@@ -1391,6 +1396,22 @@ export class RecorderManager {
         cause = err instanceof AppError ? err.toObject() : cause;
         effective = next;
       }
+    }
+  }
+
+  /**
+   * 判定"主播是否真的下播"：单次探测到 offline 可能只是平台的瞬时响应（抖音下播前后遇到过
+   * 空响应），所以紧接再探一次，只有连续两次都说未开播才认定下播——避免一次瞬时空响应
+   * 把正在进行的录制提前收掉。第二次探测失败一律按"没确认"处理（继续重试，不据此收尾）。
+   */
+  private async confirmOffline(room: Room, cookie: string | undefined): Promise<boolean> {
+    try {
+      const again = await this.services
+        .adapterFor(room.platform)
+        .checkLiveStatus(room.url, cookie);
+      return again.status === "offline";
+    } catch {
+      return false;
     }
   }
 
@@ -1608,8 +1629,20 @@ export class RecorderManager {
       const live = await this.services
         .adapterFor(room.platform)
         .checkLiveStatus(room.url, cookie);
-      if (live.status !== "live") {
+      if (live.status === "offline" && (await this.confirmOffline(room, cookie))) {
         await this.completeRecording(room, recordingId, size, "ended");
+        return;
+      }
+      if (live.status !== "live") {
+        // 没确认下播（或探测失败）不能当"直播正常结束"：按可重试的中断走，额度耗尽时按真正原因收尾。
+        const offlineCause =
+          live.error ??
+          new AppError("NETWORK_UNAVAILABLE", "暂时无法确认直播状态", {
+            roomId: room.id,
+            recordingId,
+            retryable: true,
+          }).toObject();
+        await this.handleDisconnectInner(room, recordingId, session, offlineCause, effective + 1, session.timestampOffsetMs);
         return;
       }
       const stream = await this.services

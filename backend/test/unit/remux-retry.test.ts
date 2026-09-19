@@ -71,7 +71,8 @@ describe('mp4_after 转封装失败的重试与告警', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-remux-natural-'));
     const services = buildServices({ dbPath: ':memory:', clock });
     services.settings.save({ ...baseSettings(dir), recordingFormat: 'mp4_after' } as AppSettings);
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    // 下播确认要连续两次 offline，否则这只录制会被当作"还能接上"而继续重试。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'offline' }]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/32', displayName: 'R2' });
 
     await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });

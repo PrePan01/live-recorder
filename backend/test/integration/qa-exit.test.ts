@@ -235,6 +235,8 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
 
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'sess_qa1', streamTitle: 'QA 冒烟' },
+      // 下播确认要连续两次 offline（第一条 live 已被第一轮检测消耗）。
+      { status: 'offline' },
       { status: 'offline' },
     ]);
 

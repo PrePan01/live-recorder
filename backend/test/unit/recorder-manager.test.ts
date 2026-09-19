@@ -90,7 +90,9 @@ describe('RecorderManager', () => {
     services.settings.save(baseSettings(dir));
     const preview = new FakePreview();
     services.manager.preview = preview;
+    // 自然结束后要"连续两次探测到未开播"才收尾，所以这里给两次 offline。
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline' },
       { status: 'offline' },
     ]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/10', displayName: '主播X' });
@@ -124,7 +126,7 @@ describe('RecorderManager', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-tick-'));
     const services = buildServices({ dbPath: ':memory:', clock });
     services.settings.save(baseSettings(dir));
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'offline' }]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9', displayName: 'Ticker' });
 
     let recordingUpdates = 0;
@@ -480,6 +482,37 @@ describe('RecorderManager', () => {
 
     await services.manager.stopRecording(room.id);
     expect(services.manager.isRoomActive(room.id)).toBe(false);
+  });
+
+  it('requires two consecutive offline probes: a single one must not end the recording', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-offline-once-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    // 第一段自然结束后触发下播确认；接力后的拉流持续产出，确保这条录制还能继续。
+    let engineCalls = 0;
+    services.engineFor = () => {
+      engineCalls += 1;
+      return new FakeRecordingEngine(clock, engineCalls === 1 ? { frames: 6, intervalMs: 500 } : { frames: 1000, intervalMs: 500 });
+    };
+    // 第一次探测给 offline（平台的瞬时空响应），复核给 live：不得收尾，必须继续录。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 's1' },
+    ]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/96', displayName: 'OnceOffline' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
+
+    // 推进足够时间跑完自然结束的退避 + 确认探测 + 重连：录制应当还活着。
+    for (let i = 0; i < 60; i += 1) await settle(clock, 500);
+    expect(services.recordings.get(rec.id)!.state).toBe('recording');
+    expect(services.recordings.get(rec.id)!.endReason).toBeUndefined();
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+
+    await services.manager.stopRecording(room.id);
   });
 
   it('records the silent tail when stopping a stalled recording (断网后停止也能看出丢了多久)', async () => {
