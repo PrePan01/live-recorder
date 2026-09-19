@@ -10,3 +10,5 @@ release/
 *.tsbuildinfo
 .dev-data/
 .commandcode/
+.codegraph/
+.mcp.json
