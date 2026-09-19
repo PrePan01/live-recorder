@@ -629,4 +629,21 @@ describe('Scheduler', () => {
     for (let i = 0; i < 5 && services.rooms.get(room.id)!.lastLiveStatus === 'live'; i += 1) await settle(clock, 500);
     expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('offline');
   });
+
+  it('treats an offline check as a normal not-live state: idle room and no alert (不刷"平台接口有变动")', async () => {
+    const { services } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-offline-quiet-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/123456', displayName: 'quiet' });
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const after = services.rooms.get(room.id)!;
+    expect(after.monitorState).toBe('idle');
+    expect(after.lastLiveStatus).toBe('offline');
+    expect(after.lastError).toBeNull();
+    // 未开播不是异常：不该落任何告警（以前空响应会被判成 PLATFORM_CHANGED，每个检测周期刷一条）。
+    expect(services.alerts.list().filter((a) => a.roomId === room.id)).toHaveLength(0);
+  });
 });

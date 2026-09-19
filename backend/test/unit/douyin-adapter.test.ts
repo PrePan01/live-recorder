@@ -192,6 +192,26 @@ describe('DouyinAdapter', () => {
     expect(result.error?.code).toBe('PLATFORM_CHANGED');
   });
 
+  it('把"没有房间条目"判成未开播，而不是接口变动（下播房间误报 PLATFORM_CHANGED 回归）', async () => {
+    // 抖音对不在播的房间返回 status_code=0 但没有任何房间条目：以前会落到 PLATFORM_CHANGED，
+    // 已下播的房间于是每个检测周期都报一次"平台接口有变动"（实测刷出 150+ 条告警）。
+    const empty = new DouyinAdapter(mockFetcher(() => ({ status_code: 0, data: { data: [] } })));
+    const emptyResult = await empty.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+    expect(emptyResult.status).toBe('offline');
+    expect(emptyResult.error).toBeUndefined();
+
+    // data.data 直接缺失也是同一种情况。
+    const missing = new DouyinAdapter(mockFetcher(() => ({ status_code: 0, data: {} })));
+    const missingResult = await missing.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+    expect(missingResult.status).toBe('offline');
+
+    // 取流时同样不该说成接口变动。
+    const stream = new DouyinAdapter(mockFetcher(() => ({ status_code: 0, data: { data: [] } })));
+    await expect(stream.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x')).rejects.toMatchObject({
+      code: 'RECORDING_NOT_AVAILABLE',
+    });
+  });
+
   it('maps 抖音 444（边缘节点掐断连接）to a re-authorization prompt, never a raw HTTP code', async () => {
     // 实测：设置页重新登录授权抖音后恢复 → 444 是凭证/风控信号，不是接口变更。
     const a = new DouyinAdapter(statusFetcher(444));

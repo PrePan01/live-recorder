@@ -74,6 +74,15 @@ function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): App
   return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
 }
 
+/**
+ * 抖音对"当前不在播"的房间会返回 status_code=0 但没有任何房间条目（data.data 为空或缺失）。
+ * 这是"未开播"，不是接口结构变化：以前这种情况会落到 PLATFORM_CHANGED，导致已下播的房间
+ * 每隔一个检测周期就报一次"平台接口有变动"（实测一个下播房间刷出 150+ 条告警）。
+ */
+function hasNoRoomEntry(json: DouyinEnterResponse): boolean {
+  return json.status_code === 0 && (json.data?.data?.length ?? 0) === 0;
+}
+
 function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
@@ -246,6 +255,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
+      // status_code=0 却没有房间条目 = 这个房间当前不在播（已下播/已结束），不是接口变了。
+      if (hasNoRoomEntry(data)) return { status: 'offline' };
       const appErr = classifyStatusError(data, Boolean(cookie));
       return {
         status: appErr.code === 'PLATFORM_ACCESS_RESTRICTED' || appErr.code === 'DOUYIN_COOKIE_EXPIRED'
@@ -312,6 +323,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
+      // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
+      if (hasNoRoomEntry(data)) throw new AppError('RECORDING_NOT_AVAILABLE', '直播间当前未开播，无法获取直播流', { retryable: false });
       throw classifyStatusError(data, Boolean(cookie));
     }
     const entry = arr[0];
