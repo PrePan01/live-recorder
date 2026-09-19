@@ -17,33 +17,33 @@
 ### 录制与监控
 - B站 / 抖音直播间检测与自动录制，手动录制 / 停止，支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）
 - 监控总览：卡片 / 列表视图、收藏置顶、当前录制时长、直播预览、开播预测、实时状态
-- 多路直播墙（2×2 / 3×3，最多 4 路）
+- 多路直播墙（2×2 / 3×3 / 3×1）
 - 磁盘空间守卫、断流续录、录制完整性校验、并发上限与去重
 
 ### 房间管理
 - 直播间管理：搜索 / 筛选 / 分页、批量添加、标签分组、单独自动录制开关、定时录制计划
 - 全局搜索
-- 录制统计
 
 ### 录制历史与回放
 - 历史列表：筛选 / 分页 / 回放（FLV / MP4）、重命名 / 删除、CSV 导出 / 批量删除
 - 上传状态、失败原因与重试
 
-### 后处理与分发
+### 录制后处理
 - 后处理管线：校验 → 封面帧 → 切片合并 → 压缩转封装 → 归档，失败保留源文件、定向重试
 - 录制命名规则自定义
 - [OpenList](https://github.com/OpenListTeam/OpenList)（WebDAV）自动上传：进度 / 重试 / 取消
 - 邮件通知（SMTP 预设，失败提醒去重）
+- 录制统计
 
 ### 桌面客户端
-- macOS / Windows 桌面端（Tauri）
+- 支持 macOS / Windows 桌面端
 
 ## 安装
 
 ### 使用发布包
 
 - macOS：下载 `Live Recorder_x.y.z_aarch64.dmg` 安装
-- Windows：下载 `Live.Recorder_x.y.z_x64-setup.exe` 安装包安装
+- Windows：下载 `Live.Recorder_x.y.z_x64-setup.exe` 安装
 
 ### 从源码运行
 
