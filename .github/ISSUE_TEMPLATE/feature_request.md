@@ -4,7 +4,7 @@ about: 提交新功能建议、体验改进或其他意见
 title: "[Feature] "
 labels: enhancement
 assignees: ''
--------------
+---
 
 ## 建议内容
 

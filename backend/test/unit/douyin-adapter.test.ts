@@ -53,7 +53,7 @@ describe('DouyinAdapter', () => {
 
   it('reports live with session id, title, displayName and qualities', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload()));
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('live');
     expect(result.streamSessionId).toBe('123456');
     expect(result.streamTitle).toBe('抖音直播间');
@@ -64,7 +64,7 @@ describe('DouyinAdapter', () => {
   it('falls back to title as displayName when nickname is missing (添加抖音房间显示名检测)', async () => {
     // user 缺 nickname、仅有 title：displayName 应用标题兜底，避免添加房间显示名为空。
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ user: {} })));
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('live');
     expect(result.displayName).toBe('抖音直播间');
     expect(result.streamTitle).toBe('抖音直播间');
@@ -85,7 +85,7 @@ describe('DouyinAdapter', () => {
       );
     }) as typeof fetch;
     const a = new DouyinAdapter(fetcher);
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('live');
     expect(result.displayName).toBe('青泠');
     expect(result.streamTitle).toBe('抖音直播间');
@@ -94,20 +94,20 @@ describe('DouyinAdapter', () => {
 
   it('reports offline when status is not 2', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ status: 4 })));
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('offline');
   });
 
   it('reports restricted when live but no stream url (needs cookie)', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('restricted');
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
 
   it('maps network failures to NETWORK_UNAVAILABLE', async () => {
     const a = new DouyinAdapter(() => Promise.reject(new TypeError('fetch failed')));
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('error');
     expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
     expect(result.error?.retryable).toBe(true);
@@ -144,33 +144,33 @@ describe('DouyinAdapter', () => {
 
   it('getStreamUrl picks the requested quality and falls back gracefully', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload()));
-    const original = await a.getStreamUrl('https://live.douyin.com/123456', 'original');
+    const original = await a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x');
     expect(original.url).toBe('https://pull.example.com/full.flv');
     expect(original.format).toBe('flv');
     expect(original.actualQuality).toBe('original');
     expect(original.headers?.['Referer']).toBe('https://live.douyin.com/123456');
 
-    const hd1 = await a.getStreamUrl('https://live.douyin.com/123456', '1080p');
+    const hd1 = await a.getStreamUrl('https://live.douyin.com/123456', '1080p', 'sessionid=x');
     expect(hd1.url).toBe('https://pull.example.com/hd1.flv');
     expect(hd1.actualQuality).toBe('1080p');
 
-    const sd1 = await a.getStreamUrl('https://live.douyin.com/123456', '720p');
+    const sd1 = await a.getStreamUrl('https://live.douyin.com/123456', '720p', 'sessionid=x');
     expect(sd1.url).toBe('https://pull.example.com/sd1.flv');
 
-    const sd2 = await a.getStreamUrl('https://live.douyin.com/123456', '360p');
+    const sd2 = await a.getStreamUrl('https://live.douyin.com/123456', '360p', 'sessionid=x');
     expect(sd2.url).toBe('https://pull.example.com/sd2.flv');
   });
 
   it('getStreamUrl throws PLATFORM_ACCESS_RESTRICTED when no stream is available', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
-    await a.getStreamUrl('https://live.douyin.com/123456', 'original').catch((err) => {
+    await a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x').catch((err) => {
       expect((err as AppError).code).toBe('PLATFORM_ACCESS_RESTRICTED');
     });
   });
 
-  it('maps empty responses (anti-crawl/no cookie) to PLATFORM_ACCESS_RESTRICTED', async () => {
+  it('maps empty responses (anti-crawl) to PLATFORM_ACCESS_RESTRICTED', async () => {
     const a = new DouyinAdapter(async () => new Response('', { status: 200 }) as unknown as Response);
-    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('restricted');
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
@@ -204,12 +204,33 @@ describe('DouyinAdapter', () => {
     expect(result.error?.details?.httpStatus).toBe(444);
   });
 
-  it('maps 444 without cookie to PLATFORM_ACCESS_RESTRICTED with plain copy', async () => {
-    const a = new DouyinAdapter(statusFetcher(444));
+  it('抖音未授权（无 Cookie）时不发任何平台请求，直接报平台访问受限', async () => {
+    // 匿名 enter 请求结果不可靠：可能返回看似正常的数据（房间被当成离线，卡片上看不到报错），
+    // 也可能长时间不返回把房间留在「检测中」。未登录必须走确定性失败，提示去设置登录授权。
+    let calls = 0;
+    const a = new DouyinAdapter(async () => {
+      calls += 1;
+      return new Response('', { status: 444 }) as unknown as Response;
+    });
     const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    expect(calls).toBe(0);
     expect(result.status).toBe('restricted');
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
-    expect(result.error?.message).not.toContain('444');
+    expect(result.error?.retryable).toBe(false);
+    expect(result.error?.message).toBe('平台访问受限，请检查抖音授权');
+  });
+
+  it('getStreamUrl 未授权时同样拒绝匿名取流', async () => {
+    let calls = 0;
+    const a = new DouyinAdapter(async () => {
+      calls += 1;
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+    await expect(a.getStreamUrl('https://live.douyin.com/123456', 'original')).rejects.toMatchObject({
+      code: 'PLATFORM_ACCESS_RESTRICTED',
+      retryable: false,
+    });
+    expect(calls).toBe(0);
   });
 
   it('retries once when the edge drops the request (444 then success)', async () => {

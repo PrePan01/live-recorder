@@ -225,6 +225,13 @@ export class DouyinAdapter implements PlatformAdapter {
     if (!roomId) {
       return { status: 'error', error: new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {}).toObject() };
     }
+    // 抖音未登录（本地没有 Cookie）时必须登录授权才能检测/观看/录制：不做任何匿名请求。
+    // 匿名 enter 请求的结果不可靠——有时返回看似正常的数据（房间被判成离线，卡片上看不到
+    // 任何报错，用户不知道要登录），有时长时间不返回，把房间一直留在「检测中」。直接按访问
+    // 受限落库，保证未授权时卡片立刻提示去设置登录授权。
+    if (!cookie) {
+      return { status: 'restricted', error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false }).toObject() };
+    }
     let data: DouyinEnterResponse;
     try {
       data = await this.fetchRoomInfoWithRetry(roomId, cookie);
@@ -293,6 +300,8 @@ export class DouyinAdapter implements PlatformAdapter {
   async getStreamUrl(roomUrl: string, quality: Quality, cookie?: string): Promise<StreamUrlResult> {
     const roomId = this.parseRoomId(roomUrl);
     if (!roomId) throw new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {});
+    // 同 checkLiveStatus：未登录时不尝试匿名取流，避免匿名拉到流后绕过「抖音需授权」的前提。
+    if (!cookie) throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false });
     let data: DouyinEnterResponse;
     try {
       data = await this.fetchRoomInfoWithRetry(roomId, cookie);

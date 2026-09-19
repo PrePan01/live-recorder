@@ -39,6 +39,7 @@ import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import { formatRelative } from "../../utils/format";
+import { fetchDouyinCookieStatus } from "../../api/settings";
 import {
   RoomSortableProvider,
   SortableRoomTableRow,
@@ -346,6 +347,20 @@ export default function Rooms() {
     setModalOpen(true);
   };
 
+  /**
+   * 添加抖音直播间后，用设置页同一探测口径检查抖音登录态：未登录（missing）
+   * 或 Cookie 已失效（invalid）时提示去设置页登录授权。探测失败（unknown）
+   * 不做提示，避免把网络异常误报成未登录。
+   */
+  const promptDouyinAuthorization = async () => {
+    const status = await fetchDouyinCookieStatus().catch(
+      () => "unknown" as const,
+    );
+    if (status === "missing" || status === "invalid") {
+      message.warning("如需观看、录制抖音直播间，请在设置内登录并授权", 5);
+    }
+  };
+
   const submit = async () => {
     // Ant Design rejects when client-side validation fails.  This handler is
     // invoked with `void submit()`, so validation failures must be consumed
@@ -378,6 +393,7 @@ export default function Rooms() {
         message.success("直播间已添加");
         // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
         void checkRoomNow(room.id).catch(() => undefined);
+        if (platform === "douyin") void promptDouyinAuthorization();
       }
       setModalOpen(false);
     } catch (e) {
@@ -421,6 +437,9 @@ export default function Rooms() {
       message.success(
         `成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`,
       );
+      // 批量里含抖音也只探测一次，不按房间重复请求。
+      if (res.succeeded.some((r) => r.platform === "douyin"))
+        void promptDouyinAuthorization();
     } catch (e) {
       message.error(
         e instanceof ApiError
