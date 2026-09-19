@@ -136,8 +136,12 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
                   }
                 : item,
             );
+      // 中断收尾的录制同样是 completed，但它不是"正常录完"：由失败告警说明，
+      // 这里不再弹"录制完成"，避免同一次录制同时收到"完成"和"失败"两条互相打架的提示。
       const justCompleted =
-        rec.state === "completed" && previous?.state !== "completed";
+        rec.state === "completed" &&
+        previous?.state !== "completed" &&
+        rec.endReason !== "interrupted";
       // #220/#221：进入「待确认保留」态时提示用户（挂起管线/上传，等用户决策保留/删除）。
       const justAwaiting =
         rec.state === "awaiting_confirmation" &&

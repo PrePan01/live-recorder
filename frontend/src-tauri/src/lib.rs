@@ -650,7 +650,7 @@ pub fn run() {
             updates::get_update_state,
             updates::check_update,
             updates::download_update,
-            updates::open_update,
+            updates::install_update,
             get_app_instance,
             get_health,
             start_service,

@@ -8,9 +8,11 @@ interface Store {
   accept: (state: UpdateState) => void;
   check: () => Promise<UpdateState | null>;
   download: () => Promise<void>;
+  install: () => Promise<void>;
 }
 let checking: Promise<UpdateState | null> | null = null;
 let downloading: Promise<void> | null = null;
+let installing: Promise<void> | null = null;
 export const useUpdateStore = create<Store>((set, get) => ({
   state: null,
   checking: false,
@@ -28,6 +30,12 @@ export const useUpdateStore = create<Store>((set, get) => ({
     downloading = bridge.downloadUpdate().then((state) => { get().accept(state); })
       .finally(() => { downloading = null; });
     return downloading;
+  },
+  install: () => {
+    // 安装会退出应用；重复触发只会多起一个安装程序。
+    if (installing) return installing;
+    installing = bridge.installUpdate().finally(() => { installing = null; });
+    return installing;
   },
 }));
 

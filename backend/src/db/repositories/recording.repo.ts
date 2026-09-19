@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Quality, Recording, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingEndReason, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -22,6 +22,8 @@ interface RecordingRow {
   pipeline_status: string | null;
   metadata: string | null;
   cover_path: string | null;
+  end_reason: string | null;
+  missing_ms: number | null;
   created_at: string;
   upload?: { status: string; progress: number; remotePath: string | null; error: string | null; updatedAt: string };
 }
@@ -69,6 +71,8 @@ export function rowToRecording(row: RecordingRow): Recording {
   const metadata = parseMetadata(row.metadata);
   if (metadata) rec.metadata = metadata;
   if (row.cover_path) rec.coverPath = row.cover_path;
+  if (row.end_reason) rec.endReason = row.end_reason as RecordingEndReason;
+  if (row.missing_ms !== null) rec.missingMs = row.missing_ms;
   if (row.upload) rec.upload = { ...row.upload, status: row.upload.status as UploadJobStatus };
   return rec;
 }
@@ -213,10 +217,22 @@ export class RecordingRepository {
     }
   }
 
-  /** 同一场直播去重依据：该 room+session 是否已有非 failed 的录制。手动重录由 maybeStartRecording 的 manual 标志处理，此处不排除。 */
+  /**
+   * 同一场直播去重依据：该 room+session 是否已有"录过"的录制。
+   * 排除 failed（没录成）与 end_reason=interrupted（网络中断停止，网络恢复后应当继续录完剩下的直播），
+   * 否则一次网络中断会导致这场直播剩下的内容再也不录。
+   * service_restart 不排除——服务重启不算网络问题，不自动续录。
+   * 手动重录由 maybeStartRecording 的 manual 标志处理，此处不排除。
+   */
   hasSession(roomId: string, streamSessionId: string): boolean {
     const row = this.db
-      .prepare(`SELECT 1 AS x FROM recordings WHERE room_id = ? AND stream_session_id = ? AND state != 'failed' LIMIT 1`)
+      .prepare(
+        `SELECT 1 AS x FROM recordings
+         WHERE room_id = ? AND stream_session_id = ?
+           AND state != 'failed'
+           AND (end_reason IS NULL OR end_reason != 'interrupted')
+         LIMIT 1`,
+      )
       .get(roomId, streamSessionId) as { x: number } | undefined;
     return row !== undefined;
   }
@@ -232,9 +248,17 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
+    if (patch.endReason !== undefined) {
+      sets.push('end_reason = ?');
+      params.push(patch.endReason);
+    }
+    if (patch.missingMs !== undefined) {
+      sets.push('missing_ms = ?');
+      params.push(patch.missingMs);
+    }
     if (patch.state !== undefined) {
       sets.push('state = ?');
       params.push(patch.state);

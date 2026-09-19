@@ -23,6 +23,24 @@ export function validateReleaseNotes(value, version) {
   return { releases, current };
 }
 
+/** 读取 tauri build 产出的 `.sig` 内容（客户端清单的 signature 字段要求是签名本身，不是路径）。 */
+async function readUpdaterSignature(directory, filename, required) {
+  let raw;
+  try {
+    raw = await readFile(join(directory, `${filename}.sig`), 'utf8');
+  } catch {
+    if (required) {
+      throw new Error(
+        `Missing updater signature for ${filename}: build with createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY`,
+      );
+    }
+    return null;
+  }
+  const signature = raw.trim();
+  if (!signature) throw new Error(`Empty updater signature: ${filename}.sig`);
+  return signature;
+}
+
 export async function generateUpdateManifest(directory, version, baseUrl, releaseNotesPath = 'release-notes.json') {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('A stable semantic release version is required');
   // 可选的安装包基址（如七牛 S3 公开读域名）：设置后清单 asset.url 指向对象存储加速下载；
@@ -45,6 +63,9 @@ export async function generateUpdateManifest(directory, version, baseUrl, releas
     if (!info.isFile() || info.size === 0) throw new Error(`Empty installer: ${filename}`);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk);
+    // Windows 客户端在应用内安装，必须带 tauri build 产出的签名；macOS 仍下载 DMG，
+    // 由系统安装流程接手，所以没有对应的 updater 产物与签名。
+    const signature = await readUpdaterSignature(directory, filename, platform === 'windows-x86_64');
     const encoded = encodeURIComponent(filename);
     platforms[platform] = {
       filename: basename(filename),
@@ -53,6 +74,7 @@ export async function generateUpdateManifest(directory, version, baseUrl, releas
         : `https://github.com/PrePan01/live-recorder/releases/download/v${version}/${encoded}`,
       size: info.size,
       sha256: hash.digest('hex'),
+      ...(signature ? { signature } : {}),
     };
   }
   const notesPath = resolve(releaseNotesPath);

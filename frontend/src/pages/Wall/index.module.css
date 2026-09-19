@@ -7,7 +7,6 @@
   min-width: 78px;
 }
 
-/* 副标题只提供能力提示，不额外引入边框或色块，以免抢走布局切换本身的注意力。 */
 .gridOptionLabel {
   display: inline-flex;
   flex-direction: column;
@@ -70,10 +69,6 @@
   object-fit: contain;
 }
 
-/*
- * 竖屏布局：页面变成占满内容区高度的一列，网格吃掉头部剩下的全部高度。
- * 这样单行格子不需要写死像素高度（换字号/主题不会错位），也不会撑出滚动条。
- */
 .fillPage {
   display: flex;
   flex-direction: column;
@@ -88,4 +83,24 @@
 .fillPage .videoArea {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.roomOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.roomOptionMain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.roomOptionName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

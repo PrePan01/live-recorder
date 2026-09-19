@@ -10,6 +10,10 @@ function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
     }) as unknown as Response;
 }
 
+function statusFetcher(status: number): typeof fetch {
+  return async () => new Response('', { status }) as unknown as Response;
+}
+
 function livePayload(overrides: Record<string, unknown> = {}): unknown {
   return {
     status_code: 0,
@@ -186,6 +190,48 @@ describe('DouyinAdapter', () => {
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=xxx');
     expect(result.status).toBe('error');
     expect(result.error?.code).toBe('PLATFORM_CHANGED');
+  });
+
+  it('maps 抖音 444（边缘节点掐断连接）to a re-authorization prompt, never a raw HTTP code', async () => {
+    // 实测：设置页重新登录授权抖音后恢复 → 444 是凭证/风控信号，不是接口变更。
+    const a = new DouyinAdapter(statusFetcher(444));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=stale');
+    expect(result.status).toBe('restricted');
+    expect(result.error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+    expect(result.error?.message).toContain('抖音授权');
+    // 用户看不懂 HTTP 状态码：绝不能出现在给用户看的文案里（技术细节只留在 details）。
+    expect(result.error?.message).not.toContain('444');
+    expect(result.error?.details?.httpStatus).toBe(444);
+  });
+
+  it('maps 444 without cookie to PLATFORM_ACCESS_RESTRICTED with plain copy', async () => {
+    const a = new DouyinAdapter(statusFetcher(444));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456');
+    expect(result.status).toBe('restricted');
+    expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(result.error?.message).not.toContain('444');
+  });
+
+  it('retries once when the edge drops the request (444 then success)', async () => {
+    // 偶发掐断要在重试后自愈，而不是把用户赶去重新登录。
+    let calls = 0;
+    const a = new DouyinAdapter(async () => {
+      calls += 1;
+      return calls === 1
+        ? (new Response('', { status: 444 }) as unknown as Response)
+        : (new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response);
+    });
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=ok');
+    expect(result.status).toBe('live');
+    expect(calls).toBe(2);
+  });
+
+  it('never leaks other unexpected HTTP statuses into user-facing copy', async () => {
+    const a = new DouyinAdapter(statusFetcher(451));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=ok');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.message).not.toContain('451');
+    expect(result.error?.details?.httpStatus).toBe(451);
   });
 
   it('passes cookie through and uses web_rid param (douyin API P0 fix)', async () => {

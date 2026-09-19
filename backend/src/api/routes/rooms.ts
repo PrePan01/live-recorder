@@ -262,6 +262,12 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     const { id } = req.params as { id: string };
     const existing = services.rooms.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    // 正在录制时必须先收尾再删：否则收尾阶段会因为房间已不存在而中断，
+    // 完整性校验 / 转封装 / 后处理 / 上传全被跳过，"停止录制"的请求也会一直挂着。
+    if (services.manager.isRoomActive(id)) await services.manager.stopRecording(id);
+    // 该房间的预览拉流与精彩时刻缓存一并收掉，避免删除后仍在后台跑。
+    await services.manager.stopPreviewStream(id);
+    await services.manager.disableHighlightBuffer(id);
     services.rooms.remove(id);
     services.events.emit({ type: 'room:updated', data: enrich({ ...existing, enabled: false, monitorState: 'disabled' }) });
     return reply.status(204).send();

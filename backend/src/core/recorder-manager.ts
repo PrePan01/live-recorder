@@ -3,7 +3,8 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import path from 'node:path';
 import { AppError } from '../types/error.js';
-import type { AppSettings, ErrorObject, Room } from '../types/index.js';
+import type { AppSettings, ErrorObject, RecordingEndReason, Room } from '../types/index.js';
+import { causeLabel, failureText, humanizeFailure, reconnectExhausted, writeFailure } from './recording-failure.js';
 import { recordingFilePath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
 import { mp4PathFor, remuxFlvToMp4 } from '../recorder/remux.js';
@@ -30,6 +31,14 @@ export interface PreviewSink {
 export const KEEP_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
 /** 共享录制写盘不得反压预览流；达到上限时停止该录制而非卡住观看。 */
 const MAX_SHARED_RECORDING_PENDING_BYTES = 8 * 1024 * 1024;
+/** 开录后多久还没写出文件即视为"拿不到数据"：与断流同样进入重试，而不是一次判死。 */
+const START_TIMEOUT_MS = 30_000;
+/** 恢复后稳定录满这么久，就归还重连额度——几小时前的旧故障不该拖累现在这一次抖动。 */
+const STABLE_RESET_MS = 60_000;
+/** 续录前等旧拉流收尾的上限：正常会被 stop() 立刻打断，引擎不响应时也不能把重连永久卡住。 */
+const PULL_STOP_GRACE_MS = 3_000;
+/** 退出前等写流落盘的上限：退出绝不能被某个不响应 stop() 的拉流卡住。 */
+const SHUTDOWN_GRACE_MS = 3_000;
 
 interface ActiveSession {
   recordingId: string;
@@ -40,6 +49,26 @@ interface ActiveSession {
   startedAt: string;
   /** 当前分段实际使用的引擎；停止时必须作用于这个实例。 */
   engine: import('../recorder/engine.js').RecordingEngine | null;
+  /** 本次录制的文件：中断恢复后接着写它，不再新开文件。 */
+  filePath: string | null;
+  /** 已写出的分段数；>0 表示本次拉流要追加写入而不是新建。 */
+  segments: number;
+  /** 续录时间偏移：本段媒体时间戳接在上一段结尾之后，保证拼接处播放连续。 */
+  timestampOffsetMs: number;
+  /** 最后一次收到数据的时刻；中断造成的缺失时长从它算起。 */
+  lastDataAt: number;
+  /** 中断开始时刻；恢复拿到第一份数据时据此累计缺失时长，非中断期间为 null。 */
+  gapStartAt: number | null;
+  /** 累计缺失时长（毫秒）。 */
+  missingMs: number;
+  /** 最近一次恢复录制的时刻；用于重连额度按轮重置。 */
+  lastRecoveryAt: number;
+  /** 拉流会话代次：被取代的旧会话据此停止处理事件，避免两路拉流同时写同一个文件。 */
+  generation: number;
+  /** 当前这一路拉流的完成信号（含关闭写流）；续录前必须等它，否则新旧两个写流会同时写同一个文件。 */
+  pullDone: Promise<void> | null;
+  /** 接力互斥：超时/断流/自然结束可能同时触发，只允许一次接力在途。 */
+  handingOff: boolean;
   /** 手动停止接口等待录制记录和房间状态真正收口，避免响应先于异步生成器退出。 */
   done?: Promise<void>;
   resolveDone?: () => void;
@@ -68,12 +97,46 @@ export class RecorderManager {
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
   private backgroundTasks = 0;
+  /** 正在退出：只等写流落盘，不再收尾/通知/跑后处理（状态交给下次启动的恢复流程）。 */
+  private shuttingDown = false;
 
   get busy(): boolean { return this.active.size > 0 || this.backgroundTasks > 0; }
 
   async resetIdleState(): Promise<void> {
     await Promise.all([...this.previewSessions.keys()].map((id) => this.stopPreviewStream(id)));
     await Promise.all([...this.highlightBuffers.keys()].map((id) => this.disableHighlightBuffer(id)));
+  }
+
+  /**
+   * 退出前收尾：停掉所有正在拉流的会话并等写流落盘关闭，避免最后几秒数据还没写进文件就退出了。
+   * 这里刻意不写库、不发通知、不起后处理：进程马上消失，记录状态交给下次启动的恢复流程统一收口
+   * （标记为"服务重启中断"，并重跑校验 / mp4_after 转封装 / 管线 / 上传）。
+   */
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    const pending: Promise<void>[] = [];
+    for (const session of [...this.active.values()]) {
+      pending.push(session.engine?.stop().catch(() => undefined) ?? Promise.resolve());
+      const pull = session.pullDone;
+      // 等这一路拉流真正退出：写流在它的 finally 里 flush + close。
+      if (pull) pending.push(pull.catch(() => undefined));
+    }
+    for (const preview of [...this.previewSessions.values()]) {
+      pending.push(preview.engine.stop().catch(() => undefined));
+      pending.push(preview.done.catch(() => undefined));
+    }
+    // 退出绝不能被某个不响应 stop() 的拉流卡住：到点即放手。
+    await Promise.race([
+      Promise.all(pending),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, SHUTDOWN_GRACE_MS).unref();
+      }),
+    ]);
+  }
+
+  /** 启动恢复用：把上次退出时中断、还没跑过收尾流程的录制重新交给收尾（校验 / 转封装 / 管线 / 上传）。 */
+  resumeRecoveredProcessing(recordingId: string): void {
+    this.finishSegmentProcessing(recordingId);
   }
 
   clearPendingConfirmations(): void {
@@ -101,6 +164,16 @@ export class RecorderManager {
 
   isRoomStarting(roomId: string): boolean {
     return this.starting.has(roomId);
+  }
+
+  /** 新建录制会话：续录/缺失时长相关的状态集中在这里初始化。 */
+  private newSession(recordingId: string, roomId: string, streamSessionId: string | null, startedAt: string, filePath: string | null): ActiveSession {
+    const now = this.services.clock.now();
+    return {
+      recordingId, roomId, streamSessionId, stopRequested: false, size: 0, startedAt, engine: null,
+      filePath, segments: 0, timestampOffsetMs: 0, lastDataAt: now, gapStartAt: null, missingMs: 0, lastRecoveryAt: now,
+      generation: 0, pullDone: null, handingOff: false,
+    };
   }
 
   activeRoomIds(): string[] {
@@ -229,7 +302,7 @@ export class RecorderManager {
         if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: completed });
         this.finishOrConfirm(recording.id);
       } catch (error) {
-        const err = new AppError('RECORDING_START_FAILED', `精彩时刻导出失败: ${(error as Error).message}`, { roomId, recordingId: recording.id });
+        const err = new AppError('HIGHLIGHT_EXPORT_FAILED', failureText('HIGHLIGHT_EXPORT_FAILED'), { roomId, recordingId: recording.id, details: { cause: (error as Error).message } });
         const failed = this.services.recordings.update(recording.id, { state: 'failed', endedAt: this.services.clock.iso(), failureReason: err.toObject() });
         this.services.events.emit({ type: 'recording:updated', data: failed });
       }
@@ -273,8 +346,7 @@ export class RecorderManager {
                 } catch (error) {
                   session.recording = null;
                   sharedRecording.writer.destroy();
-                  const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: sharedRecording.session.recordingId });
-                  await this.failRecording(room, sharedRecording.session.recordingId, err.toObject(), 'recorder', true);
+                  await this.failRecording(room, sharedRecording.session.recordingId, writeFailure(error, { roomId, recordingId: sharedRecording.session.recordingId }).toObject(), 'recorder', true);
                 }
               }
               if (this.settings().highlightEnabled !== false) this.highlightBuffers.get(roomId)?.append(event.chunk);
@@ -295,8 +367,7 @@ export class RecorderManager {
               await this.completeRecording(room, sharedRecording.session.recordingId, sharedRecording.session.size, 'stream_lost');
             } catch (error) {
               sharedRecording.writer.destroy();
-              const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: sharedRecording.session.recordingId });
-              await this.failRecording(room, sharedRecording.session.recordingId, err.toObject(), 'recorder');
+              await this.failRecording(room, sharedRecording.session.recordingId, writeFailure(error, { roomId, recordingId: sharedRecording.session.recordingId }).toObject(), 'recorder');
             }
           }
           this.preview?.closeRoom(
@@ -427,15 +498,7 @@ export class RecorderManager {
       throw err;
     }
     const writer = createWriteStream(filePath);
-    const session: ActiveSession = {
-      recordingId: recording.id,
-      roomId: room.id,
-      streamSessionId: status.streamSessionId ?? null,
-      stopRequested: false,
-      size: 0,
-      startedAt: recording.startedAt,
-      engine: null,
-    };
+    const session = this.newSession(recording.id, room.id, status.streamSessionId ?? null, recording.startedAt, filePath);
     let resolveDone!: () => void;
     session.done = new Promise<void>((resolve) => { resolveDone = resolve; });
     session.resolveDone = resolveDone;
@@ -443,7 +506,7 @@ export class RecorderManager {
       session,
       writer,
       // 预览流的时间戳从打开观看起计算；录制文件须在本次开始处重新归零。
-      normalizer: new FlvTimestampNormalizer(true),
+      normalizer: new FlvTimestampNormalizer({ rebaseFromFirstMedia: true }),
       pendingWrites: [],
       pendingWriteBytes: 0,
       writePump: null,
@@ -455,7 +518,7 @@ export class RecorderManager {
     } catch (error) {
       writer.destroy();
       await unlink(filePath).catch(() => undefined);
-      const err = new AppError('RECORDING_START_FAILED', `录制文件初始化失败: ${(error as Error).message}`, { roomId: room.id, recordingId: recording.id });
+      const err = writeFailure(error, { roomId: room.id, recordingId: recording.id });
       const failed = this.services.recordings.update(recording.id, { state: 'failed', endedAt: this.services.clock.iso(), failureReason: err.toObject() });
       this.services.events.emit({ type: 'recording:updated', data: failed });
       throw err;
@@ -568,14 +631,18 @@ export class RecorderManager {
       this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       let resolveDone!: () => void;
       const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-      const session: ActiveSession = { recordingId: recording.id, roomId: room.id, streamSessionId: sessionId, stopRequested: false, size: 0, startedAt: recording.startedAt, engine: null, done, resolveDone };
+      const session = this.newSession(recording.id, room.id, sessionId, recording.startedAt, filePath);
+      session.done = done;
+      session.resolveDone = resolveDone;
       this.active.set(room.id, session);
       this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
       this.services.events.emit({ type: 'recording:updated', data: recording });
       this.emitServiceStatus();
       await this.notifier.notify('recording_started', room.id, { title: room.displayName });
 
-      void this.runSession(room, recording.id, stream, filePath, session, 0).catch(() => undefined);
+      const run = this.runSession(room, recording.id, stream, filePath, session, 0);
+      session.pullDone = run;
+      void run.catch(() => undefined);
       return true;
     } finally {
       this.previewTransitions.delete(room.id);
@@ -585,23 +652,35 @@ export class RecorderManager {
   private async runSession(room: Room, recordingId: string, stream: { url: string; format: 'flv' | 'hls'; headers?: Record<string, string> }, filePath: string, session: ActiveSession, attempt: number): Promise<void> {
     const settings = this.settings();
     const engine = this.services.engineFor();
+    // 本次拉流的代次：代次由接过接力的那一路（resumeSession）推进，被取代的旧会话据此停止处理事件。
+    const generation = session.generation;
     session.engine = engine;
+    session.filePath = filePath;
     this.services.rooms.setState(room.id, 'recording');
-    // 新录制/新分段：清空预览头缓冲，让本段流的 FLV 头被重新捕获（跨录制不残留旧头，QA #150）。
-    this.preview?.resetRoom(room.id);
+    // 只有真正新开一场录制时才清空预览头缓冲（跨录制不残留旧头，QA #150）。
+    // 续录不能清：续录段会跳过 FLV 头（文件里已有），清了之后头再也补不回来，
+    // 中途打开预览的观众会收不到初始化段（预览起不来、从预览点录制也会退化成另开一路拉流）。
+    if (session.segments === 0) this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
+    // 「拿不到数据」的判据是收到第一份数据，而不是文件被创建：
+    // 平台返回 200 后卡住不吐字节时 file_created 会先触发，只看它就会把这种情况判定成"已开始录"，一直挂到天荒地老。
+    let gotData = false;
     const pendingTimeout = this.services.clock.setTimeout(() => {
-      if (!startedConfirmed) {
-        const err = new AppError('RECORDING_START_FAILED', '录制启动超时', { roomId: room.id, recordingId, retryable: true });
-        void this.failRecording(room, recordingId, err, 'recorder');
+      if (!gotData) {
+        // 拿不到数据与断流是同一件事：同样进入重试，而不是一次判死（网络慢时白丢一次录制）。
+        const err = new AppError('RECORDING_START_TIMEOUT', '等待直播数据超时', { roomId: room.id, recordingId, retryable: true });
+        void this.handleDisconnect(room, recordingId, err.toObject(), attempt, session.timestampOffsetMs);
       }
-    }, 30_000);
+    }, START_TIMEOUT_MS);
 
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
       const input = { url: stream.url, format: stream.format, ...(stream.headers ? { headers: stream.headers } : {}) };
-      for await (const event of engine.start(input, filePath)) {
+      // 第 2 段起接着写同一个文件：追加写入 + 时间戳顺延到上一段结尾之后。
+      const resume = { append: session.segments > 0, timestampOffsetMs: session.timestampOffsetMs };
+      for await (const event of engine.start(input, filePath, resume)) {
+        if (session.generation !== generation) return;
         if (session.stopRequested) break;
         switch (event.type) {
           case 'file_created': {
@@ -611,7 +690,18 @@ export class RecorderManager {
             break;
           }
           case 'data': {
+            if (!gotData) {
+              gotData = true;
+              clearTimeout2(this.services, pendingTimeout);
+            }
             session.size += event.chunk.length;
+            const now = this.services.clock.now();
+            // 恢复后拿到第一份数据：把中断期间的缺失时长结算到本次录制上。
+            if (session.gapStartAt !== null) {
+              session.missingMs += Math.max(0, now - session.gapStartAt);
+              session.gapStartAt = null;
+            }
+            session.lastDataAt = now;
             this.preview?.broadcastFrame(room.id, event.chunk);
             break;
           }
@@ -621,74 +711,163 @@ export class RecorderManager {
             break;
           }
           case 'completed': {
-            await this.handleNaturalEnd(room, recordingId, event.fileSize, session, attempt);
+            // 这一路拉流已结束（写流已关闭），接力时无需再等它。
+            session.pullDone = null;
+            await this.handleNaturalEnd(room, recordingId, event.fileSize ?? session.size, session, attempt, event.endTimestampMs ?? session.timestampOffsetMs);
             return;
           }
           case 'error': {
             clearTimeout2(this.services, pendingTimeout);
-            await this.handleDisconnect(room, recordingId, event.error, attempt);
+            // 同上：错误事件意味着该路拉流已收尾，写流已关闭。
+            session.pullDone = null;
+            await this.handleDisconnect(room, recordingId, event.error, attempt, event.endTimestampMs ?? session.timestampOffsetMs);
             return;
           }
         }
       }
+      // 已被新的续录会话取代：不在这里收尾，交给接管的那一代会话处理。
+      if (session.generation !== generation) return;
+      // 退出中：写流已经落盘，记录状态交给下次启动的恢复流程统一收口，这里不再改库、不再跑后处理。
+      if (this.shuttingDown) return;
       if (session.stopRequested) {
-        await this.completeRecording(room, recordingId, session.size, 'ended');
+        await this.completeRecording(room, recordingId, session.size, 'ended', { endReason: 'stopped' });
         return;
       }
       if (!startedConfirmed) {
         const err = new AppError('RECORDING_START_FAILED', '录制启动失败', { roomId: room.id, recordingId, retryable: true });
-        await this.failRecording(room, recordingId, err, 'recorder');
+        await this.failRecording(room, recordingId, err.toObject(), 'recorder');
         return;
       }
       await this.completeRecording(room, recordingId, session.size, 'ended');
     } catch (err) {
+      if (session.generation !== generation || this.shuttingDown) return;
       const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `录制异常: ${(err as Error).message}`, { roomId: room.id, recordingId, retryable: true });
-      await this.failRecording(room, recordingId, appErr, 'recorder');
+      await this.failRecording(room, recordingId, appErr.toObject(), 'recorder');
     } finally {
       clearTimeout2(this.services, pendingTimeout);
     }
   }
 
-  /** 断流重连：5/15/45 秒退避；成功则开新段续录，耗尽则标记失败保留已录部分。 */
-  private async handleDisconnect(room: Room, recordingId: string, error: ErrorObject, attempt: number): Promise<void> {
-    const settings = this.settings();
-    const recording = this.services.recordings.update(recordingId, {
-      state: 'reconnecting',
-      retryCount: attempt,
-    });
-    this.services.rooms.setState(room.id, 'reconnecting');
-    this.services.events.emit({ type: 'recording:updated', data: recording });
-    this.raiseAlert('warning', 'recorder', new AppError('NETWORK_UNAVAILABLE', `断流，第 ${attempt + 1} 次重连等待中`, { roomId: room.id, recordingId, retryable: true }));
+  /**
+   * 断流重连：退避后重新取地址继续拉流，恢复后接着写同一个文件——不新开文件、不新建记录。
+   * 重连额度按轮计算：稳定录满 STABLE_RESET_MS 后归还，几小时前的旧故障不再拖累现在这一次抖动。
+   * 额度耗尽才收尾：有数据 → 已完成并注明中断；一个字节都没有 → 失败。
+   */
+  private async handleDisconnect(room: Room, recordingId: string, error: ErrorObject, attempt: number, endTimestampMs: number): Promise<void> {
+    const session = this.active.get(room.id);
+    if (!session) return;
+    // 启动超时与随后的断流可能同时触发重连：只允许一次接力在途。
+    await this.withHandoff(session, () => this.handleDisconnectInner(room, recordingId, session, error, attempt, endTimestampMs));
+  }
 
-    const delay = settings.retry.delaysSeconds[attempt];
-    if (delay === undefined || attempt >= settings.retry.maxAttempts) {
-      const err = new AppError('STREAM_DISCONNECTED_RECONNECT_EXHAUSTED', '断流重连耗尽', { roomId: room.id, recordingId, retryable: true });
-      this.preview?.closeRoom(room.id, 4004, 'stream_lost');
-      await this.failRecording(room, recordingId, err, 'recorder');
+  private async handleDisconnectInner(room: Room, recordingId: string, session: ActiveSession, error: ErrorObject, attempt: number, endTimestampMs: number): Promise<void> {
+    // 本段写到哪：下一段时间戳从这里接着走，拼接处不会跳回开头。
+    if (endTimestampMs > session.timestampOffsetMs) session.timestampOffsetMs = endTimestampMs;
+    // 缺失时长从"最后一次收到数据"算起，恢复拿到数据时结算。
+    if (session.gapStartAt === null) session.gapStartAt = session.lastDataAt || this.services.clock.now();
+
+    // 写盘类失败与网络无关，重试没有意义：直接收尾，不让用户空等一轮退避。
+    if (error.retryable === false) {
+      await this.finishInterrupted(room, recordingId, humanizeFailure(error));
       return;
     }
+
+    const settings = this.settings();
+    const effective = this.services.clock.now() - session.lastRecoveryAt >= STABLE_RESET_MS ? 0 : attempt;
+    const recording = this.services.recordings.update(recordingId, { state: 'reconnecting', retryCount: effective });
+    this.services.rooms.setState(room.id, 'reconnecting');
+    this.services.events.emit({ type: 'recording:updated', data: recording });
+
+    const delay = settings.retry.delaysSeconds[effective];
+    if (delay === undefined || effective >= settings.retry.maxAttempts) {
+      await this.finishInterrupted(room, recordingId, reconnectExhausted(error, settings.retry.maxAttempts));
+      return;
+    }
+    this.raiseAlert('warning', 'recorder', new AppError(error.code, `${causeLabel(error.code)}，正在自动重试（第 ${effective + 1} 次）`, { roomId: room.id, recordingId, retryable: true }));
 
     await new Promise<void>((resolve) => {
       this.services.clock.setTimeout(() => resolve(), delay * 1000);
     });
-    if (this.active.get(room.id)?.stopRequested) return;
+    // 退避期间用户点了停止：按手动停止收尾。直接 return 会把记录永远留在"重连中"、占着并发名额，
+    // 停止录制的请求也会一直挂在 session.done 上（唯一的出口是重启服务）。
+    if (this.active.get(room.id)?.stopRequested) {
+      await this.completeRecording(room, recordingId, session.size, 'ended', { endReason: 'stopped' });
+      return;
+    }
     try {
       const cookie = await this.services.platformCookie(room.platform);
+      // 先确认主播还在不在播：已下播就是正常收尾，不该白等几次重试再报"失败"。
+      const live = await this.services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
+      if (live.status !== 'live') {
+        await this.completeRecording(room, recordingId, session.size, 'ended');
+        return;
+      }
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
-      this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: this.active.get(room.id)?.size ?? 0 });
-      // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
-      if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
-      // 断流续录：当前分段完成即执行分段级收尾（校验/管线/上传/mp4_after 转封装；#220 询问保留时进入待确认）。
-      this.finishOrConfirm(recordingId);
-      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality, expectedQuality: settings.quality });
-      const session = this.active.get(room.id);
-      if (session) session.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, session ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt, engine: null }, attempt + 1).catch(() => undefined);
-    } catch {
-      this.preview?.closeRoom(room.id, 4004, 'stream_lost');
-      await this.failRecording(room, recordingId, error, 'recorder');
+      const cur = this.active.get(room.id);
+      if (!cur) return;
+      await this.resumeSession(room, recordingId, cur, stream, effective + 1);
+    } catch (err) {
+      const cause = err instanceof AppError ? err.toObject() : error;
+      await this.finishInterrupted(room, recordingId, reconnectExhausted(cause, settings.retry.maxAttempts));
     }
+  }
+
+  /**
+   * 恢复续录：先把上一路拉流彻底停掉（含关闭写流），再接着写同一个文件，而不是新开一个。
+   * 顺序不能反：启动超时重试时旧连接可能还挂着，若不等它收尾，新旧两个写流会同时写同一个文件。
+   */
+  private async resumeSession(room: Room, recordingId: string, session: ActiveSession, stream: { url: string; format: 'flv' | 'hls'; headers?: Record<string, string> }, attempt: number): Promise<void> {
+    // 先推进代次让旧会话失效，否则它收到错误事件后会再走一遍重连、重复处理。
+    session.generation += 1;
+    await session.engine?.stop().catch(() => undefined);
+    await this.waitForPullToStop(session);
+    session.segments += 1;
+    session.lastRecoveryAt = this.services.clock.now();
+    const run = this.runSession(room, recordingId, stream, session.filePath!, session, attempt);
+    session.pullDone = run;
+    void run.catch(() => undefined);
+  }
+
+  /**
+   * 接力互斥：启动超时、断流、流自然结束可能同时触发续录。
+   * 若两次接力同时在跑，各自会起一路拉流、两路都往同一个文件写，文件必然损坏，因此同一会话只允许一次在途。
+   */
+  private async withHandoff(session: ActiveSession, action: () => Promise<void>): Promise<void> {
+    if (session.handingOff) return;
+    session.handingOff = true;
+    try {
+      await action();
+    } finally {
+      session.handingOff = false;
+    }
+  }
+
+  /** 等旧拉流收尾（正常会被 stop() 立刻打断）；引擎万一不响应 stop，也不能把重连永久卡住。 */
+  private async waitForPullToStop(session: ActiveSession): Promise<void> {
+    const pull = session.pullDone;
+    if (!pull) return;
+    await Promise.race([
+      pull.catch(() => undefined),
+      new Promise<void>((resolve) => this.services.clock.setTimeout(resolve, PULL_STOP_GRACE_MS)),
+    ]);
+  }
+
+  /**
+   * 中断收尾（重连耗尽 / 写盘失败 / 一直拿不到数据）：
+   * 文件里有数据 → 标"已完成"并注明中断——几小时的有效录像不该因为最后一段网络中断被整条判失败；
+   * 一个字节都没有 → 才按失败处理（不产生一个"已完成"的空文件）。
+   */
+  private async finishInterrupted(room: Room, recordingId: string, err: AppError, preservePreview = false): Promise<void> {
+    const session = this.active.get(room.id);
+    const size = session?.size ?? 0;
+    if (size > 0) {
+      await this.completeRecording(room, recordingId, size, 'stream_lost', { preservePreview, endReason: 'interrupted', failure: err.toObject() });
+      this.raiseAlert('error', 'recorder', err);
+      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
+      await this.notifier.notify('recording_failed', room.id, { title: room.displayName });
+      return;
+    }
+    await this.failRecording(room, recordingId, err.toObject(), 'recorder', preservePreview);
   }
 
   async stopRecording(roomId: string): Promise<void> {
@@ -702,13 +881,12 @@ export class RecorderManager {
       const room = this.services.rooms.get(roomId)!;
       try {
         await this.closeSharedPreviewRecording(sharedRecording);
-        await this.completeRecording(room, session.recordingId, session.size, 'ended', true);
+        await this.completeRecording(room, session.recordingId, session.size, 'ended', { preservePreview: true, endReason: 'stopped' });
         // 弹窗已关闭时共享上游流仍会为录制持续到这里；录制结束后没有观看者就收掉它。
         if (!this.preview?.hasClients(roomId)) await this.stopPreviewStream(roomId);
       } catch (error) {
         sharedRecording.writer.destroy();
-        const err = new AppError('RECORDING_START_FAILED', `录制文件写入失败: ${(error as Error).message}`, { roomId, recordingId: session.recordingId });
-        await this.failRecording(room, session.recordingId, err.toObject(), 'recorder', true);
+        await this.failRecording(room, session.recordingId, writeFailure(error, { roomId, recordingId: session.recordingId }).toObject(), 'recorder', true);
       }
       return;
     }
@@ -717,30 +895,35 @@ export class RecorderManager {
   }
 
   /**
-   * 自然结束（流连接断开但房间可能仍开播）：先归档当前分段，再立即重拉流开新段续录，
-   * 避免等待调度器下一轮（60s）造成 60s+ 数据缺口。rapid 用于限制连断连拉的快速循环。
+   * 自然结束（流连接正常关闭但房间可能仍开播）：重新拉流接着写同一个文件，
+   * 既避免等调度器下一轮（60s）造成的数据缺口，也不再产生"多出一个文件 + 中途一次录制完成提示"。
+   * rapid 用于限制连断连拉的快速循环。
    */
-  private async handleNaturalEnd(room: Room, recordingId: string, size: number, session: ActiveSession, attempt: number): Promise<void> {
+  private async handleNaturalEnd(room: Room, recordingId: string, size: number, session: ActiveSession, attempt: number, endTimestampMs: number): Promise<void> {
+    // 与断流重连互斥：同一时刻只允许一次接力，避免两路拉流写同一个文件。
+    await this.withHandoff(session, () => this.handleNaturalEndInner(room, recordingId, size, session, attempt, endTimestampMs));
+  }
+
+  private async handleNaturalEndInner(room: Room, recordingId: string, size: number, session: ActiveSession, attempt: number, endTimestampMs: number): Promise<void> {
     if (session.stopRequested) {
-      await this.completeRecording(room, recordingId, size, 'ended');
+      await this.completeRecording(room, recordingId, size, 'ended', { endReason: 'stopped' });
       return;
     }
     const settings = this.settings();
-    this.services.recordings.update(recordingId, { state: 'completed', endedAt: this.services.clock.iso(), fileSizeBytes: size });
-    // #222：confirmAfterComplete 开启时不发中间 completed 事件（只发最终 awaiting_confirmation），避免「已保存通知 + 确认框」弹两次。
-    if (!settings.confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
-
-    const rapid = settings.retry.delaysSeconds[attempt] ?? settings.retry.maxAttempts;
-    if (attempt >= settings.retry.maxAttempts) {
+    if (endTimestampMs > session.timestampOffsetMs) session.timestampOffsetMs = endTimestampMs;
+    if (session.gapStartAt === null) session.gapStartAt = session.lastDataAt || this.services.clock.now();
+    const effective = this.services.clock.now() - session.lastRecoveryAt >= STABLE_RESET_MS ? 0 : attempt;
+    if (effective >= settings.retry.maxAttempts) {
       await this.completeRecording(room, recordingId, size, 'ended');
       return;
     }
+    const rapid = settings.retry.delaysSeconds[effective] ?? settings.retry.maxAttempts;
     // 短暂退避后重拉流：连续断连时避免高频空转，正常重连 gap 远小于调度器间隔。
     await new Promise<void>((resolve) => {
       this.services.clock.setTimeout(() => resolve(), Math.min(rapid, 5) * 1000);
     });
     if (this.active.get(room.id)?.stopRequested) {
-      await this.completeRecording(room, recordingId, size, 'ended');
+      await this.completeRecording(room, recordingId, size, 'ended', { endReason: 'stopped' });
       return;
     }
     try {
@@ -752,29 +935,35 @@ export class RecorderManager {
         return;
       }
       const stream = await this.services.adapterFor(room.platform).getStreamUrl(room.url, settings.quality, cookie);
-      // 只有确认续录时才在这里收尾（校验/管线/上传/mp4_after 转封装），否则中间分段永不转 MP4/上传；
-      // 终止分支一律交给 completeRecording 收尾——每条录制只能收尾一次，重复会把转封装跑两轮甚至误报失败。
-      this.finishOrConfirm(recordingId);
-      const nextPath = recordingFilePath(settings.recordingDirectory, room.platform, room.displayName || room.id, this.services.clock.iso(), settings.recordingFormat, settings.namingRule, stream.actualQuality, room.id);
-      const recording = this.services.recordings.get(recordingId)!;
-      const next = this.services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: recording.streamSessionId, streamTitle: recording.streamTitle, quality: stream.actualQuality, expectedQuality: settings.quality });
       const cur = this.active.get(room.id);
-      if (cur) cur.recordingId = next.id;
-      void this.runSession(room, next.id, stream, nextPath, cur ?? { recordingId: next.id, roomId: room.id, streamSessionId: recording.streamSessionId, stopRequested: false, size: 0, startedAt: recording.startedAt, engine: null }, attempt + 1).catch(() => undefined);
+      if (!cur) return;
+      await this.resumeSession(room, recordingId, cur, stream, effective + 1);
     } catch {
       await this.completeRecording(room, recordingId, size, 'ended');
     }
   }
 
-  private async completeRecording(room: Room, recordingId: string, size: number, endReason: 'ended' | 'stream_lost', preservePreview = false): Promise<void> {
+  private async completeRecording(
+    room: Room,
+    recordingId: string,
+    size: number,
+    endReason: 'ended' | 'stream_lost',
+    options: { preservePreview?: boolean; endReason?: RecordingEndReason; failure?: ErrorObject | null } = {},
+  ): Promise<void> {
+    // 退出中：只放掉会话，不改库、不发通知、不起后处理——状态交给下次启动的恢复流程统一收口。
+    if (this.shuttingDown) {
+      this.active.get(room.id)?.resolveDone?.();
+      this.active.delete(room.id);
+      return;
+    }
     // 0 字节录制（流连接后无数据/立即关闭）应标 failed 而非 completed 空文件（QA #165 边界）。
     if (size <= 0) {
       const rec = this.services.recordings.get(recordingId);
       if (rec?.filePath) {
         await unlink(rec.filePath).catch(() => undefined);
       }
-      const err = new AppError('RECORDING_EMPTY', '录制文件为空（未获取到流数据）', { roomId: room.id, recordingId, retryable: true });
-      await this.failRecording(room, recordingId, err.toObject(), 'recorder', preservePreview);
+      const err = new AppError('RECORDING_EMPTY', failureText('RECORDING_EMPTY'), { roomId: room.id, recordingId, retryable: true });
+      await this.failRecording(room, recordingId, err.toObject(), 'recorder', options.preservePreview ?? false);
       return;
     }
     const session = this.active.get(room.id);
@@ -782,8 +971,13 @@ export class RecorderManager {
       state: 'completed',
       endedAt: this.services.clock.iso(),
       fileSizeBytes: size,
+      // 结束原因与缺失时长随录制落库：历史页据此标注"中途缺失 N 秒"，去重据此判断能否续录。
+      endReason: options.endReason ?? (endReason === 'stream_lost' ? 'interrupted' : 'natural'),
+      missingMs: Math.round(session?.missingMs ?? 0),
+      failureReason: options.failure ?? null,
     });
-    if (!preservePreview) this.preview?.closeRoom(room.id, 1000, endReason);
+    // 中断收尾要用 4004（stream_lost）告知观看端：这不是正常结束，流是断的。
+    if (!options.preservePreview) this.preview?.closeRoom(room.id, endReason === 'stream_lost' ? 4004 : 1000, endReason);
     this.active.delete(room.id);
     this.emitServiceStatus();
     this.services.rooms.setState(room.id, 'completed', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -791,7 +985,8 @@ export class RecorderManager {
     if (!this.settings().confirmAfterComplete) this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
-    await this.notifier.notify('recording_ended', room.id, { title: room.displayName });
+    // 中断收尾由 finishInterrupted 发"录制失败"通知；这里不能再发一次"录制已结束"，否则用户收到两条互相打架的提醒。
+    if (!options.failure) await this.notifier.notify('recording_ended', room.id, { title: room.displayName });
     // 异步校验文件完整性，不阻塞录制完成响应（#220 询问保留时进入待确认态挂起管线/上传）。
     this.finishOrConfirm(recordingId);
   }
@@ -833,7 +1028,7 @@ export class RecorderManager {
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
     if (!rec.filePath) {
-      const err = new AppError('RECORDING_FILE_CORRUPTED', '待确认录制文件缺失，无法保留', { recordingId, roomId: rec.roomId, retryable: false });
+      const err = new AppError('RECORDING_FILE_CORRUPTED', '录像文件已不在原位置，无法保留', { recordingId, roomId: rec.roomId, retryable: false });
       const failed = this.services.recordings.update(recordingId, { state: 'failed', failureReason: err.toObject() });
       this.services.events.emit({ type: 'recording:updated', data: failed });
       return;
@@ -937,20 +1132,28 @@ export class RecorderManager {
   }
 
   private async failRecording(room: Room, recordingId: string, err: ErrorObject, source: string, preservePreview = false): Promise<void> {
+    // 退出中：同上，只放掉会话（记录留给恢复流程，避免退出时写库/发邮件）。
+    if (this.shuttingDown) {
+      this.active.get(room.id)?.resolveDone?.();
+      this.active.delete(room.id);
+      return;
+    }
     const session = this.active.get(room.id);
+    // 用户看到的原因必须是"人话"：技术性 message 换成对应场景的说明，原文留在 details 里备查。
+    const failure = humanizeFailure(err);
     const rec = this.services.recordings.update(recordingId, {
       state: 'failed',
       endedAt: this.services.clock.iso(),
-      failureReason: err,
+      failureReason: failure.toObject(),
     });
     if (!preservePreview) this.preview?.closeRoom(room.id, 4004, 'stream_lost');
     this.active.delete(room.id);
     this.emitServiceStatus();
-    this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: err });
+    this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: failure.toObject() });
     this.services.events.emit({ type: 'recording:updated', data: rec });
     this.services.events.emit({ type: 'room:updated', data: this.enrichRoom(this.services.rooms.get(room.id)!) });
     session?.resolveDone?.();
-    this.raiseAlert('error', source, err);
+    this.raiseAlert('error', source, failure);
     await this.notifier.notify('recording_failed', room.id, { title: room.displayName });
   }
 
