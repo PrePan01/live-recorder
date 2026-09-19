@@ -4,6 +4,7 @@ import { startUpdateMonitoring, useUpdateStore } from './updateStore';
 import type { UpdateState } from '../types/update';
 vi.mock('./bootStore', () => ({ bridge: {
   isDesktop: true, checkUpdate: vi.fn(), downloadUpdate: vi.fn(), getUpdateState: vi.fn(), onUpdateState: vi.fn(),
+  installUpdate: vi.fn(),
 } }));
 const available: UpdateState = {
   revision: 2, currentVersion: '0.5.111', phase: 'available', downloaded: 0, error: null,
@@ -45,6 +46,17 @@ describe('update state synchronization', () => {
     vi.mocked(bridge.downloadUpdate).mockResolvedValue({ ...available, phase: 'ready', downloaded: 100 });
     await useUpdateStore.getState().download();
     expect(useUpdateStore.getState().state?.phase).toBe('ready');
+  });
+  it('merges installs so a double confirmation cannot start two installers', async () => {
+    let reject!: (e: string) => void;
+    vi.mocked(bridge.installUpdate).mockReturnValueOnce(new Promise((_, r) => { reject = r; }));
+    const first = useUpdateStore.getState().install();
+    expect(useUpdateStore.getState().install()).toBe(first);
+    reject('安装包已被删除');
+    await expect(first).rejects.toBe('安装包已被删除');
+    vi.mocked(bridge.installUpdate).mockResolvedValue();
+    await useUpdateStore.getState().install();
+    expect(bridge.installUpdate).toHaveBeenCalledTimes(2);
   });
   it('subscribes before the snapshot and checks every four hours with cleanup', async () => {
     vi.useFakeTimers(); const off = vi.fn();

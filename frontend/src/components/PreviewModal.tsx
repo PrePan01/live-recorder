@@ -24,6 +24,7 @@ import { useRoomStore } from "../stores/roomStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useDisplayClock } from "../hooks/useDisplayClock";
 import { describeError } from "../utils/errorMap";
+import { fitPreviewBox, fitPreviewBoxByHeight } from "../utils/previewLayout";
 import { ApiError } from "../types/error";
 import VideoPlayer from "./VideoPlayer";
 import {
@@ -37,7 +38,12 @@ import {
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
-const PICTURE_IN_PICTURE_HEIGHT = 203;
+/** 弹窗主体左右内边距合计（antd 默认各 24）：视频区宽度 = 弹窗宽度 - 该值。 */
+const MODAL_BODY_PADDING_X = 48;
+/** 标题栏 + 主体上下内边距 + 视频下方操作行 + 居中留白：竖屏据此把画面压在可视高度内。 */
+const MODAL_CHROME_HEIGHT = 190;
+/** 竖屏拖拽缩放的画面高度下限，避免缩到不可用。 */
+const MIN_VIDEO_HEIGHT = 240;
 type PlayerBounds = { left: number; top: number; width: number };
 
 /**
@@ -79,6 +85,11 @@ export default function PreviewModal({
       ),
   );
   const [recentStop, setRecentStop] = useState(false);
+  // 流的真实比例（宽/高）：元数据就绪前按 16:9，避免弹窗先跳一下再变。
+  const [streamRatio, setStreamRatio] = useState(16 / 9);
+  // 竖屏画面高度（宽度按比例算出）；null = 用满可视高度上限，用户拖拽后才取值。
+  const [portraitHeight, setPortraitHeight] = useState<number | null>(null);
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [highlightSeconds, setHighlightSeconds] = useState(30);
   const [highlightMaxSeconds, setHighlightMaxSeconds] = useState(300);
   const [highlightAvailableSeconds, setHighlightAvailableSeconds] = useState(0);
@@ -93,7 +104,13 @@ export default function PreviewModal({
   const [previewPlayerVisible, setPreviewPlayerVisible] = useState(false);
   const [previewPlayerSlot, setPreviewPlayerSlot] =
     useState<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startW: number;
+    startY: number;
+    startHeight: number;
+    portrait: boolean;
+  } | null>(null);
   const pictureDragRef = useRef<{
     startX: number;
     startY: number;
@@ -111,6 +128,31 @@ export default function PreviewModal({
   const now = useDisplayClock(recording);
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
+
+  // 画面按流的真实宽高比排版：横屏按宽度，竖屏按高度（默认用满可视高度，可拖拽缩放）。
+  const maxVideoHeight = Math.max(180, viewportHeight - MODAL_CHROME_HEIGHT);
+  const portrait = streamRatio < 1;
+  const videoBox = portrait
+    ? fitPreviewBoxByHeight(
+        streamRatio,
+        portraitHeight ?? maxVideoHeight,
+        maxVideoHeight,
+      )
+    : fitPreviewBox(streamRatio, Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoHeight);
+  const modalWidth = Math.ceil(videoBox.width + MODAL_BODY_PADDING_X);
+  // 画中画同样按真实比例，以固定宽度为基准，并且不超过窗口高度。
+  const pictureBox = fitPreviewBox(
+    streamRatio,
+    PICTURE_IN_PICTURE_WIDTH,
+    Math.max(120, viewportHeight - 20),
+  );
+
+  // 窗口高度变化时重算竖屏画面的高度上限。
+  useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     if (!recentStop) return;
@@ -288,8 +330,8 @@ export default function PreviewModal({
   const enterPictureInPicture = () => {
     setPreviewPlayerVisible(false);
     setPicturePosition({
-      x: Math.max(10, window.innerWidth - PICTURE_IN_PICTURE_WIDTH - 10),
-      y: Math.max(10, window.innerHeight - PICTURE_IN_PICTURE_HEIGHT - 10),
+      x: Math.max(10, window.innerWidth - pictureBox.width - 10),
+      y: Math.max(10, window.innerHeight - pictureBox.height - 10),
     });
     setPictureInPicture(true);
   };
@@ -326,14 +368,14 @@ export default function PreviewModal({
         x: Math.max(
           0,
           Math.min(
-            window.innerWidth - PICTURE_IN_PICTURE_WIDTH,
+            window.innerWidth - pictureBox.width,
             drag.originX + deltaX,
           ),
         ),
         y: Math.max(
           0,
           Math.min(
-            window.innerHeight - PICTURE_IN_PICTURE_HEIGHT,
+            window.innerHeight - pictureBox.height,
             drag.originY + deltaY,
           ),
         ),
@@ -367,16 +409,33 @@ export default function PreviewModal({
   const onHandleDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragRef.current = { startX: e.clientX, startW: width };
+    dragRef.current = {
+      startX: e.clientX,
+      startW: width,
+      startY: e.clientY,
+      startHeight: videoBox.height,
+      portrait,
+    };
     const onMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return;
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (drag.portrait) {
+        // 竖屏尺寸由高度决定，所以用纵向拖拽缩放；上限仍是可视高度，不会推出屏幕。
+        setPortraitHeight(
+          Math.min(
+            maxVideoHeight,
+            Math.max(
+              MIN_VIDEO_HEIGHT,
+              drag.startHeight + (ev.clientY - drag.startY),
+            ),
+          ),
+        );
+        return;
+      }
       setWidth(
         Math.min(
           MAX_WIDTH,
-          Math.max(
-            MIN_WIDTH,
-            dragRef.current.startW + (ev.clientX - dragRef.current.startX),
-          ),
+          Math.max(MIN_WIDTH, drag.startW + (ev.clientX - drag.startX)),
         ),
       );
     };
@@ -402,7 +461,7 @@ export default function PreviewModal({
               paddingRight: 8,
             }}
           >
-            <span>{`${titlePrefix}：${room.displayName}`}</span>
+            <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
               <Tooltip title="画中画">
                 <Button
@@ -426,7 +485,7 @@ export default function PreviewModal({
           </div>
         }
         footer={null}
-        width={width}
+        width={modalWidth}
         className="lr-preview-modal"
         centered
         destroyOnHidden
@@ -440,7 +499,9 @@ export default function PreviewModal({
               position: "relative",
               background: "#000",
               overflow: "hidden",
-              aspectRatio: "16 / 9",
+              margin: "0 auto",
+              width: videoBox.width,
+              aspectRatio: String(streamRatio),
             }}
           />
           <div style={{ marginTop: 12, textAlign: "center" }}>
@@ -648,8 +709,9 @@ export default function PreviewModal({
               ? picturePosition.y
               : (previewPlayerBounds?.top ?? 0),
             width: pictureInPicture
-              ? PICTURE_IN_PICTURE_WIDTH
+              ? pictureBox.width
               : (previewPlayerBounds?.width ?? 0),
+            height: pictureInPicture ? pictureBox.height : undefined,
             zIndex: pictureInPicture ? 1100 : 1001,
             cursor: pictureInPicture ? "move" : undefined,
             borderRadius: 8,
@@ -664,7 +726,12 @@ export default function PreviewModal({
             transition: pictureInPicture ? undefined : "opacity 180ms ease-out",
           }}
         >
-          <VideoPlayer roomId={room.id} platform={room.platform} />
+          <VideoPlayer
+            roomId={room.id}
+            platform={room.platform}
+            aspectRatio={streamRatio}
+            onStreamAspectRatio={setStreamRatio}
+          />
           {!pictureInPicture && (
             <div
               onMouseDown={onHandleDown}
@@ -675,7 +742,7 @@ export default function PreviewModal({
                 bottom: 4,
                 width: 18,
                 height: 18,
-                cursor: "nwse-resize",
+                cursor: portrait ? "ns-resize" : "nwse-resize",
                 zIndex: 2,
                 borderRight: "3px solid rgba(255,255,255,0.75)",
                 borderBottom: "3px solid rgba(255,255,255,0.75)",

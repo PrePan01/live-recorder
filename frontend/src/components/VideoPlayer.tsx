@@ -19,6 +19,10 @@ export interface VideoPlayerProps {
   fill?: boolean;
   /** 直播墙窗口模式中供重复格子镜像主画面。 */
   onVideoElementChange?: (element: HTMLVideoElement | null) => void;
+  /** 预览弹窗：上报流的真实宽高比（宽/高），供容器按真实比例排版。 */
+  onStreamAspectRatio?: (ratio: number) => void;
+  /** 预览弹窗：fill 未开启时用于排版的宽高比；不传保持 16:9（直播墙不动）。 */
+  aspectRatio?: number;
 }
 
 export default function VideoPlayer({
@@ -27,6 +31,8 @@ export default function VideoPlayer({
   platform,
   fill = false,
   onVideoElementChange,
+  onStreamAspectRatio,
+  aspectRatio,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const attachVideoRef = useCallback(
@@ -65,6 +71,24 @@ export default function VideoPlayer({
     return () =>
       video.removeEventListener("volumechange", rememberAudioPreference);
   }, []);
+
+  // 上报流的真实宽高比：元数据就绪时、以及流内分辨率变化（video 的 resize 事件）时都会触发。
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onStreamAspectRatio) return;
+    const report = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        onStreamAspectRatio(video.videoWidth / video.videoHeight);
+      }
+    };
+    report();
+    video.addEventListener("loadedmetadata", report);
+    video.addEventListener("resize", report);
+    return () => {
+      video.removeEventListener("loadedmetadata", report);
+      video.removeEventListener("resize", report);
+    };
+  }, [onStreamAspectRatio]);
 
   useEffect(() => {
     if (currentRoomIdRef.current !== roomId) {
@@ -256,7 +280,7 @@ export default function VideoPlayer({
           // 竖屏墙不预设比例：占满格子，画面按流自己的宽高比留边显示。
           ...(fill
             ? { height: "100%", objectFit: "contain" as const }
-            : { aspectRatio: "16 / 9" }),
+            : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }),
           display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />

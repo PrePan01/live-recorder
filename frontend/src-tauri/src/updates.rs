@@ -1,4 +1,7 @@
-//! GitHub-hosted installer downloads. No application replacement or process exit.
+//! GitHub-hosted installer downloads.
+//!
+//! Windows 的安装阶段以 NSIS 被动模式就地覆盖并自动重启（见 [`install`]），
+//! 其余平台仍交给系统安装流程处理。
 use reqwest::blocking::Client;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -24,6 +27,9 @@ const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases
 /// 清单由 CI 以 no-cache 上传（#43），SHA256 校验安装包完整性。
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
 const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
+/// Tauri 更新签名公钥（minisign，base64）。与 CI Secrets 中的 TAURI_SIGNING_PRIVATE_KEY 配对，
+/// 由 tauri build 的 createUpdaterArtifacts 生成对应 `.sig`（见 tauri.windows.conf.json）。
+const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5QkM2MzM4NjEyOUJGM0MKUldROHZ5bGhPR084bVdTbVRINGFoQ1VWN0FmWHRna2I3akdSZjNSWVNZek1QZDNYclE4Z3NvbG8K";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 /// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（1 次、5s，仅当 CDN 判「无更新」时才探测；
 /// 大陆被墙时快速失败，避免每次「已是最新」都长时间等待 GitHub）。
@@ -43,6 +49,8 @@ pub struct Asset {
     url: String,
     size: u64,
     sha256: String,
+    /// 安装包的 minisign 签名（`.sig` 内容）。旧清单与 macOS 产物没有该字段。
+    signature: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Manifest {
@@ -146,8 +154,67 @@ fn verified(path: &Path, asset: &Asset) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 用清单内的 minisign 签名核验安装包来源。
+/// 与清单的 SHA256 一样，签名内容是 base64 文本，公钥内嵌在客户端。
+fn signature_valid(path: &Path, signature: &str) -> Result<(), String> {
+    use base64::Engine;
+    let decode = |value: &str, what: &str| {
+        base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .map_err(|e| format!("更新{what}不是有效的 base64：{e}"))
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|e| format!("更新{what}不是 UTF-8：{e}")))
+    };
+    let public_key =
+        minisign_verify::PublicKey::decode(&decode(UPDATE_PUBKEY, "公钥")?).map_err(|e| format!("更新公钥无法解析：{e}"))?;
+    let signature = minisign_verify::Signature::decode(&decode(signature, "签名")?).map_err(|e| format!("更新签名无法解析：{e}"))?;
+    let bytes = fs::read(path).map_err(|e| format!("无法读取安装包：{e}"))?;
+    public_key
+        .verify(&bytes, &signature, true)
+        .map_err(|e| e.to_string())
+}
 fn installer(dir: &Path, update: &Update) -> PathBuf {
     dir.join(format!("{}-{}", update.version, update.asset.filename))
+}
+
+/// 候选版本是否比基线更新；任一侧版本号非法都返回 false（宁可保持现状，也不误删已下好的包）。
+fn is_newer(candidate: &str, baseline: &str) -> bool {
+    match (Version::parse(candidate), Version::parse(baseline)) {
+        (Ok(candidate), Ok(baseline)) => candidate > baseline,
+        _ => false,
+    }
+}
+
+/// 已下载好安装包（phase=ready）时，是否需要让位给清单里的最新版本。
+/// 只有清单版本更新才让位；清单更旧（如 CDN 滞后）或相同都保持现状，避免把下好的文件白白清掉。
+fn supersedes_ready(phase: &str, ready: Option<&Update>, latest: Option<&Update>) -> bool {
+    if phase != "ready" {
+        return false;
+    }
+    match (ready, latest) {
+        (Some(ready), Some(latest)) => is_newer(&latest.version, &ready.version),
+        _ => false,
+    }
+}
+
+/// 丢弃已被新版本取代的安装包：正式包、断点续传文件与 completed.json 元数据。
+/// 元数据必须一起删——否则下次启动 restore() 会把它恢复成"待安装"，又回到旧版本。
+fn discard_cached(dir: &Path, update: &Update) {
+    let destination = installer(dir, update);
+    let _ = fs::remove_file(destination.with_extension("part"));
+    let _ = fs::remove_file(destination);
+    let _ = fs::remove_file(dir.join("completed.json"));
+    let _ = fs::remove_file(dir.join("completed.part"));
+}
+
+/// 自动下载最新版：放独立线程跑，检查更新的调用方不必等下载完成。
+/// 进度与失败都经 update:state 事件回传；失败时状态回到 available，用户仍可手动重试。
+fn spawn_auto_download(app: AppHandle) {
+    std::thread::spawn(move || {
+        if let Err(error) = download(app) {
+            eprintln!("auto update download failed: {error}");
+        }
+    });
 }
 fn publish(app: &AppHandle, mutate: impl FnOnce(&mut Snapshot)) -> Snapshot {
     let manager = app.state::<UpdateManager>();
@@ -363,7 +430,7 @@ fn encode_uri_component(value: &str) -> String {
 fn check(app: AppHandle) -> Result<Snapshot, String> {
     initialize(&app)?;
     let manager = app.state::<UpdateManager>();
-    let Ok(_guard) = manager.operation.try_lock() else {
+    let Ok(guard) = manager.operation.try_lock() else {
         return Ok(manager.state.lock().unwrap().clone());
     };
     let current = app.package_info().version.to_string();
@@ -385,26 +452,57 @@ fn check(app: AppHandle) -> Result<Snapshot, String> {
     .map(|(source, attempts, timeout)| fetch_manifest_bytes(source, attempts, timeout))
     .collect();
     let result = resolve_updates(&current, &key, sources);
-    match result {
-        Ok(update) => Ok(publish(&app, |s| {
-            // Keep a verified installer available even when a newer release appears.
-            if s.phase != "ready" {
-                s.update = update;
-                s.phase = if s.update.is_some() {
-                    "available"
+    // 已下好的安装包只有被更新的版本取代时才让位；否则保持现状（下好的文件不清、状态不动）。
+    let mut superseded: Option<Update> = None;
+    let keep_ready = {
+        let previous = manager.state.lock().unwrap().clone();
+        match &result {
+            Ok(update) => {
+                if supersedes_ready(&previous.phase, previous.update.as_ref(), update.as_ref()) {
+                    superseded = previous.update.clone();
+                    false
                 } else {
-                    "idle"
+                    previous.phase == "ready"
                 }
-                .into();
-                s.downloaded = 0;
             }
-            s.error = None;
-        })),
+            Err(_) => false,
+        }
+    };
+    let outcome = match result {
+        Ok(update) => {
+            if keep_ready {
+                Ok(publish(&app, |s| s.error = None))
+            } else {
+                Ok(publish(&app, |s| {
+                    s.update = update;
+                    s.phase = if s.update.is_some() {
+                        "available"
+                    } else {
+                        "idle"
+                    }
+                    .into();
+                    s.downloaded = 0;
+                    s.error = None;
+                }))
+            }
+        }
         Err(error) => {
             publish(&app, |s| s.error = Some(error.clone()));
             Err(error)
         }
+    };
+    if let Some(old) = superseded.as_ref() {
+        if let Ok(dir) = cache(&app) {
+            discard_cached(&dir, old);
+        }
     }
+    // 必须先释放检查用的操作锁：download() 自己也 try_lock，持有锁时调用会直接返回、什么都不下。
+    drop(guard);
+    if superseded.is_some() {
+        // 用户此前已经选择过下载（才有 ready 的安装包），这里自动接着下最新版，不必再点一次。
+        spawn_auto_download(app.clone());
+    }
+    outcome
 }
 #[cfg(test)]
 fn transfer(
@@ -675,7 +773,26 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
         }
     }
 }
-fn open(app: AppHandle) -> Result<(), String> {
+/// 签名校验只告警不拦截：CI 已保证清单必带签名，这里失败通常意味着本地缓存异常，
+/// 不值得因此让用户卡在无法更新的状态（完整性另有清单 SHA256 兜底）。
+fn warn_if_untrusted(path: &Path, asset: &Asset) {
+    match asset.signature.as_deref() {
+        Some(signature) => {
+            if let Err(error) = signature_valid(path, signature) {
+                log::warn!("更新安装包签名校验未通过：{error}");
+            }
+        }
+        None => log::warn!("更新清单未提供安装包签名，跳过来源校验"),
+    }
+}
+
+/// 安装已下载的安装包。
+///
+/// Windows：以 NSIS 被动模式就地更新——`/P` 只显示安装进度条（不静默、也不要用户点向导）、
+/// `/UPDATE` 覆盖安装而不走「先卸载」分支（避免整包重装、保留快捷方式与注册表）、
+/// `/R` 安装完成后自动重启应用。安装程序需要替换正在运行的 exe，因此本进程随后立即退出。
+/// 其余平台维持打开安装包（macOS DMG）由系统接手的既有流程。
+fn install(app: AppHandle) -> Result<(), String> {
     initialize(&app)?;
     let manager = app.state::<UpdateManager>();
     let _guard = manager.operation.lock().unwrap();
@@ -693,6 +810,36 @@ fn open(app: AppHandle) -> Result<(), String> {
         });
         return Err(error);
     }
+    warn_if_untrusted(&path, &update.asset);
+    install_platform(&app, &path)
+}
+
+/// Windows：被动模式就地更新，然后退出本进程。
+///
+/// 参数与官方 tauri-plugin-updater 的 passive 模式一致：
+/// `/P` 只显示安装进度条（既不静默、也不需要用户点向导），`/UPDATE` 走覆盖安装而不进
+/// 「先卸载再安装」分支（保留快捷方式与注册表，不是整包重装），`/R` 装完自动重启应用。
+/// `/ARGS` 必须留在末尾——NSIS 用它复位 `$R0`，否则 `/R` 会被当成应用启动参数传下去。
+#[cfg(windows)]
+fn install_platform(app: &AppHandle, path: &Path) -> Result<(), String> {
+    // 打包进安装目录的 node.exe 仍在运行时安装目录被占用，覆盖会失败；
+    // 同时安装就意味着录制结束，所以先把服务停干净（与「退出应用」同一套收尾逻辑）。
+    let state = app.state::<crate::ShellState>();
+    if let Err(error) = state.backend.stop() {
+        log::warn!("安装前停止本地服务失败：{error}");
+    }
+    std::process::Command::new(path)
+        .args(["/P", "/UPDATE", "/R", "/ARGS"])
+        .spawn()
+        .map_err(|e| format!("无法启动安装程序，请重试：{e}"))?;
+    // 安装程序需要替换正在运行的 exe，必须让出进程；/R 会在装完后重新拉起应用。
+    app.exit(0);
+    Ok(())
+}
+
+/// 其余平台维持打开安装包（macOS DMG）由系统安装流程接手的既有行为。
+#[cfg(not(windows))]
+fn install_platform(app: &AppHandle, path: &Path) -> Result<(), String> {
     #[allow(deprecated)]
     app.shell()
         .open(path.to_string_lossy().to_string(), None)
@@ -720,8 +867,8 @@ pub async fn download_update(app: AppHandle) -> Result<Snapshot, String> {
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub async fn open_update(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open(app))
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || install(app))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -735,6 +882,7 @@ mod tests {
             url: format!("{RELEASE_PREFIX}v0.5.112/Live.Recorder_0.5.112_x64-setup.exe"),
             size: 3,
             sha256: format!("{:x}", Sha256::digest(b"abc")),
+            signature: None,
         }
     }
     fn manifest(version: &str) -> Manifest {
@@ -759,6 +907,78 @@ mod tests {
         );
         assert!(select(manifest("0.5.112"), "0.5.111", "macos-x86_64").is_err());
         assert!(select(manifest("broken"), "0.5.111", "windows-x86_64").is_err());
+    }
+
+    #[test]
+    fn newer_manifest_supersedes_an_already_downloaded_installer() {
+        let ready = |version: &str| Update {
+            version: version.into(),
+            notes: vec![],
+            asset: asset(),
+        };
+        // 已下好旧版 + 清单出现新版 → 让位（下好的旧包不该挡住新版本）。
+        assert!(supersedes_ready(
+            "ready",
+            Some(&ready("0.5.112")),
+            Some(&ready("0.5.113"))
+        ));
+        // 同一版本、或清单更旧（CDN 滞后）→ 保持已下好的那份。
+        assert!(!supersedes_ready(
+            "ready",
+            Some(&ready("0.5.112")),
+            Some(&ready("0.5.112"))
+        ));
+        assert!(!supersedes_ready(
+            "ready",
+            Some(&ready("0.5.113")),
+            Some(&ready("0.5.112"))
+        ));
+        // 还没下好 → 不涉及让位，走原有逻辑。
+        assert!(!supersedes_ready(
+            "available",
+            Some(&ready("0.5.112")),
+            Some(&ready("0.5.113"))
+        ));
+        // 清单无更新/不可用 → 一律保持现状。
+        assert!(!supersedes_ready("ready", Some(&ready("0.5.112")), None));
+        // 版本号非法 → 保持现状，绝不误删已下好的包。
+        assert!(!supersedes_ready(
+            "ready",
+            Some(&ready("bad")),
+            Some(&ready("0.5.113"))
+        ));
+    }
+
+    #[test]
+    fn discards_only_the_superseded_installer() {
+        let dir = std::env::temp_dir().join(format!("lr-update-discard-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let old = Update {
+            version: "0.5.112".into(),
+            notes: vec![],
+            asset: asset(),
+        };
+        let mut newer_asset = asset();
+        newer_asset.filename = "Live.Recorder_0.5.113_x64-setup.exe".into();
+        let newer = Update {
+            version: "0.5.113".into(),
+            notes: vec![],
+            asset: newer_asset,
+        };
+        fs::write(installer(&dir, &old), b"abc").unwrap();
+        fs::write(installer(&dir, &old).with_extension("part"), b"ab").unwrap();
+        fs::write(dir.join("completed.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+        fs::write(installer(&dir, &newer), b"abcd").unwrap();
+
+        discard_cached(&dir, &old);
+
+        assert!(!installer(&dir, &old).exists());
+        assert!(!installer(&dir, &old).with_extension("part").exists());
+        // 元数据不删的话，下次启动 restore() 会把它恢复成「待安装」，又回到旧版本。
+        assert!(!dir.join("completed.json").exists());
+        // 别的版本的文件不受影响。
+        assert!(installer(&dir, &newer).exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1013,12 +1233,37 @@ mod tests {
             url: format!("http://{address}/x.dmg"),
             size: body.len() as u64,
             sha256: sha,
+            signature: None,
         };
         let result = download_parallel(&client, &asset.url, &path, &asset, Arc::new(|_| {}));
         worker.join().unwrap();
         assert!(result.is_ok(), "parallel download failed: {result:?}");
         assert_eq!(served.load(Ordering::Relaxed), PARALLEL_CONNECTIONS as u64);
         assert_eq!(fs::read(&path).unwrap(), body);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn embedded_update_pubkey_is_a_valid_minisign_key() {
+        // 内嵌公钥抄错时，签名校验会静默地永远失败（只告警），这里直接锁死它的格式。
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(UPDATE_PUBKEY)
+            .unwrap();
+        let text = String::from_utf8(decoded).unwrap();
+        assert!(minisign_verify::PublicKey::decode(&text).is_ok());
+    }
+
+    #[test]
+    fn signature_verification_rejects_malformed_input() {
+        let path = std::env::temp_dir().join(format!("lr-update-signature-{}", std::process::id()));
+        fs::write(&path, b"abc").unwrap();
+        // 非 base64 → 公钥/签名解码阶段即失败。
+        assert!(signature_valid(&path, "not a base64 signature!").is_err());
+        // 合法 base64 但内容不是 minisign 签名。
+        assert!(signature_valid(&path, "YWJj").is_err());
+        // 清单没带签名时只告警，不阻断安装。
+        warn_if_untrusted(&path, &asset());
         let _ = fs::remove_file(path);
     }
 }

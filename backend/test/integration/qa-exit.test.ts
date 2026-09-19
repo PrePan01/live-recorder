@@ -172,6 +172,47 @@ describe('QA stage-B exit: security', () => {
   });
 });
 
+describe('记录中删除直播间', () => {
+  it('删掉正在录制的直播间时先把录制收尾再删（不会跳过校验/转封装/上传）', async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ':memory:', clock });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-del-room-'));
+    const { app } = buildApp(services);
+    await app.inject({
+      method: 'PUT', url: '/api/v1/settings', headers: HOST,
+      payload: {
+        recordingDirectory: dir,
+        maxConcurrentRecordings: 2,
+        checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+        retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
+        diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+        mail: { enabled: false, host: '', port: 465, secure: true, username: '', from: '', recipients: [] },
+      },
+    });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 'sess_del', streamTitle: 'T' }]);
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/rooms', headers: HOST,
+      payload: { platform: 'bilibili', url: 'https://live.bilibili.com/9002', displayName: '删除测试' },
+    });
+    const roomId = created.json().room.id as string;
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    const rec = services.recordings.list({ roomId }).items[0]!;
+    for (let i = 0; i < 10 && services.recordings.get(rec.id)!.state !== 'recording'; i += 1) await settle(clock, 500);
+    expect(services.manager.isRoomActive(roomId)).toBe(true);
+
+    // 删除必须等录制真正收尾后再返回（否则收尾会因为房间已删而中断，上传/校验全被跳过）。
+    const del = await app.inject({ method: 'DELETE', url: `/api/v1/rooms/${roomId}`, headers: HOST });
+    expect(del.statusCode).toBe(204);
+    const after = services.recordings.get(rec.id)!;
+    expect(after.state).toBe('completed');
+    expect(after.endReason).toBe('stopped');
+    expect(after.fileSizeBytes).toBeGreaterThan(0);
+    expect(services.manager.isRoomActive(roomId)).toBe(false);
+    expect(services.rooms.get(roomId)).toBeNull();
+    await app.close();
+  });
+});
+
 describe('QA stage-B exit: fake full-stack happy path', () => {
   it('add room → immediate check → live → recording file created → completes', async () => {
     const clock = new FakeClock();
@@ -218,7 +259,8 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     expect(services.recordings.get(rec.id)!.state).toBe('recording');
     expect(services.recordings.get(rec.id)!.filePath?.startsWith(path.join(dir, 'bilibili') + path.sep)).toBe(true);
 
-    for (let i = 0; i < 12 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
+    // 自然结束后先短暂退避再确认下播，期间仍算"录制中"（不是每段各自完成），因此这里要等够退避时间。
+    for (let i = 0; i < 30 && services.recordings.get(rec.id)!.state !== 'completed'; i += 1) {
       await settle(clock, 500);
     }
     expect(services.recordings.get(rec.id)!.state).toBe('completed');

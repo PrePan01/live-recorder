@@ -23,6 +23,8 @@ import {
 } from "../../stores/wallStore";
 import WallGrid from "../../components/WallGrid";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
+import { PlatformIcon } from "../../components/PlatformLogo";
+import LiveStatusTag from "../../components/LiveStatusTag";
 import type { Room } from "../../types/room";
 import { recordRecentErrorAction } from "../../utils/errorDiagnostics";
 import styles from "./index.module.css";
@@ -183,6 +185,16 @@ export default function Wall() {
     [rooms, wallRoomIds, layout.allowDuplicates],
   );
 
+  const renderRoomOption = (room: Room) => (
+    <div className={styles.roomOption}>
+      <span className={styles.roomOptionMain}>
+        <PlatformIcon platform={room.platform} size={16} />
+        <span className={styles.roomOptionName}>{room.displayName}</span>
+      </span>
+      <LiveStatusTag status={room.lastLiveStatus} />
+    </div>
+  );
+
   const capacity = getWallCapacity(grid);
   const fill = layout.fill;
   const roomCount = wallRoomIds.filter(Boolean).length;
@@ -323,7 +335,11 @@ export default function Wall() {
             options={available.map((r) => ({
               value: r.id,
               label: r.displayName,
+              room: r,
             }))}
+            optionRender={(option) =>
+              renderRoomOption((option.data as { room: Room }).room)
+            }
             maxTagCount="responsive"
           />
         </Space>
@@ -347,7 +363,11 @@ export default function Wall() {
           options={available.map((room) => ({
             value: room.id,
             label: room.displayName,
+            room,
           }))}
+          optionRender={(option) =>
+            renderRoomOption((option.data as { room: Room }).room)
+          }
         />
       </Modal>
     </div>

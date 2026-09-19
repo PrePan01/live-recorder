@@ -8,7 +8,6 @@ import {
   Input,
   List,
   Modal,
-  Popconfirm,
   Popover,
   Select,
   Space,
@@ -25,6 +24,7 @@ import {
   ScheduleOutlined,
   DeleteOutlined,
   EditOutlined,
+  ExclamationCircleFilled,
   SnippetsOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -56,7 +56,7 @@ const PLATFORM_LABEL: Record<Room["platform"], string> = {
 };
 
 export default function Rooms() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const {
     rooms,
     loading,
@@ -222,6 +222,58 @@ export default function Rooms() {
     }
   };
 
+  /**
+   * 删除直播间。正在录制的必须先停录并把已录内容存下来（后端会走收尾流程），
+   * 所以这里用一次显式确认把后果讲清楚，而不是点一下就删掉。
+   */
+  const confirmDeleteRooms = (targets: Room[]) => {
+    if (targets.length === 0) {
+      message.warning("请先选择要操作的直播间");
+      return;
+    }
+    const recording = targets.filter(
+      (r) => r.monitorState === "recording" || r.monitorState === "reconnecting",
+    );
+    const multiple = targets.length > 1;
+    modal.confirm({
+      title:
+        recording.length > 0
+          ? multiple
+            ? `所选直播间中有 ${recording.length} 个正在录制，确定删除？`
+            : "该直播间正在录制，确定删除？"
+          : multiple
+            ? `确定删除所选 ${targets.length} 个直播间？`
+            : "确定删除该直播间？",
+      icon:
+        recording.length > 0 ? (
+          <ExclamationCircleFilled style={{ color: "#faad14" }} />
+        ) : undefined,
+      content:
+        recording.length > 0
+          ? "删除会先停止录制并保存已录内容，随后删除直播间。"
+          : "删除后不可恢复。",
+      okText: recording.length > 0 ? "停止录制并删除" : "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        setBatchBusy(true);
+        try {
+          for (const room of targets) await removeRoom(room.id);
+          setSelectedKeys([]);
+          message.success(`已删除 ${targets.length} 个直播间`);
+        } catch (e) {
+          message.error(
+            e instanceof ApiError
+              ? describeError(e.code, e.message)
+              : "删除失败",
+          );
+        } finally {
+          setBatchBusy(false);
+        }
+      },
+    });
+  };
+
   const batchActions = (
     <Space>
       <Button
@@ -262,18 +314,16 @@ export default function Rooms() {
       >
         关闭开播提醒
       </Button>
-      <Popconfirm
-        title={`确定删除所选 ${selectedKeys.length} 个直播间？不可恢复。`}
-        onConfirm={() => void runBatch((r) => removeRoom(r.id), "已删除")}
+      <Button
+        size="small"
+        danger
+        disabled={batchBusy || selectedKeys.length === 0}
+        onClick={() =>
+          confirmDeleteRooms(rooms.filter((r) => selectedKeys.includes(r.id)))
+        }
       >
-        <Button
-          size="small"
-          danger
-          disabled={batchBusy || selectedKeys.length === 0}
-        >
-          批量删除
-        </Button>
-      </Popconfirm>
+        批量删除
+      </Button>
     </Space>
   );
 
@@ -595,16 +645,15 @@ export default function Rooms() {
           >
             计划
           </Button>
-          <Popconfirm
-            title="删除后不可恢复，确定？"
-            onConfirm={() =>
-              void removeRoom(room.id).catch(() => message.error("删除失败"))
-            }
+          <Button
+            size="small"
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => confirmDeleteRooms([room])}
           >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
+            删除
+          </Button>
         </Space>
       ),
     },

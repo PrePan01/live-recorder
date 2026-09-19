@@ -601,9 +601,24 @@ textarea.ant-input,
   font-family: var(--lr-display);
   font-weight: 900;
 }
-/* 视频观看弹窗以画面为主：压缩标题栏，为默认放大的播放器腾出空间。 */
 .lr-preview-modal .ant-modal-header {
-  padding-block: 10px !important;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding-block: 0 !important;
+}
+.lr-preview-modal .ant-modal-body {
+  padding: 10px !important;
+}
+.lr-preview-modal .ant-modal-title {
+  flex: 1;
+  min-width: 0;
+}
+.lr-preview-modal__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .ant-modal-footer {
   border-top: 1px solid var(--lr-ink);
@@ -628,7 +643,6 @@ textarea.ant-input,
   font-weight: 800;
 }
 
-/* OTP（6 位验证码）输入：与其它表单控件一致的黑描边、零圆角、无投影 */
 .ant-otp {
   gap: 8px !important;
   width: 100%;

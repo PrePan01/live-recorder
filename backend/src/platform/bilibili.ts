@@ -63,6 +63,19 @@ function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
 
+/**
+ * 平台 HTTP 状态 → 用户看得懂的分类。
+ * 5xx/限流是平台侧暂时不可用（可重试）；只有明确的接口不存在（404/405/410/501）才算"接口有变动"。
+ * 过去任何非 2xx 都走"接口有变动、等待适配更新"，把一次平台抖动报成了需要等更新的故障，
+ * 而且不重试。状态码只留在 details 里，不进给用户看的文案。
+ */
+function biliHttpError(status: number): AppError {
+  if (status === 404 || status === 405 || status === 410 || status === 501) {
+    return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', { details: { httpStatus: status } });
+  }
+  return new AppError('NETWORK_UNAVAILABLE', 'B站接口暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: status } });
+}
+
 /** B站 live_time 是本场直播的秒级 Unix 时间；拒绝明显无效或未来的值。 */
 function platformStartedAt(liveTime: number | undefined): string | undefined {
   if (!Number.isInteger(liveTime) || !liveTime || liveTime < 1_420_070_400) return undefined;
@@ -111,7 +124,7 @@ export class BilibiliAdapter implements PlatformAdapter {
         ...(cookie ? { Cookie: cookie } : {}),
       },
     });
-    if (!res.ok) throw new Error(`bilibili api http ${res.status}`);
+    if (!res.ok) throw biliHttpError(res.status);
     return (await res.json()) as BiliPlayResponse;
   }
 
@@ -199,6 +212,10 @@ export class BilibiliAdapter implements PlatformAdapter {
     try {
       data = await this.fetchPlayInfo(roomId, cookie);
     } catch (err) {
+      // 适配器内部已按状态码分好类（含可重试标记），不能在这里被拍平成"接口有变动"。
+      if (err instanceof AppError) {
+        return { status: err.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: err.toObject() };
+      }
       return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
@@ -236,6 +253,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     try {
       data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality]);
     } catch (err) {
+      if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
       throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
     }
