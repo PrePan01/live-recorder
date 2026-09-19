@@ -27,9 +27,6 @@ const RELEASE_PREFIX: &str = "https://github.com/PrePan01/live-recorder/releases
 /// 清单由 CI 以 no-cache 上传（#43），SHA256 校验安装包完整性。
 const MIRROR_ORIGIN: &str = "https://cdn.live-rec.bspartner.top";
 const MIRROR_MANIFEST_URL: &str = "https://cdn.live-rec.bspartner.top/latest.json";
-/// Tauri 更新签名公钥（minisign，base64）。与 CI Secrets 中的 TAURI_SIGNING_PRIVATE_KEY 配对，
-/// 由 tauri build 的 createUpdaterArtifacts 生成对应 `.sig`（见 tauri.windows.conf.json）。
-const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5QkM2MzM4NjEyOUJGM0MKUldROHZ5bGhPR084bVdTbVRINGFoQ1VWN0FmWHRna2I3akdSZjNSWVNZek1QZDNYclE4Z3NvbG8K";
 /// 弱网鲁棒性（#28）：清单检查与下载失败的网络类错误重试次数（指数退避）。
 /// 清单：CDN 优先（1 次、20s），GitHub 兜底探测（1 次、5s，仅当 CDN 判「无更新」时才探测；
 /// 大陆被墙时快速失败，避免每次「已是最新」都长时间等待 GitHub）。
@@ -155,9 +152,21 @@ fn verified(path: &Path, asset: &Asset) -> Result<(), String> {
     Ok(())
 }
 
+/// 从应用配置读取 updater 公钥（`plugins.updater.pubkey`）。
+/// 与 tauri build 打包时校验的是同一份配置，避免出现「打包用一把公钥、客户端校验用另一把」的错配。
+fn configured_pubkey(app: &AppHandle) -> Option<String> {
+    app.config()
+        .plugins
+        .0
+        .get("updater")?
+        .get("pubkey")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// 用清单内的 minisign 签名核验安装包来源。
-/// 与清单的 SHA256 一样，签名内容是 base64 文本，公钥内嵌在客户端。
-fn signature_valid(path: &Path, signature: &str) -> Result<(), String> {
+/// 与清单的 SHA256 一样，签名内容是 base64 文本，公钥来自应用配置。
+fn signature_valid(pubkey: &str, path: &Path, signature: &str) -> Result<(), String> {
     use base64::Engine;
     let decode = |value: &str, what: &str| {
         base64::engine::general_purpose::STANDARD
@@ -166,7 +175,7 @@ fn signature_valid(path: &Path, signature: &str) -> Result<(), String> {
             .and_then(|bytes| String::from_utf8(bytes).map_err(|e| format!("更新{what}不是 UTF-8：{e}")))
     };
     let public_key =
-        minisign_verify::PublicKey::decode(&decode(UPDATE_PUBKEY, "公钥")?).map_err(|e| format!("更新公钥无法解析：{e}"))?;
+        minisign_verify::PublicKey::decode(&decode(pubkey, "公钥")?).map_err(|e| format!("更新公钥无法解析：{e}"))?;
     let signature = minisign_verify::Signature::decode(&decode(signature, "签名")?).map_err(|e| format!("更新签名无法解析：{e}"))?;
     let bytes = fs::read(path).map_err(|e| format!("无法读取安装包：{e}"))?;
     public_key
@@ -775,10 +784,14 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
 }
 /// 签名校验只告警不拦截：CI 已保证清单必带签名，这里失败通常意味着本地缓存异常，
 /// 不值得因此让用户卡在无法更新的状态（完整性另有清单 SHA256 兜底）。
-fn warn_if_untrusted(path: &Path, asset: &Asset) {
+fn warn_if_untrusted(app: &AppHandle, path: &Path, asset: &Asset) {
+    let Some(pubkey) = configured_pubkey(app) else {
+        log::warn!("配置缺少 plugins.updater.pubkey，跳过安装包来源校验");
+        return;
+    };
     match asset.signature.as_deref() {
         Some(signature) => {
-            if let Err(error) = signature_valid(path, signature) {
+            if let Err(error) = signature_valid(&pubkey, path, signature) {
                 log::warn!("更新安装包签名校验未通过：{error}");
             }
         }
@@ -810,7 +823,7 @@ fn install(app: AppHandle) -> Result<(), String> {
         });
         return Err(error);
     }
-    warn_if_untrusted(&path, &update.asset);
+    warn_if_untrusted(&app, &path, &update.asset);
     install_platform(&app, &path)
 }
 
@@ -876,6 +889,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     fn asset() -> Asset {
         Asset {
             filename: "Live.Recorder_0.5.112_x64-setup.exe".into(),
@@ -1243,12 +1257,22 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// 配置里的公钥路径必须存在且是合法 minisign 公钥：公钥写错时签名校验只会静默告警，
+    /// 而 tauri build 又要求 `plugins.updater` 必须存在，所以这里把两件事一起钉住。
+    fn configured_pubkey_from_config() -> String {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json 不是合法 JSON");
+        config
+            .pointer("/plugins/updater/pubkey")
+            .and_then(serde_json::Value::as_str)
+            .expect("tauri.conf.json 缺少 plugins.updater.pubkey")
+            .to_string()
+    }
+
     #[test]
-    fn embedded_update_pubkey_is_a_valid_minisign_key() {
-        // 内嵌公钥抄错时，签名校验会静默地永远失败（只告警），这里直接锁死它的格式。
-        use base64::Engine;
+    fn configured_update_pubkey_is_a_valid_minisign_key() {
         let decoded = base64::engine::general_purpose::STANDARD
-            .decode(UPDATE_PUBKEY)
+            .decode(configured_pubkey_from_config())
             .unwrap();
         let text = String::from_utf8(decoded).unwrap();
         assert!(minisign_verify::PublicKey::decode(&text).is_ok());
@@ -1258,12 +1282,17 @@ mod tests {
     fn signature_verification_rejects_malformed_input() {
         let path = std::env::temp_dir().join(format!("lr-update-signature-{}", std::process::id()));
         fs::write(&path, b"abc").unwrap();
-        // 非 base64 → 公钥/签名解码阶段即失败。
-        assert!(signature_valid(&path, "not a base64 signature!").is_err());
+        let pubkey = configured_pubkey_from_config();
+        // 非 base64 → 签名解码阶段即失败。
+        assert!(signature_valid(&pubkey, &path, "not a base64 signature!").is_err());
         // 合法 base64 但内容不是 minisign 签名。
-        assert!(signature_valid(&path, "YWJj").is_err());
-        // 清单没带签名时只告警，不阻断安装。
-        warn_if_untrusted(&path, &asset());
+        assert!(signature_valid(&pubkey, &path, "YWJj").is_err());
+        // 公钥本身合法 → 走到「签名不匹配」，说明前面确实是校验失败而不是提前返回。
+        let bogus = base64::engine::general_purpose::STANDARD.encode(
+            "untrusted comment: signature\n\
+             RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/UYw3JpNMOxjp3Aj8KGVT/1wOf/gmBA==\n",
+        );
+        assert!(signature_valid(&pubkey, &path, &bogus).is_err());
         let _ = fs::remove_file(path);
     }
 }
