@@ -12,7 +12,7 @@ const SUBJECTS: Record<NotifyEvent, string> = {
   recording_started: '[直播录制助手] 录制已开始：{title}',
   recording_ended: '[直播录制助手] 录制已结束：{title}',
   recording_failed: '[直播录制助手] 录制失败：{title}',
-  disk_space_low: '[直播录制助手] 磁盘空间不足，已暂停新录制',
+  disk_space_low: '[直播录制助手] 磁盘空间不足，请及时清理',
   upload_failed: '[直播录制助手] 上传失败：{title}',
 };
 const PREFERENCE_KEY: Record<NotifyEvent, PreferenceKey> = {

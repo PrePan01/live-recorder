@@ -5,6 +5,13 @@ import { AppError } from '../types/error.js';
 import type { ErrorObject } from '../types/index.js';
 import type { RecordingEngine, RecordingEvent, RecordingResumeOptions, StreamInput } from './engine.js';
 
+/**
+ * 首字节之后允许的静默上限：CDN 只挂连接不吐数据时，超时即判定本次拉流已断，
+ * 交给上层续录重试。直播流每秒都在推数据，30 秒静默已经等同连接死掉；与启动阶段
+ * "30 秒拿不到数据就重试" 同口径。再短（10~15 秒）会在网络拥塞 / TCP 重传时误判成断流。
+ */
+const STALL_TIMEOUT_MS = 30_000;
+
 /** 续录选项：文件里已有 FLV 头 + 本段时间戳偏移。 */
 export interface FlvNormalizerOptions {
   /** 序列头 ts≈0 而媒体为绝对 PTS（抖音）时，以首个媒体标签为基准。 */
@@ -145,7 +152,7 @@ export class StreamRecordingEngine implements RecordingEngine {
   /** 本段写出的最大媒体时间戳；随 error/completed 上报，供上层计算下一段续录偏移。 */
   private lastTimestampMs = 0;
 
-  constructor(private fetcher: typeof fetch = fetch) {}
+  constructor(private fetcher: typeof fetch = fetch, private stallTimeoutMs: number = STALL_TIMEOUT_MS) {}
 
   stop(): Promise<void> {
     this.stopped = true;
@@ -193,11 +200,29 @@ export class StreamRecordingEngine implements RecordingEngine {
     let size = existing?.size ?? 0;
     if (outputPath) yield { type: 'file_created', filePath: outputPath };
     const reader = res.body.getReader();
+    // 首字节之后数据断供（CDN 既不关闭连接、也不再吐字节）时不能永远挂在这里：超时即 abort，
+    // 本段按断流上报，由上层进入续录重试。只在拿到过数据之后才计时，启动阶段交给上层 30s 超时。
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    const armStallWatchdog = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        // 主动取消读取，保证挂住的 read() 立刻收束（真实 fetch 下 abort 也会让它直接报错）。
+        void reader.cancel().catch(() => undefined);
+        this.controller?.abort();
+      }, this.stallTimeoutMs);
+      stallTimer.unref();
+    };
     try {
       while (!this.stopped) {
         const { done, value } = await reader.read();
+        if (stalled) {
+          throw new AppError('NETWORK_UNAVAILABLE', '直播流长时间无数据，已中断并重试', { retryable: true });
+        }
         if (done) break;
         if (this.stopped) break;
+        armStallWatchdog();
         const chunk = Buffer.from(value);
         // 写盘 + 预览都使用时间戳归一化后的完整 FLV 标签：
         // 文件时长正确（#148），且预览流时间戳为相对值，mpegts.js 实时模式（isLive:true）才能正常推进（#150）。
@@ -211,6 +236,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         this.lastTimestampMs = normalizer.lastTimestampMs;
       }
     } finally {
+      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
       if (this.stopped) await reader.cancel().catch(() => undefined);
       // 收尾：把尚未凑成完整标签的尾部字节一并写盘并转发（不完整尾部也转发，保持字节一致）。
       const rest = normalizer.remaining();

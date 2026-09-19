@@ -309,13 +309,11 @@ export class Scheduler {
       return;
     }
     if (status.status === 'offline') {
-      // 下播主动停录：若该房间仍在录制，等待记录完整收口并保留 completed；
-      // 只有原本未录制的房间才回到 idle。
-      const wasRecording = this.manager.isRoomActive(room.id);
-      if (wasRecording) {
-        await this.manager.stopRecording(room.id);
-      }
-      this.services.rooms.setState(room.id, wasRecording ? 'completed' : 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+      // 正在录制的房间不在这里停录：交回录制器自己的存活判定——流真的断了会走续录或收尾，
+      // 并落上真正的结束原因。否则「打开应用时的一次检测」就可能把正在进行的录制掐掉，
+      // 而且这种系统停录会被记成用户手动停止，事后完全分不出来。
+      if (this.manager.isRoomActive(room.id)) return;
+      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.emitRoom(room.id);
       return;
     }

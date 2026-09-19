@@ -277,7 +277,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     await app.close();
   });
 
-  it('disk space low blocks new recording with DISK_SPACE_INSUFFICIENT and alert', async () => {
+  it('disk space low warns but no longer blocks the new recording', async () => {
     const clock = new FakeClock();
     const services = buildServices({ dbPath: ':memory:', clock });
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-guard-'));
@@ -303,11 +303,11 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     const roomId = created.json().room.id;
 
     await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
-    const room = services.rooms.get(roomId)!;
-    expect(room.monitorState).toBe('idle');
-    expect(room.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
-    expect(services.recordings.list({ roomId }).items).toHaveLength(0);
+    // 空间不足只提醒、不拦下录制：房间照常开录（能不能录交给实际写入决定），告警照旧。
+    expect(services.manager.isRoomActive(roomId)).toBe(true);
+    expect(services.recordings.list({ roomId }).items).toHaveLength(1);
     expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
+    await services.manager.stopRecording(roomId);
     await app.close();
   });
 });

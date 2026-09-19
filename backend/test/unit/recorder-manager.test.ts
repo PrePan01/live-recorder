@@ -11,6 +11,7 @@ import { buildMinimalFlv, FakePlatformAdapter } from '../../src/platform/fake-ad
 import { FakeRecordingEngine, type FakeEngineScript } from '../../src/recorder/fake-engine.js';
 import type { RecordingEngine } from '../../src/recorder/engine.js';
 import { FakeDiskGuard } from '../../src/storage/disk-guard.js';
+import { AppError } from '../../src/types/error.js';
 import type { AppSettings } from '../../src/types/index.js';
 
 function baseSettings(dir: string): AppSettings {
@@ -382,7 +383,145 @@ describe('RecorderManager', () => {
     expect((await readFile(filePath)).toString('latin1').split('FLV').length - 1).toBe(1);
   });
 
-  it('blocks recording and alerts when disk space is low', async () => {
+  it('keeps retrying when the reconnect probe cannot confirm liveness, and records a real reason', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-probe-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    (engineOf(services) as unknown as { script: FakeEngineScript }).script = {
+      frames: 2,
+      intervalMs: 500,
+      failAfterMs: 30,
+      failError: { code: 'NETWORK_UNAVAILABLE', message: '拉流失败 HTTP 503', roomId: null, recordingId: null, occurredAt: 'x', retryable: true },
+    };
+    // 断流后的存活探测永远拿不到确定结论（受限/网络错误）：以前会被当成"已下播"静默收成 natural 且无原因，
+    // 现在必须继续重试，并在额度耗尽后按中断收尾、留下真正的原因。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript(
+      Array.from({ length: 40 }, () => ({ status: 'restricted' as const })),
+    );
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/92', displayName: 'Probe' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'probe' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed', 800);
+    const after = services.recordings.get(rec.id)!;
+    expect(after.endReason).toBe('interrupted');
+    expect(after.failureReason?.code).toBe('STREAM_DISCONNECTED_RECONNECT_EXHAUSTED');
+  });
+
+  it('records a reason instead of a silent natural end when re-pulling after a natural end fails', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-natural-refail-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    (engineOf(services) as unknown as { script: FakeEngineScript }).script = { frames: 3, intervalMs: 500 };
+    // 第一次取流成功（起录），之后取流一律失败：自然结束后的续录取流失败不能当成"直播正常结束"。
+    const inner = services.adapterFor('bilibili');
+    let urlCalls = 0;
+    services.adapterFor = () => ({
+      platform: 'bilibili' as const,
+      checkLiveStatus: async () => ({ status: 'live' as const }),
+      getStreamUrl: async (url, quality) => {
+        urlCalls += 1;
+        if (urlCalls > 1) throw new AppError('NETWORK_UNAVAILABLE', '拉流失败', { retryable: true });
+        return inner.getStreamUrl(url, quality);
+      },
+      normalizeUrl: (url: string) => inner.normalizeUrl(url),
+      validateUrl: () => true,
+    });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/93', displayName: 'NaturalRefail' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'nr' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed', 800);
+    const after = services.recordings.get(rec.id)!;
+    expect(after.endReason).toBe('interrupted');
+    expect(after.failureReason).not.toBeNull();
+  });
+
+  it('hands a shared (preview) recording back to the normal path when the preview stream ends', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-shared-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    // 预览引擎播完即收束（触发接力）；接力后的普通拉流持续产出，不在这条用例里结束。
+    let engineCalls = 0;
+    services.engineFor = () => {
+      engineCalls += 1;
+      return new FakeRecordingEngine(clock, engineCalls === 1 ? { frames: 6, intervalMs: 500 } : { frames: 1000, intervalMs: 500 });
+    };
+    // 上游收束后接力时主播仍在播：应恢复续录，而不是收尾。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'live', streamSessionId: 'shared-end', streamTitle: 'T' },
+    ]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/83', displayName: 'SharedEnd' });
+    services.rooms.setLiveStatus(room.id, 'live');
+
+    await services.manager.ensurePreviewStream(room.id);
+    await waitFor(() => services.manager.isPreviewStreaming(room.id));
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'shared-end' }, { manual: true });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+
+    // 预览引擎播完 → 上游自然收束 → 录制应接力到普通路径，而不是被静默收尾。
+    await waitForWithClock(clock, () => !services.manager.isPreviewStreaming(room.id), 40);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.recordings.get(rec.id)!.state).toBe('recording');
+
+    // 推进时钟让接力跑完退避并真正恢复拉流，再手动停止，避免测试尾部留下半接力状态。
+    for (let i = 0; i < 20; i += 1) await settle(clock, 500);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.recordings.get(rec.id)!.state).toBe('recording');
+    expect(services.recordings.get(rec.id)!.endReason).toBeUndefined();
+    // 预览房间不能被收掉：观看端还连着，收掉会连 FLV 初始化段一起删掉，重连后永远起不来。
+    expect(preview.closed).toEqual([]);
+
+    await services.manager.stopRecording(room.id);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+  });
+
+  it('records the silent tail when stopping a stalled recording (断网后停止也能看出丢了多久)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-stall-stop-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    // 第一帧之后长时间不再出数据、引擎也不报错：断网但连接没断的典型形态。
+    (engineOf(services) as unknown as { script: FakeEngineScript }).script = { frames: 100, intervalMs: 60_000 };
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/94', displayName: 'Stalled' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'stall' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
+
+    // 静默 10 秒后手动停止：这段必须记进缺失时长，历史里才会出现"中途缺失 N 秒"。
+    await settle(clock, 10_000);
+    await services.manager.stopRecording(room.id);
+
+    const after = services.recordings.get(rec.id)!;
+    expect(after.endReason).toBe('stopped');
+    expect(after.missingMs).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it('does not invent a gap on a normal manual stop right after data', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-quick-stop-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    (engineOf(services) as unknown as { script: FakeEngineScript }).script = { frames: 100, intervalMs: 60_000 };
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/95', displayName: 'QuickStop' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'quick' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
+    await services.manager.stopRecording(room.id);
+
+    // 正常停止不该冒出"中途缺失"：阈值以内一律算 0。
+    expect(services.recordings.get(rec.id)!.missingMs).toBe(0);
+  });
+
+  it('starts the recording even when disk space is low, but still warns (磁盘不足不再阻止录制)', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6l-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -390,13 +529,18 @@ describe('RecorderManager', () => {
     (services.diskGuard as FakeDiskGuard).setSpace({ freeBytes: 1024, totalBytes: 100 * 1024 ** 3 });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/17', displayName: 'L' });
 
-    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
-    await waitFor(() => services.rooms.get(room.id)!.monitorState === 'idle');
-    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(0);
-    expect(services.rooms.get(room.id)!.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
+    // 空间不足只提醒、不拦下录制：能不能录交给实际写入决定（写不进去时会有明确失败原因）。
+    const started = await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    expect(started).toBe(true);
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.state === 'recording');
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    // 但告警/通知照旧，用户仍然知道磁盘紧张。
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent.some((m) => m.subject.includes('磁盘空间不足'))).toBe(true);
     expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
+
+    await services.manager.stopRecording(room.id);
   });
 
   it('stopRecording completes the current segment with code 1000', async () => {
