@@ -13,6 +13,14 @@ export type RecordingState =
   | 'completed'
   | 'failed';
 
+/**
+ * 录制结束原因：区分正常收尾与各类中断。
+ * natural=直播结束/下播自然收尾；stopped=手动停止；
+ * interrupted=网络中断导致重连耗尽（去重时不算"已录过"，网络恢复后仍可续录）；
+ * service_restart=服务重启中断（只标注，不自动续录）。
+ */
+export type RecordingEndReason = 'natural' | 'stopped' | 'interrupted' | 'service_restart';
+
 /** 录制文件完整性：verified=ffprobe 校验通过、failed=损坏/截断、pending=校验中或 ffprobe 缺失。 */
 export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
 
@@ -54,4 +62,8 @@ export interface Recording {
   coverPath?: string;
   /** V5 最近上传任务快照（历史页上传状态列，无任务时缺省）。 */
   upload?: { status: UploadJobStatus; progress: number; remotePath: string | null; error: string | null };
+  /** 结束原因（录制收尾时写入；进行中的录制缺省）。 */
+  endReason?: RecordingEndReason;
+  /** 录制中途累计缺失时长（毫秒）：中断恢复后未录到的时间总和，历史页标注"中途缺失 N 秒"。 */
+  missingMs?: number;
 }

@@ -166,16 +166,25 @@ export class DouyinAdapter implements PlatformAdapter {
       // 过去这里抛普通 Error，调用方会误报“平台接口有变动”；用户稍后手动
       // 检测成功正是这一误判的典型表现。
       if (res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500) {
-        throw new AppError('NETWORK_UNAVAILABLE', `平台暂时不可用（HTTP ${res.status}）`, { retryable: true });
+        throw new AppError('NETWORK_UNAVAILABLE', '平台暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: res.status } });
       }
-      if (res.status === 401 || res.status === 403) {
+      // 444 是抖音边缘节点直接掐断连接、不返回任何内容的非标准状态码。
+      // 实测在设置页重新登录授权抖音后即可恢复，说明它同样是凭证/风控信号，而不是接口变更：
+      // 以前它落到下面那句“平台接口返回异常状态（HTTP 444）”，用户既看不懂、又不会重试，
+      // 也不会被提示去重新授权。
+      if (res.status === 401 || res.status === 403 || res.status === 444) {
         throw new AppError(
           cookie ? 'DOUYIN_COOKIE_EXPIRED' : 'PLATFORM_ACCESS_RESTRICTED',
           cookie ? '抖音授权已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权',
-          { retryable: false },
+          { retryable: false, details: { httpStatus: res.status } },
         );
       }
-      throw new AppError('PLATFORM_CHANGED', `平台接口返回异常状态（HTTP ${res.status}）`, {});
+      // 其余状态码同样是传输/服务侧信号，不能据此断言“接口已变更”（否则会把用户引去等适配更新）。
+      // 给用户看的文案里不含状态码，原文只留在 details 里备查。
+      throw new AppError('NETWORK_UNAVAILABLE', '平台暂时无法访问，请稍后重试', {
+        retryable: true,
+        details: { httpStatus: res.status },
+      });
     }
     const text = await res.text();
     if (!text.trim()) {
@@ -201,7 +210,10 @@ export class DouyinAdapter implements PlatformAdapter {
         return await this.fetchRoomInfo(roomId, cookie);
       } catch (err) {
         lastError = err;
-        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
+        // 边缘节点偶发掐断（444）也先立即重试一次：重试后多半就正常了。
+        // 不重试会把一次抖动直接报成“授权已失效”，把用户赶去重新登录。
+        const silentDrop = err instanceof AppError && err.details?.httpStatus === 444;
+        const retryable = (err instanceof AppError && err.retryable) || silentDrop || isNetworkError(err);
         if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
       }
     }

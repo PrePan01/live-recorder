@@ -604,6 +604,18 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_prediction_recording_sessions_room ON prediction_recording_sessions(room_id, started_at DESC);
     `,
   },
+  {
+    // 中断恢复后同一次录制合并为同一个文件，需要记录"结束原因"和"累计缺失时长"：
+    // 历史页据此标注"中途缺失 N 秒"；去重据此区分"网络中断（还能续录）"与"服务重启（不自动续录）"。
+    version: 34,
+    up: (db) => {
+      const names = new Set(
+        (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as Array<{ name: string }>).map((r) => r.name),
+      );
+      if (!names.has('end_reason')) db.exec(`ALTER TABLE recordings ADD COLUMN end_reason TEXT;`);
+      if (!names.has('missing_ms')) db.exec(`ALTER TABLE recordings ADD COLUMN missing_ms INTEGER;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

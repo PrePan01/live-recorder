@@ -1,4 +1,5 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -305,7 +306,7 @@ describe('RecorderManager', () => {
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
   });
 
-  it('fails a recording that never confirms start after the 30s pending timeout', async () => {
+  it('treats "no data after 30s" as a retryable interruption instead of failing outright', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6p-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -318,21 +319,29 @@ describe('RecorderManager', () => {
       },
       stop: async () => {},
     });
+    // 一直开播：让重试持续进行，直到额度耗尽（脚本耗尽后回落 live）。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/15', displayName: 'P' });
 
     await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
     await waitFor(() => services.rooms.get(room.id)!.monitorState === 'recording');
     expect(services.recordings.list({ roomId: room.id }).items[0]!.state).toBe('pending');
 
-    await settle(clock, 30_000);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]!.state === 'failed');
-    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
-    expect(rec.failureReason?.code).toBe('RECORDING_START_FAILED');
+    // 30 秒拿不到数据 → 进入重试，而不是一次判死。
+    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items[0]!.state === 'reconnecting', 80);
+
+    // 重试额度耗尽后才收尾；全程只有一条记录，不因为重试多出记录。
+    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items[0]!.state === 'failed', 500);
+    const recs = services.recordings.list({ roomId: room.id }).items;
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.failureReason?.code).toBe('STREAM_DISCONNECTED_RECONNECT_EXHAUSTED');
+    // 失败原因要带上真正的原因，而不是笼统的"次数已耗尽"。
+    expect(recs[0]!.failureReason?.message).toContain('等待直播数据超时');
     expect(services.rooms.get(room.id)!.monitorState).toBe('failed');
     expect(preview.closed.some((c) => c.code === 4004)).toBe(true);
   });
 
-  it('reconnects with 5/15/45s backoff, splitting segments, then fails on exhaustion', async () => {
+  it('reconnects into the same file: one recording, appended bytes, interruption noted on the row', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6r-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -343,41 +352,34 @@ describe('RecorderManager', () => {
       frames: 2,
       intervalMs: 500,
       failAfterMs: 30,
-      failError: { code: 'STREAM_DISCONNECTED', message: '断流', roomId: null, recordingId: null, occurredAt: 'x', retryable: true },
+      failError: { code: 'NETWORK_UNAVAILABLE', message: '拉流失败 HTTP 503', roomId: null, recordingId: null, occurredAt: 'x', retryable: true },
     };
+    // 一直开播：让 5/15/45 三次退避重连都真的发生，最后才耗尽。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/16', displayName: 'R' });
 
     await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
-    const rec1 = services.recordings.list({ roomId: room.id }).items[0]!;
-    await waitFor(() => services.recordings.get(rec1.id)!.state === 'reconnecting');
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.filePath !== null);
+    const filePath = services.recordings.get(rec.id)!.filePath!;
 
-    await settle(clock, 5_000);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
-    const rec2 = services.recordings.list({ roomId: room.id }).items.find((r) => r.id !== rec1.id)!;
-    await waitFor(() => services.recordings.get(rec2.id)!.state === 'reconnecting');
-
-    await settle(clock, 15_000);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 3);
-    const rec3 = services.recordings.list({ roomId: room.id }).items.find((r) => r.id !== rec1.id && r.id !== rec2.id)!;
-    await waitFor(() => services.recordings.get(rec3.id)!.state === 'reconnecting');
-
-    await settle(clock, 45_000);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 4);
-    const rec4 = services.recordings.list({ roomId: room.id }).items.find((r) => r.id !== rec1.id && r.id !== rec2.id && r.id !== rec3.id)!;
-    await waitFor(() => services.recordings.get(rec4.id)!.state === 'failed');
-
-    const recs = services.recordings.list({ roomId: room.id }).items;
-    expect(recs).toHaveLength(4);
-    const byId = new Map(recs.map((r) => [r.id, r]));
-    expect(byId.get(rec4.id)!.state).toBe('failed');
-    expect(byId.get(rec4.id)!.failureReason?.code).toBe('STREAM_DISCONNECTED_RECONNECT_EXHAUSTED');
-    expect(byId.get(rec1.id)!.state).toBe('completed');
-    expect(byId.get(rec2.id)!.state).toBe('completed');
-    expect(byId.get(rec3.id)!.state).toBe('completed');
-    expect(byId.get(rec2.id)!.retryCount).toBe(1);
-    expect(byId.get(rec3.id)!.retryCount).toBe(2);
-    expect(services.rooms.get(room.id)!.monitorState).toBe('failed');
+    // 重连耗尽但文件里有数据 → 收成"已完成 + 中途中断"，而不是把整条录制判失败。
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed', 300);
+    const after = services.recordings.get(rec.id)!;
+    // 关键回归：重连不再新开文件、不再新建记录。
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    expect(after.filePath).toBe(filePath);
+    expect(after.endReason).toBe('interrupted');
+    expect(after.fileSizeBytes).toBeGreaterThan(13);
+    // 失败原因要带上真正的原因，而不是笼统的"次数已耗尽"。
+    expect(after.failureReason?.code).toBe('STREAM_DISCONNECTED_RECONNECT_EXHAUSTED');
+    expect(after.failureReason?.message).toContain('网络中断');
+    // 中断期间的缺失时长要累计到这条录制上。
+    expect(after.missingMs).toBeGreaterThan(0);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
     expect(preview.closed.some((c) => c.code === 4004)).toBe(true);
+    // 续录是追加写入：整个文件里只应有一个 FLV 头。
+    expect((await readFile(filePath)).toString('latin1').split('FLV').length - 1).toBe(1);
   });
 
   it('blocks recording and alerts when disk space is low', async () => {
@@ -448,45 +450,49 @@ describe('RecorderManager', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
   });
 
-  it('immediately continues recording on natural end while still live (#43)', async () => {
+  it('continues into the same file on natural end while still live (#43)', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6n-'));
     const services = buildServices({ dbPath: ':memory:', clock });
     services.settings.save(baseSettings(dir));
     const preview = new FakePreview();
     services.manager.preview = preview;
-    // 自然结束后的 checkLiveStatus 返回 live → 立即开新段续录，无需等调度器。
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
-      { status: 'live', streamSessionId: 's1' },
-      { status: 'live', streamSessionId: 's1' },
-    ]);
+    // 自然结束后一直开播 → 立即接着录，无需等调度器（脚本耗尽后回落 live）。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/20', displayName: 'N' });
 
-    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
-    const first = services.recordings.list({ roomId: room.id }).items[0]!;
-    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
+    const states: string[] = [];
+    services.events.on((e) => {
+      if (e.type === 'recording:updated' && e.data.roomId === room.id) states.push(e.data.state);
+    });
 
-    // 引擎自然结束后，handleNaturalEnd 检测仍 live → 立即开第二段。
-    for (let i = 0; i < 20 && services.recordings.list({ roomId: room.id }).items.length < 2; i += 1) {
-      await settle(clock, 500);
-    }
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.some((r) => r.id !== first.id && r.state === 'recording'));
-    const recs = services.recordings.list({ roomId: room.id }).items;
-    expect(recs.length).toBeGreaterThanOrEqual(2);
-    // list 按 started_at 倒序：recs[0]=新段（recording），recs[1]=旧段（completed）
-    expect(recs[0]!.state).toBe('recording');
-    expect(recs.some((r) => r.state === 'completed')).toBe(true);
-    // 会话保持激活：同一场连续录制，room 仍 recording，不经过 completed/idle。
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.filePath !== null);
+    const filePath = services.recordings.get(rec.id)!.filePath!;
+    const flvLen = buildMinimalFlv().length;
+    const segmentBytes = flvLen + 5 * (flvLen - 9);
+
+    // 自然结束后继续录同一场：同一个文件继续变大，记录数始终是 1（不再每段一条记录 + 一个文件）。
+    for (let i = 0; i < 60 && (await stat(filePath)).size <= segmentBytes; i += 1) await settle(clock, 500);
+    expect((await stat(filePath)).size).toBeGreaterThan(segmentBytes);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
     expect(services.manager.isRoomActive(room.id)).toBe(true);
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
-    expect(services.recordings.activeCount()).toBe(1);
+    // 续录不再清空预览头缓冲：续录段跳过 FLV 头，清了之后中途加入的预览就永远等不到初始化段。
+    expect(preview.resets.filter((id) => id === room.id)).toHaveLength(1);
 
-    const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
-    await services.manager.stopRecording(room.id);
-    for (let i = 0; i < 20 && services.recordings.get(activeRec.id)!.state !== 'completed'; i += 1) {
-      await settle(clock, 500);
+    // 中途不能出现"已完成"后又回到录制中——那会让用户在录制过程中收到一次"录制完成"提示。
+    const firstCompleted = states.indexOf('completed');
+    if (firstCompleted !== -1) {
+      expect(states.slice(firstCompleted + 1).some((s) => s === 'recording' || s === 'reconnecting')).toBe(false);
     }
-    await waitFor(() => services.recordings.get(activeRec.id)!.state === 'completed');
+
+    await services.manager.stopRecording(room.id);
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed');
+    expect(services.recordings.get(rec.id)!.endReason).toBe('stopped');
+    // 追加写入：整个文件里只有一个 FLV 头。
+    expect((await readFile(filePath)).toString('latin1').split('FLV').length - 1).toBe(1);
   });
 
   it('rejects start when the save directory is unusable and never counts it as active (直播墙/预览点录制计数虚增回归)', async () => {
@@ -515,7 +521,7 @@ describe('RecorderManager', () => {
     expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
 
-  it('finishes intermediate segment processing on natural-end continue (mp4_after/上传 分段收尾)', async () => {
+  it('enqueues post-processing once for the merged recording (mp4_after/上传 收尾)', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-mp4-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -526,23 +532,133 @@ describe('RecorderManager', () => {
     } as AppSettings);
     await services.secretStore.set('openlist.token', 'tok');
     services.manager.preview = new FakePreview();
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
-      { status: 'live', streamSessionId: 's1' },
-      { status: 'live', streamSessionId: 's1' },
-    ]);
+    // 一直开播 → 自然结束后同文件续录（不新增记录）。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/21', displayName: 'P' });
 
     await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
-    const first = services.recordings.list({ roomId: room.id }).items[0]!;
-    await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
-    // 自然结束仍开播 → 开新段续录；旧段 completed 后必须走分段收尾（pipeline.enqueue → uploader.enqueue 建上传任务）。
-    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.length >= 2);
-    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.some((r) => r.state === 'recording'));
-    const activeRec = services.recordings.list({ roomId: room.id }).items.find((r) => r.state === 'recording')!;
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.filePath !== null);
+    const filePath = services.recordings.get(rec.id)!.filePath!;
+    const flvLen = buildMinimalFlv().length;
+    const segmentBytes = flvLen + 5 * (flvLen - 9);
+    // 等续录真的发生（同一个文件被追加了第二段数据）。
+    for (let i = 0; i < 60 && (await stat(filePath)).size <= segmentBytes; i += 1) await settle(clock, 500);
+
     await services.manager.stopRecording(room.id);
-    await waitForWithClock(clock, () => services.recordings.get(activeRec.id)!.state === 'completed');
-    // 转封装失败重试使用 FakeClock；停止第二段后继续推进收尾任务。
-    await waitForWithClock(clock, () => services.uploader.uploadRepo.jobForRecording(first.id) !== null);
-    expect(services.uploader.uploadRepo.jobForRecording(first.id)).not.toBeNull();
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed');
+    // 合并成一个文件后，后处理/上传只针对这一条录制入队一次。
+    await waitForWithClock(clock, () => services.uploader.uploadRepo.jobForRecording(rec.id) !== null);
+    expect(services.uploader.uploadRepo.jobForRecording(rec.id)).not.toBeNull();
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+  });
+
+  it('times out and retries when the stream opens but never sends data (HTTP 200 后卡住不吐字节)', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-stall-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    // 只发 file_created、之后永不出数据：平台返回 200 后卡住的典型形态。
+    const stalledEngine: RecordingEngine = {
+      stop: async () => undefined,
+      async *start(_input, outputPath) {
+        yield { type: 'file_created', filePath: outputPath ?? '' };
+        await new Promise(() => {});
+      },
+    };
+    services.engineFor = () => stalledEngine as never;
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/40', displayName: 'Stall' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'recording');
+
+    // 回归：file_created 不能撤销启动超时。否则这种情况会一直挂在"录制中"，占着并发名额且永不告警。
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'reconnecting', 100);
+  });
+
+  it('finishes the recording when the user stops during the retry backoff instead of wedging the room', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-stop-backoff-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    (engineOf(services) as unknown as { script: FakeEngineScript }).script = {
+      frames: 2,
+      intervalMs: 500,
+      failAfterMs: 30,
+      failError: { code: 'NETWORK_UNAVAILABLE', message: '拉流失败', roomId: null, recordingId: null, occurredAt: 'x', retryable: true },
+    };
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/41', displayName: 'StopBackoff' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'reconnecting');
+
+    // 退避期间点停止：必须收尾并释放会话，否则记录永远停在"重连中"、并发名额不释放、停止请求一直挂着。
+    const stopping = services.manager.stopRecording(room.id);
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.state === 'completed');
+    await stopping;
+    expect(services.recordings.get(rec.id)!.endReason).toBe('stopped');
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
+    expect(services.recordings.activeCount()).toBe(0);
+  });
+
+  it('stops the pull and flushes the file on shutdown, leaving the record to startup recovery', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-shutdown-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/50', displayName: 'Shutdown' });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.filePath !== null);
+    const filePath = services.recordings.get(rec.id)!.filePath!;
+    for (let i = 0; i < 40 && (statSync(filePath, { throwIfNoEntry: false })?.size ?? 0) <= 13; i += 1) {
+      await settle(clock, 500);
+    }
+
+    // 退出：必须立刻返回（不能被拉流卡住），并且拉流真的停了。
+    await services.manager.shutdown();
+    const sizeAtExit = statSync(filePath).size;
+    await settle(clock, 5_000);
+    expect(statSync(filePath).size).toBe(sizeAtExit);
+    expect(sizeAtExit).toBeGreaterThan(13);
+    // 记录状态不在这里改：交给下次启动的恢复流程统一收口（服务重启中断 + 补跑收尾）。
+    expect(services.recordings.get(rec.id)!.state).toBe('recording');
+  });
+
+  it('re-records the same broadcast after a network interruption, but not after a service restart', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-dedupe-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/30', displayName: 'Dedupe' });
+
+    // 网络中断收尾：有数据、标 interrupted。
+    const interrupted = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'same-session', streamTitle: 'T' });
+    services.recordings.update(interrupted.id, { state: 'completed', endReason: 'interrupted' });
+
+    // 主播还在播：同一场必须还能再录，否则网络恢复后剩下的直播永远不会被录。
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'same-session' });
+    await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.length === 2);
+    await services.manager.stopRecording(room.id);
+    await waitForWithClock(clock, () => !services.manager.isRoomActive(room.id));
+
+    // 服务重启中断：不算"没录过"，同一场被去重挡住（不自动续录）。
+    const restarted = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'restart-session', streamTitle: 'T' });
+    services.recordings.update(restarted.id, { state: 'completed', endReason: 'service_restart' });
+    const beforeRestart = services.recordings.list({ roomId: room.id }).items.length;
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'restart-session' });
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(beforeRestart);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
 });

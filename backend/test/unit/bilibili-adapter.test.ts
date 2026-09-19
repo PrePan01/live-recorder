@@ -162,6 +162,16 @@ describe('BilibiliAdapter', () => {
     expect(result.error?.retryable).toBe(true);
   });
 
+  it('treats 5xx as a retryable platform hiccup instead of "接口有变动"，且不把状态码给用户看', async () => {
+    const a = new BilibiliAdapter(async () => new Response('', { status: 503 }) as unknown as Response);
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
+    expect(result.error?.message).not.toContain('503');
+    expect(result.error?.details?.httpStatus).toBe(503);
+  });
+
   it('maps non-zero api code to PLATFORM_CHANGED', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => ({ code: -404, data: null })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');

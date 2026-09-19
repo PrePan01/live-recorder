@@ -556,16 +556,22 @@ export default function History() {
         },
       },
       {
-        title: "失败原因",
+        // 这一列既放失败原因，也放中断恢复合成一个文件后的"中途缺失 N 秒"。
+        title: "录制异常",
         dataIndex: "failureReason",
-        width: 160,
-        ellipsis: true,
-        render: (f: Recording["failureReason"]) =>
-          f ? (
-            <Typography.Text type="danger">{f.message}</Typography.Text>
-          ) : (
-            "-"
-          ),
+        width: 180,
+        render: (f: Recording["failureReason"], r: Recording) => {
+          const missingSeconds = r.missingMs && r.missingMs >= 1000 ? Math.round(r.missingMs / 1000) : 0;
+          if (!f && missingSeconds === 0) return "-";
+          return (
+            <Space direction="vertical" size={0}>
+              {f ? <Typography.Text type="danger">{f.message}</Typography.Text> : null}
+              {missingSeconds > 0 ? (
+                <Typography.Text type="warning">中途缺失 {missingSeconds} 秒</Typography.Text>
+              ) : null}
+            </Space>
+          );
+        },
       },
       {
         title: "操作",
