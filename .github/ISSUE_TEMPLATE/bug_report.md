@@ -1,6 +1,6 @@
 ---
 name: 问题反馈
-about: 返回使用 Live Recorder 时遇到的问题
+about: 反馈使用 Live Recorder 时遇到的问题
 title: "[Bug] "
 labels: bug
 assignees: ''
