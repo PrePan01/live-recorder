@@ -4,7 +4,7 @@ about: 返回使用 Live Recorder 时遇到的问题
 title: "[Bug] "
 labels: bug
 assignees: ''
--------------
+---
 
 ## 问题描述
 
