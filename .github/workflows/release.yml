@@ -138,7 +138,9 @@ jobs:
             files: release/*.dmg
           - os: windows-latest
             artifact: live-recorder-windows-${{ needs.prepare.outputs.version }}
-            files: release/*-setup.exe
+            files: |
+              release/*-setup.exe
+              release/*.sig
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -148,6 +150,10 @@ jobs:
       npm_config_audit: 'false'
       npm_config_fund: 'false'
       npm_config_prefer_offline: 'true'
+      # updater 签名：tauri.windows.conf.json 开启了 createUpdaterArtifacts，
+      # 缺少私钥时 Windows 打包会直接失败（而不是产出没有 .sig 的安装包）。
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository

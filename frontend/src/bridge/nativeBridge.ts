@@ -12,7 +12,7 @@ export interface NativeBridge {
   getUpdateState(): Promise<UpdateState>;
   checkUpdate(): Promise<UpdateState>;
   downloadUpdate(): Promise<UpdateState>;
-  openUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
   onUpdateState(cb: (state: UpdateState) => void): Promise<() => void>;
   getAppInstance(): Promise<AppInstance | null>;
   getHealth(): Promise<Health | null>;
@@ -47,7 +47,7 @@ class TauriBridge implements NativeBridge {
   getUpdateState(): Promise<UpdateState> { return this.invoke('get_update_state'); }
   checkUpdate(): Promise<UpdateState> { return this.invoke('check_update'); }
   downloadUpdate(): Promise<UpdateState> { return this.invoke('download_update'); }
-  openUpdate(): Promise<void> { return this.invoke('open_update'); }
+  installUpdate(): Promise<void> { return this.invoke('install_update'); }
   async onUpdateState(cb: (state: UpdateState) => void): Promise<() => void> {
     const { listen } = await import('@tauri-apps/api/event');
     return listen<UpdateState>('update:state', (event) => cb(event.payload));
@@ -202,7 +202,7 @@ class BrowserBridge implements NativeBridge {
   async getUpdateState(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
   async checkUpdate(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
   async downloadUpdate(): Promise<UpdateState> { throw new Error('更新功能仅限桌面客户端'); }
-  async openUpdate(): Promise<void> { throw new Error('更新功能仅限桌面客户端'); }
+  async installUpdate(): Promise<void> { throw new Error('更新功能仅限桌面客户端'); }
   async onUpdateState(_cb: (state: UpdateState) => void): Promise<() => void> { return () => {}; }
 
   private apiBase(): string {
