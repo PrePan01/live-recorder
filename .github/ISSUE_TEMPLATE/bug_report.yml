@@ -1,4 +1,4 @@
-name: "🐛 问题反馈"
+name: "问题反馈"
 description: "反馈使用 Live Recorder 时遇到的问题"
 title: "[Bug] "
 labels: ["bug"]
@@ -47,7 +47,7 @@ body:
     id: platform
     attributes:
       label: "直播平台"
-      description: "请选择出现问题的直播平台。"
+      description: "请选择出现问题的直播平台。如问题与具体直播间有关，请填写。"
       options:
         - "B站"
         - "抖音"
@@ -68,7 +68,6 @@ body:
     id: screenshots
     attributes:
       label: "截图或录屏"
-      description: "如有截图或录屏，可以直接粘贴或拖拽到这里。"
     validations:
       required: false
 
