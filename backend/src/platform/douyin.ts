@@ -63,16 +63,8 @@ function classifyStatusError(
   json: DouyinEnterResponse,
   hasCookie: boolean,
 ): AppError {
-  // `10011` is overloaded by Douyin: it can mean an expired session, but it
-  // is also returned for a busy edge/API node and bad request parameters.
-  // Inspect the full payload because the transient hint is often in
-  // `data.prompts`, rather than `data.message`.
   const message = JSON.stringify(json?.data ?? "");
   const code = json.status_code;
-  // Only the anonymous/expired-session code is a safe reason to invalidate
-  // every Douyin room.  Do not use 10011 for that: doing so made an occasional
-  // "服务繁忙" response contradict Settings, where the same session verified
-  // as logged in.
   if (code === 8 && hasCookie) {
     return new AppError(
       "DOUYIN_COOKIE_EXPIRED",
@@ -91,7 +83,6 @@ function classifyStatusError(
       { retryable: temporary },
     );
   }
-  // 凭证相关信号：需登录或被风控。它们只影响当前房间，不能据此熔断全部房间。
   const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
     return new AppError(
@@ -105,13 +96,30 @@ function classifyStatusError(
   return new AppError("PLATFORM_CHANGED", "平台接口有变动，请稍后重试", {});
 }
 
+/** enter 响应里平台侧的提示文案（message/prompts），用于区分限流/结束等语义。 */
+function enterHint(json: DouyinEnterResponse): string {
+  const raw = json.data as unknown as
+    { message?: unknown; prompts?: unknown } | undefined;
+  if (typeof raw?.message === "string" && raw.message) return raw.message;
+  return typeof raw?.prompts === "string" ? raw.prompts : "";
+}
+
 /**
- * 抖音对"当前不在播"的房间会返回 status_code=0 但没有任何房间条目（data.data 为空或缺失）。
- * 这是"未开播"，不是接口结构变化：以前这种情况会落到 PLATFORM_CHANGED，导致已下播的房间
- * 每隔一个检测周期就报一次"平台接口有变动"（实测一个下播房间刷出 150+ 条告警）。
+ * “当前不在播”判定，只作用于**没有任何房间条目**（data.data 为空或缺失）的响应。
+ * 抖音对已结束的房间有两种形状：
+ * ① status_code=0 且没有房间条目（稳定未开播）；
+ * ② 刚下播的一段时间内返回 status_code=30003 + “room has finished”，同样没有房间条目。
+ * 以前只识别了 ①：②会落到 PLATFORM_CHANGED，于是房间下播后会误报“平台接口有变动”
+ * （实测 status_code=30003 / hint="room has finished"）。
+ * 凭证/风控类响应（8、10011、需登录等）不在本判定内，仍走原分类逻辑。
  */
-function hasNoRoomEntry(json: DouyinEnterResponse): boolean {
-  return json.status_code === 0 && (json.data?.data?.length ?? 0) === 0;
+function isNotLiveResponse(json: DouyinEnterResponse): boolean {
+  if ((json.data?.data?.length ?? 0) > 0) return false;
+  if (json.status_code === 0) return true;
+  return (
+    json.status_code === 30003 ||
+    /room has finished|直播已结束|已下播/i.test(enterHint(json))
+  );
 }
 
 /**
@@ -137,14 +145,7 @@ function logEnterShape(
   const entries = json.data?.data;
   const entry = entries?.[0];
   const flv = entry?.stream_url?.flv_pull_url;
-  const raw = json.data as unknown as
-    { message?: unknown; prompts?: unknown } | undefined;
-  const hint =
-    typeof raw?.message === "string" && raw.message
-      ? raw.message
-      : typeof raw?.prompts === "string"
-        ? raw.prompts
-        : "";
+  const hint = enterHint(json);
   console.warn(
     `[douyin-enter] room=${roomId} status_code=${json.status_code ?? "absent"} entries=${entries ? entries.length : "missing"} entryStatus=${entry?.status ?? "-"} flvKeys=${flv ? Object.keys(flv).length : "none"} outcome=${outcome} hint=${hint.slice(0, 120)}`,
   );
@@ -323,8 +324,6 @@ export class DouyinAdapter implements PlatformAdapter {
           { retryable: false, details: { httpStatus: res.status } },
         );
       }
-      // 其余状态码同样是传输/服务侧信号，不能据此断言“接口已变更”（否则会把用户引去等适配更新）。
-      // 给用户看的文案里不含状态码，原文只留在 details 里备查。
       throw new AppError(
         "NETWORK_UNAVAILABLE",
         "平台暂时无法访问，请稍后重试",
@@ -443,8 +442,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
-      // status_code=0 却没有房间条目 = 这个房间当前不在播（已下播/已结束），不是接口变了。
-      if (hasNoRoomEntry(data)) return { status: "offline" };
+      // 没有房间条目 = 这个房间当前不在播（未开播 / 刚下播），不是接口变了。
+      if (isNotLiveResponse(data)) return { status: "offline" };
       const appErr = classifyStatusError(data, Boolean(cookie));
       logEnterShape(roomId, data, appErr.code);
       return {
@@ -472,9 +471,6 @@ export class DouyinAdapter implements PlatformAdapter {
       (await this.fetchAnchorNickname(roomId, cookie)) ||
       "";
     const streamTitle = entry.title;
-    // 主播昵称只能来自昵称源（enter 的 user.nickname 或直播间页面解析）。
-    // 直播间标题绝不能顶替昵称：否则添加房间时会把「今晚八点开播」这类标题识别成主播昵称（#2a）。
-    // 昵称确实取不到时退回房间号占位（#128），标题仍作为 streamTitle 单独保留。
     const base = nickname
       ? {
           displayName: nickname,
@@ -560,7 +556,7 @@ export class DouyinAdapter implements PlatformAdapter {
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
       // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
-      if (hasNoRoomEntry(data))
+      if (isNotLiveResponse(data))
         throw new AppError(
           "RECORDING_NOT_AVAILABLE",
           "直播间当前未开播，无法获取直播流",

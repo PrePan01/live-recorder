@@ -240,6 +240,26 @@ describe('DouyinAdapter', () => {
     });
   });
 
+  it('把下播实测形状 status_code=30003/"room has finished" 判成未开播，而不是接口变动', async () => {
+    // 诊断包实测：房间下播后抖音返回 status_code=30003、无房间条目、提示 "room has finished"。
+    // 以前只认 status_code=0 的未开播形状，于是这一段时间里误报"平台接口有变动"。
+    const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 30003, data: { message: 'room has finished' } })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/440323816405', 'sessionid=x');
+    expect(result.status).toBe('offline');
+    expect(result.error).toBeUndefined();
+    await expect(a.getStreamUrl('https://live.douyin.com/440323816405', 'original', 'sessionid=x')).rejects.toMatchObject({
+      code: 'RECORDING_NOT_AVAILABLE',
+    });
+
+    // 换了个状态码但仍是"直播已结束"文案时，也要按未开播处理。
+    const byText = new DouyinAdapter(mockFetcher(() => ({ status_code: 10000, data: { message: 'room has finished' } })));
+    expect((await byText.checkLiveStatus('https://live.douyin.com/1', 'sessionid=x')).status).toBe('offline');
+
+    // 凭证类响应（8=需登录）即使没有房间条目也不能被"未开播"判定吞掉。
+    const expired = new DouyinAdapter(mockFetcher(() => ({ status_code: 8, data: { message: '请先登录' } })));
+    expect((await expired.checkLiveStatus('https://live.douyin.com/1', 'sessionid=x')).error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
+  });
+
   it('maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure', async () => {
     // 444 会在有效登录态下偶发出现；不能让设置页显示“已登录”而监控页要求重新授权。
     const a = new DouyinAdapter(statusFetcher(444));
