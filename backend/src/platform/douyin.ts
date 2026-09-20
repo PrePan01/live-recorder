@@ -56,18 +56,33 @@ const NICK_TTL_MS = 10 * 60_000;
 
 /**
  * 区分抖音非 0 status_code 的根因：#56 第二部分——
- * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查抖音授权；
+ * 明确的反爬/凭证失效 → PLATFORM_ACCESS_RESTRICTED 引导检查抖音授权；
  * 仅结构异常（连 status_code 都无法解析）→ PLATFORM_CHANGED 真接口变更。
  */
 function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): AppError {
-  const message = String(json?.data && 'message' in json.data ? (json.data as unknown as { message?: string }).message : '');
+  // `10011` is overloaded by Douyin: it can mean an expired session, but it
+  // is also returned for a busy edge/API node and bad request parameters.
+  // Inspect the full payload because the transient hint is often in
+  // `data.prompts`, rather than `data.message`.
+  const message = JSON.stringify(json?.data ?? '');
   const code = json.status_code;
-  // 凭证相关信号：请求参数错误/服务繁忙/需登录等（抖音风控常见 status_code）。
-  const credentialLike = code === 10011 || /请求参数|服务繁忙|请稍后|登录|风控|verify|RiskControl/i.test(message);
-  // 已携带 Cookie 时的 10011 是明确凭证失效信号，可作为平台级失败处理。
-  if (code === 10011 && hasCookie) {
+  // Only the anonymous/expired-session code is a safe reason to invalidate
+  // every Douyin room.  Do not use 10011 for that: doing so made an occasional
+  // "服务繁忙" response contradict Settings, where the same session verified
+  // as logged in.
+  if (code === 8 && hasCookie) {
     return new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', { retryable: false });
   }
+  if (code === 10011) {
+    const temporary = /服务繁忙|请稍后|busy|temporar|频繁|系统异常|try again/i.test(message);
+    return new AppError(
+      temporary ? 'NETWORK_UNAVAILABLE' : 'PLATFORM_CHANGED',
+      temporary ? '抖音接口暂时不可用，请稍后重试' : '抖音接口请求参数异常，等待适配更新',
+      { retryable: temporary },
+    );
+  }
+  // 凭证相关信号：需登录或被风控。它们只影响当前房间，不能据此熔断全部房间。
+  const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
     return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，抖音授权可能已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权', { retryable: false });
   }
@@ -178,10 +193,15 @@ export class DouyinAdapter implements PlatformAdapter {
         throw new AppError('NETWORK_UNAVAILABLE', '平台暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: res.status } });
       }
       // 444 是抖音边缘节点直接掐断连接、不返回任何内容的非标准状态码。
-      // 实测在设置页重新登录授权抖音后即可恢复，说明它同样是凭证/风控信号，而不是接口变更：
-      // 以前它落到下面那句“平台接口返回异常状态（HTTP 444）”，用户既看不懂、又不会重试，
-      // 也不会被提示去重新授权。
-      if (res.status === 401 || res.status === 403 || res.status === 444) {
+      // 它也会在登录仍有效时偶发出现，不能据此使全部房间进入“授权失效”熔断。
+      if (res.status === 444) {
+        throw new AppError(
+          'NETWORK_UNAVAILABLE',
+          '抖音接口暂时不可用，请稍后重试',
+          { retryable: true, details: { httpStatus: res.status } },
+        );
+      }
+      if (res.status === 401 || res.status === 403) {
         throw new AppError(
           cookie ? 'DOUYIN_COOKIE_EXPIRED' : 'PLATFORM_ACCESS_RESTRICTED',
           cookie ? '抖音授权已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权',
@@ -219,10 +239,7 @@ export class DouyinAdapter implements PlatformAdapter {
         return await this.fetchRoomInfo(roomId, cookie);
       } catch (err) {
         lastError = err;
-        // 边缘节点偶发掐断（444）也先立即重试一次：重试后多半就正常了。
-        // 不重试会把一次抖动直接报成“授权已失效”，把用户赶去重新登录。
-        const silentDrop = err instanceof AppError && err.details?.httpStatus === 444;
-        const retryable = (err instanceof AppError && err.retryable) || silentDrop || isNetworkError(err);
+        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
         if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
       }
     }

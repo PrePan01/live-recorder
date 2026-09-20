@@ -175,13 +175,21 @@ describe('DouyinAdapter', () => {
     expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
   });
 
-  it('maps status_code=10011 with cookie to restricted with a cookie-expired error (#56 part2)', async () => {
-    // 带 Cookie 时抖音返回 status_code=10011（Request params error / 服务繁忙）→ 视为凭证失效引导更新 Cookie，而非平台变动。
+  it('does not treat a transient 10011 as an expired cookie', async () => {
+    // `10011` 也会携带“服务繁忙，请稍后重试”，此时设置页的登录态仍有效；
+    // 不能以一次房间检测熔断所有房间并要求重新授权。
     const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 10011, data: { message: 'Request params error', prompts: '当前服务繁忙，请稍后重试' } })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=expired');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
+  });
+
+  it('keeps the global re-authorization path for an explicit expired-session response', async () => {
+    const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 8, data: { message: '请先登录' } })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=expired');
     expect(result.status).toBe('restricted');
     expect(result.error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
-    expect(result.error?.message).toContain('抖音授权');
   });
 
   it('maps unexpected structure without cookie signal to PLATFORM_CHANGED', async () => {
@@ -212,13 +220,13 @@ describe('DouyinAdapter', () => {
     });
   });
 
-  it('maps 抖音 444（边缘节点掐断连接）to a re-authorization prompt, never a raw HTTP code', async () => {
-    // 实测：设置页重新登录授权抖音后恢复 → 444 是凭证/风控信号，不是接口变更。
+  it('maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure', async () => {
+    // 444 会在有效登录态下偶发出现；不能让设置页显示“已登录”而监控页要求重新授权。
     const a = new DouyinAdapter(statusFetcher(444));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=stale');
-    expect(result.status).toBe('restricted');
-    expect(result.error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
-    expect(result.error?.message).toContain('抖音授权');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
     // 用户看不懂 HTTP 状态码：绝不能出现在给用户看的文案里（技术细节只留在 details）。
     expect(result.error?.message).not.toContain('444');
     expect(result.error?.details?.httpStatus).toBe(444);
