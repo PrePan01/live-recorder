@@ -172,6 +172,43 @@ describe('BilibiliAdapter', () => {
     expect(result.error?.details?.httpStatus).toBe(503);
   });
 
+  it('retries a transient playback-api failure before reporting the room unavailable', async () => {
+    let playRequests = 0;
+    const a = new BilibiliAdapter(async (url) => {
+      if (String(url).includes('getRoomPlayInfo')) {
+        playRequests += 1;
+        if (playRequests === 1) return new Response('', { status: 503 }) as unknown as Response;
+      }
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
+    expect(playRequests).toBe(2);
+    expect(result.status).toBe('live');
+  });
+
+  it('serializes concurrent playback-api requests from polling and recording recovery', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const a = new BilibiliAdapter(async (url) => {
+      if (String(url).includes('getRoomPlayInfo')) {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+      }
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const [first, second] = await Promise.all([
+      a.checkLiveStatus('https://live.bilibili.com/111'),
+      a.checkLiveStatus('https://live.bilibili.com/222'),
+    ]);
+    expect(first.status).toBe('live');
+    expect(second.status).toBe('live');
+    expect(peak).toBe(1);
+  });
+
   it('maps non-zero api code to PLATFORM_CHANGED', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => ({ code: -404, data: null })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');

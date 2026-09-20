@@ -15,6 +15,7 @@ function qnToQuality(qn: number): Quality {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
+const PLATFORM_REQUEST_ATTEMPTS = 2;
 
 interface BiliUrlInfo {
   host?: string;
@@ -86,6 +87,11 @@ function platformStartedAt(liveTime: number | undefined): string | undefined {
 
 export class BilibiliAdapter implements PlatformAdapter {
   readonly platform = 'bilibili' as const;
+  /**
+   * 轮询、手动检测与录制恢复共用 getRoomPlayInfo；统一排队，避免多个
+   * 录制收尾和调度批次同时携带同一 Cookie 撞向播放接口。
+   */
+  private playRequestTail: Promise<void> = Promise.resolve();
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -106,7 +112,19 @@ export class BilibiliAdapter implements PlatformAdapter {
     return m ? Number(m[1]) : null;
   }
 
-  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
+  private async queuePlayRequest<T>(request: () => Promise<T>): Promise<T> {
+    const previous = this.playRequestTail;
+    let release!: () => void;
+    this.playRequestTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await request();
+    } finally {
+      release();
+    }
+  }
+
+  private async fetchPlayInfoOnce(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
     const params = new URLSearchParams({
       room_id: String(roomId),
       protocol: '0,1',
@@ -116,16 +134,30 @@ export class BilibiliAdapter implements PlatformAdapter {
       platform: 'web',
       ptype: '8',
     });
-    const res = await this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
+    const res = await this.queuePlayRequest(() => this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
       signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
         Referer: `${this.roomBase}/${roomId}`,
         ...(cookie ? { Cookie: cookie } : {}),
       },
-    });
+    }));
     if (!res.ok) throw biliHttpError(res.status);
     return (await res.json()) as BiliPlayResponse;
+  }
+
+  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.fetchPlayInfoOnce(roomId, cookie, qn);
+      } catch (err) {
+        lastError = err;
+        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
+        if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
+      }
+    }
+    throw lastError;
   }
 
   /** getRoomPlayInfo 响应已不含主播名/标题；用 get_anchor_in_room 取昵称、get_info 取标题，均免 Cookie 且无风控。 */
