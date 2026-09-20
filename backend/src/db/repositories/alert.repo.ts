@@ -70,6 +70,24 @@ export class AlertRepository {
     return this.get(id);
   }
 
+  /**
+   * 房间级告警的自动收敛：一次瞬时误判（如开播/关播窗口的平台接口误报）不该长期挂在
+   * 告警列表里，检测确认恢复后应随之消解。仅作用于指定房间，平台级告警
+   * （room_id 为空，如授权失效）不受影响。返回本条被消解的告警，供调用方推送更新。
+   */
+  resolveForRoom(roomId: string, source?: string): Alert[] {
+    const where = source
+      ? 'resolved = 0 AND room_id = ? AND source = ?'
+      : 'resolved = 0 AND room_id = ?';
+    const params = source ? [roomId, source] : [roomId];
+    const rows = this.db
+      .prepare(`SELECT * FROM alerts WHERE ${where}`)
+      .all(...params) as AlertRow[];
+    if (rows.length === 0) return [];
+    this.db.prepare(`UPDATE alerts SET resolved = 1 WHERE ${where}`).run(...params);
+    return rows.map((row) => rowToAlert({ ...row, resolved: 1 }));
+  }
+
   markAllResolved(): number {
     return this.db.prepare('UPDATE alerts SET resolved = 1 WHERE resolved = 0').run().changes;
   }

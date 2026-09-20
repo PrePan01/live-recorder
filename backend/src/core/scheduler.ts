@@ -1,9 +1,4 @@
-import {
-  DEFAULT_NOTIFICATION_PREFERENCE,
-  type ErrorObject,
-  type Platform,
-  type Room,
-} from "../types/index.js";
+import { type ErrorObject, type Platform, type Room } from "../types/index.js";
 import type { PlatformAdapter } from "../platform/adapter.js";
 import { AppError } from "../types/error.js";
 import type { RecorderManager } from "./recorder-manager.js";
@@ -262,6 +257,15 @@ export class Scheduler {
     this.services.events.emit({ type: "alert:created", data: alert });
   }
 
+  private resolveRoomAlerts(roomId: string): void {
+    for (const alert of this.services.alerts.resolveForRoom(
+      roomId,
+      "platform",
+    )) {
+      this.services.events.emit({ type: "alert:updated", data: alert });
+    }
+  }
+
   /** 检测失败不能掩盖仍由 RecorderManager 持有的活动录制会话。 */
   private setCheckFailure(roomId: string, error: ErrorObject): void {
     if (this.manager.isRoomActive(roomId)) {
@@ -358,6 +362,7 @@ export class Scheduler {
       );
     }
     if (status.status === "live" || status.status === "offline") {
+      this.resolveRoomAlerts(room.id);
       this.recordCoverage(room.id);
       if (status.status === "offline") this.recordTodayForecast(room.id);
     }
@@ -686,8 +691,6 @@ export class Scheduler {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
     if (room.platform === "douyin" && this.douyinCookieExpired) return;
-    // “检测”只更新直播状态和执行既有自动录制策略；它不是用户明确要求
-    // 同一场直播重新录制。只有 /start-recording 才能携带 manual=true。
     await this.checkRoom(room, opts).catch(() => undefined);
   }
 }

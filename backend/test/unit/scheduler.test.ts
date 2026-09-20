@@ -691,4 +691,30 @@ describe('Scheduler', () => {
     // 未开播不是异常：不该落任何告警（以前空响应会被判成 PLATFORM_CHANGED，每个检测周期刷一条）。
     expect(services.alerts.list().filter((a) => a.roomId === room.id)).toHaveLength(0);
   });
+
+  it('检测恢复后自动收敛该房间未读的平台告警（过渡期一次误报不该长期挂榜）', async () => {
+    const { services } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-alert-resolve-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/123456', displayName: 'warn' });
+    const updates: string[] = [];
+    services.events.on((event) => {
+      if (event.type === 'alert:updated') updates.push(event.data.id);
+    });
+
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
+      { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试').toObject() },
+    ]);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    const unresolved = services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id);
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]!.errorCode).toBe('PLATFORM_CHANGED');
+
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+    // 前端靠 alert:updated 更新已读状态，收敛时必须推送。
+    expect(updates).toContain(unresolved[0]!.id);
+  });
 });

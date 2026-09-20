@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DouyinAdapter } from '../../src/platform/douyin.js';
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
@@ -60,24 +60,29 @@ describe('DouyinAdapter', () => {
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
   });
 
-  it('falls back to title as displayName when nickname is missing (添加抖音房间显示名检测)', async () => {
-    // user 缺 nickname、仅有 title：displayName 应用标题兜底，避免添加房间显示名为空。
+  it('昵称解析不到时用房间号占位，绝不用直播间标题冒充主播昵称（添加房间显示名回归）', async () => {
+    // enter 缺 user.nickname 且页面解析不到昵称：以前 displayName 会用 title 兜底，
+    // 添加房间后「显示名」就变成了当场的直播标题。昵称只能来自昵称源，取不到就用占位。
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ user: {} })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('live');
-    expect(result.displayName).toBe('抖音直播间');
+    expect(result.displayName).toBe('douyin_123456');
+    expect(result.displayName).not.toBe('抖音直播间');
     expect(result.streamTitle).toBe('抖音直播间');
-    expect(result.titleSource).toBe('adapter');
-    expect(result.titleFallbackUsed).toBe(false);
+    expect(result.titleSource).toBe('placeholder');
+    expect(result.titleFallbackUsed).toBe(true);
   });
 
   it('resolves anchor nickname from the room page when enter API lacks user.nickname (验收 #2a)', async () => {
     // 抖音接口结构变更：enter 不再返回 user.nickname → 从直播间页面 data-anchor-info 解析主播昵称。
-    const fetcher = (async (url: unknown) => {
+    // 匿名请求直播间页面会被挡在“验证码中间页”（页面里没有 data-anchor-info），所以必须带上会话 Cookie。
+    let pageCookie: string | undefined;
+    const fetcher = (async (url: unknown, init?: RequestInit) => {
       const u = String(url);
       if (u.includes('/webcast/room/web/enter')) {
         return new Response(JSON.stringify(livePayload({ user: {} })), { status: 200 });
       }
+      pageCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
       return new Response(
         `<html><body><div data-anchor-info="{&quot;nickname&quot;:&quot;青泠&quot;,&quot;avatar&quot;:&quot;x&quot;}">x</div></body></html>`,
         { status: 200, headers: { 'content-type': 'text/html' } },
@@ -89,6 +94,7 @@ describe('DouyinAdapter', () => {
     expect(result.displayName).toBe('青泠');
     expect(result.streamTitle).toBe('抖音直播间');
     expect(result.titleSource).toBe('adapter');
+    expect(pageCookie).toBe('sessionid=x');
   });
 
   it('reports offline when status is not 2', async () => {
@@ -333,5 +339,40 @@ describe('DouyinAdapter', () => {
     // P0：抖音接口须用 web_rid，room_id_str 会返回 status_code=10011。
     expect(sentUrl).toContain('web_rid=123456');
     expect(sentUrl).not.toContain('room_id_str');
+  });
+
+  it('把误判结构的 enter 响应摘要写进诊断日志，便于定位过渡期误报（不含响应体/地址）', async () => {
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => {
+      warns.push(String(line));
+    });
+    try {
+      // 开播/关播过渡期可能返回非 0 状态码却没有任何房间条目：当前会被判成 PLATFORM_CHANGED。
+      // 这条日志把真实 status_code/形状留进诊断包，用于确认到底是哪种响应。
+      const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 10003, data: { data: [], message: 'Request params error' } })));
+      const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=secret-cookie');
+      expect(result.error?.code).toBe('PLATFORM_CHANGED');
+    } finally {
+      spy.mockRestore();
+    }
+    const line = warns.find((w) => w.includes('[douyin-enter]'));
+    expect(line).toBeDefined();
+    expect(line).toContain('status_code=10003');
+    expect(line).toContain('entries=0');
+    expect(line).not.toContain('secret-cookie');
+    expect(line).not.toContain('https://');
+  });
+
+  it('正常的在播/未开播检测不写诊断日志，避免污染 backend.log', async () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const live = new DouyinAdapter(mockFetcher(() => livePayload()));
+      await live.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+      const offline = new DouyinAdapter(mockFetcher(() => ({ status_code: 0, data: { data: [] } })));
+      await offline.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

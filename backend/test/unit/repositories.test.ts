@@ -410,4 +410,23 @@ describe('AlertRepository', () => {
     alerts.create({ level: 'info', source: 'recorder', message: '清晰度降级', occurredAt: new Date().toISOString() });
     expect(alerts.markAllResolved()).toBe(1);
   });
+
+  it('resolves only the given room\u2019s unresolved platform alerts, leaving platform-wide ones intact', () => {
+    // 一次瞬时误报会留下未读告警；检测恢复后应连同该房间的告警一起消解，而平台级告警（无房间）必须保留。
+    const alerts = new AlertRepository(freshDb());
+    const roomAlert = alerts.create({ level: 'error', source: 'platform', message: '平台接口有变动，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_a', errorCode: 'PLATFORM_CHANGED' });
+    const otherRoom = alerts.create({ level: 'error', source: 'platform', message: '平台接口有变动，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_b', errorCode: 'PLATFORM_CHANGED' });
+    const recorderAlert = alerts.create({ level: 'error', source: 'recorder', message: '录制启动失败', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_a', errorCode: 'RECORDING_START_FAILED' });
+    const platformWide = alerts.create({ level: 'warning', source: 'platform', message: '抖音授权已失效，请到设置页重新授权', occurredAt: '2026-09-20T00:00:00.000Z', errorCode: 'DOUYIN_COOKIE_EXPIRED' });
+
+    const resolved = alerts.resolveForRoom('room_a', 'platform');
+
+    expect(resolved.map((a) => a.id)).toEqual([roomAlert.id]);
+    expect(resolved[0]!.resolved).toBe(true);
+    expect(alerts.get(roomAlert.id)!.resolved).toBe(true);
+    expect(alerts.get(otherRoom.id)!.resolved).toBe(false);
+    expect(alerts.get(recorderAlert.id)!.resolved).toBe(false);
+    expect(alerts.get(platformWide.id)!.resolved).toBe(false);
+    expect(alerts.resolveForRoom('room_a', 'platform')).toHaveLength(0);
+  });
 });
