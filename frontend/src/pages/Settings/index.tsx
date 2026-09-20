@@ -774,7 +774,7 @@ export default function SettingsPage() {
                     className="lr-settings-section__hint"
                     type="secondary"
                   >
-                    录制当前时刻之前的片段。
+                    录制当前时刻之前的片段，最高支持 600 秒。
                   </Typography.Paragraph>
                   <Form.Item
                     label="开启精彩时刻"

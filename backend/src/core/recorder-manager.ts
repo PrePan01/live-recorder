@@ -1,5 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { AppError } from "../types/error.js";
@@ -189,6 +189,14 @@ export class RecorderManager {
   private remuxJobs = new Set<string>();
   /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
   private highlightBuffers = new Map<string, HighlightBuffer>();
+  /**
+   * 精彩时刻导出期间提前展示的保留确认。导出可能需要等待当前缓存分段落盘，
+   * 不能让这段 I/O 延迟阻塞确认框，也不能在文件尚未生成时启动后处理或删除记录。
+   */
+  private pendingHighlightConfirmations = new Map<
+    string,
+    { decision?: { keep: boolean; fileName?: string } }
+  >();
 
   constructor(
     private services: Services,
@@ -419,9 +427,6 @@ export class RecorderManager {
       throw new AppError("RECORDING_NOT_AVAILABLE", "精彩时刻缓存尚未就绪", {
         roomId,
       });
-    // The client refreshes this value periodically, so it can be stale when a
-    // cache pauses or is reset. Never silently shorten a requested highlight:
-    // that would make history claim the requested duration for a short file.
     if (lookbackSeconds > availableSeconds) {
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
@@ -454,31 +459,49 @@ export class RecorderManager {
       parsed.dir,
       `${parsed.name}_highlight_${recording.id}${parsed.ext}`,
     );
+    const confirmAfterComplete = this.settings().confirmAfterComplete;
+    if (confirmAfterComplete) {
+      this.pendingHighlightConfirmations.set(recording.id, {});
+      this.services.recordings.update(recording.id, { filePath });
+      this.enterPendingConfirmation(recording.id);
+    }
     void (async () => {
       try {
         const result = await buffer.exportTo(filePath, lookbackSeconds);
-        // A highlight is copied from an already-buffered stream, so export
-        // itself takes only milliseconds.  Persist the clip's media interval
-        // rather than that copy interval; history, stats and CSV all derive
-        // duration from startedAt/endedAt.
         const endedAt = this.services.clock.iso();
         const startedAt = new Date(
           new Date(endedAt).getTime() - result.actualSeconds * 1_000,
         ).toISOString();
         const completed = this.services.recordings.update(recording.id, {
-          state: "completed",
+          state: confirmAfterComplete ? "awaiting_confirmation" : "completed",
           filePath,
           fileSizeBytes: result.bytes,
           startedAt,
           endedAt,
         });
-        if (!this.settings().confirmAfterComplete)
+        if (!confirmAfterComplete)
           this.services.events.emit({
             type: "recording:updated",
             data: completed,
           });
-        this.finishOrConfirm(recording.id);
+        if (!confirmAfterComplete) {
+          this.finishOrConfirm(recording.id);
+          return;
+        }
+        const pending = this.pendingHighlightConfirmations.get(recording.id);
+        this.pendingHighlightConfirmations.delete(recording.id);
+        if (!pending?.decision) return;
+        if (pending.decision.keep) {
+          await this.renameConfirmedHighlight(
+            recording.id,
+            pending.decision.fileName,
+          );
+          this.resumeAfterConfirmation(recording.id);
+        } else {
+          this.discardAfterConfirmation(recording.id);
+        }
       } catch (error) {
+        this.pendingHighlightConfirmations.delete(recording.id);
         const err = new AppError(
           "HIGHLIGHT_EXPORT_FAILED",
           failureText("HIGHLIGHT_EXPORT_FAILED"),
@@ -496,14 +519,53 @@ export class RecorderManager {
         this.services.events.emit({ type: "recording:updated", data: failed });
       }
     })();
-    this.services.events.emit({ type: "recording:updated", data: recording });
+    if (!confirmAfterComplete)
+      this.services.events.emit({ type: "recording:updated", data: recording });
     return { recordingId: recording.id, availableSeconds };
   }
 
   /**
-   * 为开播但未录制的房间启动预览专用拉流（outputPath=null，引擎只产出 data 事件供预览转发，不写文件）。
-   * 仅当房间开播、且既无录制会话也无预览会话时启动；后续帧由引擎 data 事件转发到 preview。
+   * 若精彩时刻还在导出，将用户决定暂存到导出完成；返回 true 表示已接管。
    */
+  deferHighlightConfirmation(
+    recordingId: string,
+    keep: boolean,
+    fileName?: string,
+  ): boolean {
+    const pending = this.pendingHighlightConfirmations.get(recordingId);
+    if (!pending) return false;
+    this.clearConfirmTimer(recordingId);
+    pending.decision = { keep, ...(fileName ? { fileName } : {}) };
+    return true;
+  }
+
+  private async renameConfirmedHighlight(
+    recordingId: string,
+    fileName: string | undefined,
+  ): Promise<void> {
+    if (!fileName) return;
+    const rec = this.services.recordings.get(recordingId);
+    if (!rec?.filePath) return;
+    const requested = path.basename(fileName.trim());
+    const base = requested.replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, "");
+    const safeBase =
+      base.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120) || "recording";
+    const ext = path.extname(rec.filePath);
+    const nextPath = path.join(path.dirname(rec.filePath), `${safeBase}${ext}`);
+    try {
+      await rename(rec.filePath, nextPath);
+      this.services.recordings.update(recordingId, {
+        streamTitle: base.trim(),
+        filePath: nextPath,
+      });
+    } catch {
+      // 改名失败不应阻断用户已确认的保留和后处理。
+      this.services.recordings.update(recordingId, {
+        streamTitle: base.trim(),
+      });
+    }
+  }
+
   async ensurePreviewStream(roomId: string): Promise<void> {
     if (this.services.resetting) return;
     if (
@@ -1820,6 +1882,15 @@ export class RecorderManager {
           1_000,
         ),
       );
+      return;
+    }
+    // 精彩时刻的确认框会在缓存文件复制完成前出现。超时默认保留也必须等
+    // 导出完成，否则会把一个尚不存在的 filePath 交给后处理管线。
+    const pendingHighlight =
+      this.pendingHighlightConfirmations.get(recordingId);
+    if (pendingHighlight) {
+      this.clearConfirmTimer(recordingId);
+      pendingHighlight.decision ??= { keep: true };
       return;
     }
     this.clearConfirmTimer(recordingId);

@@ -30,9 +30,7 @@ interface RecordingState {
   openDirectory: (id: string) => Promise<void>;
   renameRecording: (id: string, streamTitle: string) => Promise<void>;
   removeRecording: (id: string) => Promise<void>;
-  batchRemove: (
-    ids: string[],
-  ) => Promise<{
+  batchRemove: (ids: string[]) => Promise<{
     deleted: string[];
     failed: Array<{ id: string; reason: string }>;
   }>;
@@ -153,7 +151,12 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
           : s.completionNotice,
         pendingConfirm: justAwaiting
           ? normalizeRecording(rec)
-          : s.pendingConfirm,
+          : // 精彩时刻导出失败可能发生在确认框已提前打开之后；收到失败事件时
+            // 收起已无效的确认框，避免用户提交一个不存在的待确认记录。
+            s.pendingConfirm?.id === rec.id &&
+              rec.state !== "awaiting_confirmation"
+            ? null
+            : s.pendingConfirm,
       };
     });
   },
