@@ -12,6 +12,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popover,
   Popconfirm,
   Row,
   Select,
@@ -33,34 +34,31 @@ import {
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
+import { useRoomStore } from "../../stores/roomStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
 import { bridge } from "../../stores/bootStore";
 import { useAppTheme } from "../../theme";
 import type { ThemePreference } from "../../types/settings";
-import {
-  fetchBilibiliCookieStatus,
-  fetchDouyinCookieStatus,
-  validateDirectory,
-  type BilibiliCookieStatus,
-  type DouyinCookieStatus,
-} from "../../api/settings";
-import {
-  credentialStatus,
-  type CredentialStatus,
-} from "../../utils/credentialStatus";
+import { validateDirectory } from "../../api/settings";
 import {
   exportConfig,
   exportConfigToFile,
   importConfig,
 } from "../../api/config";
 import {
+  downloadDiagnostics,
+  exportDiagnosticsToFile,
+} from "../../api/diagnostics";
+import {
   fetchSelfCheck,
   type SelfCheckItem,
   type SelfCheckStatus,
 } from "../../api/service";
 import DirectoryPicker from "../../components/DirectoryPicker";
-import { PlatformIcon } from "../../components/PlatformLogo";
+import PlatformAuthorizationList, {
+  type PlatformAuthorizationConfig,
+} from "../../components/PlatformAuthorizationList";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import PipelineConfigCard from "../../components/PipelineConfigCard";
 import NamingRuleCard from "../../components/NamingRuleCard";
@@ -72,8 +70,8 @@ import { ApiError } from "../../types/error";
 import { formatBytes, formatTime } from "../../utils/format";
 import { ALERT_LEVEL_META, alertSourceText } from "../../utils/alertText";
 import type { SettingsInput } from "../../types/settings";
-import type { Platform } from "../../types/room";
 import type { NotificationEventPreference } from "../../types/notification";
+import { recentErrorDiagnostics } from "../../utils/errorDiagnostics";
 import saveCookieTutorial from "../../assets/img/save_cookie.png";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -117,157 +115,73 @@ function openExternalUrl(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-const CREDENTIAL_PLATFORM_LABEL: Record<Platform, string> = {
-  douyin: "抖音",
-  bilibili: "B站",
-};
-
-const CREDENTIAL_STATUS_TEXT: Record<CredentialStatus, string> = {
-  authorized: "已登录",
-  invalid: "登录已失效",
-  unauthorized: "未登录",
-};
-
-/**
- * 平台授权的一行：平台（含状态）、说明、动作三栏对齐，两个平台可直接横向对比。
- * 说明文字由状态驱动——已登录后不再重复「怎么登录」，只留不满足时的后果与补救。
- */
-function CredentialRow({
-  anchor,
-  platform,
-  status,
+function CredentialManual({
+  config,
   hasCookie,
-  authorizing,
-  unauthorizedHint,
-  cookieField,
-  manualHost,
-  manualPlaceholder,
-  tutorialImage,
-  onAuthorize,
-  onClear,
 }: {
-  anchor: string;
-  platform: Platform;
-  status: CredentialStatus;
+  config: PlatformAuthorizationConfig;
   hasCookie: boolean;
-  authorizing: boolean;
-  unauthorizedHint: string;
-  cookieField: "douyinCookie" | "bilibiliCookie";
-  manualHost: string;
-  manualPlaceholder: string;
-  /** 手动粘贴的操作示意图；平台各有一张，没有对应图的平台不显示入口。 */
-  tutorialImage?: string;
-  onAuthorize: () => void;
-  onClear: () => void;
 }) {
-  const authorized = status !== "unauthorized";
-  const label = CREDENTIAL_PLATFORM_LABEL[platform];
+  const tutorialImage =
+    config.platform === "douyin" ? saveCookieTutorial : undefined;
   return (
-    <div id={anchor} className="lr-credential-row">
-      <div className="lr-credential-row__main">
-        <div className="lr-credential-row__platform">
-          <span className="lr-credential-row__name">
-            <PlatformIcon platform={platform} size={18} />
-            <Typography.Text strong>{label}</Typography.Text>
-          </span>
-          <Tag
-            color={
-              status === "invalid"
-                ? "error"
-                : authorized
-                  ? "success"
-                  : "default"
-            }
-          >
-            {CREDENTIAL_STATUS_TEXT[status]}
-          </Tag>
-        </div>
-        <div className="lr-credential-row__state">
-          {status === "authorized" ? null : (
-            <Typography.Text
-              type={status === "invalid" ? "danger" : "secondary"}
-            >
-              {status === "invalid" ? "请重新登录" : unauthorizedHint}
-            </Typography.Text>
-          )}
-        </div>
-        <div className="lr-credential-row__actions">
-          {bridge.isDesktop ? (
-            <Button
-              type={authorized ? "default" : "primary"}
-              loading={authorizing}
-              onClick={onAuthorize}
-            >
-              {authorized ? "重新登录" : "登录并授权"}
-            </Button>
-          ) : (
-            <Typography.Text type="secondary">
-              请用桌面客户端登录
-            </Typography.Text>
-          )}
-          <Button type="text" danger disabled={!authorized} onClick={onClear}>
-            清除
-          </Button>
-        </div>
-      </div>
-      <Collapse
-        className="lr-credential-manual"
-        ghost
-        items={[
-          {
-            key: "manual-cookie",
-            label: "手动粘贴 Cookie（高级）",
-            children: (
-              <div className="lr-credential-manual__content">
-                <Typography.Paragraph type="secondary">
-                  进入网页版{label}并登录，打开任意直播间后按 F12 →
-                  网络（Network） → 刷新页面 → 点开任意{" "}
-                  <Typography.Text code>{manualHost}</Typography.Text> 请求 →
-                  在「请求标头」复制完整 Cookie 并粘贴。
-                  {tutorialImage ? (
-                    <span className="lr-network-help">
-                      <Tooltip
-                        styles={{
-                          root: {
-                            width: "min(600px, calc(100vw - 48px))",
-                            maxWidth: "none",
-                          },
-                        }}
-                        title={
-                          <img
-                            alt={`从网络面板保存${label} Cookie 的教程`}
-                            className="lr-cookie-tutorial-image"
-                            src={tutorialImage}
-                          />
-                        }
-                        placement="top"
-                      >
-                        <Button
-                          aria-label={`查看${label}网络面板 Cookie 教程`}
-                          className="lr-inline-icon-button"
-                          size="small"
-                          type="text"
-                          icon={<QuestionCircleOutlined />}
+    <Collapse
+      className="lr-credential-manual"
+      ghost
+      items={[
+        {
+          key: "manual-cookie",
+          label: "手动粘贴 Cookie（高级）",
+          children: (
+            <div className="lr-credential-manual__content">
+              <Typography.Paragraph type="secondary">
+                进入网页版{config.label}并登录，打开任意直播间后按 F12 →
+                网络（Network） → 刷新页面 → 点开任意{" "}
+                <Typography.Text code>{config.manualHost}</Typography.Text> 请求
+                → 在「请求标头」复制完整 Cookie 并粘贴。
+                {tutorialImage ? (
+                  <span className="lr-network-help">
+                    <Tooltip
+                      styles={{
+                        root: {
+                          width: "min(600px, calc(100vw - 48px))",
+                          maxWidth: "none",
+                        },
+                      }}
+                      title={
+                        <img
+                          alt={`从网络面板保存${config.label} Cookie 的教程`}
+                          className="lr-cookie-tutorial-image"
+                          src={tutorialImage}
                         />
-                      </Tooltip>
-                    </span>
-                  ) : null}
-                </Typography.Paragraph>
-                <Form.Item
-                  name={cookieField}
-                  extra={hasCookie ? "已保存；留空则不修改" : undefined}
-                >
-                  <Input.Password
-                    placeholder={hasCookie ? "••••••" : manualPlaceholder}
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-              </div>
-            ),
-          },
-        ]}
-      />
-    </div>
+                      }
+                      placement="top"
+                    >
+                      <Button
+                        aria-label={`查看${config.label}网络面板 Cookie 教程`}
+                        className="lr-inline-icon-button"
+                        size="small"
+                        type="text"
+                        icon={<QuestionCircleOutlined />}
+                      />
+                    </Tooltip>
+                  </span>
+                ) : null}
+              </Typography.Paragraph>
+              <Form.Item
+                name={config.cookieField}
+                extra={hasCookie ? "已保存；留空则不修改" : undefined}
+              >
+                <Input.Password
+                  placeholder={hasCookie ? "••••••" : config.manualPlaceholder}
+                  autoComplete="new-password"
+                />
+              </Form.Item>
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -275,6 +189,7 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
+  const rooms = useRoomStore((s) => s.rooms);
   const emailNotificationsEnabled = settings?.mail.enabled ?? false;
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
@@ -303,23 +218,10 @@ export default function SettingsPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
+  const [diagnosticsPopoverOpen, setDiagnosticsPopoverOpen] = useState(false);
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
-  const [douyinAuthorizing, setDouyinAuthorizing] = useState(false);
-  const [douyinCookieStatus, setDouyinCookieStatus] =
-    useState<DouyinCookieStatus | null>(null);
-  const [bilibiliAuthorizing, setBilibiliAuthorizing] = useState(false);
-  const [bilibiliCookieStatus, setBilibiliCookieStatus] =
-    useState<BilibiliCookieStatus | null>(null);
-  // 状态驱动渲染：探测结果优先于「本地是否存过」，失效的凭证不该显示成已登录。
-  const douyinCredentialStatus = credentialStatus(
-    douyinCookieStatus,
-    settings?.douyinCookie.hasCookie ?? false,
-  );
-  const bilibiliCredentialStatus = credentialStatus(
-    bilibiliCookieStatus,
-    settings?.bilibiliCookie.hasCookie ?? false,
-  );
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
@@ -341,56 +243,6 @@ export default function SettingsPage() {
     void fetchStatus();
     void loadNotifications().catch(() => undefined);
   }, [load, fetchAlerts, fetchStatus, loadNotifications]);
-
-  useEffect(() => {
-    let disposed = false;
-    void fetchDouyinCookieStatus()
-      .then((result) => {
-        if (!disposed) setDouyinCookieStatus(result);
-      })
-      // A network failure must not label a previously valid authorization as
-      // failed. The next settings visit will retry the verification.
-      .catch(() => {
-        if (!disposed) setDouyinCookieStatus("unknown");
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    void fetchBilibiliCookieStatus()
-      .then((result) => {
-        if (!disposed) setBilibiliCookieStatus(result);
-      })
-      .catch(() => {
-        if (!disposed) setBilibiliCookieStatus("unknown");
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    return bridge.onDouyinAuthorized(() => {
-      void load();
-      void fetchDouyinCookieStatus()
-        .then(setDouyinCookieStatus)
-        .catch(() => setDouyinCookieStatus("unknown"));
-      message.success("抖音授权已完成");
-    });
-  }, [load, message]);
-
-  useEffect(() => {
-    return bridge.onBilibiliAuthorized(() => {
-      void load();
-      void fetchBilibiliCookieStatus()
-        .then(setBilibiliCookieStatus)
-        .catch(() => setBilibiliCookieStatus("unknown"));
-      message.success("B站授权已完成");
-    });
-  }, [load, message]);
 
   useEffect(() => {
     if (settings && settings.theme) {
@@ -565,34 +417,6 @@ export default function SettingsPage() {
     }
   };
 
-  const startDouyinAuthorization = async () => {
-    setDouyinAuthorizing(true);
-    try {
-      await bridge.startDouyinAuthorization();
-      message.info("请在新窗口完成抖音登录，完成后回到此处确认。");
-    } catch (error) {
-      message.error(
-        error instanceof Error ? error.message : "无法打开抖音授权窗口",
-      );
-    } finally {
-      setDouyinAuthorizing(false);
-    }
-  };
-
-  const startBilibiliAuthorization = async () => {
-    setBilibiliAuthorizing(true);
-    try {
-      await bridge.startBilibiliAuthorization();
-      message.info("请在新窗口完成 B站 登录，完成后回到此处确认。");
-    } catch (error) {
-      message.error(
-        error instanceof Error ? error.message : "无法打开B站授权窗口",
-      );
-    } finally {
-      setBilibiliAuthorizing(false);
-    }
-  };
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onValuesChange = (_changed: unknown, all: SettingsInput) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -632,6 +456,32 @@ export default function SettingsPage() {
     }
   };
 
+  const onExportDiagnostics = async (includeRooms: boolean) => {
+    setDiagnosticsPopoverOpen(false);
+    setExportingDiagnostics(true);
+    try {
+      const frontendDiagnostics = recentErrorDiagnostics();
+      const result = await exportDiagnosticsToFile(
+        frontendDiagnostics,
+        includeRooms,
+      );
+      if (result.saved) {
+        message.success(`诊断日志已导出到 ${result.path}`);
+      } else if (result.reason === "no-dialog") {
+        await downloadDiagnostics(frontendDiagnostics, includeRooms);
+        message.success("诊断日志已下载");
+      }
+    } catch (e) {
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "诊断日志导出失败",
+      );
+    } finally {
+      setExportingDiagnostics(false);
+    }
+  };
+
   const onImportFile = async (file: File) => {
     setImporting(true);
     try {
@@ -645,10 +495,13 @@ export default function SettingsPage() {
         `告警 ${result.importedAlerts} 条`,
       ];
       if (result.prediction) {
-        const { matchedRooms, skippedRooms, events, forecasts } = result.prediction;
+        const { matchedRooms, skippedRooms, events, forecasts } =
+          result.prediction;
         parts.push(
           `开播预测：${matchedRooms} 个直播间、开播记录 ${events} 条、预测记录 ${forecasts} 条` +
-            (skippedRooms > 0 ? `（${skippedRooms} 个直播间未匹配已跳过）` : ""),
+            (skippedRooms > 0
+              ? `（${skippedRooms} 个直播间未匹配已跳过）`
+              : ""),
         );
       }
       message.success(`导入完成：${parts.join("，")}`);
@@ -703,7 +556,7 @@ export default function SettingsPage() {
           showIcon
           banner
           style={{ marginBottom: 16 }}
-          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），低于阈值可能拒绝新录制`}
+          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），可用空间过低将可能无法开启新的录制`}
         />
       ) : null}
       <Row className="lr-settings-grid" gutter={[16, 16]}>
@@ -921,7 +774,7 @@ export default function SettingsPage() {
                     className="lr-settings-section__hint"
                     type="secondary"
                   >
-                    录制当前时刻之前的片段。
+                    录制当前时刻之前的片段，最高支持 600 秒。
                   </Typography.Paragraph>
                   <Form.Item
                     label="开启精彩时刻"
@@ -946,53 +799,24 @@ export default function SettingsPage() {
                 >
                   平台授权
                 </Typography.Title>
-                <div className="lr-credential-list">
-                  <CredentialRow
-                    anchor="douyin-cookie"
-                    platform="douyin"
-                    status={douyinCredentialStatus}
-                    hasCookie={settings?.douyinCookie.hasCookie ?? false}
-                    authorizing={douyinAuthorizing}
-                    unauthorizedHint="未登录时无法检测和录制抖音直播间"
-                    cookieField="douyinCookie"
-                    manualHost="live.douyin.com"
-                    manualPlaceholder="粘贴完整抖音 Cookie"
-                    // 现有示意图是抖音网络面板的截图，B站 没有对应图，故只给抖音。
-                    tutorialImage={saveCookieTutorial}
-                    onAuthorize={() => void startDouyinAuthorization()}
-                    onClear={() => {
-                      form.setFieldValue("douyinCookie", "");
-                      void persist(form.getFieldsValue() as SettingsInput, {
-                        douyin: true,
-                      });
-                    }}
-                  />
-                  <CredentialRow
-                    anchor="bilibili-cookie"
-                    platform="bilibili"
-                    status={bilibiliCredentialStatus}
-                    hasCookie={settings?.bilibiliCookie.hasCookie ?? false}
-                    authorizing={bilibiliAuthorizing}
-                    unauthorizedHint="未登录时最高只能观看、录制 720p"
-                    cookieField="bilibiliCookie"
-                    manualHost="live.bilibili.com"
-                    manualPlaceholder="粘贴完整B站 Cookie"
-                    onAuthorize={() => void startBilibiliAuthorization()}
-                    onClear={() => {
-                      form.setFieldValue("bilibiliCookie", "");
-                      void persist(form.getFieldsValue() as SettingsInput, {
-                        bilibili: true,
-                      });
-                    }}
-                  />
-                </div>
-                <Typography.Text
-                  className="lr-credential-list__privacy"
-                  type="secondary"
-                >
-                  Cookie
-                  仅保存在本地，不会上传或提供给他人，可随时清除，请放心。
-                </Typography.Text>
+                <PlatformAuthorizationList
+                  settings={settings}
+                  onAuthorized={load}
+                  onClear={(platform) => {
+                    const cookieField =
+                      platform === "douyin" ? "douyinCookie" : "bilibiliCookie";
+                    form.setFieldValue(cookieField, "");
+                    void persist(
+                      form.getFieldsValue() as SettingsInput,
+                      platform === "douyin"
+                        ? { douyin: true }
+                        : { bilibili: true },
+                    );
+                  }}
+                  renderSupplement={(config, hasCookie) => (
+                    <CredentialManual config={config} hasCookie={hasCookie} />
+                  )}
+                />
               </div>
             </Form>
             <DirectoryPicker
@@ -1267,6 +1091,9 @@ export default function SettingsPage() {
                     }
                     description={
                       <Typography.Text type="secondary">
+                        {a.roomId
+                          ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · `
+                          : ""}
                         {alertSourceText(a.source)} · {formatTime(a.occurredAt)}
                       </Typography.Text>
                     }
@@ -1282,9 +1109,52 @@ export default function SettingsPage() {
           <Typography.Link onClick={() => openExternalUrl(OFFICIAL_SITE_URL)}>
             <GlobalOutlined /> 官网
           </Typography.Link>
-          <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
-            <BugOutlined /> 提交 Issue
-          </Typography.Link>
+          <Space className="lr-settings-support-links" size={4}>
+            <BugOutlined />
+            <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
+              提交 Issue
+            </Typography.Link>
+            <Typography.Text>|</Typography.Text>
+            <Popover
+              open={diagnosticsPopoverOpen}
+              onOpenChange={(open) => {
+                if (!exportingDiagnostics) setDiagnosticsPopoverOpen(open);
+              }}
+              title="是否导出包含直播间信息的日志？"
+              content={
+                <div style={{ width: 240 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: 8,
+                    }}
+                  >
+                    <Button
+                      block
+                      size="small"
+                      type="primary"
+                      onClick={() => void onExportDiagnostics(true)}
+                    >
+                      是
+                    </Button>
+                    <Button
+                      block
+                      size="small"
+                      onClick={() => void onExportDiagnostics(false)}
+                    >
+                      否
+                    </Button>
+                  </div>
+                </div>
+              }
+              trigger="click"
+            >
+              <Typography.Link disabled={exportingDiagnostics}>
+                {exportingDiagnostics ? "正在导出…" : "导出诊断日志"}
+              </Typography.Link>
+            </Popover>
+          </Space>
         </Space>
       </footer>
     </div>

@@ -11,7 +11,7 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   ROOM_LINK_DUPLICATE: "该直播间已存在",
   PLATFORM_ACCESS_RESTRICTED: "平台访问受限，请检查平台授权",
   DOUYIN_COOKIE_EXPIRED: "抖音授权已失效，请到设置页重新授权",
-  PLATFORM_CHANGED: "平台有变动，等待适配更新",
+  PLATFORM_CHANGED: "平台接口有变动，请稍后重试",
   DIRECTORY_NOT_WRITABLE: "目录不可写，请检查目录是否正确",
   RECORDING_DIRECTORY_INVALID: "保存目录无效，录制失败",
   DISK_SPACE_INSUFFICIENT: "磁盘空间不足，请及时清理",

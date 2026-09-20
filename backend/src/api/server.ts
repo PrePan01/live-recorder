@@ -11,6 +11,7 @@ import { registerTagRoutes } from './routes/tags.js';
 import { registerSearchRoutes } from './routes/search.js';
 import { registerStatsRoutes } from './routes/stats.js';
 import { registerDiagnosticRoutes } from './routes/diagnostics.js';
+import { registerDiagnosticExportRoutes } from './routes/diagnostic-export.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
 import { registerNamingRoutes } from './routes/naming.js';
@@ -146,6 +147,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerSearchRoutes(app, services);
   registerStatsRoutes(app, services);
   registerDiagnosticRoutes(app, services);
+  registerDiagnosticExportRoutes(app, services);
   registerNotificationRoutes(app, services);
   registerPipelineRoutes(app, services);
   registerNamingRoutes(app, services);

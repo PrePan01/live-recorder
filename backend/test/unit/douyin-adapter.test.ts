@@ -1,6 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DouyinAdapter } from '../../src/platform/douyin.js';
-import { AppError } from '../../src/types/error.js';
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
   return async (url) =>
@@ -61,24 +60,29 @@ describe('DouyinAdapter', () => {
     expect(result.availableQualities).toEqual(['original', '1080p', '720p', '360p']);
   });
 
-  it('falls back to title as displayName when nickname is missing (添加抖音房间显示名检测)', async () => {
-    // user 缺 nickname、仅有 title：displayName 应用标题兜底，避免添加房间显示名为空。
+  it('昵称解析不到时用房间号占位，绝不用直播间标题冒充主播昵称（添加房间显示名回归）', async () => {
+    // enter 缺 user.nickname 且页面解析不到昵称：以前 displayName 会用 title 兜底，
+    // 添加房间后「显示名」就变成了当场的直播标题。昵称只能来自昵称源，取不到就用占位。
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ user: {} })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
     expect(result.status).toBe('live');
-    expect(result.displayName).toBe('抖音直播间');
+    expect(result.displayName).toBe('douyin_123456');
+    expect(result.displayName).not.toBe('抖音直播间');
     expect(result.streamTitle).toBe('抖音直播间');
-    expect(result.titleSource).toBe('adapter');
-    expect(result.titleFallbackUsed).toBe(false);
+    expect(result.titleSource).toBe('placeholder');
+    expect(result.titleFallbackUsed).toBe(true);
   });
 
   it('resolves anchor nickname from the room page when enter API lacks user.nickname (验收 #2a)', async () => {
     // 抖音接口结构变更：enter 不再返回 user.nickname → 从直播间页面 data-anchor-info 解析主播昵称。
-    const fetcher = (async (url: unknown) => {
+    // 匿名请求直播间页面会被挡在“验证码中间页”（页面里没有 data-anchor-info），所以必须带上会话 Cookie。
+    let pageCookie: string | undefined;
+    const fetcher = (async (url: unknown, init?: RequestInit) => {
       const u = String(url);
       if (u.includes('/webcast/room/web/enter')) {
         return new Response(JSON.stringify(livePayload({ user: {} })), { status: 200 });
       }
+      pageCookie = (init?.headers as Record<string, string> | undefined)?.Cookie;
       return new Response(
         `<html><body><div data-anchor-info="{&quot;nickname&quot;:&quot;青泠&quot;,&quot;avatar&quot;:&quot;x&quot;}">x</div></body></html>`,
         { status: 200, headers: { 'content-type': 'text/html' } },
@@ -90,6 +94,7 @@ describe('DouyinAdapter', () => {
     expect(result.displayName).toBe('青泠');
     expect(result.streamTitle).toBe('抖音直播间');
     expect(result.titleSource).toBe('adapter');
+    expect(pageCookie).toBe('sessionid=x');
   });
 
   it('reports offline when status is not 2', async () => {
@@ -98,11 +103,25 @@ describe('DouyinAdapter', () => {
     expect(result.status).toBe('offline');
   });
 
-  it('reports restricted when live but no stream url (needs cookie)', async () => {
+  it('treats a newly-live room without a stream url as a retryable platform delay, not an authorization failure', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
-    expect(result.status).toBe('restricted');
-    expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
+    expect(result.error?.message).toContain('正在等待平台生成流地址');
+  });
+
+  it('rechecks once when a room transitions from offline to live before its stream url is ready', async () => {
+    let requests = 0;
+    const a = new DouyinAdapter(async () => {
+      requests += 1;
+      return new Response(JSON.stringify(requests === 1 ? livePayload({ stream_url: {} }) : livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+    expect(requests).toBe(2);
+    expect(result.status).toBe('live');
   });
 
   it('maps network failures to NETWORK_UNAVAILABLE', async () => {
@@ -161,10 +180,11 @@ describe('DouyinAdapter', () => {
     expect(sd2.url).toBe('https://pull.example.com/sd2.flv');
   });
 
-  it('getStreamUrl throws PLATFORM_ACCESS_RESTRICTED when no stream is available', async () => {
+  it('getStreamUrl reports a retryable platform delay when a newly-live room has no stream url', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
-    await a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x').catch((err) => {
-      expect((err as AppError).code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    await expect(a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x')).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+      retryable: true,
     });
   });
 
@@ -218,6 +238,26 @@ describe('DouyinAdapter', () => {
     await expect(stream.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x')).rejects.toMatchObject({
       code: 'RECORDING_NOT_AVAILABLE',
     });
+  });
+
+  it('把下播实测形状 status_code=30003/"room has finished" 判成未开播，而不是接口变动', async () => {
+    // 诊断包实测：房间下播后抖音返回 status_code=30003、无房间条目、提示 "room has finished"。
+    // 以前只认 status_code=0 的未开播形状，于是这一段时间里误报"平台接口有变动"。
+    const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 30003, data: { message: 'room has finished' } })));
+    const result = await a.checkLiveStatus('https://live.douyin.com/440323816405', 'sessionid=x');
+    expect(result.status).toBe('offline');
+    expect(result.error).toBeUndefined();
+    await expect(a.getStreamUrl('https://live.douyin.com/440323816405', 'original', 'sessionid=x')).rejects.toMatchObject({
+      code: 'RECORDING_NOT_AVAILABLE',
+    });
+
+    // 换了个状态码但仍是"直播已结束"文案时，也要按未开播处理。
+    const byText = new DouyinAdapter(mockFetcher(() => ({ status_code: 10000, data: { message: 'room has finished' } })));
+    expect((await byText.checkLiveStatus('https://live.douyin.com/1', 'sessionid=x')).status).toBe('offline');
+
+    // 凭证类响应（8=需登录）即使没有房间条目也不能被"未开播"判定吞掉。
+    const expired = new DouyinAdapter(mockFetcher(() => ({ status_code: 8, data: { message: '请先登录' } })));
+    expect((await expired.checkLiveStatus('https://live.douyin.com/1', 'sessionid=x')).error?.code).toBe('DOUYIN_COOKIE_EXPIRED');
   });
 
   it('maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure', async () => {
@@ -275,6 +315,49 @@ describe('DouyinAdapter', () => {
     expect(calls).toBe(2);
   });
 
+  it('serializes concurrent enter requests from polling and recording recovery', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const a = new DouyinAdapter(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const [first, second] = await Promise.all([
+      a.checkLiveStatus('https://live.douyin.com/111', 'sessionid=ok'),
+      a.checkLiveStatus('https://live.douyin.com/222', 'sessionid=ok'),
+    ]);
+    expect(first.status).toBe('live');
+    expect(second.status).toBe('live');
+    expect(peak).toBe(1);
+  });
+
+  it('用户取流插队到排队的后台检测之前（打开预览不被批量检测堵住）', async () => {
+    // 回归：刷新时的批量检测会把 enter 请求排满队列，打开新预览的取流请求排在最后，
+    // 前端就一直卡在“连接视频流”，直到整轮检测跑完。取流必须优先于排队中的检测。
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const a = new DouyinAdapter(async (url) => {
+      const rid = /web_rid=([^&]+)/.exec(String(url))?.[1] ?? '?';
+      order.push(rid);
+      // 第一个请求卡住，制造“正在执行 + 后面排队”的场景。
+      if (order.length === 1) await new Promise<void>((r) => (releaseFirst = r));
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const bg1 = a.checkLiveStatus('https://live.douyin.com/100', 'sessionid=ok');
+    const bg2 = a.checkLiveStatus('https://live.douyin.com/200', 'sessionid=ok');
+    const preview = a.getStreamUrl('https://live.douyin.com/999', 'original', 'sessionid=ok');
+
+    releaseFirst();
+    const [, , stream] = await Promise.all([bg1, bg2, preview]);
+    expect(stream.url).toBe('https://pull.example.com/full.flv');
+    expect(order).toEqual(['100', '999', '200']);
+  });
+
   it('never leaks other unexpected HTTP statuses into user-facing copy', async () => {
     const a = new DouyinAdapter(statusFetcher(451));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=ok');
@@ -299,5 +382,40 @@ describe('DouyinAdapter', () => {
     // P0：抖音接口须用 web_rid，room_id_str 会返回 status_code=10011。
     expect(sentUrl).toContain('web_rid=123456');
     expect(sentUrl).not.toContain('room_id_str');
+  });
+
+  it('把误判结构的 enter 响应摘要写进诊断日志，便于定位过渡期误报（不含响应体/地址）', async () => {
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => {
+      warns.push(String(line));
+    });
+    try {
+      // 开播/关播过渡期可能返回非 0 状态码却没有任何房间条目：当前会被判成 PLATFORM_CHANGED。
+      // 这条日志把真实 status_code/形状留进诊断包，用于确认到底是哪种响应。
+      const a = new DouyinAdapter(mockFetcher(() => ({ status_code: 10003, data: { data: [], message: 'Request params error' } })));
+      const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=secret-cookie');
+      expect(result.error?.code).toBe('PLATFORM_CHANGED');
+    } finally {
+      spy.mockRestore();
+    }
+    const line = warns.find((w) => w.includes('[douyin-enter]'));
+    expect(line).toBeDefined();
+    expect(line).toContain('status_code=10003');
+    expect(line).toContain('entries=0');
+    expect(line).not.toContain('secret-cookie');
+    expect(line).not.toContain('https://');
+  });
+
+  it('正常的在播/未开播检测不写诊断日志，避免污染 backend.log', async () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const live = new DouyinAdapter(mockFetcher(() => livePayload()));
+      await live.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+      const offline = new DouyinAdapter(mockFetcher(() => ({ status_code: 0, data: { data: [] } })));
+      await offline.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

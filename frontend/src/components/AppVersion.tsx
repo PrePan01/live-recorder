@@ -37,7 +37,6 @@ export default function AppVersion() {
         title: `更新 ${snapshot.update.version} 已下载完成`,
         content: (
           <div>
-            <p>安装时会显示安装进度，完成后应用会自动重启。</p>
             {snapshot.update.notes.length > 0 && (
               <div>
                 <strong>本次更新</strong>

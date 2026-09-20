@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { mp4PathFor, remuxFlvToMp4 } from '../../src/recorder/remux.js';
+import { mp4PathFor, remuxFlvToMp4, remuxStallMsForSize } from '../../src/recorder/remux.js';
 
 const HAS_FFMPEG = spawnSync('ffmpeg', ['-version'], { timeout: 20_000 }).status === 0;
 
@@ -23,6 +23,13 @@ async function exists(file: string): Promise<boolean> {
 }
 
 describe.skipIf(!HAS_FFMPEG)('remuxFlvToMp4 (#165 mp4_after 假 MP4 / 大文件半成品)', () => {
+  it('按源文件大小动态放宽无进度阈值，并限制最大等待时间', () => {
+    expect(remuxStallMsForSize(0)).toBe(2 * 60_000);
+    expect(remuxStallMsForSize(1)).toBe(3 * 60_000);
+    expect(remuxStallMsForSize(5.3 * 1024 ** 3)).toBe(8 * 60_000);
+    expect(remuxStallMsForSize(100 * 1024 ** 3)).toBe(10 * 60_000);
+  });
+
   it('成功：产物是真 MP4、源 FLV 删除、不留临时文件', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-remux-'));
     const flvPath = path.join(dir, 'rec.flv');

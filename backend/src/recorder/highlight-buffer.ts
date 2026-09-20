@@ -114,7 +114,12 @@ export class HighlightBuffer {
     return first && last ? Math.max(0, Math.floor((last.at - first.at) / 1000)) : 0;
   }
 
-  async exportTo(output: string, seconds: number): Promise<{ bytes: number; actualSeconds: number }> {
+  async exportTo(
+    output: string,
+    seconds: number,
+    signal?: AbortSignal,
+    onProgress?: (bytes: number) => void,
+  ): Promise<{ bytes: number; actualSeconds: number }> {
     if (this.cleared) throw new Error('缓存已清空，无法导出');
     // Rotate synchronously before awaiting I/O. New live frames then flow into
     // a new segment, while this export reads an immutable, pinned snapshot.
@@ -123,7 +128,7 @@ export class HighlightBuffer {
     for (const segment of pinned) this.pinned.add(segment);
     this.beginExport();
     try {
-      await snapshot.done;
+      await abortable(snapshot.done, signal);
       const all = snapshot.segments.flatMap((segment) => segment.entries.filter((entry) => entry.written).map((entry) => ({ segment, entry })));
       const last = all.at(-1);
       if (!last || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
@@ -137,8 +142,13 @@ export class HighlightBuffer {
       const selected = all.slice(start);
       let bytes = this.init.reduce((sum, part) => sum + part.length, 0);
       const stream = createWriteStream(output);
+      const abortOutput = () => stream.destroy();
+      signal?.addEventListener('abort', abortOutput, { once: true });
       try {
-        for (const part of this.init) await writeChunk(stream, part);
+        for (const part of this.init) {
+          await writeChunk(stream, part, signal);
+          onProgress?.(part.length);
+        }
         // Entries in one segment are appended sequentially. Coalesce contiguous
         // tag offsets so a large export issues range reads, not one read per tag.
         for (const [segment, entries] of groupEntries(selected)) {
@@ -149,19 +159,22 @@ export class HighlightBuffer {
               rangeEnd += entry.length;
               continue;
             }
-            await copyRange(segment.path, rangeStart, rangeEnd, stream);
+            await copyRange(segment.path, rangeStart, rangeEnd, stream, signal, onProgress);
             bytes += rangeEnd - rangeStart + 1;
             rangeStart = entry.offset;
             rangeEnd = rangeStart + entry.length - 1;
           }
-          await copyRange(segment.path, rangeStart, rangeEnd, stream);
+          await copyRange(segment.path, rangeStart, rangeEnd, stream, signal, onProgress);
           bytes += rangeEnd - rangeStart + 1;
         }
         stream.end();
-        await once(stream, 'finish');
+        await abortable(once(stream, 'finish'), signal);
       } catch (error) {
         stream.destroy();
+        if (!stream.closed) await once(stream, 'close').catch(() => undefined);
         throw error;
+      } finally {
+        signal?.removeEventListener('abort', abortOutput);
       }
       return { bytes, actualSeconds: Math.max(0, Math.round((last.entry.at - all[start]!.entry.at) / 1000)) };
     } finally {
@@ -303,11 +316,45 @@ function groupEntries(items: Array<{ segment: Segment; entry: Entry }>): Map<Seg
   return grouped;
 }
 
-async function writeChunk(stream: ReturnType<typeof createWriteStream>, chunk: Buffer): Promise<void> {
-  if (!stream.write(chunk)) await once(stream, 'drain');
+function abortError(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error ? signal.reason : new Error('操作已取消');
 }
 
-async function copyRange(file: string, start: number, end: number, output: ReturnType<typeof createWriteStream>): Promise<void> {
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw abortError(signal);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(abortError(signal));
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(
+      (value) => { signal.removeEventListener('abort', abort); resolve(value); },
+      (error) => { signal.removeEventListener('abort', abort); reject(error); },
+    );
+  });
+}
+
+async function writeChunk(stream: ReturnType<typeof createWriteStream>, chunk: Buffer, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortError(signal);
+  if (!stream.write(chunk)) await abortable(once(stream, 'drain'), signal);
+}
+
+async function copyRange(
+  file: string,
+  start: number,
+  end: number,
+  output: ReturnType<typeof createWriteStream>,
+  signal?: AbortSignal,
+  onProgress?: (bytes: number) => void,
+): Promise<void> {
   const input = createReadStream(file, { start, end });
-  for await (const chunk of input) await writeChunk(output, chunk as Buffer);
+  const abortInput = () => input.destroy();
+  signal?.addEventListener('abort', abortInput, { once: true });
+  try {
+    for await (const chunk of input) {
+      await writeChunk(output, chunk as Buffer, signal);
+      onProgress?.((chunk as Buffer).length);
+    }
+  } finally {
+    signal?.removeEventListener('abort', abortInput);
+  }
 }

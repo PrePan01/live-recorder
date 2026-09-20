@@ -37,6 +37,22 @@ export class AlertRepository {
     return this.get(id)!;
   }
 
+  /**
+   * 同一未读故障持续存在时只保留一条告警，并刷新发生时间。轮询失败不应
+   * 以房间数 × 检测轮次无限堆叠；一旦标记已读，后续再次失败会新建告警。
+   */
+  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
+    const existing = this.db
+      .prepare(`SELECT * FROM alerts
+        WHERE resolved = 0 AND source = ? AND message = ?
+          AND room_id IS ? AND error_code IS ?
+        ORDER BY occurred_at DESC LIMIT 1`)
+      .get(input.source, input.message, input.roomId ?? null, input.errorCode ?? null) as AlertRow | undefined;
+    if (!existing) return this.create(input);
+    this.db.prepare('UPDATE alerts SET occurred_at = ? WHERE id = ?').run(input.occurredAt, existing.id);
+    return this.get(existing.id)!;
+  }
+
   get(id: string): Alert | null {
     const row = this.db.prepare('SELECT * FROM alerts WHERE id = ?').get(id) as AlertRow | undefined;
     return row ? rowToAlert(row) : null;
@@ -52,6 +68,24 @@ export class AlertRepository {
   markResolved(id: string): Alert | null {
     this.db.prepare('UPDATE alerts SET resolved = 1 WHERE id = ?').run(id);
     return this.get(id);
+  }
+
+  /**
+   * 房间级告警的自动收敛：一次瞬时误判（如开播/关播窗口的平台接口误报）不该长期挂在
+   * 告警列表里，检测确认恢复后应随之消解。仅作用于指定房间，平台级告警
+   * （room_id 为空，如授权失效）不受影响。返回本条被消解的告警，供调用方推送更新。
+   */
+  resolveForRoom(roomId: string, source?: string): Alert[] {
+    const where = source
+      ? 'resolved = 0 AND room_id = ? AND source = ?'
+      : 'resolved = 0 AND room_id = ?';
+    const params = source ? [roomId, source] : [roomId];
+    const rows = this.db
+      .prepare(`SELECT * FROM alerts WHERE ${where}`)
+      .all(...params) as AlertRow[];
+    if (rows.length === 0) return [];
+    this.db.prepare(`UPDATE alerts SET resolved = 1 WHERE ${where}`).run(...params);
+    return rows.map((row) => rowToAlert({ ...row, resolved: 1 }));
   }
 
   markAllResolved(): number {

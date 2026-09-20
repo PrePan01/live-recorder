@@ -30,9 +30,7 @@ interface RecordingState {
   openDirectory: (id: string) => Promise<void>;
   renameRecording: (id: string, streamTitle: string) => Promise<void>;
   removeRecording: (id: string) => Promise<void>;
-  batchRemove: (
-    ids: string[],
-  ) => Promise<{
+  batchRemove: (ids: string[]) => Promise<{
     deleted: string[];
     failed: Array<{ id: string; reason: string }>;
   }>;
@@ -40,6 +38,7 @@ interface RecordingState {
   upsertRecording: (rec: Recording) => void;
   /** 仅由 SSE 写入，用于避免打开历史页时把旧记录误报成刚完成。 */
   upsertRecordingFromEvent: (rec: Recording) => void;
+  removeRecordingFromEvent: (recordingId: string) => void;
   /** SSE upload:updated 按 recordingId 更新对应录制的上传快照（#191）。 */
   patchRecordingUpload: (
     recordingId: string,
@@ -153,9 +152,22 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
           : s.completionNotice,
         pendingConfirm: justAwaiting
           ? normalizeRecording(rec)
-          : s.pendingConfirm,
+          : // 精彩时刻导出失败可能发生在确认框已提前打开之后；收到失败事件时
+            // 收起已无效的确认框，避免用户提交一个不存在的待确认记录。
+            s.pendingConfirm?.id === rec.id &&
+              rec.state !== "awaiting_confirmation"
+            ? null
+            : s.pendingConfirm,
       };
     });
+  },
+  removeRecordingFromEvent(recordingId) {
+    set((s) => ({
+      items: s.items.filter((item) => item.id !== recordingId),
+      total: Math.max(0, s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0)),
+      pendingConfirm:
+        s.pendingConfirm?.id === recordingId ? null : s.pendingConfirm,
+    }));
   },
   clearPendingConfirm() {
     set({ pendingConfirm: null });

@@ -66,4 +66,9 @@ export interface Recording {
   endReason?: RecordingEndReason;
   /** 录制中途累计缺失时长（毫秒）：中断恢复后未录到的时间总和，历史页标注"中途缺失 N 秒"。 */
   missingMs?: number;
+  /** 精彩时刻缓存正在导出。仅用于让确认弹窗可提前出现时安全恢复状态。 */
+  highlightExportPending?: boolean;
+  /** 导出尚未结束时用户已提交的保留决定；null 代表尚未决定。 */
+  highlightConfirmationDecision?: boolean | null;
+  highlightConfirmationFileName?: string | null;
 }

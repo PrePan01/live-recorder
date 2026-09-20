@@ -33,13 +33,18 @@ describe('Notifier', () => {
     expect(mailer.sent).toHaveLength(3);
     expect(mailer.sent[2]!.subject).toContain('录制失败');
 
-    await notifier.notify('disk_space_low', 'room1');
+    // 转封装失败复用“录制失败”通知开关，不能只留在应用内告警中心。
+    await notifier.notify('recording_remux_failed', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(4);
-    expect(mailer.sent[3]!.subject).toContain('磁盘空间不足');
+    expect(mailer.sent[3]!.subject).toContain('转 MP4 失败');
+
+    await notifier.notify('disk_space_low', 'room1');
+    expect(mailer.sent).toHaveLength(5);
+    expect(mailer.sent[4]!.subject).toContain('磁盘空间不足');
 
     clock.advance(31 * 60 * 1000);
     await notifier.notify('live_started', 'room1', { title: '主播A' });
-    expect(mailer.sent).toHaveLength(5);
+    expect(mailer.sent).toHaveLength(6);
   });
 
   it('skips when mail is disabled and only alerts on SMTP failure', async () => {

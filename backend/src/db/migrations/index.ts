@@ -626,6 +626,18 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_room_started_at ON recordings(room_id, started_at);`);
     },
   },
+  {
+    // 精彩时刻允许在文件复制完成前确认保留。把导出和决定持久化，避免崩溃恢复时把半成品当作普通待确认录像。
+    version: 36,
+    up: (db) => {
+      const names = new Set(
+        (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as Array<{ name: string }>).map((r) => r.name),
+      );
+      if (!names.has('highlight_export_pending')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_export_pending INTEGER NOT NULL DEFAULT 0;`);
+      if (!names.has('highlight_confirmation_decision')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_confirmation_decision INTEGER;`);
+      if (!names.has('highlight_confirmation_file_name')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_confirmation_file_name TEXT;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
