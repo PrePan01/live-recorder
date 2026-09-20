@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { DouyinAdapter } from '../../src/platform/douyin.js';
-import { AppError } from '../../src/types/error.js';
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
   return async (url) =>
@@ -98,11 +97,25 @@ describe('DouyinAdapter', () => {
     expect(result.status).toBe('offline');
   });
 
-  it('reports restricted when live but no stream url (needs cookie)', async () => {
+  it('treats a newly-live room without a stream url as a retryable platform delay, not an authorization failure', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
-    expect(result.status).toBe('restricted');
-    expect(result.error?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(result.status).toBe('error');
+    expect(result.error?.code).toBe('NETWORK_UNAVAILABLE');
+    expect(result.error?.retryable).toBe(true);
+    expect(result.error?.message).toContain('正在等待平台生成流地址');
+  });
+
+  it('rechecks once when a room transitions from offline to live before its stream url is ready', async () => {
+    let requests = 0;
+    const a = new DouyinAdapter(async () => {
+      requests += 1;
+      return new Response(JSON.stringify(requests === 1 ? livePayload({ stream_url: {} }) : livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=x');
+    expect(requests).toBe(2);
+    expect(result.status).toBe('live');
   });
 
   it('maps network failures to NETWORK_UNAVAILABLE', async () => {
@@ -161,10 +174,11 @@ describe('DouyinAdapter', () => {
     expect(sd2.url).toBe('https://pull.example.com/sd2.flv');
   });
 
-  it('getStreamUrl throws PLATFORM_ACCESS_RESTRICTED when no stream is available', async () => {
+  it('getStreamUrl reports a retryable platform delay when a newly-live room has no stream url', async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: {} })));
-    await a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x').catch((err) => {
-      expect((err as AppError).code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    await expect(a.getStreamUrl('https://live.douyin.com/123456', 'original', 'sessionid=x')).rejects.toMatchObject({
+      code: 'NETWORK_UNAVAILABLE',
+      retryable: true,
     });
   });
 
@@ -273,6 +287,26 @@ describe('DouyinAdapter', () => {
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=ok');
     expect(result.status).toBe('live');
     expect(calls).toBe(2);
+  });
+
+  it('serializes concurrent enter requests from polling and recording recovery', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const a = new DouyinAdapter(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const [first, second] = await Promise.all([
+      a.checkLiveStatus('https://live.douyin.com/111', 'sessionid=ok'),
+      a.checkLiveStatus('https://live.douyin.com/222', 'sessionid=ok'),
+    ]);
+    expect(first.status).toBe('live');
+    expect(second.status).toBe('live');
+    expect(peak).toBe(1);
   });
 
   it('never leaks other unexpected HTTP statuses into user-facing copy', async () => {

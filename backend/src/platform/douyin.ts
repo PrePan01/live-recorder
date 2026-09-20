@@ -98,6 +98,17 @@ function hasNoRoomEntry(json: DouyinEnterResponse): boolean {
   return json.status_code === 0 && (json.data?.data?.length ?? 0) === 0;
 }
 
+/**
+ * 抖音刚切换到开播时，enter 接口会先给出 status=2，随后才异步填充
+ * flv_pull_url。它不是 Cookie/风控信号；将其视为受限会造成一次误告警，
+ * 而手动检测恰好在地址生成后又会“恢复”。
+ */
+function hasLiveEntryWithoutStreamUrl(json: DouyinEnterResponse): boolean {
+  const entry = json.data?.data?.[0];
+  const flv = entry?.stream_url?.flv_pull_url;
+  return json.status_code === 0 && entry?.status === 2 && (!flv || Object.keys(flv).length === 0);
+}
+
 function isNetworkError(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || 'cause' in err));
 }
@@ -106,6 +117,12 @@ export class DouyinAdapter implements PlatformAdapter {
   readonly platform = 'douyin' as const;
 
   private nickCache = new Map<string, { name: string; at: number }>();
+  /**
+   * 所有 enter 请求（轮询、手动检测、录制断流后的确认/续录）共享同一条队列。
+   * 这些路径使用同一 Cookie；若并发撞到抖音边缘节点，会集中得到 444，再被
+   * 立即重试放大成所有房间同时报“接口暂时不可用”。
+   */
+  private enterRequestTail: Promise<void> = Promise.resolve();
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -165,6 +182,18 @@ export class DouyinAdapter implements PlatformAdapter {
     return m?.[1] ?? null;
   }
 
+  private async queueEnterRequest<T>(request: () => Promise<T>): Promise<T> {
+    const previous = this.enterRequestTail;
+    let release!: () => void;
+    this.enterRequestTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await request();
+    } finally {
+      release();
+    }
+  }
+
   private async fetchRoomInfo(roomId: string, cookie?: string): Promise<DouyinEnterResponse> {
     const params = new URLSearchParams({
       aid: '6383',
@@ -177,14 +206,14 @@ export class DouyinAdapter implements PlatformAdapter {
       enter_from_merge: 'web_live',
       is_need_double_stream: 'false',
     });
-    const res = await this.fetcher(`${this.apiBase}/?${params}`, {
+    const res = await this.queueEnterRequest(() => this.fetcher(`${this.apiBase}/?${params}`, {
       signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
         Referer: `https://live.douyin.com/${roomId}`,
         ...(cookie ? { Cookie: cookie } : {}),
       },
-    });
+    }));
     if (!res.ok) {
       // 429/5xx 是抖音侧的暂时限流/抖动，并不表示 enter 响应结构已变。
       // 过去这里抛普通 Error，调用方会误报“平台接口有变动”；用户稍后手动
@@ -236,7 +265,12 @@ export class DouyinAdapter implements PlatformAdapter {
     let lastError: unknown;
     for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
       try {
-        return await this.fetchRoomInfo(roomId, cookie);
+        const data = await this.fetchRoomInfo(roomId, cookie);
+        // 开播状态先于 CDN 拉流地址发布是正常的短暂中间态。立即复查一次，
+        // 避免把它误判为授权失效；若仍未就绪，交给下一轮常规检测继续重试。
+        if (!hasLiveEntryWithoutStreamUrl(data)) return data;
+        lastError = new AppError('NETWORK_UNAVAILABLE', '直播刚开播，正在等待平台生成流地址，请稍后重试', { retryable: true });
+        if (attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw lastError;
       } catch (err) {
         lastError = err;
         const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
