@@ -1,12 +1,23 @@
-import { DEFAULT_NOTIFICATION_PREFERENCE, type ErrorObject, type Platform, type Room } from '../types/index.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
-import { AppError } from '../types/error.js';
-import type { RecorderManager } from './recorder-manager.js';
-import type { Services } from './services.js';
-import { dueSchedules } from '../api/routes/schedules.js';
-import { calculateLivePrediction, coversPredictionWindow, openingEvidenceInWindow, recordingCoverageIntervals, type PredictionCoverageInterval } from './live-prediction.js';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCE,
+  type ErrorObject,
+  type Platform,
+  type Room,
+} from "../types/index.js";
+import type { PlatformAdapter } from "../platform/adapter.js";
+import { AppError } from "../types/error.js";
+import type { RecorderManager } from "./recorder-manager.js";
+import type { Services } from "./services.js";
+import { dueSchedules } from "../api/routes/schedules.js";
+import {
+  calculateLivePrediction,
+  coversPredictionWindow,
+  openingEvidenceInWindow,
+  recordingCoverageIntervals,
+  type PredictionCoverageInterval,
+} from "./live-prediction.js";
 
-const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
+const PLATFORMS: Platform[] = ["bilibili", "douyin"];
 const PLATFORM_CHECK_CONCURRENCY = 2;
 
 export class Scheduler {
@@ -20,9 +31,15 @@ export class Scheduler {
   private predictionsFinalizedAt = 0;
   private forecastDate: string | null = null;
   private forecastRecordedFor = new Set<string>();
-  private forecastRetry = new Map<string, { at: number; latestEventId: string | null }>();
+  private forecastRetry = new Map<
+    string,
+    { at: number; latestEventId: string | null }
+  >();
 
-  constructor(private services: Services, private manager: RecorderManager) {}
+  constructor(
+    private services: Services,
+    private manager: RecorderManager,
+  ) {}
 
   start(): void {
     if (this.running) return;
@@ -30,13 +47,19 @@ export class Scheduler {
     // 启动后先完成一轮检测，再开始按平台间隔轮询；恢复服务无需额外等待一个周期。
     for (const platform of PLATFORMS) {
       void this.runPlatform(platform)
-        .catch((error: unknown) => { console.error(`scheduler ${platform} check failed`, error); })
+        .catch((error: unknown) => {
+          console.error(`scheduler ${platform} check failed`, error);
+        })
         .finally(() => this.scheduleNext(platform));
     }
   }
 
-  get isRunning(): boolean { return this.running; }
-  get isChecking(): boolean { return this.checking.size > 0; }
+  get isRunning(): boolean {
+    return this.running;
+  }
+  get isChecking(): boolean {
+    return this.checking.size > 0;
+  }
 
   stop(): void {
     this.running = false;
@@ -47,7 +70,11 @@ export class Scheduler {
   }
 
   intervalFor(platform: Platform): number {
-    const ci = this.services.settings.load()?.checkIntervalSec ?? { default: 60, bilibili: 60, douyin: 120 };
+    const ci = this.services.settings.load()?.checkIntervalSec ?? {
+      default: 60,
+      bilibili: 60,
+      douyin: 120,
+    };
     return ci[platform] ?? ci.default;
   }
 
@@ -56,30 +83,42 @@ export class Scheduler {
     const ms = this.intervalFor(platform) * 1000;
     const handle = this.services.clock.setTimeout(() => {
       void this.runPlatform(platform)
-        .catch((error: unknown) => { console.error(`scheduler ${platform} check failed`, error); })
+        .catch((error: unknown) => {
+          console.error(`scheduler ${platform} check failed`, error);
+        })
         .finally(() => this.scheduleNext(platform));
     }, ms);
     this.handles.set(platform, handle);
   }
 
   private async runPlatform(platform: Platform): Promise<void> {
-    if (platform === 'douyin' && this.douyinCookieExpired) return;
+    if (platform === "douyin" && this.douyinCookieExpired) return;
     await this.finalizePastPredictions();
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
     const scheduledRooms = this.dueScheduleChecks(now, platform)
       .map((roomId) => this.services.rooms.get(roomId))
-      .filter((room): room is Room => room !== null && !this.manager.isRoomActive(room.id));
+      .filter(
+        (room): room is Room =>
+          room !== null && !this.manager.isRoomActive(room.id),
+      );
     // Due schedules run before ordinary polling, but both retain per-room
     // de-duplication in checkRoom and a bounded per-platform concurrency.
     await this.runChecks(scheduledRooms, { scheduled: true });
-    const rooms = this.services.rooms.listEnabled().filter((r) => r.platform === platform);
-    await this.runChecks(rooms.filter((room) => !this.manager.isRoomActive(room.id)));
+    const rooms = this.services.rooms
+      .listEnabled()
+      .filter((r) => r.platform === platform);
+    await this.runChecks(
+      rooms.filter((room) => !this.manager.isRoomActive(room.id)),
+    );
   }
 
-  private async runChecks(rooms: Room[], opts: { scheduled?: boolean } = {}): Promise<void> {
+  private async runChecks(
+    rooms: Room[],
+    opts: { scheduled?: boolean } = {},
+  ): Promise<void> {
     let cursor = 0;
-    const isDouyinQueue = rooms[0]?.platform === 'douyin';
+    const isDouyinQueue = rooms[0]?.platform === "douyin";
     const worker = async () => {
       while (this.running && (!isDouyinQueue || !this.douyinCookieExpired)) {
         const room = rooms[cursor++];
@@ -87,7 +126,12 @@ export class Scheduler {
         await this.checkRoom(room, opts).catch(() => undefined);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) }, worker));
+    await Promise.all(
+      Array.from(
+        { length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) },
+        worker,
+      ),
+    );
   }
 
   /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */
@@ -105,7 +149,9 @@ export class Scheduler {
    * 同时会等待携带旧 Cookie 的在途检测收口后再发起新请求。
    */
   async recheckDouyinRoomsAfterCookieUpdate(): Promise<void> {
-    const rooms = this.services.rooms.list().filter((room) => room.platform === 'douyin');
+    const rooms = this.services.rooms
+      .list()
+      .filter((room) => room.platform === "douyin");
     await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
     this.resetDouyinCookieFailure();
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
@@ -116,7 +162,9 @@ export class Scheduler {
    * 因此无需抖音那样的熔断复位，仅等待旧 Cookie 的在途请求收口后重新发起检测。
    */
   async recheckBilibiliRoomsAfterCookieUpdate(): Promise<void> {
-    const rooms = this.services.rooms.list().filter((room) => room.platform === 'bilibili');
+    const rooms = this.services.rooms
+      .list()
+      .filter((room) => room.platform === "bilibili");
     await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
   }
@@ -125,35 +173,39 @@ export class Scheduler {
     if (this.douyinCookieExpired) return;
     this.douyinCookieExpired = true;
     const now = this.services.clock.iso();
-    for (const room of this.services.rooms.list().filter((item) => item.platform === 'douyin')) {
-      const error = new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', {
-        roomId: room.id,
-        retryable: false,
-      }).toObject();
+    for (const room of this.services.rooms
+      .list()
+      .filter((item) => item.platform === "douyin")) {
+      const error = new AppError(
+        "DOUYIN_COOKIE_EXPIRED",
+        "抖音授权已失效，请到设置页重新授权",
+        {
+          roomId: room.id,
+          retryable: false,
+        },
+      ).toObject();
       // 正在录制的房间保留录制状态；lastError 足以让卡片显示 Cookie 已失效。
-      if (this.manager.isRoomActive(room.id)) this.services.rooms.setLastError(room.id, error);
-      else this.services.rooms.setState(room.id, 'failed', { lastCheckedAt: now, lastError: error });
+      if (this.manager.isRoomActive(room.id))
+        this.services.rooms.setLastError(room.id, error);
+      else
+        this.services.rooms.setState(room.id, "failed", {
+          lastCheckedAt: now,
+          lastError: error,
+        });
       this.emitRoom(room.id);
     }
     const alert = this.services.alerts.create({
-      level: 'warning',
-      source: 'platform',
-      message: '抖音授权已失效，请到设置页重新授权',
+      level: "warning",
+      source: "platform",
+      message: "抖音授权已失效，请到设置页重新授权",
       occurredAt: now,
-      errorCode: 'DOUYIN_COOKIE_EXPIRED',
+      errorCode: "DOUYIN_COOKIE_EXPIRED",
     });
-    this.services.events.emit({ type: 'alert:created', data: alert });
+    this.services.events.emit({ type: "alert:created", data: alert });
   }
 
   /** 到期计划清单 + 推进 nextRunAt（幂等：重复调用同 now 不会重复触发）。 */
   private dueScheduleChecks(nowMs: number, platform: Platform): string[] {
-    // Every platform timer may enter this method at a slightly different
-    // millisecond.  Do not key a shared claim to that timestamp: doing so can
-    // replace the other platform's already-claimed queue before it consumes
-    // it.  Claim all due schedules atomically through dueSchedules, append
-    // them to their platform queues, then consume only this platform's queue.
-    // dueSchedules advances nextRunAt, so a later scan cannot duplicate a
-    // successfully claimed item.
     for (const { roomId } of dueSchedules(this.services, nowMs)) {
       const room = this.services.rooms.get(roomId);
       if (!room) continue;
@@ -166,13 +218,18 @@ export class Scheduler {
     return result;
   }
 
-  async checkRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
+  async checkRoom(
+    room: Room,
+    opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
+  ): Promise<void> {
     if (this.services.resetting) return;
-    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
+    if (room.platform === "douyin" && this.douyinCookieExpired) return;
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
-    const task = this.runCheckRoom(room, opts).finally(() => this.checking.delete(room.id));
+    const task = this.runCheckRoom(room, opts).finally(() =>
+      this.checking.delete(room.id),
+    );
     this.checking.set(room.id, task);
     return task;
   }
@@ -180,21 +237,29 @@ export class Scheduler {
   private emitRoom(roomId: string): void {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
-    this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
+    this.services.events.emit({
+      type: "room:updated",
+      data: this.manager.enrichRoom(room),
+    });
   }
 
   /** 平台整体暂不可用时收敛为一个平台级事件，避免一个轮询批次按房间数刷屏。 */
-  private createCheckAlert(room: Room, error: ErrorObject, level: 'warning' | 'error'): void {
-    const platformWide = room.platform === 'douyin' && error.code === 'NETWORK_UNAVAILABLE';
+  private createCheckAlert(
+    room: Room,
+    error: ErrorObject,
+    level: "warning" | "error",
+  ): void {
+    const platformWide =
+      room.platform === "douyin" && error.code === "NETWORK_UNAVAILABLE";
     const alert = this.services.alerts.createOrRefresh({
       level,
-      source: 'platform',
+      source: "platform",
       message: platformWide ? `抖音：${error.message}` : error.message,
       occurredAt: this.services.clock.iso(),
       ...(platformWide ? {} : { roomId: room.id }),
       errorCode: error.code,
     });
-    this.services.events.emit({ type: 'alert:created', data: alert });
+    this.services.events.emit({ type: "alert:created", data: alert });
   }
 
   /** 检测失败不能掩盖仍由 RecorderManager 持有的活动录制会话。 */
@@ -202,98 +267,142 @@ export class Scheduler {
     if (this.manager.isRoomActive(roomId)) {
       this.services.rooms.setLastError(roomId, error);
     } else {
-      this.services.rooms.setState(roomId, 'failed', { lastCheckedAt: this.services.clock.iso(), lastError: error });
+      this.services.rooms.setState(roomId, "failed", {
+        lastCheckedAt: this.services.clock.iso(),
+        lastError: error,
+      });
     }
     this.emitRoom(roomId);
   }
 
-  private async runCheckRoom(room: Room, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
+  private async runCheckRoom(
+    room: Room,
+    opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
+  ): Promise<void> {
     const adapter = this.services.adapterFor(room.platform);
     // 手动/全量复检也可能命中正在录制的房间。录制会话仍由 manager 持有，
     // 不能仅为检测而把对外状态降为 checking，否则前端会丢失「停止」入口。
-    this.services.rooms.setState(room.id, this.manager.isRoomActive(room.id) ? 'recording' : 'checking', { lastCheckedAt: this.services.clock.iso() });
+    this.services.rooms.setState(
+      room.id,
+      this.manager.isRoomActive(room.id) ? "recording" : "checking",
+      { lastCheckedAt: this.services.clock.iso() },
+    );
     this.emitRoom(room.id);
     try {
       await this.runCheckRoomInner(room, adapter, opts);
     } catch (err) {
       // 容错：任何意外异常（平台接口变动、DB 缺列等）都不能让房间卡死在 checking——
       // 一律落到 failed + lastError 并补告警，等待下一轮检测恢复。
-      const appErr = err instanceof AppError
-        ? err
-        : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
+      const appErr =
+        err instanceof AppError
+          ? err
+          : new AppError(
+              "CHECK_FAILED",
+              `检测异常: ${(err as Error).message ?? String(err)}`,
+              { roomId: room.id, retryable: true },
+            );
       this.setCheckFailure(room.id, appErr.toObject());
-      this.createCheckAlert(room, appErr.toObject(), 'error');
+      this.createCheckAlert(room, appErr.toObject(), "error");
     }
   }
 
-  private async runCheckRoomInner(room: Room, adapter: PlatformAdapter, opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {}): Promise<void> {
+  private async runCheckRoomInner(
+    room: Room,
+    adapter: PlatformAdapter,
+    opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
+  ): Promise<void> {
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
     // 不让这个已在途请求的结果覆盖全局失效标记。
-    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
+    if (room.platform === "douyin" && this.douyinCookieExpired) return;
     // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
     // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
     const detectedName = status.displayName?.trim();
     // 仅填补空名称，保留用户手动设置的自定义名称。
-    const checkedRoom = detectedName && !room.displayName.trim()
-      ? this.services.rooms.update(room.id, { displayName: detectedName })
-      : room;
+    const checkedRoom =
+      detectedName && !room.displayName.trim()
+        ? this.services.rooms.update(room.id, { displayName: detectedName })
+        : room;
     if (checkedRoom !== room) this.emitRoom(room.id);
     // #128 抖音标题回退加固：记录标题来源/回退标记，SSE 供前端展示回退/占位状态。
     if (status.titleSource) {
-      this.services.rooms.setTitleInfo(room.id, { titleSource: status.titleSource, titleFallbackUsed: status.titleFallbackUsed ?? false });
+      this.services.rooms.setTitleInfo(room.id, {
+        titleSource: status.titleSource,
+        titleFallbackUsed: status.titleFallbackUsed ?? false,
+      });
     }
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
     const checkedAt = this.services.clock.iso();
-    const isOpening = status.status === 'live' && room.lastLiveStatus !== 'live';
-    if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
-      this.services.rooms.setLiveStatus(room.id, status.status, isOpening ? checkedAt : undefined);
+    const isOpening =
+      status.status === "live" && room.lastLiveStatus !== "live";
+    if (
+      status.status === "live" ||
+      status.status === "offline" ||
+      status.status === "restricted"
+    ) {
+      this.services.rooms.setLiveStatus(
+        room.id,
+        status.status,
+        isOpening ? checkedAt : undefined,
+      );
       this.services.rooms.setCurrentStreamTitle(
         room.id,
-        status.status === 'live' ? status.streamTitle ?? null : null,
+        status.status === "live" ? (status.streamTitle ?? null) : null,
       );
       // 未登录 B站 时平台只给低清晰度。提前把「这个房间现在能录到什么」存下来，
       // 让监控卡片在按下录制之前就能说明，而不是录完翻历史才发现画质不符。
       this.services.rooms.setAvailableQualities(
         room.id,
-        status.status === 'live' ? status.availableQualities ?? [] : [],
+        status.status === "live" ? (status.availableQualities ?? []) : [],
       );
     }
-    if (status.status === 'live' || status.status === 'offline') {
+    if (status.status === "live" || status.status === "offline") {
       this.recordCoverage(room.id);
-      if (status.status === 'offline') this.recordTodayForecast(room.id);
+      if (status.status === "offline") this.recordTodayForecast(room.id);
     }
-    if (status.status === 'live') {
+    if (status.status === "live") {
       // 录制中的房间仍需继续检测（例如确认下播后自动收口），但开播结果不能
       // 覆盖已有会话的 recording 状态；也无需再次进入自动录制决策。
       if (this.manager.isRoomActive(room.id)) {
-        this.services.rooms.setState(room.id, 'recording', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.services.rooms.setState(room.id, "recording", {
+          lastCheckedAt: this.services.clock.iso(),
+          lastError: null,
+        });
         this.emitRoom(room.id);
         return;
       }
       // A confirmed offline→live transition has a narrow polling interval. First
       // discovery while already live is still useful, but is stored as a lower-
       // confidence interval instead of claiming the check time is the start time.
-      if (room.lastLiveStatus !== 'live' && status.platformStartedAt) {
+      if (room.lastLiveStatus !== "live" && status.platformStartedAt) {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
-          source: 'platform', lowerBoundAt: room.lastLiveStatus === 'offline' ? room.lastCheckedAt : null, platformStartedAt: status.platformStartedAt,
+          source: "platform",
+          lowerBoundAt:
+            room.lastLiveStatus === "offline" ? room.lastCheckedAt : null,
+          platformStartedAt: status.platformStartedAt,
         });
-      } else if (room.lastLiveStatus === 'offline') {
+      } else if (room.lastLiveStatus === "offline") {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
-          source: 'transition', lowerBoundAt: room.lastCheckedAt,
+          source: "transition",
+          lowerBoundAt: room.lastCheckedAt,
         });
       } else if (room.lastLiveStatus === null) {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
-          source: 'initial_live', lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
+          source: "initial_live",
+          lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
         });
       }
-      const shouldNotifyLiveStarted = room.lastLiveStatus === 'offline'
-        && checkedRoom.enabled
-        && checkedRoom.liveNotificationEnabled;
+      const shouldNotifyLiveStarted =
+        room.lastLiveStatus === "offline" &&
+        checkedRoom.enabled &&
+        checkedRoom.liveNotificationEnabled;
       // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
-        this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.services.rooms.setState(room.id, "idle", {
+          lastCheckedAt: this.services.clock.iso(),
+          lastError: null,
+        });
         this.emitRoom(room.id);
         return;
       }
@@ -303,93 +412,166 @@ export class Scheduler {
       const globalAuto = this.services.settings.load()?.autoRecord ?? false;
       const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
       if (!effectiveAuto) {
-        this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+        this.services.rooms.setState(room.id, "idle", {
+          lastCheckedAt: this.services.clock.iso(),
+          lastError: null,
+        });
         this.emitRoom(room.id);
         if (shouldNotifyLiveStarted) {
-          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName });
+          await this.services.notifier.notify("live_started", room.id, {
+            title: checkedRoom.displayName,
+          });
         }
         return;
       }
       try {
         const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
         const started = await this.manager.maybeStartRecording(
-          { ...refreshedRoom, monitorState: 'checking' },
+          { ...refreshedRoom, monitorState: "checking" },
           status,
           { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
         );
         if (shouldNotifyLiveStarted) {
-          await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName, autoRecordingStarted: started });
+          await this.services.notifier.notify("live_started", room.id, {
+            title: checkedRoom.displayName,
+            autoRecordingStarted: started,
+          });
         }
       } catch (err) {
-        const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
+        const appErr =
+          err instanceof AppError
+            ? err
+            : new AppError(
+                "RECORDING_START_FAILED",
+                `启动录制失败: ${(err as Error).message}`,
+                { roomId: room.id, retryable: true },
+              );
         this.setCheckFailure(room.id, appErr.toObject());
-        const alert = this.services.alerts.createOrRefresh({ level: 'error', source: 'recorder', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
-        this.services.events.emit({ type: 'alert:created', data: alert });
+        const alert = this.services.alerts.createOrRefresh({
+          level: "error",
+          source: "recorder",
+          message: appErr.message,
+          occurredAt: this.services.clock.iso(),
+          roomId: room.id,
+          errorCode: appErr.code,
+        });
+        this.services.events.emit({ type: "alert:created", data: alert });
       }
       return;
     }
-    if (status.status === 'offline') {
+    if (status.status === "offline") {
       // 正在录制的房间不在这里停录：交回录制器自己的存活判定——流真的断了会走续录或收尾，
       // 并落上真正的结束原因。否则「打开应用时的一次检测」就可能把正在进行的录制掐掉，
       // 而且这种系统停录会被记成用户手动停止，事后完全分不出来。
       if (this.manager.isRoomActive(room.id)) return;
-      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+      this.services.rooms.setState(room.id, "idle", {
+        lastCheckedAt: this.services.clock.iso(),
+        lastError: null,
+      });
       this.emitRoom(room.id);
       return;
     }
-    const err = status.error ?? new AppError(
-      status.status === 'restricted' ? 'PLATFORM_ACCESS_RESTRICTED' : 'NETWORK_UNAVAILABLE',
-      status.status === 'restricted'
-        ? room.platform === 'douyin'
-          ? '平台访问受限，请检查抖音授权'
-          : '平台访问受限，请检查B站授权'
-        : '平台请求失败',
-      { roomId: room.id, retryable: status.status !== 'restricted' },
-    ).toObject();
-    if (room.platform === 'douyin' && err.code === 'DOUYIN_COOKIE_EXPIRED') {
+    const err =
+      status.error ??
+      new AppError(
+        status.status === "restricted"
+          ? "PLATFORM_ACCESS_RESTRICTED"
+          : "NETWORK_UNAVAILABLE",
+        status.status === "restricted"
+          ? room.platform === "douyin"
+            ? "平台访问受限，请检查抖音授权"
+            : "平台访问受限，请检查B站授权"
+          : "平台请求失败",
+        { roomId: room.id, retryable: status.status !== "restricted" },
+      ).toObject();
+    if (room.platform === "douyin" && err.code === "DOUYIN_COOKIE_EXPIRED") {
       this.markDouyinCookieExpired();
       return;
     }
     this.setCheckFailure(room.id, err);
-    this.createCheckAlert(room, err, status.status === 'restricted' ? 'warning' : 'error');
+    this.createCheckAlert(
+      room,
+      err,
+      status.status === "restricted" ? "warning" : "error",
+    );
   }
 
   private recordCoverage(roomId: string): void {
     const now = this.services.clock.now();
     const room = this.services.rooms.get(roomId);
-    const gap = Math.min(10 * 60_000, Math.max(180_000, this.intervalFor(room?.platform ?? 'bilibili') * 2_000 + 30_000));
-    this.services.predictionCalibration.recordCoverage(roomId, localDate(now), this.services.clock.iso(), gap);
+    const gap = Math.min(
+      10 * 60_000,
+      Math.max(
+        180_000,
+        this.intervalFor(room?.platform ?? "bilibili") * 2_000 + 30_000,
+      ),
+    );
+    this.services.predictionCalibration.recordCoverage(
+      roomId,
+      localDate(now),
+      this.services.clock.iso(),
+      gap,
+    );
   }
 
   private recordTodayForecast(roomId: string): void {
     const now = this.services.clock.now();
     const today = localDate(now);
-    if (this.forecastDate !== today) { this.forecastRecordedFor.clear(); this.forecastRetry.clear(); this.forecastDate = today; }
+    if (this.forecastDate !== today) {
+      this.forecastRecordedFor.clear();
+      this.forecastRetry.clear();
+      this.forecastDate = today;
+    }
     const latestEventId = this.services.liveEvents.latestId(roomId);
     const retry = this.forecastRetry.get(roomId);
-    if (retry && now < retry.at && retry.latestEventId === latestEventId) return;
+    if (retry && now < retry.at && retry.latestEventId === latestEventId)
+      return;
     this.forecastRetry.set(roomId, { at: now + 5 * 60_000, latestEventId });
     const from = new Date(now - 60 * 24 * 60 * 60 * 1_000).toISOString();
     const events = this.services.liveEvents.list(roomId, from);
     if (events.length < 2) return;
     const prediction = calculateLivePrediction({
-      roomId, events, now, generatedAt: this.services.clock.iso(),
-      calibration: this.services.predictionCalibration.profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000)).get(roomId),
+      roomId,
+      events,
+      now,
+      generatedAt: this.services.clock.iso(),
+      calibration: this.services.predictionCalibration
+        .profiles([roomId], localDate(now - 60 * 24 * 60 * 60 * 1_000))
+        .get(roomId),
       coverage: this.coverageWithRecordings(roomId, from, now),
     });
     // Retry at the current window's end even when the normal throttle has not
     // elapsed, so the next session can be considered without stale dates.
-    const end = prediction.windowEndTimestamp ? Date.parse(prediction.windowEndTimestamp) : NaN;
+    const end = prediction.windowEndTimestamp
+      ? Date.parse(prediction.windowEndTimestamp)
+      : NaN;
     if (Number.isFinite(end) && end >= now) {
-      this.forecastRetry.set(roomId, { at: Math.min(now + 5 * 60_000, end + 1), latestEventId });
+      this.forecastRetry.set(roomId, {
+        at: Math.min(now + 5 * 60_000, end + 1),
+        latestEventId,
+      });
     }
-    if (prediction.kind !== 'next' || !prediction.rawLikelihood || !prediction.likelihood || !prediction.windowStartTimestamp || !prediction.windowEndTimestamp) return;
+    if (
+      prediction.kind !== "next" ||
+      !prediction.rawLikelihood ||
+      !prediction.likelihood ||
+      !prediction.windowStartTimestamp ||
+      !prediction.windowEndTimestamp
+    )
+      return;
     const start = Date.parse(prediction.windowStartTimestamp);
     if (localDate(start) !== today || start <= now) return;
     const key = `${roomId}:${today}:${prediction.windowStartTimestamp}`;
     if (this.forecastRecordedFor.has(key)) return;
-    this.services.predictionCalibration.recordForecast({ roomId, targetDate: today, probability: prediction.likelihood, rawProbability: prediction.rawLikelihood,
-      windowStartAt: prediction.windowStartTimestamp, windowEndAt: prediction.windowEndTimestamp, generatedAt: this.services.clock.iso() });
+    this.services.predictionCalibration.recordForecast({
+      roomId,
+      targetDate: today,
+      probability: prediction.likelihood,
+      rawProbability: prediction.rawLikelihood,
+      windowStartAt: prediction.windowStartTimestamp,
+      windowEndAt: prediction.windowEndTimestamp,
+      generatedAt: this.services.clock.iso(),
+    });
     // INSERT OR IGNORE can mean another run already persisted this room/day/window.
     // Either way a concrete forecast exists before the in-memory key is set.
     this.forecastRecordedFor.add(key);
@@ -400,14 +582,25 @@ export class Scheduler {
    * 因此录制区间等价于同等强度的覆盖——自动录制会暂停轮询，不补上这一段，
    * 同一场提前开播会因为「有没有开自动录制」得到两种判定。
    */
-  private coverageWithRecordings(roomId: string, from: string, now: number): PredictionCoverageInterval[] {
+  private coverageWithRecordings(
+    roomId: string,
+    from: string,
+    now: number,
+  ): PredictionCoverageInterval[] {
     // 直接查而不是走 recordings.list：后者有 100 条上限，录制分段多的房间会被截断，
     // 覆盖不完整又会把命中率带偏。
     const recordings = this.services.db
-      .prepare('SELECT started_at AS startedAt, ended_at AS endedAt FROM recordings WHERE room_id = ? AND started_at >= ? ORDER BY started_at')
-      .all(roomId, from) as Array<{ startedAt: string; endedAt: string | null }>;
+      .prepare(
+        "SELECT started_at AS startedAt, ended_at AS endedAt FROM recordings WHERE room_id = ? AND started_at >= ? ORDER BY started_at",
+      )
+      .all(roomId, from) as Array<{
+      startedAt: string;
+      endedAt: string | null;
+    }>;
     return [
-      ...(this.services.predictionCalibration.intervals([roomId], from).get(roomId) ?? []),
+      ...(this.services.predictionCalibration
+        .intervals([roomId], from)
+        .get(roomId) ?? []),
       ...recordingCoverageIntervals(recordings, now),
     ];
   }
@@ -427,20 +620,46 @@ export class Scheduler {
       coverageCache.set(roomId, merged);
       return merged;
     };
-    for (const forecast of this.services.predictionCalibration.pendingBefore(today)) {
-      if (!forecast.windowStartAt || !forecast.windowEndAt || !forecast.rawProbability) {
-        this.services.predictionCalibration.resolve(forecast.id, 'unknown', this.services.clock.iso()); continue;
+    for (const forecast of this.services.predictionCalibration.pendingBefore(
+      today,
+    )) {
+      if (
+        !forecast.windowStartAt ||
+        !forecast.windowEndAt ||
+        !forecast.rawProbability
+      ) {
+        this.services.predictionCalibration.resolve(
+          forecast.id,
+          "unknown",
+          this.services.clock.iso(),
+        );
+        continue;
       }
-      const start = Date.parse(forecast.windowStartAt), end = Date.parse(forecast.windowEndAt);
+      const start = Date.parse(forecast.windowStartAt),
+        end = Date.parse(forecast.windowEndAt);
       // Allow the next check to discover an opening near the window's end.
       if (end + 10 * 60_000 > now) continue;
-      const events = this.services.liveEvents.listBetween(forecast.roomId, forecast.windowStartAt, new Date(end + 10 * 60_000).toISOString());
-      const evidence = events.map(event => openingEvidenceInWindow(event,start,end));
-      const opened = evidence.includes('hit');
+      const events = this.services.liveEvents.listBetween(
+        forecast.roomId,
+        forecast.windowStartAt,
+        new Date(end + 10 * 60_000).toISOString(),
+      );
+      const evidence = events.map((event) =>
+        openingEvidenceInWindow(event, start, end),
+      );
+      const opened = evidence.includes("hit");
       const coverage = coverageFor(forecast.roomId);
-      const ambiguous = evidence.includes('unknown');
-      const outcome = opened ? 'hit' : !ambiguous && coversPredictionWindow(coverage, start, end) ? 'miss' : 'unknown';
-      this.services.predictionCalibration.resolve(forecast.id, outcome, this.services.clock.iso());
+      const ambiguous = evidence.includes("unknown");
+      const outcome = opened
+        ? "hit"
+        : !ambiguous && coversPredictionWindow(coverage, start, end)
+          ? "miss"
+          : "unknown";
+      this.services.predictionCalibration.resolve(
+        forecast.id,
+        outcome,
+        this.services.clock.iso(),
+      );
     }
   }
 
@@ -451,14 +670,22 @@ export class Scheduler {
     await this.checking.get(roomId);
     const room = this.services.rooms.get(roomId);
     if (!room || this.manager.isRoomActive(roomId)) return;
-    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? false)) return;
+    if (!(
+      room.autoRecord ??
+      this.services.settings.load()?.autoRecord ??
+      false
+    ))
+      return;
     await this.checkRoom(room);
   }
 
-  async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
+  async triggerImmediateCheck(
+    roomId: string,
+    opts: { nameOnly?: boolean } = {},
+  ): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
-    if (room.platform === 'douyin' && this.douyinCookieExpired) return;
+    if (room.platform === "douyin" && this.douyinCookieExpired) return;
     // “检测”只更新直播状态和执行既有自动录制策略；它不是用户明确要求
     // 同一场直播重新录制。只有 /start-recording 才能携带 manual=true。
     await this.checkRoom(room, opts).catch(() => undefined);
@@ -467,5 +694,5 @@ export class Scheduler {
 
 function localDate(ms: number): string {
   const date = new Date(ms);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
