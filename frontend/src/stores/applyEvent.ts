@@ -27,6 +27,9 @@ export function applyServerEvent(e: ServerEvent) {
     case 'recording:updated':
       useRecordingStore.getState().upsertRecordingFromEvent(e.recording);
       break;
+    case 'recording:deleted':
+      useRecordingStore.getState().removeRecordingFromEvent(e.recordingId);
+      break;
     case 'alert:created':
     case 'alert:updated':
       useAlertStore.getState().upsertAlert(e.alert);

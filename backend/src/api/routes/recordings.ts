@@ -254,11 +254,13 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
+    await services.manager.cancelHighlightExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
     if (rec.filePath) {
       await unlink(rec.filePath).catch(() => undefined);
     }
     services.recordings.remove(id);
+    services.events.emit({ type: "recording:deleted", data: { id } });
     return reply.status(204).send();
   });
 
@@ -377,10 +379,12 @@ export function registerRecordingRoutes(
         failed.push({ id, reason: "记录不存在" });
         continue;
       }
+      await services.manager.cancelHighlightExport(id);
       if (rec.filePath) {
         await unlink(rec.filePath).catch(() => undefined);
       }
       services.recordings.remove(id);
+      services.events.emit({ type: "recording:deleted", data: { id } });
       deleted.push(id);
     }
     return reply.send({ deleted, failed });

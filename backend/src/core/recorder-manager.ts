@@ -44,6 +44,9 @@ export interface PreviewSink {
 
 /** 录制完成询问是否保留待确认超时。 */
 export const KEEP_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+/** 精彩时刻导出持续有 I/O 进度就允许继续；仅持续无进度才判定卡死。 */
+export const HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS = 1_000;
 /** 录像待写上限大小 */
 const MAX_SHARED_RECORDING_PENDING_BYTES = 32 * 1024 * 1024;
 /** 开录后多久还没写出文件即视为拿不到数据 */
@@ -196,6 +199,17 @@ export class RecorderManager {
   private pendingHighlightConfirmations = new Map<
     string,
     { decision?: { keep: boolean; fileName?: string } }
+  >();
+  private highlightExportJobs = new Map<
+    string,
+    {
+      controller: AbortController;
+      timeout: unknown;
+      settling: boolean;
+      lastWatchdogRefreshAt: number | null;
+      done: Promise<void>;
+      resolveDone: () => void;
+    }
   >();
 
   constructor(
@@ -462,22 +476,56 @@ export class RecorderManager {
     const confirmAfterComplete = this.settings().confirmAfterComplete;
     if (confirmAfterComplete) {
       this.pendingHighlightConfirmations.set(recording.id, {});
-      this.services.recordings.update(recording.id, { filePath });
+      this.services.recordings.update(recording.id, {
+        filePath,
+        highlightExportPending: true,
+        highlightConfirmationDecision: null,
+        highlightConfirmationFileName: null,
+      });
       this.enterPendingConfirmation(recording.id);
     }
+    const controller = new AbortController();
+    let resolveDone!: () => void;
+    const job = {
+      controller,
+      timeout: undefined as unknown,
+      settling: false,
+      lastWatchdogRefreshAt: null,
+      done: new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      }),
+      resolveDone,
+    };
+    this.highlightExportJobs.set(recording.id, job);
+    this.refreshHighlightExportWatchdog(recording.id, job, roomId, filePath);
     void (async () => {
       try {
-        const result = await buffer.exportTo(filePath, lookbackSeconds);
+        const result = await buffer.exportTo(
+          filePath,
+          lookbackSeconds,
+          controller.signal,
+          () => this.refreshHighlightExportWatchdog(recording.id, job, roomId, filePath),
+        );
+        if (this.highlightExportJobs.get(recording.id) !== job) return;
         const endedAt = this.services.clock.iso();
         const startedAt = new Date(
           new Date(endedAt).getTime() - result.actualSeconds * 1_000,
         ).toISOString();
+        const pending = this.pendingHighlightConfirmations.get(recording.id);
+        const decision = pending?.decision;
         const completed = this.services.recordings.update(recording.id, {
           state: confirmAfterComplete ? "awaiting_confirmation" : "completed",
           filePath,
           fileSizeBytes: result.bytes,
           startedAt,
           endedAt,
+          highlightExportPending: false,
+          ...(decision
+            ? {}
+            : {
+                highlightConfirmationDecision: null,
+                highlightConfirmationFileName: null,
+              }),
         });
         if (!confirmAfterComplete)
           this.services.events.emit({
@@ -488,35 +536,32 @@ export class RecorderManager {
           this.finishOrConfirm(recording.id);
           return;
         }
-        const pending = this.pendingHighlightConfirmations.get(recording.id);
         this.pendingHighlightConfirmations.delete(recording.id);
-        if (!pending?.decision) return;
-        if (pending.decision.keep) {
+        if (!decision) {
+          this.services.events.emit({ type: "recording:updated", data: completed });
+          this.finishHighlightExportJob(recording.id, job);
+          return;
+        }
+        if (decision.keep) {
           await this.renameConfirmedHighlight(
             recording.id,
-            pending.decision.fileName,
+            decision.fileName,
           );
           this.resumeAfterConfirmation(recording.id);
         } else {
           this.discardAfterConfirmation(recording.id);
         }
+        this.finishHighlightExportJob(recording.id, job);
       } catch (error) {
-        this.pendingHighlightConfirmations.delete(recording.id);
-        const err = new AppError(
-          "HIGHLIGHT_EXPORT_FAILED",
-          failureText("HIGHLIGHT_EXPORT_FAILED"),
-          {
-            roomId,
-            recordingId: recording.id,
-            details: { cause: (error as Error).message },
-          },
-        );
-        const failed = this.services.recordings.update(recording.id, {
-          state: "failed",
-          endedAt: this.services.clock.iso(),
-          failureReason: err.toObject(),
-        });
-        this.services.events.emit({ type: "recording:updated", data: failed });
+        if (
+          this.highlightExportJobs.get(recording.id) === job &&
+          !job.settling
+        ) {
+          job.settling = true;
+          await this.failHighlightExport(recording.id, roomId, filePath, error);
+        }
+      } finally {
+        job.resolveDone();
       }
     })();
     if (!confirmAfterComplete)
@@ -536,7 +581,125 @@ export class RecorderManager {
     if (!pending) return false;
     this.clearConfirmTimer(recordingId);
     pending.decision = { keep, ...(fileName ? { fileName } : {}) };
+    const updated = this.services.recordings.update(recordingId, {
+      highlightConfirmationDecision: keep,
+      highlightConfirmationFileName: fileName ?? null,
+    });
+    this.services.events.emit({ type: "recording:updated", data: updated });
     return true;
+  }
+
+  /** 通用删除路径也必须中止正在导出的精彩时刻，避免迟到的异步任务重建已删除记录。 */
+  async cancelHighlightExport(recordingId: string): Promise<boolean> {
+    const job = this.highlightExportJobs.get(recordingId);
+    if (!job) return false;
+    job.settling = true;
+    job.controller.abort(new Error("精彩时刻导出已取消"));
+    this.pendingHighlightConfirmations.delete(recordingId);
+    this.clearConfirmTimer(recordingId);
+    // 等输出/输入流关闭后才允许调用方 unlink；Windows 上打开的句柄会拒绝删除。
+    await job.done;
+    this.finishHighlightExportJob(recordingId, job);
+    return true;
+  }
+
+  private finishHighlightExportJob(
+    recordingId: string,
+    job: {
+      controller: AbortController;
+      timeout: unknown;
+      settling: boolean;
+      lastWatchdogRefreshAt: number | null;
+      done: Promise<void>;
+      resolveDone: () => void;
+    },
+  ): void {
+    if (this.highlightExportJobs.get(recordingId) !== job) return;
+    this.services.clock.clearTimeout(job.timeout);
+    this.highlightExportJobs.delete(recordingId);
+  }
+
+  private refreshHighlightExportWatchdog(
+    recordingId: string,
+    job: {
+      controller: AbortController;
+      timeout: unknown;
+      settling: boolean;
+      lastWatchdogRefreshAt: number | null;
+      done: Promise<void>;
+      resolveDone: () => void;
+    },
+    roomId: string,
+    filePath: string,
+  ): void {
+    if (this.highlightExportJobs.get(recordingId) !== job || job.settling)
+      return;
+    const now = this.services.clock.now();
+    if (
+      job.lastWatchdogRefreshAt !== null &&
+      now - job.lastWatchdogRefreshAt < HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS
+    )
+      return;
+    this.services.clock.clearTimeout(job.timeout);
+    job.lastWatchdogRefreshAt = now;
+    job.timeout = this.services.clock.setTimeout(() => {
+      if (this.highlightExportJobs.get(recordingId) !== job || job.settling)
+        return;
+      job.settling = true;
+      job.controller.abort(new Error("精彩时刻导出无进度超时"));
+      void this.failHighlightExport(
+        recordingId,
+        roomId,
+        filePath,
+        new Error("精彩时刻导出连续 2 分钟无磁盘 I/O 进度"),
+      );
+    }, HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS);
+  }
+
+  private async failHighlightExport(
+    recordingId: string,
+    roomId: string,
+    filePath: string,
+    error: unknown,
+  ): Promise<void> {
+    const job = this.highlightExportJobs.get(recordingId);
+    if (job) job.settling = true;
+    try {
+      this.clearConfirmTimer(recordingId);
+      const pending = this.pendingHighlightConfirmations.get(recordingId);
+      this.pendingHighlightConfirmations.delete(recordingId);
+      const rec = this.services.recordings.get(recordingId);
+      const decision = pending?.decision?.keep ?? rec?.highlightConfirmationDecision;
+      // 不完整的 FLV 不能作为已保存录像留下；用户明确选择不保留时也应兑现决定。
+      await unlink(filePath).catch(() => undefined);
+      if (decision === false) {
+        this.services.recordings.remove(recordingId);
+        this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
+        return;
+      }
+      const err = new AppError(
+        "HIGHLIGHT_EXPORT_FAILED",
+        failureText("HIGHLIGHT_EXPORT_FAILED"),
+        {
+          roomId,
+          recordingId,
+          details: { cause: (error as Error).message },
+        },
+      );
+      const failed = this.services.recordings.update(recordingId, {
+        state: "failed",
+        endedAt: this.services.clock.iso(),
+        filePath: null,
+        fileSizeBytes: 0,
+        highlightExportPending: false,
+        highlightConfirmationDecision: null,
+        highlightConfirmationFileName: null,
+        failureReason: err.toObject(),
+      });
+      this.services.events.emit({ type: "recording:updated", data: failed });
+    } finally {
+      if (job) this.finishHighlightExportJob(recordingId, job);
+    }
   }
 
   private async renameConfirmedHighlight(
@@ -1891,6 +2054,12 @@ export class RecorderManager {
     if (pendingHighlight) {
       this.clearConfirmTimer(recordingId);
       pendingHighlight.decision ??= { keep: true };
+      const updated = this.services.recordings.update(recordingId, {
+        highlightConfirmationDecision: pendingHighlight.decision.keep,
+        highlightConfirmationFileName:
+          pendingHighlight.decision.fileName ?? null,
+      });
+      this.services.events.emit({ type: "recording:updated", data: updated });
       return;
     }
     this.clearConfirmTimer(recordingId);
@@ -1911,6 +2080,9 @@ export class RecorderManager {
     }
     const updated = this.services.recordings.update(recordingId, {
       state: "completed",
+      highlightExportPending: false,
+      highlightConfirmationDecision: null,
+      highlightConfirmationFileName: null,
     });
     this.services.events.emit({ type: "recording:updated", data: updated });
     this.finishSegmentProcessing(recordingId);
@@ -1923,6 +2095,7 @@ export class RecorderManager {
     if (!rec) return;
     if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
     this.services.recordings.remove(recordingId);
+    this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
   }
 
   /** 启动恢复（#220）：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
@@ -1931,6 +2104,23 @@ export class RecorderManager {
       .list({ pageSize: 100 })
       .items.filter((r) => r.state === "awaiting_confirmation");
     for (const rec of pending) {
+      // 进程重启会中断内存中的缓存复制。绝不能把尚未生成的精彩时刻当作
+      // 普通待确认录像直接标记 completed；用户若已选择不保留，则兑现删除。
+      if (rec.highlightExportPending) {
+        if (rec.highlightConfirmationDecision === false) {
+          if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
+          this.services.recordings.remove(rec.id);
+          this.services.events.emit({ type: "recording:deleted", data: { id: rec.id } });
+        } else {
+          void this.failHighlightExport(
+            rec.id,
+            rec.roomId,
+            rec.filePath ?? "",
+            new Error("服务重启中断了精彩时刻导出"),
+          );
+        }
+        continue;
+      }
       this.resumeAfterConfirmation(rec.id);
     }
   }

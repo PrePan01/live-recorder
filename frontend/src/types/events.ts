@@ -10,6 +10,7 @@ export type ServerEvent =
   | { type: 'room:updated'; room: Room }
   | { type: 'desktop:notification'; notification: { title: string; body: string } }
   | { type: 'recording:updated'; recording: Recording }
+  | { type: 'recording:deleted'; recordingId: string }
   | { type: 'alert:created'; alert: Alert }
   | { type: 'alert:updated'; alert: Alert }
   | { type: 'settings:updated'; settings: Settings }
@@ -22,6 +23,7 @@ export const SSE_EVENT_NAMES = [
   'room:updated',
   'desktop:notification',
   'recording:updated',
+  'recording:deleted',
   'alert:created',
   'alert:updated',
   'settings:updated',

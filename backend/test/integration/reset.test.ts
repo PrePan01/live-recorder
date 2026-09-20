@@ -65,7 +65,7 @@ it('clears application data and credentials while preserving recordings and sche
   for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) expect(await services.secretStore.get(key)).toBeNull();
   const tables = services.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'schema_version'").all() as { name: string }[];
   for (const { name } of tables) expect(services.db.prepare(`SELECT COUNT(*) AS count FROM "${name}"`).get()).toEqual({ count: 0 });
-  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 35 });
+  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 36 });
   expect((await app.inject({ url: '/api/v1/health', headers: { host: '127.0.0.1:43120' } })).json().serviceStatus.setupCompleted).toBe(false);
 });
 

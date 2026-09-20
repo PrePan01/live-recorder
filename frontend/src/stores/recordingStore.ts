@@ -38,6 +38,7 @@ interface RecordingState {
   upsertRecording: (rec: Recording) => void;
   /** 仅由 SSE 写入，用于避免打开历史页时把旧记录误报成刚完成。 */
   upsertRecordingFromEvent: (rec: Recording) => void;
+  removeRecordingFromEvent: (recordingId: string) => void;
   /** SSE upload:updated 按 recordingId 更新对应录制的上传快照（#191）。 */
   patchRecordingUpload: (
     recordingId: string,
@@ -159,6 +160,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
             : s.pendingConfirm,
       };
     });
+  },
+  removeRecordingFromEvent(recordingId) {
+    set((s) => ({
+      items: s.items.filter((item) => item.id !== recordingId),
+      total: Math.max(0, s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0)),
+      pendingConfirm:
+        s.pendingConfirm?.id === recordingId ? null : s.pendingConfirm,
+    }));
   },
   clearPendingConfirm() {
     set({ pendingConfirm: null });
