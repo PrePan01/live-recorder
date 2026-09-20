@@ -120,63 +120,61 @@ function CredentialManual({
     config.platform === "douyin" ? saveCookieTutorial : undefined;
   return (
     <Collapse
-        className="lr-credential-manual"
-        ghost
-        items={[
-          {
-            key: "manual-cookie",
-            label: "手动粘贴 Cookie（高级）",
-            children: (
-              <div className="lr-credential-manual__content">
-                <Typography.Paragraph type="secondary">
-                  进入网页版{config.label}并登录，打开任意直播间后按 F12 →
-                  网络（Network） → 刷新页面 → 点开任意{" "}
-                  <Typography.Text code>{config.manualHost}</Typography.Text> 请求 →
-                  在「请求标头」复制完整 Cookie 并粘贴。
-                  {tutorialImage ? (
-                    <span className="lr-network-help">
-                      <Tooltip
-                        styles={{
-                          root: {
-                            width: "min(600px, calc(100vw - 48px))",
-                            maxWidth: "none",
-                          },
-                        }}
-                        title={
-                          <img
-                            alt={`从网络面板保存${config.label} Cookie 的教程`}
-                            className="lr-cookie-tutorial-image"
-                            src={tutorialImage}
-                          />
-                        }
-                        placement="top"
-                      >
-                        <Button
-                          aria-label={`查看${config.label}网络面板 Cookie 教程`}
-                          className="lr-inline-icon-button"
-                          size="small"
-                          type="text"
-                          icon={<QuestionCircleOutlined />}
+      className="lr-credential-manual"
+      ghost
+      items={[
+        {
+          key: "manual-cookie",
+          label: "手动粘贴 Cookie（高级）",
+          children: (
+            <div className="lr-credential-manual__content">
+              <Typography.Paragraph type="secondary">
+                进入网页版{config.label}并登录，打开任意直播间后按 F12 →
+                网络（Network） → 刷新页面 → 点开任意{" "}
+                <Typography.Text code>{config.manualHost}</Typography.Text> 请求
+                → 在「请求标头」复制完整 Cookie 并粘贴。
+                {tutorialImage ? (
+                  <span className="lr-network-help">
+                    <Tooltip
+                      styles={{
+                        root: {
+                          width: "min(600px, calc(100vw - 48px))",
+                          maxWidth: "none",
+                        },
+                      }}
+                      title={
+                        <img
+                          alt={`从网络面板保存${config.label} Cookie 的教程`}
+                          className="lr-cookie-tutorial-image"
+                          src={tutorialImage}
                         />
-                      </Tooltip>
-                    </span>
-                  ) : null}
-                </Typography.Paragraph>
-                <Form.Item
-                  name={config.cookieField}
-                  extra={hasCookie ? "已保存；留空则不修改" : undefined}
-                >
-                  <Input.Password
-                    placeholder={
-                      hasCookie ? "••••••" : config.manualPlaceholder
-                    }
-                    autoComplete="new-password"
-                  />
-                </Form.Item>
-              </div>
-            ),
-          },
-        ]}
+                      }
+                      placement="top"
+                    >
+                      <Button
+                        aria-label={`查看${config.label}网络面板 Cookie 教程`}
+                        className="lr-inline-icon-button"
+                        size="small"
+                        type="text"
+                        icon={<QuestionCircleOutlined />}
+                      />
+                    </Tooltip>
+                  </span>
+                ) : null}
+              </Typography.Paragraph>
+              <Form.Item
+                name={config.cookieField}
+                extra={hasCookie ? "已保存；留空则不修改" : undefined}
+              >
+                <Input.Password
+                  placeholder={hasCookie ? "••••••" : config.manualPlaceholder}
+                  autoComplete="new-password"
+                />
+              </Form.Item>
+            </div>
+          ),
+        },
+      ]}
     />
   );
 }
@@ -463,10 +461,13 @@ export default function SettingsPage() {
         `告警 ${result.importedAlerts} 条`,
       ];
       if (result.prediction) {
-        const { matchedRooms, skippedRooms, events, forecasts } = result.prediction;
+        const { matchedRooms, skippedRooms, events, forecasts } =
+          result.prediction;
         parts.push(
           `开播预测：${matchedRooms} 个直播间、开播记录 ${events} 条、预测记录 ${forecasts} 条` +
-            (skippedRooms > 0 ? `（${skippedRooms} 个直播间未匹配已跳过）` : ""),
+            (skippedRooms > 0
+              ? `（${skippedRooms} 个直播间未匹配已跳过）`
+              : ""),
         );
       }
       message.success(`导入完成：${parts.join("，")}`);
@@ -521,7 +522,7 @@ export default function SettingsPage() {
           showIcon
           banner
           style={{ marginBottom: 16 }}
-          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），低于阈值可能拒绝新录制`}
+          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），可用空间过低将可能无法开启新的录制`}
         />
       ) : null}
       <Row className="lr-settings-grid" gutter={[16, 16]}>
@@ -771,8 +772,11 @@ export default function SettingsPage() {
                     const cookieField =
                       platform === "douyin" ? "douyinCookie" : "bilibiliCookie";
                     form.setFieldValue(cookieField, "");
-                    void persist(form.getFieldsValue() as SettingsInput,
-                      platform === "douyin" ? { douyin: true } : { bilibili: true },
+                    void persist(
+                      form.getFieldsValue() as SettingsInput,
+                      platform === "douyin"
+                        ? { douyin: true }
+                        : { bilibili: true },
                     );
                   }}
                   renderSupplement={(config, hasCookie) => (
@@ -1053,7 +1057,10 @@ export default function SettingsPage() {
                     }
                     description={
                       <Typography.Text type="secondary">
-                        {a.roomId ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · ` : ''}{alertSourceText(a.source)} · {formatTime(a.occurredAt)}
+                        {a.roomId
+                          ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · `
+                          : ""}
+                        {alertSourceText(a.source)} · {formatTime(a.occurredAt)}
                       </Typography.Text>
                     }
                   />
