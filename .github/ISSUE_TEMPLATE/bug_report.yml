@@ -1,0 +1,80 @@
+name: "问题反馈"
+description: "反馈使用 Live Recorder 时遇到的问题"
+title: "[Bug] "
+labels: ["bug"]
+
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "问题描述"
+      description: "请清晰、简洁地描述你遇到的问题。"
+      placeholder: "请描述你遇到的问题"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "复现步骤"
+      description: "请描述能够稳定复现问题的步骤。"
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Live Recorder 版本"
+      placeholder: "例如：v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: "操作系统"
+      options:
+        - "macOS"
+        - "Windows"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: "直播平台"
+      description: "请选择出现问题的直播平台。如问题与具体直播间有关，请填写。"
+      options:
+        - "B站"
+        - "抖音"
+        - "其他"
+    validations:
+      required: false
+
+  - type: input
+    id: room
+    attributes:
+      label: "直播间 ID / 地址"
+      description: "如问题与具体直播间有关，请填写。请勿提交账号密码、Cookie、Token 等敏感信息。"
+      placeholder: "例如：https://live.bilibili.com/123456"
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "截图或录屏"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "补充信息"
+      description: "如果还有其他可能帮助定位问题的信息，请在这里补充。"
+    validations:
+      required: false

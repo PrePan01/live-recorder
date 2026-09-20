@@ -115,6 +115,31 @@ describe('StreamRecordingEngine (HTTP)', () => {
     expect(info.size).toBeGreaterThan(0);
   });
 
+  it('aborts and reports a retryable interruption when the stream stalls after the first bytes', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
+    const out = path.join(dir, 'stall.flv');
+    const flv = buildMinimalFlv();
+    // 前两次喂入数据，之后既不关闭也不吐字节：模拟 CDN 挂住连接（以前会永远卡在这里）。
+    let served = 0;
+    const stalling = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (served < 2) controller.enqueue(served++ === 0 ? flv : flv.subarray(13));
+      },
+    });
+    const engine = new StreamRecordingEngine(mockFetch(200, () => stalling), 40);
+    const events: string[] = [];
+    let code = '';
+    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+      events.push(ev.type);
+      if (ev.type === 'error') code = ev.error.code;
+    }
+    expect(events).toContain('data');
+    expect(events[events.length - 1]).toBe('error');
+    // 必须是可重试的网络中断，上层才会进入续录而不是判死。
+    expect(code).toBe('NETWORK_UNAVAILABLE');
+    expect((await stat(out)).size).toBeGreaterThan(0);
+  });
+
   it('passes request headers through', async () => {
     let seenHeaders: Record<string, string> | undefined;
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));

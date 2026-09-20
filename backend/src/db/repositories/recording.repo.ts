@@ -237,6 +237,25 @@ export class RecordingRepository {
     return row !== undefined;
   }
 
+  /**
+   * 本次开播周期内是否已有一次有效录制。平台会复用 stream session id，
+   * 因此自动录制绝不能以全历史 session id 去重。failed/interrupted
+   * 仍允许在同一场直播中由后续检测恢复录制；手动停止会保留 completed，
+   * 从而阻止本次直播再次自动开始。
+   */
+  hasRecordingSince(roomId: string, liveStartedAt: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS x FROM recordings
+         WHERE room_id = ? AND started_at >= ?
+           AND state != 'failed'
+           AND (end_reason IS NULL OR end_reason != 'interrupted')
+         LIMIT 1`,
+      )
+      .get(roomId, liveStartedAt) as { x: number } | undefined;
+    return row !== undefined;
+  }
+
   listActive(): Recording[] {
     return (this.db.prepare("SELECT * FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')").all() as RecordingRow[]).map(rowToRecording);
   }

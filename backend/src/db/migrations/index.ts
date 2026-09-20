@@ -616,6 +616,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!names.has('missing_ms')) db.exec(`ALTER TABLE recordings ADD COLUMN missing_ms INTEGER;`);
     },
   },
+  {
+    // 自动录制的去重边界是「本次开播」，不能依赖平台可能跨场复用的 session id。
+    // 持久化本地确认的开播起点，重启后仍能识别本次直播是否已手动停止过录制。
+    version: 35,
+    up: (db) => {
+      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_started_at'`).get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN live_started_at TEXT;`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_room_started_at ON recordings(room_id, started_at);`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

@@ -13,6 +13,7 @@ interface RoomRow {
   auto_record: number | null;
   live_notification_enabled: number;
   last_live_status: string | null;
+  live_started_at: string | null;
   current_stream_title: string | null;
   available_qualities: string | null;
   upload_enabled: number | null;
@@ -57,6 +58,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
     liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
+    liveStartedAt: row.live_started_at,
     currentStreamTitle: row.current_stream_title,
     availableQualities: parseQualities(row.available_qualities),
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
@@ -119,6 +121,7 @@ export class RoomRepository {
       autoRecord: null,
       liveNotificationEnabled: input.liveNotificationEnabled ?? false,
       lastLiveStatus: null,
+      liveStartedAt: null,
       currentStreamTitle: null,
       availableQualities: [],
       uploadEnabled: null,
@@ -229,11 +232,22 @@ export class RoomRepository {
       .run(JSON.stringify(error), nowIso(), id);
   }
 
-  /** 写入最近一次检测的直播状态（#78）。 */
-  setLiveStatus(id: string, status: LiveStatus): void {
+  /**
+   * 写入最近一次检测的直播状态。liveStartedAt 是本地确认的开播周期边界：
+   * offline 会清空它；live 则仅在尚无边界时写入，避免每次轮询扩大去重范围。
+   */
+  setLiveStatus(id: string, status: LiveStatus, liveStartedAt?: string): void {
     this.db
-      .prepare(`UPDATE rooms SET last_live_status = ?, updated_at = ? WHERE id = ?`)
-      .run(status, nowIso(), id);
+      .prepare(`UPDATE rooms
+        SET last_live_status = ?,
+            live_started_at = CASE
+              WHEN ? = 'offline' THEN NULL
+              WHEN ? = 'live' THEN COALESCE(live_started_at, ?)
+              ELSE live_started_at
+            END,
+            updated_at = ?
+        WHERE id = ?`)
+      .run(status, status, status, liveStartedAt ?? null, nowIso(), id);
   }
 
   /** 保存本次检测到的可录清晰度；空数组表示未知（未开播/平台未给出），不展示过期的「最高可录」。 */

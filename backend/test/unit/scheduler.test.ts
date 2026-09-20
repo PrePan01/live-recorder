@@ -34,6 +34,9 @@ function baseSettings(dir = ''): AppSettings {
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',
+    // Tests that use this helper exercise recording paths explicitly; the
+    // product's first-use default is covered in config.test instead.
+    autoRecord: true,
     checkIntervalSec: { default: 60, bilibili: 30, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -326,7 +329,7 @@ describe('Scheduler', () => {
     expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
   });
 
-  it('stops recording when live check returns offline while active (#64)', async () => {
+  it('does not stop an active recording when a live recheck reports offline (#64 revised)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-schoff-'));
     services.settings.save(baseSettings(dir));
@@ -345,17 +348,18 @@ describe('Scheduler', () => {
     }
     expect(services.manager.isRoomActive(room.id)).toBe(true);
 
-    // 第二次检查返回 offline → 应主动停录收口
+    // 第二次检查返回 offline：正在录制的房间不再由调度器停录（否则「打开应用时的一次检测」就会掐断录制，
+    // 且这种系统停录会被记成用户手动停止）。是否结束交给录制器自己的存活判定。
     await services.scheduler.triggerImmediateCheck(room.id);
-    for (let i = 0; i < 20 && services.manager.isRoomActive(room.id); i += 1) {
+    for (let i = 0; i < 20; i += 1) {
       await settle(clock, 500);
     }
-    await waitFor(() => !services.manager.isRoomActive(room.id));
-    expect(services.manager.isRoomActive(room.id)).toBe(false);
-    expect(services.rooms.get(room.id)!.monitorState).toBe('completed');
-    // 录制记录已收口为 completed/failed，无残留 recording
-    const recs = services.recordings.list({ roomId: room.id }).items;
-    expect(recs.some((r) => r.state === 'recording')).toBe(false);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    // 房态仍更新为已下播（卡片要展示），但不影响正在进行的录制。
+    expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('offline');
+
+    await services.manager.stopRecording(room.id);
   });
 
   it('keeps an active recording visible after an immediate live recheck', async () => {
@@ -452,6 +456,48 @@ describe('Scheduler', () => {
     services.scheduler.stop();
   });
 
+  it('starts each offline-to-live cycle even when the platform reuses a stream session id, but not after a manual stop within that cycle', async () => {
+    const { services, clock } = newServices();
+    // RecordingRepository timestamps rows with wall-clock time; align the fake
+    // scheduler clock so the persisted opening boundary is comparable.
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-live-cycle-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/26', displayName: 'cycle' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'reused-id' },
+      { status: 'live', streamSessionId: 'reused-id' },
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'reused-id' },
+    ]);
+
+    await services.scheduler.checkRoom(room);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]?.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 10 && services.manager.isRoomActive(room.id); i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+
+    // 用户本次直播手动停录后，后续 live 检测不能重新自动启动。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+
+    // 检测到下播，再次开播即进入新的周期；即使平台 session id 未变也必须开始录制。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    clock.advance(60_000);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    await services.manager.stopRecording(room.id);
+    await settle(clock, 200);
+  });
+
   it('room autoRecord=false blocks even manual /check from auto-starting (PrePan)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-roomoff-'));
@@ -503,6 +549,7 @@ describe('Scheduler', () => {
 
   it('does not throw when a live room fails to start (getStreamUrl error) and records failed state', async () => {
     const { services } = newServices();
+    services.settings.save(baseSettings());
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'E' });
     const throwing: PlatformAdapter = {
       platform: 'bilibili',
@@ -627,5 +674,22 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
     for (let i = 0; i < 5 && services.rooms.get(room.id)!.lastLiveStatus === 'live'; i += 1) await settle(clock, 500);
     expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('offline');
+  });
+
+  it('treats an offline check as a normal not-live state: idle room and no alert (不刷"平台接口有变动")', async () => {
+    const { services } = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-offline-quiet-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/123456', displayName: 'quiet' });
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    const after = services.rooms.get(room.id)!;
+    expect(after.monitorState).toBe('idle');
+    expect(after.lastLiveStatus).toBe('offline');
+    expect(after.lastError).toBeNull();
+    // 未开播不是异常：不该落任何告警（以前空响应会被判成 PLATFORM_CHANGED，每个检测周期刷一条）。
+    expect(services.alerts.list().filter((a) => a.roomId === room.id)).toHaveLength(0);
   });
 });

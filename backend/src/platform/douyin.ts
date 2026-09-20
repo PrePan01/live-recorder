@@ -56,22 +56,46 @@ const NICK_TTL_MS = 10 * 60_000;
 
 /**
  * 区分抖音非 0 status_code 的根因：#56 第二部分——
- * 反爬/凭证（Cookie 缺失、失效/过期、被风控）→ PLATFORM_ACCESS_RESTRICTED 引导检查抖音授权；
+ * 明确的反爬/凭证失效 → PLATFORM_ACCESS_RESTRICTED 引导检查抖音授权；
  * 仅结构异常（连 status_code 都无法解析）→ PLATFORM_CHANGED 真接口变更。
  */
 function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): AppError {
-  const message = String(json?.data && 'message' in json.data ? (json.data as unknown as { message?: string }).message : '');
+  // `10011` is overloaded by Douyin: it can mean an expired session, but it
+  // is also returned for a busy edge/API node and bad request parameters.
+  // Inspect the full payload because the transient hint is often in
+  // `data.prompts`, rather than `data.message`.
+  const message = JSON.stringify(json?.data ?? '');
   const code = json.status_code;
-  // 凭证相关信号：请求参数错误/服务繁忙/需登录等（抖音风控常见 status_code）。
-  const credentialLike = code === 10011 || /请求参数|服务繁忙|请稍后|登录|风控|verify|RiskControl/i.test(message);
-  // 已携带 Cookie 时的 10011 是明确凭证失效信号，可作为平台级失败处理。
-  if (code === 10011 && hasCookie) {
+  // Only the anonymous/expired-session code is a safe reason to invalidate
+  // every Douyin room.  Do not use 10011 for that: doing so made an occasional
+  // "服务繁忙" response contradict Settings, where the same session verified
+  // as logged in.
+  if (code === 8 && hasCookie) {
     return new AppError('DOUYIN_COOKIE_EXPIRED', '抖音授权已失效，请到设置页重新授权', { retryable: false });
   }
+  if (code === 10011) {
+    const temporary = /服务繁忙|请稍后|busy|temporar|频繁|系统异常|try again/i.test(message);
+    return new AppError(
+      temporary ? 'NETWORK_UNAVAILABLE' : 'PLATFORM_CHANGED',
+      temporary ? '抖音接口暂时不可用，请稍后重试' : '抖音接口请求参数异常，等待适配更新',
+      { retryable: temporary },
+    );
+  }
+  // 凭证相关信号：需登录或被风控。它们只影响当前房间，不能据此熔断全部房间。
+  const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
     return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，抖音授权可能已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权', { retryable: false });
   }
   return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+}
+
+/**
+ * 抖音对"当前不在播"的房间会返回 status_code=0 但没有任何房间条目（data.data 为空或缺失）。
+ * 这是"未开播"，不是接口结构变化：以前这种情况会落到 PLATFORM_CHANGED，导致已下播的房间
+ * 每隔一个检测周期就报一次"平台接口有变动"（实测一个下播房间刷出 150+ 条告警）。
+ */
+function hasNoRoomEntry(json: DouyinEnterResponse): boolean {
+  return json.status_code === 0 && (json.data?.data?.length ?? 0) === 0;
 }
 
 function isNetworkError(err: unknown): boolean {
@@ -169,10 +193,15 @@ export class DouyinAdapter implements PlatformAdapter {
         throw new AppError('NETWORK_UNAVAILABLE', '平台暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: res.status } });
       }
       // 444 是抖音边缘节点直接掐断连接、不返回任何内容的非标准状态码。
-      // 实测在设置页重新登录授权抖音后即可恢复，说明它同样是凭证/风控信号，而不是接口变更：
-      // 以前它落到下面那句“平台接口返回异常状态（HTTP 444）”，用户既看不懂、又不会重试，
-      // 也不会被提示去重新授权。
-      if (res.status === 401 || res.status === 403 || res.status === 444) {
+      // 它也会在登录仍有效时偶发出现，不能据此使全部房间进入“授权失效”熔断。
+      if (res.status === 444) {
+        throw new AppError(
+          'NETWORK_UNAVAILABLE',
+          '抖音接口暂时不可用，请稍后重试',
+          { retryable: true, details: { httpStatus: res.status } },
+        );
+      }
+      if (res.status === 401 || res.status === 403) {
         throw new AppError(
           cookie ? 'DOUYIN_COOKIE_EXPIRED' : 'PLATFORM_ACCESS_RESTRICTED',
           cookie ? '抖音授权已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权',
@@ -210,10 +239,7 @@ export class DouyinAdapter implements PlatformAdapter {
         return await this.fetchRoomInfo(roomId, cookie);
       } catch (err) {
         lastError = err;
-        // 边缘节点偶发掐断（444）也先立即重试一次：重试后多半就正常了。
-        // 不重试会把一次抖动直接报成“授权已失效”，把用户赶去重新登录。
-        const silentDrop = err instanceof AppError && err.details?.httpStatus === 444;
-        const retryable = (err instanceof AppError && err.retryable) || silentDrop || isNetworkError(err);
+        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
         if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
       }
     }
@@ -224,6 +250,13 @@ export class DouyinAdapter implements PlatformAdapter {
     const roomId = this.parseRoomId(roomUrl);
     if (!roomId) {
       return { status: 'error', error: new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {}).toObject() };
+    }
+    // 抖音未登录（本地没有 Cookie）时必须登录授权才能检测/观看/录制：不做任何匿名请求。
+    // 匿名 enter 请求的结果不可靠——有时返回看似正常的数据（房间被判成离线，卡片上看不到
+    // 任何报错，用户不知道要登录），有时长时间不返回，把房间一直留在「检测中」。直接按访问
+    // 受限落库，保证未授权时卡片立刻提示去设置登录授权。
+    if (!cookie) {
+      return { status: 'restricted', error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false }).toObject() };
     }
     let data: DouyinEnterResponse;
     try {
@@ -239,6 +272,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
+      // status_code=0 却没有房间条目 = 这个房间当前不在播（已下播/已结束），不是接口变了。
+      if (hasNoRoomEntry(data)) return { status: 'offline' };
       const appErr = classifyStatusError(data, Boolean(cookie));
       return {
         status: appErr.code === 'PLATFORM_ACCESS_RESTRICTED' || appErr.code === 'DOUYIN_COOKIE_EXPIRED'
@@ -293,6 +328,8 @@ export class DouyinAdapter implements PlatformAdapter {
   async getStreamUrl(roomUrl: string, quality: Quality, cookie?: string): Promise<StreamUrlResult> {
     const roomId = this.parseRoomId(roomUrl);
     if (!roomId) throw new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {});
+    // 同 checkLiveStatus：未登录时不尝试匿名取流，避免匿名拉到流后绕过「抖音需授权」的前提。
+    if (!cookie) throw new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查抖音授权', { retryable: false });
     let data: DouyinEnterResponse;
     try {
       data = await this.fetchRoomInfoWithRetry(roomId, cookie);
@@ -303,6 +340,8 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
+      // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
+      if (hasNoRoomEntry(data)) throw new AppError('RECORDING_NOT_AVAILABLE', '直播间当前未开播，无法获取直播流', { retryable: false });
       throw classifyStatusError(data, Boolean(cookie));
     }
     const entry = arr[0];
