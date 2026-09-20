@@ -17,6 +17,9 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 const PLATFORM_REQUEST_ATTEMPTS = 2;
 
+/** 播放接口车道：interactive = 用户主动取流（预览/录制），优先于 background = 后台检测。 */
+type PlayLane = 'interactive' | 'background';
+
 interface BiliUrlInfo {
   host?: string;
   base_url?: string;
@@ -90,8 +93,16 @@ export class BilibiliAdapter implements PlatformAdapter {
   /**
    * 轮询、手动检测与录制恢复共用 getRoomPlayInfo；统一排队，避免多个
    * 录制收尾和调度批次同时携带同一 Cookie 撞向播放接口。
+   *
+   * 但不能只是普通 FIFO：用户主动的取流（打开预览 / 开始录制）会被“刷新全部房间”
+   * 这类批量检测长时间排在后面。因此分两条车道，interactive 永远优先于 background，
+   * 同一时刻仍只跑一个请求。
    */
-  private playRequestTail: Promise<void> = Promise.resolve();
+  private playBusy = false;
+  private playLanes: Record<PlayLane, Array<() => void>> = {
+    interactive: [],
+    background: [],
+  };
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -112,19 +123,27 @@ export class BilibiliAdapter implements PlatformAdapter {
     return m ? Number(m[1]) : null;
   }
 
-  private async queuePlayRequest<T>(request: () => Promise<T>): Promise<T> {
-    const previous = this.playRequestTail;
-    let release!: () => void;
-    this.playRequestTail = new Promise<void>((resolve) => { release = resolve; });
-    await previous;
+  /**
+   * 同一条车道内按到达顺序唤醒；interactive 车道永远先于 background，
+   * 保证用户主动取流只排在“正在跑的那一个”请求后面，而不是整批检测后面。
+   */
+  private async runPlayRequest<T>(lane: PlayLane, request: () => Promise<T>): Promise<T> {
+    if (this.playBusy) {
+      // 被唤醒即代表已接管占用（release 直接移交，不在交接间隙放开占用，避免被新请求插队）。
+      await new Promise<void>((resolve) => this.playLanes[lane].push(resolve));
+    } else {
+      this.playBusy = true;
+    }
     try {
       return await request();
     } finally {
-      release();
+      const next = this.playLanes.interactive.shift() ?? this.playLanes.background.shift();
+      if (next) next();
+      else this.playBusy = false;
     }
   }
 
-  private async fetchPlayInfoOnce(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
+  private async fetchPlayInfoOnce(roomId: number, cookie?: string, qn?: number, lane: PlayLane = 'background'): Promise<BiliPlayResponse> {
     const params = new URLSearchParams({
       room_id: String(roomId),
       protocol: '0,1',
@@ -134,7 +153,7 @@ export class BilibiliAdapter implements PlatformAdapter {
       platform: 'web',
       ptype: '8',
     });
-    const res = await this.queuePlayRequest(() => this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
+    const res = await this.runPlayRequest(lane, () => this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
       signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
@@ -146,11 +165,11 @@ export class BilibiliAdapter implements PlatformAdapter {
     return (await res.json()) as BiliPlayResponse;
   }
 
-  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
+  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number, lane: PlayLane = 'background'): Promise<BiliPlayResponse> {
     let lastError: unknown;
     for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
       try {
-        return await this.fetchPlayInfoOnce(roomId, cookie, qn);
+        return await this.fetchPlayInfoOnce(roomId, cookie, qn, lane);
       } catch (err) {
         lastError = err;
         const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
@@ -242,7 +261,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     }
     let data: BiliPlayResponse;
     try {
-      data = await this.fetchPlayInfo(roomId, cookie);
+      data = await this.fetchPlayInfo(roomId, cookie, undefined, 'background');
     } catch (err) {
       // 适配器内部已按状态码分好类（含可重试标记），不能在这里被拍平成"接口有变动"。
       if (err instanceof AppError) {
@@ -283,7 +302,9 @@ export class BilibiliAdapter implements PlatformAdapter {
     if (!roomId) throw new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {});
     let data: BiliPlayResponse;
     try {
-      data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality]);
+      // 取流是用户主动操作（打开预览 / 开始录制）：走 interactive 车道，
+      // 只排在正在执行的那一个请求之后，不被后台批量检测堵住。
+      data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality], 'interactive');
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });

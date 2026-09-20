@@ -335,6 +335,29 @@ describe('DouyinAdapter', () => {
     expect(peak).toBe(1);
   });
 
+  it('用户取流插队到排队的后台检测之前（打开预览不被批量检测堵住）', async () => {
+    // 回归：刷新时的批量检测会把 enter 请求排满队列，打开新预览的取流请求排在最后，
+    // 前端就一直卡在“连接视频流”，直到整轮检测跑完。取流必须优先于排队中的检测。
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const a = new DouyinAdapter(async (url) => {
+      const rid = /web_rid=([^&]+)/.exec(String(url))?.[1] ?? '?';
+      order.push(rid);
+      // 第一个请求卡住，制造“正在执行 + 后面排队”的场景。
+      if (order.length === 1) await new Promise<void>((r) => (releaseFirst = r));
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const bg1 = a.checkLiveStatus('https://live.douyin.com/100', 'sessionid=ok');
+    const bg2 = a.checkLiveStatus('https://live.douyin.com/200', 'sessionid=ok');
+    const preview = a.getStreamUrl('https://live.douyin.com/999', 'original', 'sessionid=ok');
+
+    releaseFirst();
+    const [, , stream] = await Promise.all([bg1, bg2, preview]);
+    expect(stream.url).toBe('https://pull.example.com/full.flv');
+    expect(order).toEqual(['100', '999', '200']);
+  });
+
   it('never leaks other unexpected HTTP statuses into user-facing copy', async () => {
     const a = new DouyinAdapter(statusFetcher(451));
     const result = await a.checkLiveStatus('https://live.douyin.com/123456', 'sessionid=ok');

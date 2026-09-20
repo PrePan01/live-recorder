@@ -8,6 +8,9 @@ import type {
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/** enter 请求车道：interactive = 用户主动取流（预览/录制），优先于 background = 后台检测。 */
+type EnterLane = "interactive" | "background";
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 const PLATFORM_REQUEST_ATTEMPTS = 2;
 
@@ -166,11 +169,18 @@ export class DouyinAdapter implements PlatformAdapter {
 
   private nickCache = new Map<string, { name: string; at: number }>();
   /**
-   * 所有 enter 请求（轮询、手动检测、录制断流后的确认/续录）共享同一条队列。
-   * 这些路径使用同一 Cookie；若并发撞到抖音边缘节点，会集中得到 444，再被
-   * 立即重试放大成所有房间同时报“接口暂时不可用”。
+   * enter 请求串行化：并发撞到抖音边缘节点会集中得到 444，再被立即重试放大成
+   * 所有房间同时报“接口暂时不可用”，所以同一时刻只发一个 enter 请求。
+   *
+   * 但不能只是普通 FIFO：用户主动的取流（打开预览 / 开始录制）会被“刷新全部房间”
+   * 这类批量检测长时间排在后面——实测打开新预览会卡在“连接视频流”，直到整轮检测跑完。
+   * 因此分两条车道，interactive 永远优先于 background，且同一时刻仍只跑一个请求。
    */
-  private enterRequestTail: Promise<void> = Promise.resolve();
+  private enterBusy = false;
+  private enterLanes: Record<EnterLane, Array<() => void>> = {
+    interactive: [],
+    background: [],
+  };
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -251,23 +261,35 @@ export class DouyinAdapter implements PlatformAdapter {
     return m?.[1] ?? null;
   }
 
-  private async queueEnterRequest<T>(request: () => Promise<T>): Promise<T> {
-    const previous = this.enterRequestTail;
-    let release!: () => void;
-    this.enterRequestTail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
+  /**
+   * 同一条车道有多个等待者时按到达顺序唤醒；interactive 车道永远先于 background，
+   * 保证用户主动取流只排在“正在跑的那一个”请求后面，而不是整批检测后面。
+   */
+  private async runEnterRequest<T>(
+    lane: EnterLane,
+    request: () => Promise<T>,
+  ): Promise<T> {
+    if (this.enterBusy) {
+      // 被唤醒即代表已接管占用（release 直接移交，不在交接间隙放开占用，避免被新请求插队）。
+      await new Promise<void>((resolve) => this.enterLanes[lane].push(resolve));
+    } else {
+      this.enterBusy = true;
+    }
     try {
       return await request();
     } finally {
-      release();
+      const next =
+        this.enterLanes.interactive.shift() ??
+        this.enterLanes.background.shift();
+      if (next) next();
+      else this.enterBusy = false;
     }
   }
 
   private async fetchRoomInfo(
     roomId: string,
     cookie?: string,
+    lane: EnterLane = "background",
   ): Promise<DouyinEnterResponse> {
     const params = new URLSearchParams({
       aid: "6383",
@@ -280,7 +302,7 @@ export class DouyinAdapter implements PlatformAdapter {
       enter_from_merge: "web_live",
       is_need_double_stream: "false",
     });
-    const res = await this.queueEnterRequest(() =>
+    const res = await this.runEnterRequest(lane, () =>
       this.fetcher(`${this.apiBase}/?${params}`, {
         signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
         headers: {
@@ -361,11 +383,12 @@ export class DouyinAdapter implements PlatformAdapter {
   private async fetchRoomInfoWithRetry(
     roomId: string,
     cookie?: string,
+    lane: EnterLane = "background",
   ): Promise<DouyinEnterResponse> {
     let lastError: unknown;
     for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
       try {
-        const data = await this.fetchRoomInfo(roomId, cookie);
+        const data = await this.fetchRoomInfo(roomId, cookie, lane);
         // 开播状态先于 CDN 拉流地址发布是正常的短暂中间态。立即复查一次，
         // 避免把它误判为授权失效；若仍未就绪，交给下一轮常规检测继续重试。
         if (!hasLiveEntryWithoutStreamUrl(data)) return data;
@@ -419,7 +442,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     let data: DouyinEnterResponse;
     try {
-      data = await this.fetchRoomInfoWithRetry(roomId, cookie);
+      data = await this.fetchRoomInfoWithRetry(roomId, cookie, "background");
     } catch (err) {
       if (err instanceof AppError) {
         if (
@@ -544,7 +567,9 @@ export class DouyinAdapter implements PlatformAdapter {
       );
     let data: DouyinEnterResponse;
     try {
-      data = await this.fetchRoomInfoWithRetry(roomId, cookie);
+      // 取流是用户主动操作（打开预览 / 开始录制）：走 interactive 车道，
+      // 只排在正在执行的那一个请求之后，不被后台批量检测堵住。
+      data = await this.fetchRoomInfoWithRetry(roomId, cookie, "interactive");
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err))

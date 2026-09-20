@@ -209,6 +209,30 @@ describe('BilibiliAdapter', () => {
     expect(peak).toBe(1);
   });
 
+  it('用户取流插队到排队的后台检测之前（打开预览不被批量检测堵住）', async () => {
+    // 回归：刷新时的批量检测会把播放接口请求排满队列，打开新预览的取流请求排在最后。
+    // 取流必须优先于排队中的检测，只等“正在跑的那一个”。
+    const order: number[] = [];
+    let releaseFirst!: () => void;
+    const a = new BilibiliAdapter(async (url) => {
+      const u = String(url);
+      if (u.includes('getRoomPlayInfo')) {
+        order.push(Number(/room_id=(\d+)/.exec(u)?.[1] ?? 0));
+        if (order.length === 1) await new Promise<void>((r) => (releaseFirst = r));
+      }
+      return new Response(JSON.stringify(livePayload()), { status: 200 }) as unknown as Response;
+    });
+
+    const bg1 = a.checkLiveStatus('https://live.bilibili.com/100');
+    const bg2 = a.checkLiveStatus('https://live.bilibili.com/200');
+    const preview = a.getStreamUrl('https://live.bilibili.com/999', 'original');
+
+    releaseFirst();
+    const [, , stream] = await Promise.all([bg1, bg2, preview]);
+    expect(stream.url).toContain('live-bvc');
+    expect(order).toEqual([100, 999, 200]);
+  });
+
   it('maps non-zero api code to PLATFORM_CHANGED', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => ({ code: -404, data: null })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
