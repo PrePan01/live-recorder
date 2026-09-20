@@ -1918,6 +1918,14 @@ export class RecorderManager {
           { recordingId: rec.id, roomId: rec.roomId, retryable: false },
         ),
       );
+      // 转封装失败并不等于录制失败，过去它只显示在告警中心，用户很容易错过。
+      // 复用“录制失败”通知偏好，避免额外增加一项默认关闭的通知开关。
+      const room = this.services.rooms.get(rec.roomId);
+      if (room) {
+        await this.notifier.notify("recording_remux_failed", room.id, {
+          title: room.displayName,
+        });
+      }
       return null;
     } finally {
       this.remuxJobs.delete(rec.id);

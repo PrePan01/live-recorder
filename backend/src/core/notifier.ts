@@ -4,7 +4,7 @@ import type { Clock } from './clock.js';
 import type { AlertRepository } from '../db/repositories/alert.repo.js';
 import { AppEventBus } from './events.js';
 
-export type NotifyEvent = 'live_started' | 'recording_started' | 'recording_ended' | 'recording_failed' | 'disk_space_low' | 'upload_failed';
+export type NotifyEvent = 'live_started' | 'recording_started' | 'recording_ended' | 'recording_failed' | 'recording_remux_failed' | 'disk_space_low' | 'upload_failed';
 type PreferenceKey = 'liveStarted' | 'recordingStarted' | 'recordingEnded' | 'recordingFailed' | 'diskSpaceLow' | 'uploadFailed';
 
 const SUBJECTS: Record<NotifyEvent, string> = {
@@ -12,12 +12,13 @@ const SUBJECTS: Record<NotifyEvent, string> = {
   recording_started: '[直播录制助手] 录制已开始：{title}',
   recording_ended: '[直播录制助手] 录制已结束：{title}',
   recording_failed: '[直播录制助手] 录制失败：{title}',
+  recording_remux_failed: '[直播录制助手] 转 MP4 失败，已保留源 FLV：{title}',
   disk_space_low: '[直播录制助手] 磁盘空间不足，请及时清理',
   upload_failed: '[直播录制助手] 上传失败：{title}',
 };
 const PREFERENCE_KEY: Record<NotifyEvent, PreferenceKey> = {
   live_started: 'liveStarted', recording_started: 'recordingStarted', recording_ended: 'recordingEnded',
-  recording_failed: 'recordingFailed', disk_space_low: 'diskSpaceLow', upload_failed: 'uploadFailed',
+  recording_failed: 'recordingFailed', recording_remux_failed: 'recordingFailed', disk_space_low: 'diskSpaceLow', upload_failed: 'uploadFailed',
 };
 
 /** 邮件通知：开播、录制失败和磁盘空间不足；同房间同类事件 30 分钟窗口去重；SMTP 失败只告警不影响录制。 */
