@@ -232,8 +232,10 @@ export class Scheduler {
       this.services.rooms.setTitleInfo(room.id, { titleSource: status.titleSource, titleFallbackUsed: status.titleFallbackUsed ?? false });
     }
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
+    const checkedAt = this.services.clock.iso();
+    const isOpening = status.status === 'live' && room.lastLiveStatus !== 'live';
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
-      this.services.rooms.setLiveStatus(room.id, status.status);
+      this.services.rooms.setLiveStatus(room.id, status.status, isOpening ? checkedAt : undefined);
       this.services.rooms.setCurrentStreamTitle(
         room.id,
         status.status === 'live' ? status.streamTitle ?? null : null,
@@ -282,10 +284,10 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
+      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 false），
       // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
       // true 时检测即自动开始。
-      const globalAuto = this.services.settings.load()?.autoRecord ?? true;
+      const globalAuto = this.services.settings.load()?.autoRecord ?? false;
       const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
       if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -296,7 +298,12 @@ export class Scheduler {
         return;
       }
       try {
-        const started = await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
+        const started = await this.manager.maybeStartRecording(
+          { ...refreshedRoom, monitorState: 'checking' },
+          status,
+          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
+        );
         if (shouldNotifyLiveStarted) {
           await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName, autoRecordingStarted: started });
         }
@@ -439,7 +446,7 @@ export class Scheduler {
     await this.checking.get(roomId);
     const room = this.services.rooms.get(roomId);
     if (!room || this.manager.isRoomActive(roomId)) return;
-    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? true)) return;
+    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? false)) return;
     await this.checkRoom(room, { manual: true });
   }
 

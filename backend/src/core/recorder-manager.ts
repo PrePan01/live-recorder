@@ -900,11 +900,11 @@ export class RecorderManager {
     }
   }
 
-  /** 调度器发现直播后调用：并发上限、去重、磁盘保护，然后启动录制。manual=手动触发，跳过同场去重以便停止后重录。 */
+  /** 调度器发现直播后调用：并发上限、本次开播周期去重、磁盘保护，然后启动录制。manual=手动触发，可在本次直播中显式重录。 */
   async maybeStartRecording(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean } = {},
+    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
   ): Promise<boolean> {
     if (this.services.resetting) return false;
     if (this.active.has(room.id) || this.starting.has(room.id)) return false;
@@ -939,17 +939,17 @@ export class RecorderManager {
   private async maybeStartRecordingInternal(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean } = {},
+    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
   ): Promise<boolean> {
     await this.disableHighlightBuffer(room.id);
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
     if (
       !opts.manual &&
-      sessionId &&
-      this.services.recordings.hasSession(room.id, sessionId)
+      opts.liveStartedAt &&
+      this.services.recordings.hasRecordingSince(room.id, opts.liveStartedAt)
     ) {
-      // 同一场直播已录制过，保持去重但不能遗留“检测中”，否则 UI 会误判预览状态。
+      // 本次开播已录制过（例如用户手动停止），保持去重但不能遗留“检测中”。
       this.services.rooms.setState(room.id, "idle", {
         lastCheckedAt: this.services.clock.iso(),
         lastError: null,
@@ -2015,7 +2015,7 @@ function defaultsLite(): AppSettings {
     maxConcurrentRecordings: 2,
     quality: "original",
     recordingFormat: "source_flv",
-    autoRecord: true,
+    autoRecord: false,
     checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },

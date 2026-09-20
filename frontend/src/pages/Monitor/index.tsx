@@ -947,7 +947,7 @@ export default function Monitor() {
                   onStop={onStopRoom}
                   recentlyStopped={recentStop[room.id] !== undefined}
                   autoRecordEnabled={
-                    room.autoRecord ?? settings?.autoRecord ?? true
+                    room.autoRecord ?? settings?.autoRecord ?? false
                   }
                   insight={insights[room.id]}
                   qualityPreference={settings?.quality ?? null}

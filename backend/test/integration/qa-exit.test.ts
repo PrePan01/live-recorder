@@ -148,6 +148,7 @@ describe('QA stage-B exit: security', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -183,6 +184,7 @@ describe('记录中删除直播间', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -225,6 +227,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -291,6 +294,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },

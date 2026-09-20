@@ -34,6 +34,9 @@ function baseSettings(dir = ''): AppSettings {
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',
+    // Tests that use this helper exercise recording paths explicitly; the
+    // product's first-use default is covered in config.test instead.
+    autoRecord: true,
     checkIntervalSec: { default: 60, bilibili: 30, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -453,6 +456,48 @@ describe('Scheduler', () => {
     services.scheduler.stop();
   });
 
+  it('starts each offline-to-live cycle even when the platform reuses a stream session id, but not after a manual stop within that cycle', async () => {
+    const { services, clock } = newServices();
+    // RecordingRepository timestamps rows with wall-clock time; align the fake
+    // scheduler clock so the persisted opening boundary is comparable.
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-live-cycle-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/26', displayName: 'cycle' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'reused-id' },
+      { status: 'live', streamSessionId: 'reused-id' },
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'reused-id' },
+    ]);
+
+    await services.scheduler.checkRoom(room);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]?.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    for (let i = 0; i < 10 && services.manager.isRoomActive(room.id); i += 1) {
+      await settle(clock, 500);
+    }
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+
+    // 用户本次直播手动停录后，后续 live 检测不能重新自动启动。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+
+    // 检测到下播，再次开播即进入新的周期；即使平台 session id 未变也必须开始录制。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    clock.advance(60_000);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    await services.manager.stopRecording(room.id);
+    await settle(clock, 200);
+  });
+
   it('room autoRecord=false blocks even manual /check from auto-starting (PrePan)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-roomoff-'));
@@ -504,6 +549,7 @@ describe('Scheduler', () => {
 
   it('does not throw when a live room fails to start (getStreamUrl error) and records failed state', async () => {
     const { services } = newServices();
+    services.settings.save(baseSettings());
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/5', displayName: 'E' });
     const throwing: PlatformAdapter = {
       platform: 'bilibili',

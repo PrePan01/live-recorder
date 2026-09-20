@@ -19,6 +19,7 @@ function baseSettings(dir: string): AppSettings {
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',
+    autoRecord: true,
     checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },
@@ -296,7 +297,7 @@ describe('RecorderManager', () => {
     await Promise.all(rooms.map((room) => services.manager.stopRecording(room.id)));
   });
 
-  it('dedupes by streamSessionId', async () => {
+  it('dedupes an already-active recording without relying on streamSessionId', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6d-'));
     const services = buildServices({ dbPath: ':memory:', clock });
@@ -604,9 +605,10 @@ describe('RecorderManager', () => {
     const services = buildServices({ dbPath: ':memory:', clock });
     services.settings.save(baseSettings(dir));
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/19', displayName: 'M' });
+    const liveStartedAt = clock.iso();
 
     // 第一次录制同一场（session s1），随后手动停止 → completed
-    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' }, { liveStartedAt });
     const first = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(first.id)!.state === 'recording');
     await services.manager.stopRecording(room.id);
@@ -617,7 +619,7 @@ describe('RecorderManager', () => {
     expect(services.manager.isRoomActive(room.id)).toBe(false);
 
     // 自动轮询（非手动）应被同场去重，不再重复录制
-    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' });
+    await services.manager.maybeStartRecording(room, { streamSessionId: 's1' }, { liveStartedAt });
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
 
     // 手动再次检测应跳过去重、重新录制同一场
@@ -819,13 +821,14 @@ describe('RecorderManager', () => {
     services.manager.preview = new FakePreview();
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/30', displayName: 'Dedupe' });
+    const liveStartedAt = clock.iso();
 
     // 网络中断收尾：有数据、标 interrupted。
     const interrupted = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'same-session', streamTitle: 'T' });
     services.recordings.update(interrupted.id, { state: 'completed', endReason: 'interrupted' });
 
     // 主播还在播：同一场必须还能再录，否则网络恢复后剩下的直播永远不会被录。
-    await services.manager.maybeStartRecording(room, { streamSessionId: 'same-session' });
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'same-session' }, { liveStartedAt });
     await waitForWithClock(clock, () => services.recordings.list({ roomId: room.id }).items.length === 2);
     await services.manager.stopRecording(room.id);
     await waitForWithClock(clock, () => !services.manager.isRoomActive(room.id));
@@ -834,7 +837,7 @@ describe('RecorderManager', () => {
     const restarted = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'restart-session', streamTitle: 'T' });
     services.recordings.update(restarted.id, { state: 'completed', endReason: 'service_restart' });
     const beforeRestart = services.recordings.list({ roomId: room.id }).items.length;
-    await services.manager.maybeStartRecording(room, { streamSessionId: 'restart-session' });
+    await services.manager.maybeStartRecording(room, { streamSessionId: 'restart-session' }, { liveStartedAt });
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(beforeRestart);
     expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
