@@ -232,8 +232,10 @@ export class Scheduler {
       this.services.rooms.setTitleInfo(room.id, { titleSource: status.titleSource, titleFallbackUsed: status.titleFallbackUsed ?? false });
     }
     // #78：记录最近一次检测的直播状态（live/offline/restricted），供监控开播标识。
+    const checkedAt = this.services.clock.iso();
+    const isOpening = status.status === 'live' && room.lastLiveStatus !== 'live';
     if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
-      this.services.rooms.setLiveStatus(room.id, status.status);
+      this.services.rooms.setLiveStatus(room.id, status.status, isOpening ? checkedAt : undefined);
       this.services.rooms.setCurrentStreamTitle(
         room.id,
         status.status === 'live' ? status.streamTitle ?? null : null,
@@ -282,10 +284,10 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 true），
+      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 false），
       // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
       // true 时检测即自动开始。
-      const globalAuto = this.services.settings.load()?.autoRecord ?? true;
+      const globalAuto = this.services.settings.load()?.autoRecord ?? false;
       const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
       if (!effectiveAuto) {
         this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
@@ -296,7 +298,12 @@ export class Scheduler {
         return;
       }
       try {
-        const started = await this.manager.maybeStartRecording({ ...checkedRoom, monitorState: 'checking' }, status, opts);
+        const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
+        const started = await this.manager.maybeStartRecording(
+          { ...refreshedRoom, monitorState: 'checking' },
+          status,
+          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
+        );
         if (shouldNotifyLiveStarted) {
           await this.services.notifier.notify('live_started', room.id, { title: checkedRoom.displayName, autoRecordingStarted: started });
         }
@@ -309,13 +316,11 @@ export class Scheduler {
       return;
     }
     if (status.status === 'offline') {
-      // 下播主动停录：若该房间仍在录制，等待记录完整收口并保留 completed；
-      // 只有原本未录制的房间才回到 idle。
-      const wasRecording = this.manager.isRoomActive(room.id);
-      if (wasRecording) {
-        await this.manager.stopRecording(room.id);
-      }
-      this.services.rooms.setState(room.id, wasRecording ? 'completed' : 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
+      // 正在录制的房间不在这里停录：交回录制器自己的存活判定——流真的断了会走续录或收尾，
+      // 并落上真正的结束原因。否则「打开应用时的一次检测」就可能把正在进行的录制掐掉，
+      // 而且这种系统停录会被记成用户手动停止，事后完全分不出来。
+      if (this.manager.isRoomActive(room.id)) return;
+      this.services.rooms.setState(room.id, 'idle', { lastCheckedAt: this.services.clock.iso(), lastError: null });
       this.emitRoom(room.id);
       return;
     }
@@ -441,7 +446,7 @@ export class Scheduler {
     await this.checking.get(roomId);
     const room = this.services.rooms.get(roomId);
     if (!room || this.manager.isRoomActive(roomId)) return;
-    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? true)) return;
+    if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? false)) return;
     await this.checkRoom(room, { manual: true });
   }
 

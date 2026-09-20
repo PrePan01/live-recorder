@@ -26,7 +26,8 @@ export const DEFAULT_SETTINGS = {
   maxConcurrentRecordings: 2,
   quality: 'original' as const,
   recordingFormat: 'source_flv' as const,
-  autoRecord: true as const,
+  // 首次使用默认仅检测，不在用户明确授权前自动写入录制文件。
+  autoRecord: false as const,
   checkIntervalSec: DEFAULT_CHECK_INTERVAL,
   retry: DEFAULT_RETRY,
   diskGuard: DEFAULT_DISK_GUARD,

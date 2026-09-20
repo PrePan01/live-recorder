@@ -42,6 +42,10 @@ import { recordingFileUrl } from "../../api/client";
 import { formatBytes, formatDuration, formatTime } from "../../utils/format";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
+import {
+  describeEndReason,
+  isInterruptedEnd,
+} from "../../utils/recordingEndReason";
 import PipelineTimeline from "../../components/PipelineTimeline";
 import UploadStatus from "../../components/UploadStatus";
 import { createExport, cancelExport, fetchExports } from "../../api/export";
@@ -421,7 +425,21 @@ export default function History() {
         title: "状态",
         dataIndex: "state",
         width: 95,
-        render: (s) => <RecordingStateTag state={s} />,
+        render: (s, r) => {
+          const reason = describeEndReason(r.endReason);
+          if (!reason) return <RecordingStateTag state={s} />;
+          return (
+            <Space direction="vertical" size={0}>
+              <RecordingStateTag state={s} />
+              <Typography.Text
+                type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
+                style={{ fontSize: 12 }}
+              >
+                {reason}
+              </Typography.Text>
+            </Space>
+          );
+        },
       },
       {
         title: "大小",
@@ -561,13 +579,20 @@ export default function History() {
         dataIndex: "failureReason",
         width: 180,
         render: (f: Recording["failureReason"], r: Recording) => {
-          const missingSeconds = r.missingMs && r.missingMs >= 1000 ? Math.round(r.missingMs / 1000) : 0;
+          const missingSeconds =
+            r.missingMs && r.missingMs >= 1000
+              ? Math.round(r.missingMs / 1000)
+              : 0;
           if (!f && missingSeconds === 0) return "-";
           return (
             <Space direction="vertical" size={0}>
-              {f ? <Typography.Text type="danger">{f.message}</Typography.Text> : null}
+              {f ? (
+                <Typography.Text type="danger">{f.message}</Typography.Text>
+              ) : null}
               {missingSeconds > 0 ? (
-                <Typography.Text type="warning">中途缺失 {missingSeconds} 秒</Typography.Text>
+                <Typography.Text type="warning">
+                  中途缺失 {missingSeconds} 秒
+                </Typography.Text>
               ) : null}
             </Space>
           );

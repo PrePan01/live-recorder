@@ -18,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(34);
+    expect(runMigrations(db)).toBe(35);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(34);
+    expect(currentSchemaVersion(db)).toBe(35);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -48,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(32);
+    expect(runMigrations(db)).toBe(33);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(34);
+    expect(currentSchemaVersion(db)).toBe(35);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +82,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16 及之后未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(19);
+    expect(runMigrations(db)).toBe(20);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -96,7 +96,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(34);
+    expect(currentSchemaVersion(db)).toBe(35);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -118,7 +118,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(16);
+    expect(runMigrations(db)).toBe(17);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -130,7 +130,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(34);
+    expect(currentSchemaVersion(db)).toBe(35);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -228,6 +228,19 @@ describe('migrations', () => {
     expect(alerts.get(prefixed.id)!.message).toBe('平台访问受限，请检查B站授权');
     expect(alerts.get(prefixed.id)!.errorCode).toBe('PLATFORM_ACCESS_RESTRICTED');
     expect(alerts.get(plain.id)!.message).toBe('SMTP 通知发送失败（live_started）');
+    db.close();
+  });
+});
+
+describe('SettingsRepository compatibility', () => {
+  it('keeps the historical enabled default for an existing settings record without autoRecord', () => {
+    const db = freshDb();
+    const settings = new SettingsRepository(db);
+    const legacy = { ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/recordings' } as Record<string, unknown>;
+    delete legacy.autoRecord;
+    settings.setRaw('settings', JSON.stringify(legacy));
+
+    expect(settings.load()?.autoRecord).toBe(true);
     db.close();
   });
 });

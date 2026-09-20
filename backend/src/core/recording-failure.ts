@@ -17,7 +17,7 @@ const FAILURE_TEXT: Partial<Record<ErrorCode, string>> = {
   RECORDING_REMUX_FAILED: '转为 MP4 失败，已保留原始录像文件',
   HIGHLIGHT_EXPORT_FAILED: '精彩时刻导出失败，请重试',
   RECORDING_DIRECTORY_INVALID: '保存目录无效，录制失败',
-  DISK_SPACE_INSUFFICIENT: '磁盘空间不足，无法开始录制',
+  DISK_SPACE_INSUFFICIENT: '磁盘空间不足，请及时清理',
   CONCURRENT_LIMIT_REACHED: '录制达到最大并发数量，请在设置内增加最大并发',
 };
 

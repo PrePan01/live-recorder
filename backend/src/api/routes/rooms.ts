@@ -226,7 +226,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       patch.uploadEnabled = body.uploadEnabled;
     }
     const previous = services.rooms.get(id);
-    const globalAuto = services.settings.load()?.autoRecord ?? true;
+    const globalAuto = services.settings.load()?.autoRecord ?? false;
     const room = services.rooms.update(id, patch);
     services.events.emit({ type: 'room:updated', data: enrich(room) });
     if (patch.autoRecord !== undefined && previous &&

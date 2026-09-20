@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Input, Modal, Space } from "antd";
+import { App, Button, Input, Modal, Space, Typography } from "antd";
 import { useRecordingStore } from "../stores/recordingStore";
 import { useRoomStore } from "../stores/roomStore";
 import { confirmRecordingKeep } from "../api/recordings";
+import {
+  describeEndReason,
+  isInterruptedEnd,
+} from "../utils/recordingEndReason";
 
 export default function RecordingCompleteNotice() {
   const { notification, message } = App.useApp();
@@ -53,6 +57,8 @@ export default function RecordingCompleteNotice() {
   const confirmName = pendingConfirm
     ? (roomName[pendingConfirm.roomId] ?? pendingConfirm.roomId)
     : "";
+  const endReasonText = describeEndReason(pendingConfirm?.endReason);
+  const interruptedEnd = isInterruptedEnd(pendingConfirm?.endReason);
   const doKeep = async (keep: boolean) => {
     if (!pendingConfirm) return;
     setConfirming(true);
@@ -78,10 +84,20 @@ export default function RecordingCompleteNotice() {
       onCancel={() => clearPendingConfirm()}
     >
       <p>
-        录制已完成，是否保留此片段？
+        {interruptedEnd
+          ? "录制已中断，是否保留已录到的部分？"
+          : "录制已完成，是否保留此片段？"}
         <br />
         <span style={{ fontWeight: 600 }}>{confirmName}</span>
       </p>
+      {/* 中断结束不能只显示"录制完成"：要让用户知道这次是为什么停的。 */}
+      {endReasonText ? (
+        <p style={{ marginTop: 0, marginBottom: 12 }}>
+          <Typography.Text type={interruptedEnd ? "warning" : "secondary"}>
+            结束原因：{endReasonText}
+          </Typography.Text>
+        </p>
+      ) : null}
       <Input
         size="small"
         value={fileName}

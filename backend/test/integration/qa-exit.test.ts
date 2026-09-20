@@ -148,6 +148,7 @@ describe('QA stage-B exit: security', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -183,6 +184,7 @@ describe('记录中删除直播间', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -225,6 +227,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -235,6 +238,8 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
 
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 'sess_qa1', streamTitle: 'QA 冒烟' },
+      // 下播确认要连续两次 offline（第一条 live 已被第一轮检测消耗）。
+      { status: 'offline' },
       { status: 'offline' },
     ]);
 
@@ -277,7 +282,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     await app.close();
   });
 
-  it('disk space low blocks new recording with DISK_SPACE_INSUFFICIENT and alert', async () => {
+  it('disk space low warns but no longer blocks the new recording', async () => {
     const clock = new FakeClock();
     const services = buildServices({ dbPath: ':memory:', clock });
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-guard-'));
@@ -289,6 +294,7 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
       payload: {
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
+        autoRecord: true,
         checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
         retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
         diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },
@@ -303,11 +309,11 @@ describe('QA stage-B exit: fake full-stack happy path', () => {
     const roomId = created.json().room.id;
 
     await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
-    const room = services.rooms.get(roomId)!;
-    expect(room.monitorState).toBe('idle');
-    expect(room.lastError?.code).toBe('DISK_SPACE_INSUFFICIENT');
-    expect(services.recordings.list({ roomId }).items).toHaveLength(0);
+    // 空间不足只提醒、不拦下录制：房间照常开录（能不能录交给实际写入决定），告警照旧。
+    expect(services.manager.isRoomActive(roomId)).toBe(true);
+    expect(services.recordings.list({ roomId }).items).toHaveLength(1);
     expect(services.alerts.list().some((a) => a.errorCode === 'DISK_SPACE_INSUFFICIENT')).toBe(true);
+    await services.manager.stopRecording(roomId);
     await app.close();
   });
 });

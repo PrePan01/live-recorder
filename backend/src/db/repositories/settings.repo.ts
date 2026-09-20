@@ -20,8 +20,14 @@ export class SettingsRepository {
     const raw = this.getRaw('settings');
     if (!raw) return null;
     try {
-      const parsed = JSON.parse(raw) as AppSettings & { mail?: MailConfig & { password?: string } };
+      const parsed = JSON.parse(raw) as AppSettings & {
+        autoRecord?: boolean;
+        mail?: MailConfig & { password?: string };
+      };
       if (parsed.mail) delete (parsed.mail as { password?: string }).password;
+      // v4 之前已保存的设置没有 autoRecord 字段，历史行为是自动录制默认开启。
+      // 新的首次使用默认关闭只适用于完全没有 settings 记录的用户，不能倒改旧用户。
+      if (parsed.autoRecord === undefined) parsed.autoRecord = true;
       return parsed;
     } catch {
       return null;

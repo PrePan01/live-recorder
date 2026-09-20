@@ -423,7 +423,7 @@ export default function SettingsPage() {
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
         recordingFormat: settings.recordingFormat ?? "source_flv",
-        autoRecord: settings.autoRecord ?? true,
+        autoRecord: settings.autoRecord ?? false,
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
         highlightEnabled: settings.highlightEnabled ?? true,
