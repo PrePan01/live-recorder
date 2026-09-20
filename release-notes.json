@@ -1,6 +1,11 @@
 {
   "releases": [
     {
+      "version": "0.5.150",
+      "publishedAt": "2026-09-20",
+      "notes": ["部分已知问题修复"]
+    },
+    {
       "version": "0.5.149",
       "publishedAt": "2026-09-19",
       "notes": [
