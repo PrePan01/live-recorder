@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   App,
   Alert,
@@ -58,6 +59,8 @@ const PLATFORM_LABEL: Record<Room["platform"], string> = {
 
 export default function Rooms() {
   const { message, modal } = App.useApp();
+  const { search } = useLocation();
+  const navigate = useNavigate();
   const {
     rooms,
     loading,
@@ -335,6 +338,16 @@ export default function Rooms() {
     setTagIds([]);
     setModalOpen(true);
   };
+
+  useEffect(() => {
+    if (new URLSearchParams(search).get("add") !== "1") return;
+    setEditing(null);
+    form.resetFields();
+    form.setFieldValue("liveNotificationEnabled", false);
+    setTagIds([]);
+    setModalOpen(true);
+    navigate("/rooms", { replace: true });
+  }, [form, navigate, search]);
 
   const openEdit = (room: Room) => {
     setEditing(room);

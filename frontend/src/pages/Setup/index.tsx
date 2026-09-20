@@ -11,6 +11,7 @@ import {
   Switch,
   Typography,
 } from "antd";
+import { PlusOutlined, RocketOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { validateDirectory, updateSettings } from "../../api/settings";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -21,6 +22,7 @@ import DirectoryPicker from "../../components/DirectoryPicker";
 import PlatformAuthorizationList, {
   type PlatformAuthorizationStatuses,
 } from "../../components/PlatformAuthorizationList";
+import { playSetupCelebration } from "../../components/SetupCelebration";
 import type { Quality } from "../../types/settings";
 
 const qualityOptions = [
@@ -95,7 +97,7 @@ export default function Setup() {
     }
   };
 
-  const finish = async () => {
+  const finish = async (destination = "/monitor") => {
     setSaving(true);
     try {
       await updateSettings({
@@ -106,7 +108,8 @@ export default function Setup() {
       });
       await useServiceStore.getState().fetchStatus();
       message.success("设置已保存");
-      navigate("/monitor", { replace: true });
+      playSetupCelebration();
+      navigate(destination, { replace: true });
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
@@ -227,7 +230,7 @@ export default function Setup() {
           </Space>
         )}
         {step === 3 && (
-          <Space orientation="vertical">
+          <Space orientation="vertical" style={{ width: "100%" }}>
             <Typography.Text>配置确认：</Typography.Text>
             <Typography.Paragraph>
               保存目录：<Typography.Text code>{dir}</Typography.Text>
@@ -249,6 +252,27 @@ export default function Setup() {
                 ? "已登录"
                 : "未登录"}
             </Typography.Paragraph>
+            <div className="lr-setup-first-room">
+              <div className="lr-setup-first-room__copy">
+                <RocketOutlined />
+                <div>
+                  <Typography.Text strong>
+                    准备好录制第一场直播了吗？
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    点击右侧快速添加第一个直播间
+                  </Typography.Text>
+                </div>
+              </div>
+              <Button
+                className="lr-setup-first-room__action"
+                icon={<PlusOutlined />}
+                loading={saving}
+                onClick={() => void finish("/rooms?add=1")}
+              >
+                添加第一个直播间
+              </Button>
+            </div>
           </Space>
         )}
         <div className="lr-setup-actions">
