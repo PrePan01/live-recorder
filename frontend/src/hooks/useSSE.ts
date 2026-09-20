@@ -29,6 +29,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, notification: payload as { title: string; body: string } };
     case 'recording:updated':
       return { type, recording: payload as unknown as Recording };
+    case 'recording:deleted':
+      return { type, recordingId: (payload as { id: string }).id };
     case 'alert:created':
     case 'alert:updated':
       return { type, alert: payload as unknown as Alert };

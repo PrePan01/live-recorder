@@ -15,6 +15,10 @@ function qnToQuality(qn: number): Quality {
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
+const PLATFORM_REQUEST_ATTEMPTS = 2;
+
+/** 播放接口车道：interactive = 用户主动取流（预览/录制），优先于 background = 后台检测。 */
+type PlayLane = 'interactive' | 'background';
 
 interface BiliUrlInfo {
   host?: string;
@@ -71,7 +75,7 @@ function isNetworkError(err: unknown): boolean {
  */
 function biliHttpError(status: number): AppError {
   if (status === 404 || status === 405 || status === 410 || status === 501) {
-    return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', { details: { httpStatus: status } });
+    return new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', { details: { httpStatus: status } });
   }
   return new AppError('NETWORK_UNAVAILABLE', 'B站接口暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: status } });
 }
@@ -86,6 +90,19 @@ function platformStartedAt(liveTime: number | undefined): string | undefined {
 
 export class BilibiliAdapter implements PlatformAdapter {
   readonly platform = 'bilibili' as const;
+  /**
+   * 轮询、手动检测与录制恢复共用 getRoomPlayInfo；统一排队，避免多个
+   * 录制收尾和调度批次同时携带同一 Cookie 撞向播放接口。
+   *
+   * 但不能只是普通 FIFO：用户主动的取流（打开预览 / 开始录制）会被“刷新全部房间”
+   * 这类批量检测长时间排在后面。因此分两条车道，interactive 永远优先于 background，
+   * 同一时刻仍只跑一个请求。
+   */
+  private playBusy = false;
+  private playLanes: Record<PlayLane, Array<() => void>> = {
+    interactive: [],
+    background: [],
+  };
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -106,7 +123,27 @@ export class BilibiliAdapter implements PlatformAdapter {
     return m ? Number(m[1]) : null;
   }
 
-  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number): Promise<BiliPlayResponse> {
+  /**
+   * 同一条车道内按到达顺序唤醒；interactive 车道永远先于 background，
+   * 保证用户主动取流只排在“正在跑的那一个”请求后面，而不是整批检测后面。
+   */
+  private async runPlayRequest<T>(lane: PlayLane, request: () => Promise<T>): Promise<T> {
+    if (this.playBusy) {
+      // 被唤醒即代表已接管占用（release 直接移交，不在交接间隙放开占用，避免被新请求插队）。
+      await new Promise<void>((resolve) => this.playLanes[lane].push(resolve));
+    } else {
+      this.playBusy = true;
+    }
+    try {
+      return await request();
+    } finally {
+      const next = this.playLanes.interactive.shift() ?? this.playLanes.background.shift();
+      if (next) next();
+      else this.playBusy = false;
+    }
+  }
+
+  private async fetchPlayInfoOnce(roomId: number, cookie?: string, qn?: number, lane: PlayLane = 'background'): Promise<BiliPlayResponse> {
     const params = new URLSearchParams({
       room_id: String(roomId),
       protocol: '0,1',
@@ -116,16 +153,30 @@ export class BilibiliAdapter implements PlatformAdapter {
       platform: 'web',
       ptype: '8',
     });
-    const res = await this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
+    const res = await this.runPlayRequest(lane, () => this.fetcher(`${this.apiBase}/xlive/web-room/v2/index/getRoomPlayInfo?${params}`, {
       signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': UA,
         Referer: `${this.roomBase}/${roomId}`,
         ...(cookie ? { Cookie: cookie } : {}),
       },
-    });
+    }));
     if (!res.ok) throw biliHttpError(res.status);
     return (await res.json()) as BiliPlayResponse;
+  }
+
+  private async fetchPlayInfo(roomId: number, cookie?: string, qn?: number, lane: PlayLane = 'background'): Promise<BiliPlayResponse> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.fetchPlayInfoOnce(roomId, cookie, qn, lane);
+      } catch (err) {
+        lastError = err;
+        const retryable = (err instanceof AppError && err.retryable) || isNetworkError(err);
+        if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
+      }
+    }
+    throw lastError;
   }
 
   /** getRoomPlayInfo 响应已不含主播名/标题；用 get_anchor_in_room 取昵称、get_info 取标题，均免 Cookie 且无风控。 */
@@ -210,16 +261,16 @@ export class BilibiliAdapter implements PlatformAdapter {
     }
     let data: BiliPlayResponse;
     try {
-      data = await this.fetchPlayInfo(roomId, cookie);
+      data = await this.fetchPlayInfo(roomId, cookie, undefined, 'background');
     } catch (err) {
       // 适配器内部已按状态码分好类（含可重试标记），不能在这里被拍平成"接口有变动"。
       if (err instanceof AppError) {
         return { status: err.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: err.toObject() };
       }
-      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {})).toObject() };
+      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
+      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {}).toObject() };
     }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);
@@ -251,14 +302,16 @@ export class BilibiliAdapter implements PlatformAdapter {
     if (!roomId) throw new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {});
     let data: BiliPlayResponse;
     try {
-      data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality]);
+      // 取流是用户主动操作（打开预览 / 开始录制）：走 interactive 车道，
+      // 只排在正在执行的那一个请求之后，不被后台批量检测堵住。
+      data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality], 'interactive');
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     if (data.code !== 0 || !data.data) {
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     const picked = this.pickStream(data, BILI_QN[quality]);
     if (!picked) {

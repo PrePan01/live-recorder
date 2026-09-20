@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -8,8 +8,10 @@ import {
   Select,
   Space,
   Steps,
+  Switch,
   Typography,
 } from "antd";
+import { PlusOutlined, RocketOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { validateDirectory, updateSettings } from "../../api/settings";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -17,6 +19,10 @@ import { useServiceStore } from "../../stores/serviceStore";
 import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import DirectoryPicker from "../../components/DirectoryPicker";
+import PlatformAuthorizationList, {
+  type PlatformAuthorizationStatuses,
+} from "../../components/PlatformAuthorizationList";
+import { playSetupCelebration } from "../../components/SetupCelebration";
 import type { Quality } from "../../types/settings";
 
 const qualityOptions = [
@@ -52,7 +58,16 @@ export default function Setup() {
   const [quality, setQuality] = useState<Quality>(
     settings?.quality ?? "original",
   );
+  const [autoRecord, setAutoRecord] = useState(settings?.autoRecord ?? false);
   const [saving, setSaving] = useState(false);
+  const [authorizationStatuses, setAuthorizationStatuses] =
+    useState<PlatformAuthorizationStatuses>({});
+
+  const handleAuthorizationStatuses = useCallback(
+    (statuses: PlatformAuthorizationStatuses) =>
+      setAuthorizationStatuses(statuses),
+    [],
+  );
 
   useEffect(() => {
     if (!settings) void load();
@@ -82,17 +97,19 @@ export default function Setup() {
     }
   };
 
-  const finish = async () => {
+  const finish = async (destination = "/monitor") => {
     setSaving(true);
     try {
       await updateSettings({
         recordingDirectory: dir.trim(),
         maxConcurrentRecordings: concurrency,
         quality,
+        autoRecord,
       });
       await useServiceStore.getState().fetchStatus();
       message.success("设置已保存");
-      navigate("/monitor", { replace: true });
+      playSetupCelebration();
+      navigate(destination, { replace: true });
     } catch (e) {
       message.error(
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
@@ -116,8 +133,8 @@ export default function Setup() {
           current={step}
           items={[
             { title: "保存目录" },
-            { title: "并发数" },
-            { title: "录制清晰度" },
+            { title: "录制设置" },
+            { title: "平台授权" },
             { title: "完成" },
           ]}
           style={{ marginBottom: 32 }}
@@ -162,19 +179,20 @@ export default function Setup() {
           </Space>
         )}
         {step === 1 && (
-          <Space orientation="vertical">
-            <Typography.Text>最大并发录制数（默认 2）：</Typography.Text>
+          <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+            <Typography.Text style={{ fontWeight: "bold" }}>
+              最大同时录制的直播间数量：
+            </Typography.Text>
             <InputNumber
               min={1}
               max={8}
               value={concurrency}
               onChange={(v) => setConcurrency(v ?? 2)}
             />
-          </Space>
-        )}
-        {step === 2 && (
-          <Space orientation="vertical" style={{ width: "100%" }}>
-            <Typography.Text>选择默认录制清晰度：</Typography.Text>
+            <hr />
+            <Typography.Text style={{ fontWeight: "bold" }}>
+              默认录制清晰度：
+            </Typography.Text>
             <Select<Quality>
               aria-label="录制清晰度"
               value={quality}
@@ -183,12 +201,36 @@ export default function Setup() {
               style={{ width: "100%", maxWidth: 320 }}
             />
             <Typography.Text type="secondary">
-              默认原画，可在设置中修改。若直播间未提供所选画质，将按实际可用画质录制（历史中会标注）。
+              默认原画，可在设置中修改。若直播间未提供所选画质，将按实际可用画质录制。
             </Typography.Text>
+            <hr />
+            <Typography.Text style={{ fontWeight: "bold" }}>
+              检测到开播自动录制
+            </Typography.Text>
+            <Switch
+              aria-label="检测到开播自动录制"
+              checked={autoRecord}
+              onChange={setAutoRecord}
+            />
+          </Space>
+        )}
+        {step === 2 && (
+          <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+            <Typography.Text>
+              登录平台账号即可开启对应的观看与录制能力，也可以稍后在设置中完成。
+            </Typography.Text>
+            <Typography.Text type="danger">
+              若需要观看、录制抖音直播，请先进行抖音的授权。
+            </Typography.Text>
+            <PlatformAuthorizationList
+              settings={settings}
+              onAuthorized={load}
+              onStatusesChange={handleAuthorizationStatuses}
+            />
           </Space>
         )}
         {step === 3 && (
-          <Space orientation="vertical">
+          <Space orientation="vertical" style={{ width: "100%" }}>
             <Typography.Text>配置确认：</Typography.Text>
             <Typography.Paragraph>
               保存目录：<Typography.Text code>{dir}</Typography.Text>
@@ -197,7 +239,40 @@ export default function Setup() {
               <br />
               清晰度：
               {qualityOptions.find((option) => option.value === quality)?.label}
+              <br />
+              自动录制：{autoRecord ? "开启" : "关闭"}
+              <br />
+              抖音授权：
+              {authorizationStatuses.douyin === "authorized"
+                ? "已登录"
+                : "未登录"}
+              <br />
+              B站授权：
+              {authorizationStatuses.bilibili === "authorized"
+                ? "已登录"
+                : "未登录"}
             </Typography.Paragraph>
+            <div className="lr-setup-first-room">
+              <div className="lr-setup-first-room__copy">
+                <RocketOutlined />
+                <div>
+                  <Typography.Text strong>
+                    准备好录制第一场直播了吗？
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    点击右侧快速添加第一个直播间
+                  </Typography.Text>
+                </div>
+              </div>
+              <Button
+                className="lr-setup-first-room__action"
+                icon={<PlusOutlined />}
+                loading={saving}
+                onClick={() => void finish("/rooms?add=1")}
+              >
+                添加第一个直播间
+              </Button>
+            </div>
           </Space>
         )}
         <div className="lr-setup-actions">
@@ -223,6 +298,8 @@ export default function Setup() {
           )}
         </div>
       </Card>
+      <br />
+      <Typography.Text>以上设置内容可随时在设置中调整</Typography.Text>
     </main>
   );
 }

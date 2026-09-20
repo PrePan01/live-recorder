@@ -78,3 +78,11 @@ body:
       description: "如果还有其他可能帮助定位问题的信息，请在这里补充。"
     validations:
       required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "诊断日志"
+      description: "在设置页底部导出诊断日志，可以帮助问题定位，诊断日志不会包含任何敏感信息，请放心。"
+    validations:
+      required: false

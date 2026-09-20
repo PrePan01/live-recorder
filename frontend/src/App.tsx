@@ -14,6 +14,7 @@ import { recordRecentErrorAction } from "./utils/errorDiagnostics";
 import RecordingCompleteNotice from "./components/RecordingCompleteNotice";
 import OpenList2faModal from "./components/OpenList2faModal";
 import GlobalErrorNotice from "./components/GlobalErrorNotice";
+import SetupCelebration from "./components/SetupCelebration";
 import { LAZY_ROUTE_PATHS, loadRoute } from "./routes/preload";
 
 const Rooms = lazy(() => loadRoute("/rooms"));
@@ -108,6 +109,7 @@ export default function App() {
   return (
     <>
       <GlobalErrorNotice />
+      <SetupCelebration />
       <RecordingCompleteNotice />
       <OpenList2faModal />
       <BootGate>

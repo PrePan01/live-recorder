@@ -18,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(35);
+    expect(runMigrations(db)).toBe(36);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(35);
+    expect(currentSchemaVersion(db)).toBe(36);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -48,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(33);
+    expect(runMigrations(db)).toBe(34);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(35);
+    expect(currentSchemaVersion(db)).toBe(36);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +82,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16 及之后未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(20);
+    expect(runMigrations(db)).toBe(21);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -96,7 +96,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(35);
+    expect(currentSchemaVersion(db)).toBe(36);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -118,7 +118,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(17);
+    expect(runMigrations(db)).toBe(18);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -130,7 +130,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(35);
+    expect(currentSchemaVersion(db)).toBe(36);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -228,6 +228,22 @@ describe('migrations', () => {
     expect(alerts.get(prefixed.id)!.message).toBe('平台访问受限，请检查B站授权');
     expect(alerts.get(prefixed.id)!.errorCode).toBe('PLATFORM_ACCESS_RESTRICTED');
     expect(alerts.get(plain.id)!.message).toBe('SMTP 通知发送失败（live_started）');
+    db.close();
+  });
+});
+
+describe('AlertRepository', () => {
+  it('refreshes a continuing unresolved error instead of adding a row for every polling cycle', () => {
+    const db = freshDb();
+    const alerts = new AlertRepository(db);
+    const first = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+    const refreshed = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:02:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+
+    expect(refreshed.id).toBe(first.id);
+    expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
+    expect(alerts.get(first.id)!.occurredAt).toBe('2026-09-20T00:02:00.000Z');
+    alerts.markResolved(first.id);
+    expect(alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:03:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' }).id).not.toBe(first.id);
     db.close();
   });
 });
@@ -393,5 +409,24 @@ describe('AlertRepository', () => {
     expect(alerts.list({ unresolvedOnly: true })).toHaveLength(0);
     alerts.create({ level: 'info', source: 'recorder', message: '清晰度降级', occurredAt: new Date().toISOString() });
     expect(alerts.markAllResolved()).toBe(1);
+  });
+
+  it('resolves only the given room\u2019s unresolved platform alerts, leaving platform-wide ones intact', () => {
+    // 一次瞬时误报会留下未读告警；检测恢复后应连同该房间的告警一起消解，而平台级告警（无房间）必须保留。
+    const alerts = new AlertRepository(freshDb());
+    const roomAlert = alerts.create({ level: 'error', source: 'platform', message: '平台接口有变动，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_a', errorCode: 'PLATFORM_CHANGED' });
+    const otherRoom = alerts.create({ level: 'error', source: 'platform', message: '平台接口有变动，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_b', errorCode: 'PLATFORM_CHANGED' });
+    const recorderAlert = alerts.create({ level: 'error', source: 'recorder', message: '录制启动失败', occurredAt: '2026-09-20T00:00:00.000Z', roomId: 'room_a', errorCode: 'RECORDING_START_FAILED' });
+    const platformWide = alerts.create({ level: 'warning', source: 'platform', message: '抖音授权已失效，请到设置页重新授权', occurredAt: '2026-09-20T00:00:00.000Z', errorCode: 'DOUYIN_COOKIE_EXPIRED' });
+
+    const resolved = alerts.resolveForRoom('room_a', 'platform');
+
+    expect(resolved.map((a) => a.id)).toEqual([roomAlert.id]);
+    expect(resolved[0]!.resolved).toBe(true);
+    expect(alerts.get(roomAlert.id)!.resolved).toBe(true);
+    expect(alerts.get(otherRoom.id)!.resolved).toBe(false);
+    expect(alerts.get(recorderAlert.id)!.resolved).toBe(false);
+    expect(alerts.get(platformWide.id)!.resolved).toBe(false);
+    expect(alerts.resolveForRoom('room_a', 'platform')).toHaveLength(0);
   });
 });

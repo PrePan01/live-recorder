@@ -24,6 +24,9 @@ interface RecordingRow {
   cover_path: string | null;
   end_reason: string | null;
   missing_ms: number | null;
+  highlight_export_pending: number | null;
+  highlight_confirmation_decision: number | null;
+  highlight_confirmation_file_name: string | null;
   created_at: string;
   upload?: { status: string; progress: number; remotePath: string | null; error: string | null; updatedAt: string };
 }
@@ -73,6 +76,9 @@ export function rowToRecording(row: RecordingRow): Recording {
   if (row.cover_path) rec.coverPath = row.cover_path;
   if (row.end_reason) rec.endReason = row.end_reason as RecordingEndReason;
   if (row.missing_ms !== null) rec.missingMs = row.missing_ms;
+  if (row.highlight_export_pending) rec.highlightExportPending = true;
+  if (row.highlight_confirmation_decision !== null) rec.highlightConfirmationDecision = Boolean(row.highlight_confirmation_decision);
+  if (row.highlight_confirmation_file_name !== null) rec.highlightConfirmationFileName = row.highlight_confirmation_file_name;
   if (row.upload) rec.upload = { ...row.upload, status: row.upload.status as UploadJobStatus };
   return rec;
 }
@@ -267,7 +273,7 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null }>): Recording {
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null; highlightExportPending: boolean; highlightConfirmationDecision: boolean | null; highlightConfirmationFileName: string | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.endReason !== undefined) {
@@ -325,6 +331,18 @@ export class RecordingRepository {
     if (patch.streamTitle !== undefined) {
       sets.push('stream_title = ?');
       params.push(patch.streamTitle);
+    }
+    if (patch.highlightExportPending !== undefined) {
+      sets.push('highlight_export_pending = ?');
+      params.push(patch.highlightExportPending ? 1 : 0);
+    }
+    if (patch.highlightConfirmationDecision !== undefined) {
+      sets.push('highlight_confirmation_decision = ?');
+      params.push(patch.highlightConfirmationDecision === null ? null : patch.highlightConfirmationDecision ? 1 : 0);
+    }
+    if (patch.highlightConfirmationFileName !== undefined) {
+      sets.push('highlight_confirmation_file_name = ?');
+      params.push(patch.highlightConfirmationFileName);
     }
     if (sets.length) {
       this.db.prepare(`UPDATE recordings SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);

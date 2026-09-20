@@ -4,6 +4,7 @@ export type AppEvent =
   | { type: 'room:updated'; data: Room }
   | { type: 'desktop:notification'; data: { title: string; body: string } }
   | { type: 'recording:updated'; data: Recording }
+  | { type: 'recording:deleted'; data: { id: string } }
   | { type: 'alert:created'; data: Alert }
   | { type: 'alert:updated'; data: Alert }
   | { type: 'settings:updated'; data: SettingsView }

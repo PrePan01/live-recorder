@@ -58,6 +58,9 @@ export interface Recording {
   endReason?: RecordingEndReason | null;
   /** 录制中途累计缺失时长（毫秒）：中断恢复后未录到的时间总和。 */
   missingMs?: number | null;
+  highlightExportPending?: boolean;
+  highlightConfirmationDecision?: boolean | null;
+  highlightConfirmationFileName?: string | null;
 }
 
 export interface RecordingQuery {
