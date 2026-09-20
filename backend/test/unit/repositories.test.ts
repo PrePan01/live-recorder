@@ -232,6 +232,22 @@ describe('migrations', () => {
   });
 });
 
+describe('AlertRepository', () => {
+  it('refreshes a continuing unresolved error instead of adding a row for every polling cycle', () => {
+    const db = freshDb();
+    const alerts = new AlertRepository(db);
+    const first = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:00:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+    const refreshed = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:02:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+
+    expect(refreshed.id).toBe(first.id);
+    expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
+    expect(alerts.get(first.id)!.occurredAt).toBe('2026-09-20T00:02:00.000Z');
+    alerts.markResolved(first.id);
+    expect(alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:03:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' }).id).not.toBe(first.id);
+    db.close();
+  });
+});
+
 describe('SettingsRepository compatibility', () => {
   it('keeps the historical enabled default for an existing settings record without autoRecord', () => {
     const db = freshDb();

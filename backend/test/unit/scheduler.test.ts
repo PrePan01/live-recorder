@@ -304,7 +304,7 @@ describe('Scheduler', () => {
     expect(alerts[0]!.message).toBe('平台访问受限，请检查B站授权');
   });
 
-  it('manual triggerImmediateCheck re-records the same broadcast after a manual stop', async () => {
+  it('manual triggerImmediateCheck does not re-record the same broadcast after a manual stop', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-schm-'));
     services.settings.save(baseSettings(dir));
@@ -324,9 +324,8 @@ describe('Scheduler', () => {
     await waitFor(() => services.recordings.get(first.id)!.state === 'completed');
 
     await services.scheduler.triggerImmediateCheck(room.id);
-    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
-    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(2);
-    expect(services.rooms.get(room.id)!.monitorState).toBe('recording');
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    expect(services.manager.isRoomActive(room.id)).toBe(false);
   });
 
   it('does not stop an active recording when a live recheck reports offline (#64 revised)', async () => {

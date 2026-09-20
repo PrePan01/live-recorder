@@ -33,6 +33,7 @@ import {
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
+import { useRoomStore } from "../../stores/roomStore";
 import { useServiceStore } from "../../stores/serviceStore";
 import { useNotificationStore } from "../../stores/notificationStore";
 import { bridge } from "../../stores/bootStore";
@@ -275,6 +276,7 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
+  const rooms = useRoomStore((s) => s.rooms);
   const emailNotificationsEnabled = settings?.mail.enabled ?? false;
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
@@ -1267,7 +1269,7 @@ export default function SettingsPage() {
                     }
                     description={
                       <Typography.Text type="secondary">
-                        {alertSourceText(a.source)} · {formatTime(a.occurredAt)}
+                        {a.roomId ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · ` : ''}{alertSourceText(a.source)} · {formatTime(a.occurredAt)}
                       </Typography.Text>
                     }
                   />

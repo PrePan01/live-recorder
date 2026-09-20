@@ -37,6 +37,22 @@ export class AlertRepository {
     return this.get(id)!;
   }
 
+  /**
+   * 同一未读故障持续存在时只保留一条告警，并刷新发生时间。轮询失败不应
+   * 以房间数 × 检测轮次无限堆叠；一旦标记已读，后续再次失败会新建告警。
+   */
+  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
+    const existing = this.db
+      .prepare(`SELECT * FROM alerts
+        WHERE resolved = 0 AND source = ? AND message = ?
+          AND room_id IS ? AND error_code IS ?
+        ORDER BY occurred_at DESC LIMIT 1`)
+      .get(input.source, input.message, input.roomId ?? null, input.errorCode ?? null) as AlertRow | undefined;
+    if (!existing) return this.create(input);
+    this.db.prepare('UPDATE alerts SET occurred_at = ? WHERE id = ?').run(input.occurredAt, existing.id);
+    return this.get(existing.id)!;
+  }
+
   get(id: string): Alert | null {
     const row = this.db.prepare('SELECT * FROM alerts WHERE id = ?').get(id) as AlertRow | undefined;
     return row ? rowToAlert(row) : null;

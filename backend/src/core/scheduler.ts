@@ -183,6 +183,20 @@ export class Scheduler {
     this.services.events.emit({ type: 'room:updated', data: this.manager.enrichRoom(room) });
   }
 
+  /** 平台整体暂不可用时收敛为一个平台级事件，避免一个轮询批次按房间数刷屏。 */
+  private createCheckAlert(room: Room, error: ErrorObject, level: 'warning' | 'error'): void {
+    const platformWide = room.platform === 'douyin' && error.code === 'NETWORK_UNAVAILABLE';
+    const alert = this.services.alerts.createOrRefresh({
+      level,
+      source: 'platform',
+      message: platformWide ? `抖音：${error.message}` : error.message,
+      occurredAt: this.services.clock.iso(),
+      ...(platformWide ? {} : { roomId: room.id }),
+      errorCode: error.code,
+    });
+    this.services.events.emit({ type: 'alert:created', data: alert });
+  }
+
   /** 检测失败不能掩盖仍由 RecorderManager 持有的活动录制会话。 */
   private setCheckFailure(roomId: string, error: ErrorObject): void {
     if (this.manager.isRoomActive(roomId)) {
@@ -208,8 +222,7 @@ export class Scheduler {
         ? err
         : new AppError('CHECK_FAILED', `检测异常: ${(err as Error).message ?? String(err)}`, { roomId: room.id, retryable: true });
       this.setCheckFailure(room.id, appErr.toObject());
-      const alert = this.services.alerts.create({ level: 'error', source: 'platform', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
-      this.services.events.emit({ type: 'alert:created', data: alert });
+      this.createCheckAlert(room, appErr.toObject(), 'error');
     }
   }
 
@@ -310,7 +323,7 @@ export class Scheduler {
       } catch (err) {
         const appErr = err instanceof AppError ? err : new AppError('RECORDING_START_FAILED', `启动录制失败: ${(err as Error).message}`, { roomId: room.id, retryable: true });
         this.setCheckFailure(room.id, appErr.toObject());
-        const alert = this.services.alerts.create({ level: 'error', source: 'recorder', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
+        const alert = this.services.alerts.createOrRefresh({ level: 'error', source: 'recorder', message: appErr.message, occurredAt: this.services.clock.iso(), roomId: room.id, errorCode: appErr.code });
         this.services.events.emit({ type: 'alert:created', data: alert });
       }
       return;
@@ -338,15 +351,7 @@ export class Scheduler {
       return;
     }
     this.setCheckFailure(room.id, err);
-    const alert = this.services.alerts.create({
-      level: status.status === 'restricted' ? 'warning' : 'error',
-      source: 'platform',
-      message: err.message,
-      occurredAt: this.services.clock.iso(),
-      roomId: room.id,
-      errorCode: err.code,
-    });
-    this.services.events.emit({ type: 'alert:created', data: alert });
+    this.createCheckAlert(room, err, status.status === 'restricted' ? 'warning' : 'error');
   }
 
   private recordCoverage(roomId: string): void {
@@ -447,14 +452,16 @@ export class Scheduler {
     const room = this.services.rooms.get(roomId);
     if (!room || this.manager.isRoomActive(roomId)) return;
     if (!(room.autoRecord ?? this.services.settings.load()?.autoRecord ?? false)) return;
-    await this.checkRoom(room, { manual: true });
+    await this.checkRoom(room);
   }
 
   async triggerImmediateCheck(roomId: string, opts: { nameOnly?: boolean } = {}): Promise<void> {
     const room = this.services.rooms.get(roomId);
     if (!room) return;
     if (room.platform === 'douyin' && this.douyinCookieExpired) return;
-    await this.checkRoom(room, { manual: true, ...opts }).catch(() => undefined);
+    // “检测”只更新直播状态和执行既有自动录制策略；它不是用户明确要求
+    // 同一场直播重新录制。只有 /start-recording 才能携带 manual=true。
+    await this.checkRoom(room, opts).catch(() => undefined);
   }
 }
 

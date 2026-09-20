@@ -14,6 +14,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useServiceStore } from "../stores/serviceStore";
 import { useAppearanceStore } from "../stores/appearanceStore";
 import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
+import { useRoomStore } from "../stores/roomStore";
 import { formatBytes, formatRelative } from "../utils/format";
 import { alertSourceText } from "../utils/alertText";
 import GlobalSearch from "./GlobalSearch";
@@ -25,6 +26,7 @@ export default function StatusBar() {
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
   const sseConnected = useServiceStore((s) => s.sseConnected);
   const alerts = useAlertStore((s) => s.alerts);
+  const rooms = useRoomStore((s) => s.rooms);
   const unread = useAlertStore(selectUnreadCount);
   const fetchAlerts = useAlertStore((s) => s.fetchAlerts);
   const markRead = useAlertStore((s) => s.markRead);
@@ -173,7 +175,7 @@ export default function StatusBar() {
                     title={a.message}
                     description={
                       <span>
-                        {alertSourceText(a.source)} ·{" "}
+                        {a.roomId ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · ` : ''}{alertSourceText(a.source)} ·{" "}
                         {formatRelative(a.occurredAt)}
                       </span>
                     }
