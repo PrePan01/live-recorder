@@ -86,7 +86,7 @@ function classifyStatusError(json: DouyinEnterResponse, hasCookie: boolean): App
   if (credentialLike || !hasCookie) {
     return new AppError('PLATFORM_ACCESS_RESTRICTED', hasCookie ? '平台访问受限，抖音授权可能已失效，请到设置页重新授权' : '平台访问受限，请检查抖音授权', { retryable: false });
   }
-  return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+  return new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
 }
 
 /**
@@ -302,7 +302,7 @@ export class DouyinAdapter implements PlatformAdapter {
         }
         return { status: 'error', error: err.toObject() };
       }
-      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {})).toObject() };
+      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
@@ -318,7 +318,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const entry = arr[0];
     if (!entry) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
+      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {}).toObject() };
     }
     const nickname = entry.user?.nickname?.trim() || (await this.fetchAnchorNickname(roomId)) || '';
     const streamTitle = entry.title;
@@ -370,7 +370,7 @@ export class DouyinAdapter implements PlatformAdapter {
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
@@ -380,7 +380,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     const entry = arr[0];
     if (!entry) {
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     const flv = entry.stream_url?.flv_pull_url;
     if (!flv || Object.keys(flv).length === 0) {

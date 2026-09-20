@@ -12,6 +12,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popover,
   Popconfirm,
   Row,
   Select,
@@ -46,6 +47,10 @@ import {
   importConfig,
 } from "../../api/config";
 import {
+  downloadDiagnostics,
+  exportDiagnosticsToFile,
+} from "../../api/diagnostics";
+import {
   fetchSelfCheck,
   type SelfCheckItem,
   type SelfCheckStatus,
@@ -66,6 +71,7 @@ import { formatBytes, formatTime } from "../../utils/format";
 import { ALERT_LEVEL_META, alertSourceText } from "../../utils/alertText";
 import type { SettingsInput } from "../../types/settings";
 import type { NotificationEventPreference } from "../../types/notification";
+import { recentErrorDiagnostics } from "../../utils/errorDiagnostics";
 import saveCookieTutorial from "../../assets/img/save_cookie.png";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -212,6 +218,8 @@ export default function SettingsPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
+  const [diagnosticsPopoverOpen, setDiagnosticsPopoverOpen] = useState(false);
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -445,6 +453,32 @@ export default function SettingsPage() {
       );
     } finally {
       setExporting(false);
+    }
+  };
+
+  const onExportDiagnostics = async (includeRooms: boolean) => {
+    setDiagnosticsPopoverOpen(false);
+    setExportingDiagnostics(true);
+    try {
+      const frontendDiagnostics = recentErrorDiagnostics();
+      const result = await exportDiagnosticsToFile(
+        frontendDiagnostics,
+        includeRooms,
+      );
+      if (result.saved) {
+        message.success(`诊断日志已导出到 ${result.path}`);
+      } else if (result.reason === "no-dialog") {
+        await downloadDiagnostics(frontendDiagnostics, includeRooms);
+        message.success("诊断日志已下载");
+      }
+    } catch (e) {
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "诊断日志导出失败",
+      );
+    } finally {
+      setExportingDiagnostics(false);
     }
   };
 
@@ -1075,9 +1109,52 @@ export default function SettingsPage() {
           <Typography.Link onClick={() => openExternalUrl(OFFICIAL_SITE_URL)}>
             <GlobalOutlined /> 官网
           </Typography.Link>
-          <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
-            <BugOutlined /> 提交 Issue
-          </Typography.Link>
+          <Space className="lr-settings-support-links" size={4}>
+            <BugOutlined />
+            <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
+              提交 Issue
+            </Typography.Link>
+            <Typography.Text>|</Typography.Text>
+            <Popover
+              open={diagnosticsPopoverOpen}
+              onOpenChange={(open) => {
+                if (!exportingDiagnostics) setDiagnosticsPopoverOpen(open);
+              }}
+              title="是否导出包含直播间信息的日志？"
+              content={
+                <div style={{ width: 240 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: 8,
+                    }}
+                  >
+                    <Button
+                      block
+                      size="small"
+                      type="primary"
+                      onClick={() => void onExportDiagnostics(true)}
+                    >
+                      是
+                    </Button>
+                    <Button
+                      block
+                      size="small"
+                      onClick={() => void onExportDiagnostics(false)}
+                    >
+                      否
+                    </Button>
+                  </div>
+                </div>
+              }
+              trigger="click"
+            >
+              <Typography.Link disabled={exportingDiagnostics}>
+                {exportingDiagnostics ? "正在导出…" : "导出诊断日志"}
+              </Typography.Link>
+            </Popover>
+          </Space>
         </Space>
       </footer>
     </div>

@@ -436,19 +436,27 @@ export type SaveFilePick =
   | { status: 'unsupported' };
 
 /** 系统原生“另存为”选择器；用户取消返回 cancelled，无原生对话框可用时返回 unsupported。 */
-export function nativePickSaveFile(defaultName: string): Promise<SaveFilePick> {
+export interface SaveFileOptions {
+  defaultName: string;
+  prompt?: string;
+  extension?: string;
+  filter?: string;
+}
+
+export function nativePickSaveFile(options: SaveFileOptions | string): Promise<SaveFilePick> {
+  const { defaultName, prompt = '选择配置文件保存位置', extension = 'json', filter = 'JSON 文件 (*.json)|*.json' } = typeof options === 'string' ? { defaultName: options } : options;
   return new Promise((resolve) => {
     let command: string;
     let args: string[];
     if (process.platform === 'darwin') {
       command = 'osascript';
-      args = ['-e', `POSIX path of (choose file name with prompt "选择配置文件保存位置" default name "${defaultName}")`];
+      args = ['-e', `POSIX path of (choose file name with prompt "${prompt}" default name "${defaultName}")`];
     } else if (process.platform === 'win32') {
       command = 'powershell';
       args = [
         '-NoProfile',
         '-Command',
-        `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.SaveFileDialog; $f.FileName='${defaultName}'; $f.DefaultExt='json'; $f.Filter='JSON 文件 (*.json)|*.json'; if($f.ShowDialog() -eq 'OK'){ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.FileName)) }`,
+        `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.SaveFileDialog; $f.FileName='${defaultName}'; $f.DefaultExt='${extension}'; $f.Filter='${filter}'; if($f.ShowDialog() -eq 'OK'){ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.FileName)) }`,
       ];
     } else {
       command = 'zenity';

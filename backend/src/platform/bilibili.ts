@@ -72,7 +72,7 @@ function isNetworkError(err: unknown): boolean {
  */
 function biliHttpError(status: number): AppError {
   if (status === 404 || status === 405 || status === 410 || status === 501) {
-    return new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', { details: { httpStatus: status } });
+    return new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', { details: { httpStatus: status } });
   }
   return new AppError('NETWORK_UNAVAILABLE', 'B站接口暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: status } });
 }
@@ -248,10 +248,10 @@ export class BilibiliAdapter implements PlatformAdapter {
       if (err instanceof AppError) {
         return { status: err.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: err.toObject() };
       }
-      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {})).toObject() };
+      return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {}).toObject() };
+      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {}).toObject() };
     }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);
@@ -287,10 +287,10 @@ export class BilibiliAdapter implements PlatformAdapter {
     } catch (err) {
       if (err instanceof AppError) throw err;
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     if (data.code !== 0 || !data.data) {
-      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，等待适配更新', {});
+      throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
     const picked = this.pickStream(data, BILI_QN[quality]);
     if (!picked) {
