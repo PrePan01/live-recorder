@@ -444,7 +444,7 @@
 }
 
 .lr-live-prediction-timeline {
-  width: 220px;
+  width: 248px;
   padding: 2px 0;
 }
 .lr-live-prediction-popover__likelihood {
@@ -482,12 +482,13 @@
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  width: 220px;
+  width: 248px;
   color: var(--lr-muted);
   font-size: 12px;
   line-height: 1.3;
   opacity: 0.72;
   margin-bottom: 2px;
+  white-space: nowrap;
 }
 .lr-live-prediction-popover__time-row > :last-child {
   text-align: right;
