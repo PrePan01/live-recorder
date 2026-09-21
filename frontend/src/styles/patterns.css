@@ -356,6 +356,49 @@
   font-size: 16px;
   line-height: 1.2;
 }
+
+.lr-floating-recorder-toggle.ant-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lr-floating-recorder-toggle__ring {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #9aa3af;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .34);
+  box-sizing: border-box;
+}
+
+.lr-floating-recorder-toggle__ring > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.lr-floating-recorder-toggle.ant-btn:hover,
+.lr-floating-recorder-toggle.ant-btn:focus-visible {
+  background: transparent;
+}
+
+.lr-floating-recorder-toggle.ant-btn:hover .lr-floating-recorder-toggle__ring {
+  background: #7c8795;
+}
+
+.lr-floating-recorder-toggle--enabled .lr-floating-recorder-toggle__ring,
+.lr-floating-recorder-toggle--enabled.ant-btn:hover .lr-floating-recorder-toggle__ring {
+  background: #ed2e3b;
+}
 .lr-live-status-tag {
   min-width: 0;
   gap: 6px;

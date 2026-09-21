@@ -84,6 +84,63 @@ function engineOf(services: Services): FakeRecordingEngine {
 }
 
 describe('RecorderManager', () => {
+  it('uses the filename-rule result as the history title for floating recordings', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-floating-title-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save({
+      ...baseSettings(dir),
+      namingRule: '{platform}_{roomId}_{quality}',
+    });
+    const room = services.rooms.create({
+      platform: 'bilibili',
+      url: 'https://live.bilibili.com/101',
+      displayName: '不应作为历史标题的房间名',
+    });
+
+    await services.manager.maybeStartRecording(
+      room,
+      { streamSessionId: 'floating-title', streamTitle: room.displayName },
+      { manual: true, origin: 'floating' },
+    );
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
+    const saved = services.recordings.get(rec.id)!;
+
+    expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
+    expect(saved.streamTitle).not.toBe(room.displayName);
+    await services.manager.stopRecording(room.id);
+  });
+
+  it('keeps the filename-rule title when floating recording reuses a preview stream', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-floating-preview-title-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save({ ...baseSettings(dir), namingRule: '{roomId}_{platform}' });
+    services.manager.preview = new FakePreview();
+    const room = services.rooms.create({
+      platform: 'bilibili',
+      url: 'https://live.bilibili.com/102',
+      displayName: '预览房间名',
+    });
+    services.rooms.setLiveStatus(room.id, 'live');
+    await services.manager.ensurePreviewStream(room.id);
+    await waitFor(() => services.manager.isPreviewStreaming(room.id));
+
+    await services.manager.maybeStartRecording(
+      room,
+      { streamSessionId: 'floating-preview', streamTitle: room.displayName },
+      { manual: true, origin: 'floating' },
+    );
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
+    const saved = services.recordings.get(rec.id)!;
+
+    expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
+    expect(saved.streamTitle).not.toBe(room.displayName);
+    await services.manager.stopRecording(room.id);
+  });
+
   it('records a live stream to completion, forwards preview frames and closes with 1000', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-b6-'));

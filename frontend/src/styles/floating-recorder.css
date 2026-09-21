@@ -1,0 +1,180 @@
+:root {
+  --record-button-radius: 36px;
+  --record-button-size: 72px;
+  --record-button-border: 4px;
+  --record-button-icon-size: 27px;
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif;
+}
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.floating-recorder,
+.floating-recorder * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.floating-recorder {
+  position: relative;
+  display: grid;
+  grid-template-rows: 20px var(--record-button-size) 22px;
+  justify-items: center;
+  align-content: start;
+  width: 100%;
+  height: 100%;
+  padding: 4px 5px;
+  box-sizing: border-box;
+}
+.recording-room-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72);
+}
+.record-button {
+  width: var(--record-button-size);
+  height: var(--record-button-size);
+  border: var(--record-button-border) solid rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  background: #ed2e3b;
+  color: white;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.42);
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    transform 0.12s,
+    background 0.12s,
+    opacity 0.12s;
+}
+.record-button:hover:not(:disabled) {
+  transform: scale(1.06);
+  background: #ff4050;
+  opacity: 1;
+}
+.record-button:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+.record-button--active {
+  background: #ba1725;
+}
+.record-button__camera {
+  font-size: var(--record-button-icon-size);
+  line-height: 1;
+}
+.floating-close {
+  position: absolute;
+  top: 13px;
+  right: 6px;
+  z-index: 3;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(26, 26, 30, 0.82);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity 0.14s,
+    transform 0.14s,
+    background 0.14s;
+}
+.floating-recorder:hover .floating-close {
+  opacity: 1;
+  transform: scale(1);
+}
+.floating-close:hover {
+  background: #d72635;
+}
+.floating-close::before,
+.floating-close::after {
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;
+  content: "";
+}
+.floating-close::before {
+  transform: rotate(45deg);
+}
+.floating-close::after {
+  transform: rotate(-45deg);
+}
+.recording-time {
+  justify-self: center;
+  align-self: center;
+  min-width: 74px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 2px 7px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff;
+  font:
+    600 12px/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  text-align: center;
+}
+.recording-time--hidden {
+  visibility: hidden;
+}
+.recording-error {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  left: 2px;
+  color: #fff;
+  background: rgba(174, 20, 31, 0.92);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  text-align: center;
+}
+.floating-menu {
+  position: absolute;
+  top: 23px;
+  right: 4px;
+  left: 4px;
+  z-index: 2;
+  margin: 0;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(31, 31, 35, 0.97);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.floating-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  padding: 7px 5px;
+  background: transparent;
+  color: white;
+  font: inherit;
+  font-size: 11px;
+  text-align: center;
+  white-space: normal;
+  cursor: pointer;
+}
+.floating-menu button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}

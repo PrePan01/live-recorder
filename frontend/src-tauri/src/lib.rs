@@ -9,6 +9,7 @@ use tauri::{
     tray::TrayIconBuilder,
     window::WindowBuilder,
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl,
+    WebviewWindowBuilder,
 };
 
 use backend::BackendManager;
@@ -17,6 +18,14 @@ use contract::{BootEvent, BootState, DiagnosticItem};
 struct ShellState {
     backend: BackendManager,
     boot: Mutex<BootState>,
+    floating_recorder: Mutex<FloatingRecorderState>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FloatingRecorderState {
+    target_room_id: Option<String>,
+    button_size: f64,
 }
 
 impl ShellState {
@@ -41,6 +50,14 @@ const BILIBILI_LOGIN_WEBVIEW: &str = "bilibili-auth-login-page";
 const BILIBILI_LOGIN_URL: &str = "https://passport.bilibili.com/login";
 /** 授权窗口底部本地确认栏高度：远程登录页占满其余空间。 */
 const AUTH_CONTROLS_HEIGHT: f64 = 76.0;
+const FLOATING_RECORDER_WINDOW: &str = "floating-recorder";
+const FLOATING_RECORDER_EVENT: &str = "floating-recorder:target";
+const FLOATING_RECORDER_MOVED_EVENT: &str = "floating-recorder:moved";
+const FLOATING_RECORDER_POSITION_FILE: &str = "floating-recorder-position.json";
+// 设置项表达的是半径；默认 36px 对应当前 72px 直径的按钮。
+const DEFAULT_FLOATING_RECORDER_SIZE: f64 = 36.0;
+const FLOATING_RECORDER_MIN_SIZE: f64 = 20.0;
+const FLOATING_RECORDER_MAX_SIZE: f64 = 100.0;
 
 // Store logical pixels so the window keeps a sensible size when the display's
 // scale factor changes (for example, moving between Retina and non-Retina
@@ -55,6 +72,18 @@ const MAX_WINDOW_DIMENSION: f64 = 10_000.0;
 struct WindowSize {
     width: f64,
     height: f64,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct WindowPosition {
+    x: f64,
+    y: f64,
+}
+
+impl WindowPosition {
+    fn is_valid(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && (-10_000.0..=10_000.0).contains(&self.x) && (-10_000.0..=10_000.0).contains(&self.y)
+    }
 }
 
 impl WindowSize {
@@ -72,6 +101,133 @@ fn window_state_path(app: &AppHandle) -> Option<std::path::PathBuf> {
         .app_data_dir()
         .ok()
         .map(|directory| directory.join(WINDOW_STATE_FILE))
+}
+
+fn floating_position_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|directory| directory.join(FLOATING_RECORDER_POSITION_FILE))
+}
+
+fn load_floating_position(app: &AppHandle) -> Option<WindowPosition> {
+    let path = floating_position_path(app)?;
+    let contents = fs::read_to_string(path).ok()?;
+    let position = serde_json::from_str::<WindowPosition>(&contents).ok()?;
+    position.is_valid().then_some(position)
+}
+
+fn default_floating_position(app: &AppHandle, button_size: f64) -> (f64, f64) {
+    let Ok(Some(monitor)) = app.primary_monitor() else { return (24.0, 24.0); };
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let (width, height) = floating_recorder_window_size(button_size);
+    let x = area.position.x as f64 + area.size.width as f64 - (width + 24.0) * scale;
+    let y = area.position.y as f64 + area.size.height as f64 - (height + 24.0) * scale;
+    (x / scale, y / scale)
+}
+
+fn save_floating_position(app: &AppHandle, physical: tauri::PhysicalPosition<i32>) {
+    let Some(window) = app.get_webview_window(FLOATING_RECORDER_WINDOW) else { return; };
+    let Ok(scale_factor) = window.scale_factor() else { return; };
+    let position = physical.to_logical::<f64>(scale_factor);
+    let saved = WindowPosition { x: position.x, y: position.y };
+    if !saved.is_valid() { return; }
+    let Some(path) = floating_position_path(app) else { return; };
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_ok() {
+            if let Ok(json) = serde_json::to_vec(&saved) { let _ = fs::write(path, json); }
+        }
+    }
+}
+
+fn floating_state(app: &AppHandle) -> FloatingRecorderState {
+    app.state::<ShellState>().floating_recorder.lock().map(|state| state.clone()).unwrap_or(FloatingRecorderState { target_room_id: None, button_size: DEFAULT_FLOATING_RECORDER_SIZE })
+}
+
+fn clamp_floating_recorder_size(size: f64) -> f64 {
+    if size.is_finite() { size.round().clamp(FLOATING_RECORDER_MIN_SIZE, FLOATING_RECORDER_MAX_SIZE) } else { DEFAULT_FLOATING_RECORDER_SIZE }
+}
+
+fn floating_recorder_window_size(button_radius: f64) -> (f64, f64) {
+    // 额外空间留给右上角关闭按钮、房间名和居中的时长。
+    let button_diameter = button_radius * 2.0;
+    (button_diameter + 84.0, button_diameter + 54.0)
+}
+
+fn show_floating_recorder_window(app: &AppHandle, room_id: String, button_size: Option<f64>) -> Result<FloatingRecorderState, String> {
+    let state = {
+        let shell = app.state::<ShellState>();
+        let mut state = shell.floating_recorder.lock().map_err(|_| "悬浮录制状态不可用")?;
+        state.target_room_id = Some(room_id);
+        if let Some(size) = button_size { state.button_size = clamp_floating_recorder_size(size); }
+        state.clone()
+    };
+    if let Some(window) = app.get_webview_window(FLOATING_RECORDER_WINDOW) {
+        let _ = app.emit(FLOATING_RECORDER_EVENT, &state);
+        let (width, height) = floating_recorder_window_size(state.button_size);
+        let _ = window.set_size(LogicalSize::new(width, height));
+        let _ = window.unminimize();
+        let _ = window.show();
+        return Ok(state);
+    }
+    let (width, height) = floating_recorder_window_size(state.button_size);
+    let mut builder = WebviewWindowBuilder::new(app, FLOATING_RECORDER_WINDOW, WebviewUrl::App("floating-recorder.html".into()))
+        .title("快速录制")
+        .inner_size(width, height)
+        .min_inner_size(width, height)
+        .max_inner_size(width, height)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        .shadow(false);
+    if let Some(position) = load_floating_position(app).filter(|position| {
+        app.monitor_from_point(position.x, position.y).ok().flatten().is_some()
+    }) {
+        builder = builder.position(position.x, position.y);
+    } else {
+        let (x, y) = default_floating_position(app, state.button_size);
+        builder = builder.position(x, y);
+    }
+    builder.build().map_err(|error| format!("无法创建快速录制按钮: {error}"))?;
+    Ok(state)
+}
+
+#[tauri::command]
+async fn show_floating_recorder(app: AppHandle, room_id: String, button_size: Option<f64>) -> Result<FloatingRecorderState, String> {
+    // WebView2 在同步 command 内创建窗口会死锁；与授权窗口相同，移到后台任务，
+    // Tauri 会把窗口操作分派回正确的原生 UI 线程。
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || show_floating_recorder_window(&handle, room_id, button_size))
+        .await
+        .map_err(|error| format!("创建快速录制窗口任务异常: {error}"))?
+}
+
+#[tauri::command]
+fn get_floating_recorder_state(app: AppHandle) -> FloatingRecorderState { floating_state(&app) }
+
+#[tauri::command]
+fn hide_floating_recorder(app: AppHandle, clear_target: bool) {
+    if clear_target {
+        if let Ok(mut state) = app.state::<ShellState>().floating_recorder.lock() { state.target_room_id = None; }
+    }
+    let _ = app.emit(FLOATING_RECORDER_EVENT, floating_state(&app));
+    if let Some(window) = app.get_webview_window(FLOATING_RECORDER_WINDOW) { let _ = window.hide(); }
+}
+
+#[tauri::command]
+fn set_floating_recorder_size(app: AppHandle, button_size: f64) {
+    let state = {
+        let shell = app.state::<ShellState>();
+        let mut state = match shell.floating_recorder.lock() { Ok(state) => state, Err(_) => return };
+        state.button_size = clamp_floating_recorder_size(button_size);
+        state.clone()
+    };
+    if let Some(window) = app.get_webview_window(FLOATING_RECORDER_WINDOW) {
+        let (width, height) = floating_recorder_window_size(state.button_size);
+        let _ = window.set_size(LogicalSize::new(width, height));
+        let _ = app.emit(FLOATING_RECORDER_EVENT, state);
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -611,6 +767,7 @@ pub fn run() {
         .manage(ShellState {
             backend: BackendManager::new(),
             boot: Mutex::new(BootState::Booting),
+            floating_recorder: Mutex::new(FloatingRecorderState { target_room_id: None, button_size: DEFAULT_FLOATING_RECORDER_SIZE }),
         })
         .on_window_event(|window, event| {
             // Close to tray by default: the main window hides rather than
@@ -621,6 +778,16 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                     emit_window_visibility(&window.app_handle());
+                }
+                if window.label() == FLOATING_RECORDER_WINDOW {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            if let tauri::WindowEvent::Moved(position) = event {
+                if window.label() == FLOATING_RECORDER_WINDOW {
+                    save_floating_position(&window.app_handle(), *position);
+                    let _ = window.app_handle().emit_to(FLOATING_RECORDER_WINDOW, FLOATING_RECORDER_MOVED_EVENT, ());
                 }
             }
             if let tauri::WindowEvent::Resized(size) = event {
@@ -658,6 +825,10 @@ pub fn run() {
             restart_service,
             get_diagnostics,
             get_window_visible,
+            show_floating_recorder,
+            get_floating_recorder_state,
+            hide_floating_recorder,
+            set_floating_recorder_size,
             start_douyin_authorization,
             complete_douyin_authorization,
             start_bilibili_authorization,

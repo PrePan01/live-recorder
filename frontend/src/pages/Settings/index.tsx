@@ -15,6 +15,7 @@ import {
   Popover,
   Popconfirm,
   Row,
+  Slider,
   Select,
   Space,
   Switch,
@@ -251,6 +252,13 @@ export default function SettingsPage() {
   }, [settings, setPreference]);
 
   useEffect(() => {
+    if (!bridge.isDesktop || !settings) return;
+    void bridge
+      .setFloatingRecorderSize(settings.floatingRecorderSize ?? 36)
+      .catch(() => undefined);
+  }, [settings]);
+
+  useEffect(() => {
     const target =
       hash === "#douyin-cookie"
         ? "douyin-cookie"
@@ -280,6 +288,7 @@ export default function SettingsPage() {
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
         highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
+        floatingRecorderSize: settings.floatingRecorderSize ?? 36,
         douyinCookie: "",
         bilibiliCookie: "",
         mail: {
@@ -594,6 +603,14 @@ export default function SettingsPage() {
                     checked={showGlobalSearch}
                     onChange={setShowGlobalSearch}
                     disabled={false}
+                  />
+                </Form.Item>
+                <Form.Item label="全局录制按钮大小" name="floatingRecorderSize">
+                  <Slider
+                    min={20}
+                    max={100}
+                    step={1}
+                    tooltip={{ formatter: (value) => `${value ?? 36}px` }}
                   />
                 </Form.Item>
                 <Form.Item label="保存目录">

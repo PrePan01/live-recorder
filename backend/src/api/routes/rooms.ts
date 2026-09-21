@@ -360,6 +360,8 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
   // 手动「录制」按钮（#79）：开播状态下显式强制开始录制，绕过 autoRecord 检查。
   app.post('/api/v1/rooms/:id/start-recording', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { origin?: unknown };
+    const origin = body.origin === 'floating' ? 'floating' : 'manual';
     const room = services.rooms.get(id);
     if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     if (services.manager.isRoomActive(id)) {
@@ -383,7 +385,7 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (status.status !== 'live') {
       throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
     }
-    const started = await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true });
+    const started = await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true, origin });
     if (!started) {
       if (services.manager.isRoomActive(id)) {
         throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });

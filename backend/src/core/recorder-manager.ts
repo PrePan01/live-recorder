@@ -457,6 +457,7 @@ export class RecorderManager {
       streamTitle: `精彩时刻｜${room.displayName}`,
       quality: settings.quality,
       expectedQuality: settings.quality,
+      origin: "highlight",
     });
     const base = recordingFilePath(
       settings.recordingDirectory,
@@ -504,7 +505,13 @@ export class RecorderManager {
           filePath,
           lookbackSeconds,
           controller.signal,
-          () => this.refreshHighlightExportWatchdog(recording.id, job, roomId, filePath),
+          () =>
+            this.refreshHighlightExportWatchdog(
+              recording.id,
+              job,
+              roomId,
+              filePath,
+            ),
         );
         if (this.highlightExportJobs.get(recording.id) !== job) return;
         const endedAt = this.services.clock.iso();
@@ -538,15 +545,15 @@ export class RecorderManager {
         }
         this.pendingHighlightConfirmations.delete(recording.id);
         if (!decision) {
-          this.services.events.emit({ type: "recording:updated", data: completed });
+          this.services.events.emit({
+            type: "recording:updated",
+            data: completed,
+          });
           this.finishHighlightExportJob(recording.id, job);
           return;
         }
         if (decision.keep) {
-          await this.renameConfirmedHighlight(
-            recording.id,
-            decision.fileName,
-          );
+          await this.renameConfirmedHighlight(recording.id, decision.fileName);
           this.resumeAfterConfirmation(recording.id);
         } else {
           this.discardAfterConfirmation(recording.id);
@@ -669,12 +676,16 @@ export class RecorderManager {
       const pending = this.pendingHighlightConfirmations.get(recordingId);
       this.pendingHighlightConfirmations.delete(recordingId);
       const rec = this.services.recordings.get(recordingId);
-      const decision = pending?.decision?.keep ?? rec?.highlightConfirmationDecision;
+      const decision =
+        pending?.decision?.keep ?? rec?.highlightConfirmationDecision;
       // 不完整的 FLV 不能作为已保存录像留下；用户明确选择不保留时也应兑现决定。
       await unlink(filePath).catch(() => undefined);
       if (decision === false) {
         this.services.recordings.remove(recordingId);
-        this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
+        this.services.events.emit({
+          type: "recording:deleted",
+          data: { id: recordingId },
+        });
         return;
       }
       const err = new AppError(
@@ -985,6 +996,7 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     actualQuality: string,
     settings: AppSettings,
+    origin: import("../types/index.js").RecordingOrigin,
   ): Promise<boolean> {
     const previewSession = this.previewSessions.get(room.id);
     const bootstrap = this.preview?.recordingBootstrap?.(room.id);
@@ -1005,6 +1017,7 @@ export class RecorderManager {
       streamTitle: status.streamTitle ?? room.displayName,
       quality: actualQuality,
       expectedQuality: settings.quality,
+      origin,
     });
     let filePath: string;
     try {
@@ -1084,6 +1097,9 @@ export class RecorderManager {
     this.services.recordings.update(recording.id, {
       state: "recording",
       filePath,
+      ...(origin === "floating"
+        ? { streamTitle: path.parse(filePath).name }
+        : {}),
     });
     this.services.rooms.setState(room.id, "recording", {
       lastCheckedAt: this.services.clock.iso(),
@@ -1131,7 +1147,11 @@ export class RecorderManager {
   async maybeStartRecording(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
+    opts: {
+      manual?: boolean;
+      liveStartedAt?: string | null;
+      origin?: import("../types/index.js").RecordingOrigin;
+    } = {},
   ): Promise<boolean> {
     if (this.services.resetting) return false;
     if (this.active.has(room.id) || this.starting.has(room.id)) return false;
@@ -1166,7 +1186,11 @@ export class RecorderManager {
   private async maybeStartRecordingInternal(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
+    opts: {
+      manual?: boolean;
+      liveStartedAt?: string | null;
+      origin?: import("../types/index.js").RecordingOrigin;
+    } = {},
   ): Promise<boolean> {
     await this.disableHighlightBuffer(room.id);
     const settings = this.settings();
@@ -1242,6 +1266,7 @@ export class RecorderManager {
         status,
         stream.actualQuality,
         settings,
+        opts.origin ?? (opts.manual ? "manual" : "automatic"),
       )
     )
       return true;
@@ -1260,14 +1285,20 @@ export class RecorderManager {
         stream.actualQuality,
         room.id,
       );
+      // 悬浮录制的历史标题使用最终文件基名，确保它和设置里的命名规则完全一致。
+      const streamTitle =
+        opts.origin === "floating"
+          ? path.parse(filePath).name
+          : (status.streamTitle ?? room.displayName);
       const recording = this.services.recordings.create({
         roomId: room.id,
         roomName: room.displayName,
         platform: room.platform,
         streamSessionId: sessionId,
-        streamTitle: status.streamTitle ?? room.displayName,
+        streamTitle,
         quality: stream.actualQuality,
         expectedQuality: settings.quality,
+        origin: opts.origin ?? (opts.manual ? "manual" : "automatic"),
       });
       this.services.rooms.setState(room.id, "recording", {
         lastCheckedAt: this.services.clock.iso(),
@@ -2008,7 +2039,11 @@ export class RecorderManager {
    * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
    */
   private finishOrConfirm(recordingId: string): void {
-    if (this.settings().confirmAfterComplete) {
+    const recording = this.services.recordings.get(recordingId);
+    if (
+      this.settings().confirmAfterComplete &&
+      recording?.origin !== "floating"
+    ) {
       this.enterPendingConfirmation(recordingId);
     } else {
       this.finishSegmentProcessing(recordingId);
@@ -2095,7 +2130,10 @@ export class RecorderManager {
     if (!rec) return;
     if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
     this.services.recordings.remove(recordingId);
-    this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
+    this.services.events.emit({
+      type: "recording:deleted",
+      data: { id: recordingId },
+    });
   }
 
   /** 启动恢复（#220）：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
@@ -2110,7 +2148,10 @@ export class RecorderManager {
         if (rec.highlightConfirmationDecision === false) {
           if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
           this.services.recordings.remove(rec.id);
-          this.services.events.emit({ type: "recording:deleted", data: { id: rec.id } });
+          this.services.events.emit({
+            type: "recording:deleted",
+            data: { id: rec.id },
+          });
         } else {
           void this.failHighlightExport(
             rec.id,
@@ -2320,6 +2361,7 @@ function defaultsLite(): AppSettings {
     },
     dedupeWindowMinutes: 30,
     theme: "system",
+    floatingRecorderSize: 36,
     confirmAfterComplete: false,
   };
 }

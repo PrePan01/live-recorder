@@ -24,6 +24,8 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     douyinCookie: { hasCookie: hasDouyinCookie },
     bilibiliCookie: { hasCookie: hasBilibiliCookie },
     theme: settings.theme ?? 'system',
+    // 旧版本允许 30–128px；收紧范围后在视图层归一化，避免旧值让新滑块越界。
+    floatingRecorderSize: Math.min(100, Math.max(20, settings.floatingRecorderSize ?? 36)),
     notifications: notificationPreference(services),
     pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),
     namingRule: settings.namingRule ?? DEFAULT_SETTINGS.namingRule,

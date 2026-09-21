@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build && npm run bundle:resources"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",

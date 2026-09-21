@@ -71,8 +71,8 @@ export async function checkEnabledRooms(): Promise<void> {
   await http.post("/rooms/check-enabled");
 }
 
-export async function startRoomRecording(id: string): Promise<void> {
-  await http.post(`/rooms/${id}/start-recording`);
+export async function startRoomRecording(id: string, origin?: "floating"): Promise<void> {
+  await http.post(`/rooms/${id}/start-recording`, origin ? { origin } : undefined);
 }
 
 export async function stopRecording(id: string): Promise<void> {

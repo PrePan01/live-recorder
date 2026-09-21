@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS = {
   },
   dedupeWindowMinutes: 30,
   theme: 'system' as const,
+  floatingRecorderSize: 36,
   notifications: DEFAULT_NOTIFICATION_PREFERENCE,
   pipeline: DEFAULT_PIPELINE_CONFIG,
   namingRule: '{room}_{date}_{time}',
