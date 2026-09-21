@@ -15,6 +15,7 @@ import {
   Popover,
   Popconfirm,
   Row,
+  Slider,
   Select,
   Space,
   Switch,
@@ -49,6 +50,8 @@ import {
 import {
   downloadDiagnostics,
   exportDiagnosticsToFile,
+  fetchPerformanceDiagnostics,
+  type PerformanceDiagnostic,
 } from "../../api/diagnostics";
 import {
   fetchSelfCheck,
@@ -93,6 +96,17 @@ const CHECK_TEXT: Record<SelfCheckStatus, string> = {
 };
 const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
 const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
+const PERFORMANCE_DIAGNOSTICS_ENABLED = import.meta.env.DEV;
+const PERFORMANCE_STAGE_LABEL: Record<string, string> = {
+  requested: "已请求",
+  highlight_buffer_stopped: "精彩时刻缓存已停用",
+  storage_checks_ready: "存储检查完成",
+  platform_cookie_ready: "平台授权已读取",
+  stream_url_ready: "流地址已获取",
+  ready: "已收到首段直播数据",
+  failed: "启动失败",
+  skipped: "未执行",
+};
 const NOTIFICATION_EVENTS: Array<{
   key: keyof NotificationEventPreference;
   label: string;
@@ -222,6 +236,11 @@ export default function SettingsPage() {
   const [diagnosticsPopoverOpen, setDiagnosticsPopoverOpen] = useState(false);
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
+  const [performanceDiagnostics, setPerformanceDiagnostics] = useState<
+    PerformanceDiagnostic[]
+  >([]);
+  const [loadingPerformanceDiagnostics, setLoadingPerformanceDiagnostics] =
+    useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const ffmpegPromptedRef = useRef(false);
   const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
@@ -244,11 +263,33 @@ export default function SettingsPage() {
     void loadNotifications().catch(() => undefined);
   }, [load, fetchAlerts, fetchStatus, loadNotifications]);
 
+  const loadPerformanceDiagnostics = async () => {
+    setLoadingPerformanceDiagnostics(true);
+    try {
+      setPerformanceDiagnostics(await fetchPerformanceDiagnostics());
+    } catch {
+      // 性能诊断不可用不影响设置页其它功能。
+    } finally {
+      setLoadingPerformanceDiagnostics(false);
+    }
+  };
+
+  useEffect(() => {
+    if (PERFORMANCE_DIAGNOSTICS_ENABLED) void loadPerformanceDiagnostics();
+  }, []);
+
   useEffect(() => {
     if (settings && settings.theme) {
       setPreference(settings.theme);
     }
   }, [settings, setPreference]);
+
+  useEffect(() => {
+    if (!bridge.isDesktop || !settings) return;
+    void bridge
+      .setFloatingRecorderSize(settings.floatingRecorderSize ?? 36)
+      .catch(() => undefined);
+  }, [settings]);
 
   useEffect(() => {
     const target =
@@ -280,6 +321,7 @@ export default function SettingsPage() {
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
         highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
+        floatingRecorderSize: settings.floatingRecorderSize ?? 36,
         douyinCookie: "",
         bilibiliCookie: "",
         mail: {
@@ -594,6 +636,14 @@ export default function SettingsPage() {
                     checked={showGlobalSearch}
                     onChange={setShowGlobalSearch}
                     disabled={false}
+                  />
+                </Form.Item>
+                <Form.Item label="全局录制按钮大小" name="floatingRecorderSize">
+                  <Slider
+                    min={20}
+                    max={100}
+                    step={1}
+                    tooltip={{ formatter: (value) => `${value ?? 36}px` }}
                   />
                 </Form.Item>
                 <Form.Item label="保存目录">
@@ -1006,6 +1056,94 @@ export default function SettingsPage() {
               />
             )}
           </Card>
+          {PERFORMANCE_DIAGNOSTICS_ENABLED && (
+            <Card
+              className="lr-settings-card"
+              title="性能诊断"
+              extra={
+                <Button
+                  size="small"
+                  loading={loadingPerformanceDiagnostics}
+                  onClick={() => void loadPerformanceDiagnostics()}
+                >
+                  刷新
+                </Button>
+              }
+            >
+              <Typography.Paragraph type="secondary">
+                显示本次服务运行期间最近 100
+                次录制或预览启动的服务端耗时；完整记录也会随诊断日志导出。
+              </Typography.Paragraph>
+              <List
+                size="small"
+                dataSource={performanceDiagnostics.slice(0, 20)}
+                locale={{ emptyText: "尚无录制或预览启动记录" }}
+                renderItem={(item) => {
+                  const room = rooms.find(
+                    (candidate) => candidate.id === item.roomId,
+                  );
+                  const kind =
+                    item.kind === "recording_start" ? "录制启动" : "预览启动";
+                  const outcome =
+                    item.outcome === "ok"
+                      ? "完成"
+                      : item.outcome === "running"
+                        ? "进行中"
+                        : item.outcome === "skipped"
+                          ? "跳过"
+                          : "失败";
+                  return (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={
+                          <Space wrap>
+                            <Typography.Text strong>{kind}</Typography.Text>
+                            <Tag>
+                              {item.platform === "bilibili" ? "B站" : "抖音"}
+                            </Tag>
+                            <Tag
+                              color={
+                                item.outcome === "ok"
+                                  ? "success"
+                                  : item.outcome === "failed"
+                                    ? "error"
+                                    : "default"
+                              }
+                            >
+                              {outcome}
+                            </Tag>
+                            <Typography.Text type="secondary">
+                              {item.elapsedMs} ms
+                            </Typography.Text>
+                          </Space>
+                        }
+                        description={
+                          <>
+                            <Typography.Text type="secondary">
+                              {room?.displayName ?? "已删除的直播间"} ·{" "}
+                              {formatTime(item.startedAt)}
+                              {item.errorCode ? ` · ${item.errorCode}` : ""}
+                            </Typography.Text>
+                            <Typography.Text
+                              type="secondary"
+                              style={{ display: "block" }}
+                            >
+                              {item.stages
+                                .map(
+                                  (stage) =>
+                                    `${PERFORMANCE_STAGE_LABEL[stage.name] ?? stage.name} ${stage.elapsedMs} ms`,
+                                )
+                                .join(" · ")}
+                            </Typography.Text>
+                          </>
+                        }
+                      />
+                    </List.Item>
+                  );
+                }}
+              />
+            </Card>
+          )}
           <Card
             className="lr-alerts-card lr-settings-card"
             title="告警"

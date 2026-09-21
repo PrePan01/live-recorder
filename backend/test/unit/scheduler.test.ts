@@ -46,6 +46,38 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it('merges repeated enabled-room checks while a batch is still running', async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    services.rooms.create({
+      platform: 'bilibili',
+      url: 'https://live.bilibili.com/599',
+      displayName: '队列合并',
+    });
+    const adapter = services.adapterFor('bilibili');
+    let release!: () => void;
+    adapter.checkLiveStatus = async () =>
+      new Promise((resolve) => {
+        release = () => resolve({ status: 'offline' });
+      });
+
+    expect(services.scheduler.queueEnabledRoomChecks()).toEqual({
+      queued: 1,
+      alreadyRunning: false,
+    });
+    expect(services.scheduler.queueEnabledRoomChecks()).toEqual({
+      queued: 0,
+      alreadyRunning: true,
+    });
+    await waitFor(() => typeof release === 'function');
+    release();
+    await waitFor(() => !services.scheduler.isChecking);
+    expect(services.scheduler.queueEnabledRoomChecks()).toEqual({
+      queued: 1,
+      alreadyRunning: false,
+    });
+  });
+
   it('stores the detected live room title and clears it once the room goes offline', async () => {
     const { services } = newServices();
     services.settings.save({ ...baseSettings(), autoRecord: false });

@@ -68,6 +68,13 @@ function classifyStatusError(
 ): AppError {
   const message = JSON.stringify(json?.data ?? "");
   const code = json.status_code;
+  if (code === 4001038) {
+    return new AppError(
+      "ROOM_CONTENT_UNAVAILABLE",
+      "直播间当前不可查看，请稍后重试",
+      { retryable: true },
+    );
+  }
   if (code === 8 && hasCookie) {
     return new AppError(
       "DOUYIN_COOKIE_EXPIRED",

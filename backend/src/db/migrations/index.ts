@@ -1,4 +1,4 @@
-import type { DB } from '../connection.js';
+import type { DB } from "../connection.js";
 
 export interface Migration {
   version: number;
@@ -76,9 +76,15 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 追加 v3 幂等补列，确保任意历史 DB 都具备 favorited 列。
     version: 3,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'favorited'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'favorited'`,
+        )
+        .get();
       if (!has) {
-        db.exec(`ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;`);
+        db.exec(
+          `ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;`,
+        );
       }
     },
   },
@@ -86,7 +92,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #50：录制完整性校验列（ffprobe 结果），幂等加列。
     version: 4,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'integrity'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'integrity'`,
+        )
+        .get();
       if (!has) {
         db.exec(`ALTER TABLE recordings ADD COLUMN integrity TEXT;`);
       }
@@ -96,17 +106,25 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #54：告警中心结构化字段——roomId/errorCode，供失败一键重试定位房间。幂等加列。
     version: 5,
     up: (db) => {
-      const cols = db.prepare(`SELECT name FROM pragma_table_info('alerts')`).all() as { name: string }[];
+      const cols = db
+        .prepare(`SELECT name FROM pragma_table_info('alerts')`)
+        .all() as { name: string }[];
       const names = new Set(cols.map((c) => c.name));
-      if (!names.has('room_id')) db.exec(`ALTER TABLE alerts ADD COLUMN room_id TEXT;`);
-      if (!names.has('error_code')) db.exec(`ALTER TABLE alerts ADD COLUMN error_code TEXT;`);
+      if (!names.has("room_id"))
+        db.exec(`ALTER TABLE alerts ADD COLUMN room_id TEXT;`);
+      if (!names.has("error_code"))
+        db.exec(`ALTER TABLE alerts ADD COLUMN error_code TEXT;`);
     },
   },
   {
     // #75：房间级自动录制开关（覆盖全局 settings.autoRecord），幂等加列。
     version: 6,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'auto_record'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'auto_record'`,
+        )
+        .get();
       if (!has) {
         db.exec(`ALTER TABLE rooms ADD COLUMN auto_record INTEGER;`);
       }
@@ -116,7 +134,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #78：最近一次检测的直播状态（live/offline/restricted），幂等加列。
     version: 7,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'last_live_status'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'last_live_status'`,
+        )
+        .get();
       if (!has) {
         db.exec(`ALTER TABLE rooms ADD COLUMN last_live_status TEXT;`);
       }
@@ -129,8 +151,20 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 幂等保护：若列已存在且外键已移除则跳过。
     version: 8,
     up: (db) => {
-      const hasRoomName = Boolean(db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'room_name'`).get());
-      const fkCount = (db.prepare(`SELECT COUNT(*) AS c FROM pragma_foreign_key_list('recordings')`).get() as { c: number }).c;
+      const hasRoomName = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'room_name'`,
+          )
+          .get(),
+      );
+      const fkCount = (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM pragma_foreign_key_list('recordings')`,
+          )
+          .get() as { c: number }
+      ).c;
       if (hasRoomName && fkCount === 0) return;
       db.exec(`
         CREATE TABLE recordings_new (
@@ -166,7 +200,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 幂等保护：表存在即跳过；rooms.upload_enabled 列存在即跳过列迁移。
     version: 9,
     up: (db) => {
-      const tagsExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'tags'`).get());
+      const tagsExists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'tags'`,
+          )
+          .get(),
+      );
       if (!tagsExists) {
         db.exec(`
           CREATE TABLE tags (
@@ -184,12 +224,20 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
           CREATE INDEX idx_room_tags_tag_id ON room_tags(tag_id);
         `);
       }
-      const cols = db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[];
+      const cols = db
+        .prepare(`SELECT name FROM pragma_table_info('rooms')`)
+        .all() as { name: string }[];
       const names = new Set(cols.map((c) => c.name));
-      if (!names.has('upload_enabled')) db.exec(`ALTER TABLE rooms ADD COLUMN upload_enabled INTEGER;`);
-      if (!names.has('title_source')) db.exec(`ALTER TABLE rooms ADD COLUMN title_source TEXT;`);
-      if (!names.has('title_updated_at')) db.exec(`ALTER TABLE rooms ADD COLUMN title_updated_at TEXT;`);
-      if (!names.has('title_fallback_used')) db.exec(`ALTER TABLE rooms ADD COLUMN title_fallback_used INTEGER NOT NULL DEFAULT 0;`);
+      if (!names.has("upload_enabled"))
+        db.exec(`ALTER TABLE rooms ADD COLUMN upload_enabled INTEGER;`);
+      if (!names.has("title_source"))
+        db.exec(`ALTER TABLE rooms ADD COLUMN title_source TEXT;`);
+      if (!names.has("title_updated_at"))
+        db.exec(`ALTER TABLE rooms ADD COLUMN title_updated_at TEXT;`);
+      if (!names.has("title_fallback_used"))
+        db.exec(
+          `ALTER TABLE rooms ADD COLUMN title_fallback_used INTEGER NOT NULL DEFAULT 0;`,
+        );
     },
   },
   {
@@ -197,18 +245,29 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // （pipeline_status、metadata JSON、cover_path）。幂等加列。
     version: 10,
     up: (db) => {
-      const cols = db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[];
+      const cols = db
+        .prepare(`SELECT name FROM pragma_table_info('recordings')`)
+        .all() as { name: string }[];
       const names = new Set(cols.map((c) => c.name));
-      if (!names.has('pipeline_status')) db.exec(`ALTER TABLE recordings ADD COLUMN pipeline_status TEXT;`);
-      if (!names.has('metadata')) db.exec(`ALTER TABLE recordings ADD COLUMN metadata TEXT;`);
-      if (!names.has('cover_path')) db.exec(`ALTER TABLE recordings ADD COLUMN cover_path TEXT;`);
+      if (!names.has("pipeline_status"))
+        db.exec(`ALTER TABLE recordings ADD COLUMN pipeline_status TEXT;`);
+      if (!names.has("metadata"))
+        db.exec(`ALTER TABLE recordings ADD COLUMN metadata TEXT;`);
+      if (!names.has("cover_path"))
+        db.exec(`ALTER TABLE recordings ADD COLUMN cover_path TEXT;`);
     },
   },
   {
     // #93 V5 Phase 0：诊断自愈工作台——诊断项与动作审计（幂等键防并发重复执行）。
     version: 11,
     up: (db) => {
-      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'diagnostics'`).get());
+      const exists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'diagnostics'`,
+          )
+          .get(),
+      );
       if (!exists) {
         db.exec(`
           CREATE TABLE diagnostics (
@@ -247,7 +306,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #114 V5 Batch2 后处理管线：PipelineRun + PipelineArtifact（步骤可独立判定与重试）。
     version: 12,
     up: (db) => {
-      const runsExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'`).get());
+      const runsExists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'`,
+          )
+          .get(),
+      );
       if (!runsExists) {
         db.exec(`
           CREATE TABLE pipeline_runs (
@@ -281,7 +346,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #116 V5 Batch2 OpenList 自动上传：UploadJob（状态/进度/重试/幂等键）。
     version: 13,
     up: (db) => {
-      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`).get());
+      const exists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`,
+          )
+          .get(),
+      );
       if (!exists) {
         db.exec(`
           CREATE TABLE upload_jobs (
@@ -305,7 +376,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #125 V5 Batch3 定时录制计划：RecordingSchedule（周计划，按本地时区计算 nextRunAt）。
     version: 14,
     up: (db) => {
-      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'recording_schedules'`).get());
+      const exists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'recording_schedules'`,
+          )
+          .get(),
+      );
       if (!exists) {
         db.exec(`
           CREATE TABLE recording_schedules (
@@ -330,7 +407,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // #127 V5 Batch3 录制备份与导出：ExportJob（单场/批量打包，manifest 含哈希/版本不含密钥）。
     version: 15,
     up: (db) => {
-      const exists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'export_jobs'`).get());
+      const exists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'export_jobs'`,
+          )
+          .get(),
+      );
       if (!exists) {
         db.exec(`
           CREATE TABLE export_jobs (
@@ -357,27 +440,47 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 幂等补所有 ALTER 新增过的列（PRAGMA 判存在，任意历史 DB 都可自愈）。
     version: 16,
     up: (db) => {
-      const ensureColumn = (table: string, column: string, ddl: string): void => {
-        const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('${table}') WHERE name = '${column}'`).get();
+      const ensureColumn = (
+        table: string,
+        column: string,
+        ddl: string,
+      ): void => {
+        const has = db
+          .prepare(
+            `SELECT 1 AS x FROM pragma_table_info('${table}') WHERE name = '${column}'`,
+          )
+          .get();
         if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
       };
       // rooms（v2/v3 favorited、v6 auto_record、v7 last_live_status、v9 upload_enabled + title_*）
-      ensureColumn('rooms', 'favorited', 'favorited INTEGER NOT NULL DEFAULT 0');
-      ensureColumn('rooms', 'auto_record', 'auto_record INTEGER');
-      ensureColumn('rooms', 'last_live_status', 'last_live_status TEXT');
-      ensureColumn('rooms', 'upload_enabled', 'upload_enabled INTEGER');
-      ensureColumn('rooms', 'title_source', 'title_source TEXT');
-      ensureColumn('rooms', 'title_updated_at', 'title_updated_at TEXT');
-      ensureColumn('rooms', 'title_fallback_used', 'title_fallback_used INTEGER NOT NULL DEFAULT 0');
+      ensureColumn(
+        "rooms",
+        "favorited",
+        "favorited INTEGER NOT NULL DEFAULT 0",
+      );
+      ensureColumn("rooms", "auto_record", "auto_record INTEGER");
+      ensureColumn("rooms", "last_live_status", "last_live_status TEXT");
+      ensureColumn("rooms", "upload_enabled", "upload_enabled INTEGER");
+      ensureColumn("rooms", "title_source", "title_source TEXT");
+      ensureColumn("rooms", "title_updated_at", "title_updated_at TEXT");
+      ensureColumn(
+        "rooms",
+        "title_fallback_used",
+        "title_fallback_used INTEGER NOT NULL DEFAULT 0",
+      );
       // recordings（v4 integrity、v8 room_name、v10 pipeline_status/metadata/cover_path）
-      ensureColumn('recordings', 'integrity', 'integrity TEXT');
-      ensureColumn('recordings', 'room_name', 'room_name TEXT NOT NULL DEFAULT \'\'');
-      ensureColumn('recordings', 'pipeline_status', 'pipeline_status TEXT');
-      ensureColumn('recordings', 'metadata', 'metadata TEXT');
-      ensureColumn('recordings', 'cover_path', 'cover_path TEXT');
+      ensureColumn("recordings", "integrity", "integrity TEXT");
+      ensureColumn(
+        "recordings",
+        "room_name",
+        "room_name TEXT NOT NULL DEFAULT ''",
+      );
+      ensureColumn("recordings", "pipeline_status", "pipeline_status TEXT");
+      ensureColumn("recordings", "metadata", "metadata TEXT");
+      ensureColumn("recordings", "cover_path", "cover_path TEXT");
       // alerts（v5 room_id/error_code）
-      ensureColumn('alerts', 'room_id', 'room_id TEXT');
-      ensureColumn('alerts', 'error_code', 'error_code TEXT');
+      ensureColumn("alerts", "room_id", "room_id TEXT");
+      ensureColumn("alerts", "error_code", "error_code TEXT");
     },
   },
   {
@@ -386,9 +489,15 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // v17 加复合索引 (state, started_at DESC) 消临时排序（幂等：索引不存在才建）。
     version: 17,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND name = 'idx_recordings_state_started'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND name = 'idx_recordings_state_started'`,
+        )
+        .get();
       if (!has) {
-        db.exec(`CREATE INDEX idx_recordings_state_started ON recordings(state, started_at DESC);`);
+        db.exec(
+          `CREATE INDEX idx_recordings_state_started ON recordings(state, started_at DESC);`,
+        );
       }
     },
   },
@@ -396,7 +505,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 录制发起时设置的期望画质快照（settings.quality），历史页据此判断画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。
     version: 18,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`,
+        )
+        .get();
       if (!has) {
         db.exec(`ALTER TABLE recordings ADD COLUMN expected_quality TEXT;`);
       }
@@ -407,7 +520,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // v18 因版本已记录被跳过 → 列永远补不上、recordings.create 带 expectedQuality 即报错。追加 v19 幂等 ensure-column（PRAGMA 判存→ALTER 补列）。
     version: 19,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'expected_quality'`,
+        )
+        .get();
       if (!has) {
         db.exec(`ALTER TABLE recordings ADD COLUMN expected_quality TEXT;`);
       }
@@ -419,8 +536,12 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // sort at 10k+ history rows while preserving existing migration data.
     version: 20,
     up: (db) => {
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_room_started_id ON recordings(room_id, started_at DESC, id DESC);`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_started_id ON recordings(started_at DESC, id DESC);`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_recordings_room_started_id ON recordings(room_id, started_at DESC, id DESC);`,
+      );
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_recordings_started_id ON recordings(started_at DESC, id DESC);`,
+      );
     },
   },
   {
@@ -428,30 +549,60 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 相同时间用 id 稳定排序；新房间可用更小的值插入顶部。
     version: 21,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'sort_order'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'sort_order'`,
+        )
+        .get();
       if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN sort_order INTEGER`);
-      const rows = db.prepare(`SELECT id FROM rooms ORDER BY created_at DESC, id DESC`).all() as Array<{ id: string }>;
-      const update = db.prepare(`UPDATE rooms SET sort_order = ? WHERE id = ? AND sort_order IS NULL`);
+      const rows = db
+        .prepare(`SELECT id FROM rooms ORDER BY created_at DESC, id DESC`)
+        .all() as Array<{ id: string }>;
+      const update = db.prepare(
+        `UPDATE rooms SET sort_order = ? WHERE id = ? AND sort_order IS NULL`,
+      );
       rows.forEach((row, index) => update.run(index, row.id));
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_rooms_sort_order ON rooms(sort_order, created_at DESC, id DESC)`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_rooms_sort_order ON rooms(sort_order, created_at DESC, id DESC)`,
+      );
     },
   },
   {
     // OpenList 自动上传成功后的本地文件清理资格。存于任务，避免重启/重试丢失自动与手动的边界。
     version: 22,
     up: (db) => {
-      const tableExists = Boolean(db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`).get());
+      const tableExists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'upload_jobs'`,
+          )
+          .get(),
+      );
       if (!tableExists) return;
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('upload_jobs') WHERE name = 'delete_source_after_success'`).get();
-      if (!has) db.exec(`ALTER TABLE upload_jobs ADD COLUMN delete_source_after_success INTEGER NOT NULL DEFAULT 0;`);
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('upload_jobs') WHERE name = 'delete_source_after_success'`,
+        )
+        .get();
+      if (!has)
+        db.exec(
+          `ALTER TABLE upload_jobs ADD COLUMN delete_source_after_success INTEGER NOT NULL DEFAULT 0;`,
+        );
     },
   },
   {
     // 直播间级开播提醒。存量与新建房间均默认关闭，须由用户显式订阅。
     version: 23,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_notification_enabled'`).get();
-      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN live_notification_enabled INTEGER NOT NULL DEFAULT 0;`);
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_notification_enabled'`,
+        )
+        .get();
+      if (!has)
+        db.exec(
+          `ALTER TABLE rooms ADD COLUMN live_notification_enabled INTEGER NOT NULL DEFAULT 0;`,
+        );
     },
   },
   {
@@ -472,26 +623,48 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 监控总览展示正在直播的房间标题，不能复用主播显示名或录制历史标题。
     version: 25,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'current_stream_title'`).get();
-      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN current_stream_title TEXT;`);
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'current_stream_title'`,
+        )
+        .get();
+      if (!has)
+        db.exec(`ALTER TABLE rooms ADD COLUMN current_stream_title TEXT;`);
     },
   },
   {
     // 开播观测保留来源和可确认的时间范围。旧事件仍可读取，避免升级后丢失预测历史。
     version: 26,
     up: (db) => {
-      const hasSource = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'source'`).get();
-      if (!hasSource) db.exec(`ALTER TABLE live_events ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy';`);
-      const hasLowerBound = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'lower_bound_at'`).get();
-      if (!hasLowerBound) db.exec(`ALTER TABLE live_events ADD COLUMN lower_bound_at TEXT;`);
+      const hasSource = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'source'`,
+        )
+        .get();
+      if (!hasSource)
+        db.exec(
+          `ALTER TABLE live_events ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy';`,
+        );
+      const hasLowerBound = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'lower_bound_at'`,
+        )
+        .get();
+      if (!hasLowerBound)
+        db.exec(`ALTER TABLE live_events ADD COLUMN lower_bound_at TEXT;`);
     },
   },
   {
     // 平台提供真实开播时间时单独保存，既保留本地检测时间，也能用于最高质量预测样本。
     version: 27,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'platform_started_at'`).get();
-      if (!has) db.exec(`ALTER TABLE live_events ADD COLUMN platform_started_at TEXT;`);
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('live_events') WHERE name = 'platform_started_at'`,
+        )
+        .get();
+      if (!has)
+        db.exec(`ALTER TABLE live_events ADD COLUMN platform_started_at TEXT;`);
     },
   },
   {
@@ -572,8 +745,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 而不是等录完翻历史才发现画质不符。与 current_stream_title 同为检测派生的缓存字段。
     version: 31,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'available_qualities'`).get();
-      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN available_qualities TEXT;`);
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'available_qualities'`,
+        )
+        .get();
+      if (!has)
+        db.exec(`ALTER TABLE rooms ADD COLUMN available_qualities TEXT;`);
     },
   },
   {
@@ -581,10 +759,12 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 清理存量库里带 `CODE: ` 前缀的历史消息，避免升级后仍显示令人困惑的英文错误码。
     version: 32,
     up: (db) => {
-      const rows = db.prepare(`SELECT id, message FROM alerts WHERE message LIKE '%: %'`).all() as Array<{ id: string; message: string }>;
-      const update = db.prepare('UPDATE alerts SET message = ? WHERE id = ?');
+      const rows = db
+        .prepare(`SELECT id, message FROM alerts WHERE message LIKE '%: %'`)
+        .all() as Array<{ id: string; message: string }>;
+      const update = db.prepare("UPDATE alerts SET message = ? WHERE id = ?");
       for (const row of rows) {
-        const stripped = row.message.replace(/^[A-Z][A-Z_]{4,}: /, '');
+        const stripped = row.message.replace(/^[A-Z][A-Z_]{4,}: /, "");
         if (stripped !== row.message) update.run(stripped, row.id);
       }
     },
@@ -610,10 +790,16 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     version: 34,
     up: (db) => {
       const names = new Set(
-        (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as Array<{ name: string }>).map((r) => r.name),
+        (
+          db
+            .prepare(`SELECT name FROM pragma_table_info('recordings')`)
+            .all() as Array<{ name: string }>
+        ).map((r) => r.name),
       );
-      if (!names.has('end_reason')) db.exec(`ALTER TABLE recordings ADD COLUMN end_reason TEXT;`);
-      if (!names.has('missing_ms')) db.exec(`ALTER TABLE recordings ADD COLUMN missing_ms INTEGER;`);
+      if (!names.has("end_reason"))
+        db.exec(`ALTER TABLE recordings ADD COLUMN end_reason TEXT;`);
+      if (!names.has("missing_ms"))
+        db.exec(`ALTER TABLE recordings ADD COLUMN missing_ms INTEGER;`);
     },
   },
   {
@@ -621,9 +807,15 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     // 持久化本地确认的开播起点，重启后仍能识别本次直播是否已手动停止过录制。
     version: 35,
     up: (db) => {
-      const has = db.prepare(`SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_started_at'`).get();
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'live_started_at'`,
+        )
+        .get();
       if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN live_started_at TEXT;`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_recordings_room_started_at ON recordings(room_id, started_at);`);
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_recordings_room_started_at ON recordings(room_id, started_at);`,
+      );
     },
   },
   {
@@ -631,11 +823,38 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     version: 36,
     up: (db) => {
       const names = new Set(
-        (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as Array<{ name: string }>).map((r) => r.name),
+        (
+          db
+            .prepare(`SELECT name FROM pragma_table_info('recordings')`)
+            .all() as Array<{ name: string }>
+        ).map((r) => r.name),
       );
-      if (!names.has('highlight_export_pending')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_export_pending INTEGER NOT NULL DEFAULT 0;`);
-      if (!names.has('highlight_confirmation_decision')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_confirmation_decision INTEGER;`);
-      if (!names.has('highlight_confirmation_file_name')) db.exec(`ALTER TABLE recordings ADD COLUMN highlight_confirmation_file_name TEXT;`);
+      if (!names.has("highlight_export_pending"))
+        db.exec(
+          `ALTER TABLE recordings ADD COLUMN highlight_export_pending INTEGER NOT NULL DEFAULT 0;`,
+        );
+      if (!names.has("highlight_confirmation_decision"))
+        db.exec(
+          `ALTER TABLE recordings ADD COLUMN highlight_confirmation_decision INTEGER;`,
+        );
+      if (!names.has("highlight_confirmation_file_name"))
+        db.exec(
+          `ALTER TABLE recordings ADD COLUMN highlight_confirmation_file_name TEXT;`,
+        );
+    },
+  },
+  {
+    version: 37,
+    up: (db) => {
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('recordings') WHERE name = 'origin'`,
+        )
+        .get();
+      if (!has)
+        db.exec(
+          `ALTER TABLE recordings ADD COLUMN origin TEXT NOT NULL DEFAULT 'automatic';`,
+        );
     },
   },
 ];
@@ -647,7 +866,10 @@ export function runMigrations(db: DB): number {
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   const applied = new Set(
-    db.prepare('SELECT version FROM schema_version').all().map((r: unknown) => (r as { version: number }).version),
+    db
+      .prepare("SELECT version FROM schema_version")
+      .all()
+      .map((r: unknown) => (r as { version: number }).version),
   );
   let count = 0;
   for (const m of MIGRATIONS) {
@@ -658,7 +880,9 @@ export function runMigrations(db: DB): number {
       } else if (m.sql) {
         db.exec(m.sql);
       }
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(m.version);
+      db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(
+        m.version,
+      );
     })();
     count += 1;
   }
@@ -666,6 +890,8 @@ export function runMigrations(db: DB): number {
 }
 
 export function currentSchemaVersion(db: DB): number {
-  const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number | null };
+  const row = db
+    .prepare("SELECT MAX(version) AS v FROM schema_version")
+    .get() as { v: number | null };
   return row.v ?? 0;
 }

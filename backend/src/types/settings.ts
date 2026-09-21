@@ -55,6 +55,8 @@ export interface AppSettings {
   dedupeWindowMinutes: number;
   /** V5 界面主题偏好（FE 持久化经此字段）；缺省 system。 */
   theme: ThemePreference;
+  /** 全局悬浮录制按钮半径（px）。 */
+  floatingRecorderSize: number;
   /** V5 通知偏好（开播/录制/磁盘事件预设+开关）。 */
   notifications?: NotificationPreference;
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
@@ -146,6 +148,7 @@ export interface SettingsView {
   bilibiliCookie: { hasCookie: boolean };
   /** V5 界面主题偏好。 */
   theme: ThemePreference;
+  floatingRecorderSize: number;
   /** V5 通知偏好视图（与写入契约一致）。 */
   notifications?: NotificationPreference;
   /** V5 后处理管线配置视图（与写入契约一致）。 */

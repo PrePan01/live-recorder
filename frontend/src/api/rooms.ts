@@ -66,13 +66,20 @@ export async function checkRoomNow(id: string): Promise<void> {
   await http.post(`/rooms/${id}/check`);
 }
 
-/** 对全部启用直播间执行一次即时开播检测。 */
-export async function checkEnabledRooms(): Promise<void> {
-  await http.post("/rooms/check-enabled");
+/** 提交全部启用直播间的开播检测；相同的在途批次会被后端合并。 */
+export async function checkEnabledRooms(): Promise<{
+  queued: number;
+  alreadyRunning: boolean;
+}> {
+  const { data } = await http.post<{
+    queued: number;
+    alreadyRunning: boolean;
+  }>("/rooms/check-enabled");
+  return data;
 }
 
-export async function startRoomRecording(id: string): Promise<void> {
-  await http.post(`/rooms/${id}/start-recording`);
+export async function startRoomRecording(id: string, origin?: "floating"): Promise<void> {
+  await http.post(`/rooms/${id}/start-recording`, origin ? { origin } : undefined);
 }
 
 export async function stopRecording(id: string): Promise<void> {

@@ -17,6 +17,11 @@
     transform: rotate(-2deg) scale(1.06);
   }
 }
+@keyframes lr-recording-indicator {
+  50% {
+    background: #fff;
+  }
+}
 @keyframes lr-value-roll-in {
   from {
     transform: translateY(100%);

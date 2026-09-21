@@ -101,7 +101,10 @@ export default function RoomStats({
         className={`lr-stat lr-stat--duration${recording ? ' lr-stat--duration-visible' : ''}`}
         aria-hidden={!recording}
       >
-        <div className="lr-stat__label">已录制</div>
+        <div className="lr-stat__label lr-stat__recording-label">
+          {recording ? <span className="lr-stat__recording-dot" aria-hidden="true" /> : null}
+          {recording ? '正在录制' : '已录制'}
+        </div>
         <RollingDuration value={recording ? duration : lastDuration} />
       </div>
     </div>
