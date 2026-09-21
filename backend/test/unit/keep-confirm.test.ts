@@ -6,6 +6,7 @@ import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS, KEEP_CONFIRM_TIMEOUT_MS } from '../../src/core/recorder-manager.js';
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -123,6 +124,25 @@ describe('#220 录制完成「询问是否保留」', () => {
     const rec = services.recordings.get(recId)!;
     expect(rec.state).toBe('completed');
     await app.close();
+  });
+
+  it('悬浮按钮来源在确认设置开启时也直接保留并进入完成态', async () => {
+    const services = newServices();
+    const clock = services.clock as FakeClock;
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-floating-keep-'));
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/998', displayName: '悬浮录制' });
+    services.rooms.setLiveStatus(room.id, 'live');
+
+    await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 'floating-session' }, { manual: true, origin: 'floating' });
+    const deadline = Date.now() + 5_000;
+    while (!services.recordings.list({ pageSize: 100 }).items.some((r) => r.state === 'completed') && Date.now() < deadline) {
+      clock.advance(500);
+      await sleep(5);
+    }
+    const recording = services.recordings.list({ pageSize: 100 }).items[0]!;
+    expect(recording.origin).toBe('floating');
+    expect(recording.state).toBe('completed');
   });
 
   it('统一决策接口 confirm：keep=true 保留、keep=false 删除；keep 非布尔/非待确认态 422', async () => {

@@ -1,6 +1,36 @@
-import { http } from './client';
-import type { ErrorDiagnostic } from '../utils/errorDiagnostics';
-import type { DiagnosticDetail, DiagnosticStatus, PagedDiagnostics } from '../types/diagnostic';
+import { http } from "./client";
+import type { ErrorDiagnostic } from "../utils/errorDiagnostics";
+import type {
+  DiagnosticDetail,
+  DiagnosticStatus,
+  PagedDiagnostics,
+} from "../types/diagnostic";
+
+export interface PerformanceStage {
+  name: string;
+  elapsedMs: number;
+}
+
+export interface PerformanceDiagnostic {
+  id: number;
+  kind: "recording_start" | "preview_start";
+  roomId: string;
+  platform: "bilibili" | "douyin";
+  startedAt: string;
+  elapsedMs: number;
+  outcome: "running" | "ok" | "failed" | "skipped";
+  stages: PerformanceStage[];
+  errorCode: string | null;
+}
+
+export async function fetchPerformanceDiagnostics(): Promise<
+  PerformanceDiagnostic[]
+> {
+  const { data } = await http.get<{ items: PerformanceDiagnostic[] }>(
+    "/diagnostics/performance",
+  );
+  return data.items;
+}
 
 export interface DiagnosticQuery {
   status?: DiagnosticStatus;
@@ -10,18 +40,31 @@ export interface DiagnosticQuery {
   pageSize?: number;
 }
 
-export async function fetchDiagnostics(q: DiagnosticQuery = {}): Promise<PagedDiagnostics> {
-  const { data } = await http.get<PagedDiagnostics>('/diagnostics', { params: q });
+export async function fetchDiagnostics(
+  q: DiagnosticQuery = {},
+): Promise<PagedDiagnostics> {
+  const { data } = await http.get<PagedDiagnostics>("/diagnostics", {
+    params: q,
+  });
   return data;
 }
 
-export async function fetchDiagnosticDetail(id: string): Promise<DiagnosticDetail> {
+export async function fetchDiagnosticDetail(
+  id: string,
+): Promise<DiagnosticDetail> {
   const { data } = await http.get<DiagnosticDetail>(`/diagnostics/${id}`);
   return data;
 }
 
-export async function runDiagnosticAction(id: string, action: string, idempotencyKey: string): Promise<DiagnosticDetail> {
-  const { data } = await http.post<DiagnosticDetail>(`/diagnostics/${id}/actions/${action}`, { idempotencyKey });
+export async function runDiagnosticAction(
+  id: string,
+  action: string,
+  idempotencyKey: string,
+): Promise<DiagnosticDetail> {
+  const { data } = await http.post<DiagnosticDetail>(
+    `/diagnostics/${id}/actions/${action}`,
+    { idempotencyKey },
+  );
   return data;
 }
 
@@ -29,18 +72,32 @@ export interface DiagnosticExportFileResult {
   ok: boolean;
   saved: boolean;
   path: string | null;
-  reason: 'cancelled' | 'no-dialog' | null;
+  reason: "cancelled" | "no-dialog" | null;
 }
 
-export async function exportDiagnosticsToFile(frontendDiagnostics: readonly ErrorDiagnostic[], includeRooms: boolean): Promise<DiagnosticExportFileResult> {
-  const { data } = await http.post<DiagnosticExportFileResult>('/diagnostics/export-file', { frontendDiagnostics, includeRooms }, { timeout: 0 });
+export async function exportDiagnosticsToFile(
+  frontendDiagnostics: readonly ErrorDiagnostic[],
+  includeRooms: boolean,
+): Promise<DiagnosticExportFileResult> {
+  const { data } = await http.post<DiagnosticExportFileResult>(
+    "/diagnostics/export-file",
+    { frontendDiagnostics, includeRooms },
+    { timeout: 0 },
+  );
   return data;
 }
 
-export async function downloadDiagnostics(frontendDiagnostics: readonly ErrorDiagnostic[], includeRooms: boolean): Promise<void> {
-  const response = await http.post<Blob>('/diagnostics/export-download', { frontendDiagnostics, includeRooms }, { responseType: 'blob', timeout: 0 });
+export async function downloadDiagnostics(
+  frontendDiagnostics: readonly ErrorDiagnostic[],
+  includeRooms: boolean,
+): Promise<void> {
+  const response = await http.post<Blob>(
+    "/diagnostics/export-download",
+    { frontendDiagnostics, includeRooms },
+    { responseType: "blob", timeout: 0 },
+  );
   const url = URL.createObjectURL(response.data);
-  const anchor = document.createElement('a');
+  const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `live-recorder-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`;
   anchor.click();

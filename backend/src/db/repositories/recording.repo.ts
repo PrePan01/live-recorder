@@ -1,5 +1,5 @@
 import type { DB } from '../connection.js';
-import type { ErrorObject, Platform, Quality, Recording, RecordingEndReason, RecordingIntegrity, RecordingMetadata, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
+import type { ErrorObject, Platform, Quality, Recording, RecordingEndReason, RecordingIntegrity, RecordingMetadata, RecordingOrigin, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
 interface RecordingRow {
@@ -27,6 +27,7 @@ interface RecordingRow {
   highlight_export_pending: number | null;
   highlight_confirmation_decision: number | null;
   highlight_confirmation_file_name: string | null;
+  origin: string | null;
   created_at: string;
   upload?: { status: string; progress: number; remotePath: string | null; error: string | null; updatedAt: string };
 }
@@ -79,6 +80,7 @@ export function rowToRecording(row: RecordingRow): Recording {
   if (row.highlight_export_pending) rec.highlightExportPending = true;
   if (row.highlight_confirmation_decision !== null) rec.highlightConfirmationDecision = Boolean(row.highlight_confirmation_decision);
   if (row.highlight_confirmation_file_name !== null) rec.highlightConfirmationFileName = row.highlight_confirmation_file_name;
+  if (row.origin) rec.origin = row.origin as RecordingOrigin;
   if (row.upload) rec.upload = { ...row.upload, status: row.upload.status as UploadJobStatus };
   return rec;
 }
@@ -107,6 +109,7 @@ export class RecordingRepository {
     streamTitle: string;
     quality?: string;
     expectedQuality?: string;
+    origin?: RecordingOrigin;
   }): Recording {
     const now = nowIso();
     const rec: Recording = {
@@ -127,10 +130,11 @@ export class RecordingRepository {
     };
     this.db
       .prepare(
-        `INSERT INTO recordings (id, room_id, room_name, platform, stream_session_id, stream_title, state, started_at, created_at, quality, expected_quality)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        `INSERT INTO recordings (id, room_id, room_name, platform, stream_session_id, stream_title, state, started_at, created_at, quality, expected_quality, origin)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
       )
-      .run(rec.id, rec.roomId, rec.roomName, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null, input.expectedQuality ?? null);
+      .run(rec.id, rec.roomId, rec.roomName, rec.platform, rec.streamSessionId, rec.streamTitle, now, now, input.quality ?? null, input.expectedQuality ?? null, input.origin ?? 'automatic');
+    rec.origin = input.origin ?? 'automatic';
     return rec;
   }
 

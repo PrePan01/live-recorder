@@ -13,6 +13,9 @@ export type RecordingState =
   | 'completed'
   | 'failed';
 
+/** 发起录制的入口；悬浮窗录制完成后始终保留文件。 */
+export type RecordingOrigin = 'manual' | 'automatic' | 'floating' | 'highlight';
+
 /**
  * 录制结束原因：区分正常收尾与各类中断。
  * natural=直播结束/下播自然收尾；stopped=手动停止；
@@ -50,6 +53,7 @@ export interface Recording {
   failureReason: ErrorObject | null;
   retryCount: number;
   createdAt: string;
+  origin?: RecordingOrigin;
   quality?: Quality;
   /** 录制发起时设置的期望画质（settings.quality 快照），用于历史页判断是否发生画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。 */
   expectedQuality?: Quality;

@@ -49,6 +49,18 @@ function openEventStream(url: string): { frames: string[]; req: http.ClientReque
 }
 
 describe('SSE events', () => {
+  it('lists recent local startup performance diagnostics', async () => {
+    const server = await listen();
+    const response = await server.app.inject({
+      method: 'GET',
+      url: '/api/v1/diagnostics/performance',
+      headers: { host: '127.0.0.1:43120' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ items: [] });
+    await server.close();
+  });
+
   it('streams room:updated frames to subscribers', async () => {
     const server = await listen();
     const stream = openEventStream(server.url);

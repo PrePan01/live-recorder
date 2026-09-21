@@ -9,7 +9,12 @@ import Startup from "./pages/Startup";
 import StartupDiagnostics from "./pages/StartupDiagnostics";
 import { useSSE } from "./hooks/useSSE";
 import { useServiceStore } from "./stores/serviceStore";
-import { useBootStore, subscribeBridgeEvents } from "./stores/bootStore";
+import {
+  bridge,
+  useBootStore,
+  subscribeBridgeEvents,
+} from "./stores/bootStore";
+import { useSettingsStore } from "./stores/settingsStore";
 import { recordRecentErrorAction } from "./utils/errorDiagnostics";
 import RecordingCompleteNotice from "./components/RecordingCompleteNotice";
 import OpenList2faModal from "./components/OpenList2faModal";
@@ -63,6 +68,8 @@ export default function App() {
   useSSE();
   const boot = useBootStore((s) => s.boot);
   const bootState = useBootStore((s) => s.state);
+  const settings = useSettingsStore((s) => s.settings);
+  const loadSettings = useSettingsStore((s) => s.load);
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -74,6 +81,18 @@ export default function App() {
     if (useBootStore.getState().state === "booting") void boot();
     return unsub;
   }, [boot]);
+
+  useEffect(() => {
+    if (bootState !== "ready" || settings) return;
+    void loadSettings();
+  }, [bootState, loadSettings, settings]);
+
+  useEffect(() => {
+    if (bootState !== "ready" || !bridge.isDesktop || !settings) return;
+    void bridge
+      .setFloatingRecorderSize(settings.floatingRecorderSize ?? 36)
+      .catch(() => undefined);
+  }, [bootState, settings]);
 
   useEffect(() => {
     if (bootState !== "ready") return;

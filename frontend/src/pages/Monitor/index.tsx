@@ -27,6 +27,7 @@ import {
   UnorderedListOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
+import { bridge } from "../../stores/bootStore";
 import { useRoomStore } from "../../stores/roomStore";
 import { usePreviewStore } from "../../stores/previewStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -61,7 +62,15 @@ import {
 let startupLiveCheck: Promise<void> | null = null;
 
 function triggerStartupLiveCheck(): Promise<void> {
-  startupLiveCheck ??= checkEnabledRooms();
+  if (!startupLiveCheck) {
+    const request = checkEnabledRooms().then(() => undefined);
+    startupLiveCheck = request;
+    // A failed request must not poison subsequent visits to this page: allow a
+    // later mount to issue a fresh request instead of reusing this rejection.
+    void request.catch(() => {
+      if (startupLiveCheck === request) startupLiveCheck = null;
+    });
+  }
   return startupLiveCheck;
 }
 
@@ -144,6 +153,7 @@ const RoomCard = memo(function RoomCard({
   onStop,
   onRecord,
   onFavorite,
+  onEnableFloating,
   layout,
   actingAction,
   acting,
@@ -152,6 +162,8 @@ const RoomCard = memo(function RoomCard({
   insight,
   qualityPreference,
   bilibiliAuthorized,
+  floatingEnabled,
+  floatingReady,
 }: {
   room: Room;
   onWatch: (r: Room) => void;
@@ -159,6 +171,7 @@ const RoomCard = memo(function RoomCard({
   onStop: (r: Room) => void;
   onRecord: (r: Room) => void;
   onFavorite: (r: Room, favorited: boolean) => void;
+  onEnableFloating: (r: Room) => void;
   layout: "card" | "list";
   actingAction?: "check" | "record" | "stop";
   acting?: boolean;
@@ -167,6 +180,8 @@ const RoomCard = memo(function RoomCard({
   insight?: RoomInsight;
   qualityPreference: Quality | null;
   bilibiliAuthorized: boolean;
+  floatingEnabled: boolean;
+  floatingReady: boolean;
 }) {
   const navigate = useNavigate();
   const recording =
@@ -208,6 +223,30 @@ const RoomCard = memo(function RoomCard({
         }
         extra={
           <Space size={0}>
+            {onAir ? (
+              <Tooltip
+                title={
+                  floatingReady
+                    ? `${floatingEnabled ? "关闭" : "启用"}录制按钮`
+                    : "正在加载录制按钮设置…"
+                }
+              >
+                <Button
+                  type="text"
+                  aria-label="启用录制按钮"
+                  className={`lr-floating-recorder-toggle ${floatingEnabled ? "lr-floating-recorder-toggle--enabled" : ""}`}
+                  disabled={!floatingReady}
+                  onClick={() => onEnableFloating(room)}
+                >
+                  <span
+                    className="lr-floating-recorder-toggle__ring"
+                    aria-hidden="true"
+                  >
+                    <span />
+                  </span>
+                </Button>
+              </Tooltip>
+            ) : null}
             <Button
               type="text"
               size="small"
@@ -446,6 +485,16 @@ export default function Monitor() {
   // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
   const [insights, setInsights] = useState<Record<string, RoomInsight>>({});
+  const [floatingRoomId, setFloatingRoomId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!bridge.isDesktop) return;
+    void bridge
+      .getFloatingRecorderTarget()
+      .then(setFloatingRoomId)
+      .catch(() => undefined);
+    return bridge.onFloatingRecorderTarget(setFloatingRoomId);
+  }, []);
 
   useEffect(() => {
     const ids = Object.keys(recentStop);
@@ -628,14 +677,46 @@ export default function Monitor() {
     [favoriteRoom, message],
   );
 
+  const onEnableFloating = useCallback(
+    (room: Room) => {
+      if (!bridge.isDesktop) {
+        message.info("全局录制按钮仅限桌面客户端");
+        return;
+      }
+      const currentSettings = useSettingsStore.getState().settings;
+      if (!currentSettings) {
+        message.info("正在加载录制按钮设置，请稍后重试");
+        return;
+      }
+      if (floatingRoomId === room.id) {
+        void bridge
+          .hideFloatingRecorder(true)
+          .then(() => setFloatingRoomId(null))
+          .catch(() => message.error("无法隐藏全局录制按钮"));
+        return;
+      }
+      void bridge
+        .showFloatingRecorder(
+          room.id,
+          currentSettings.floatingRecorderSize ?? 36,
+        )
+        .then(() => setFloatingRoomId(room.id))
+        .catch(() => message.error("无法启用全局录制按钮"));
+    },
+    [floatingRoomId, message],
+  );
+
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
       await checkEnabledRooms();
       await fetchRooms(true);
-      message.success("已刷新并完成开播检测");
-    } catch {
-      message.error("刷新或开播检测失败，请稍后重试");
+    } catch (error) {
+      message.error(
+        error instanceof ApiError
+          ? describeError(error.code, error.message)
+          : "刷新或开播检测失败，请稍后重试",
+      );
     } finally {
       setRefreshing(false);
     }
@@ -952,8 +1033,11 @@ export default function Monitor() {
                   insight={insights[room.id]}
                   qualityPreference={settings?.quality ?? null}
                   bilibiliAuthorized={bilibiliAuthorized}
+                  floatingEnabled={floatingRoomId === room.id}
+                  floatingReady={settings !== null}
                   onRecord={onRecordRoom}
                   onFavorite={onFavoriteRoom}
+                  onEnableFloating={onEnableFloating}
                   layout="card"
                 />
               </SortableRoomCardItem>

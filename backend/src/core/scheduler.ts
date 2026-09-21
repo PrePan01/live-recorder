@@ -13,7 +13,13 @@ import {
 } from "./live-prediction.js";
 
 const PLATFORMS: Platform[] = ["bilibili", "douyin"];
-const PLATFORM_CHECK_CONCURRENCY = 2;
+/**
+ * 开播检测平台级上限
+ */
+const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
+  bilibili: 6,
+  douyin: 3,
+};
 
 export class Scheduler {
   private running = false;
@@ -21,6 +27,8 @@ export class Scheduler {
   private dueByPlatform = new Map<Platform, string[]>();
   /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
   private checking = new Map<string, Promise<void>>();
+  /** 全量检测任务：页面反复刷新时合并到这一个任务，避免重复排完整队列。 */
+  private enabledRoomChecks: Promise<void> | null = null;
   /** 已收到抖音明确的凭证失效信号；保存新 Cookie 后才恢复请求。 */
   private douyinCookieExpired = false;
   private predictionsFinalizedAt = 0;
@@ -110,12 +118,15 @@ export class Scheduler {
 
   private async runChecks(
     rooms: Room[],
-    opts: { scheduled?: boolean } = {},
+    opts: { scheduled?: boolean; allowWhenStopped?: boolean } = {},
   ): Promise<void> {
     let cursor = 0;
     const isDouyinQueue = rooms[0]?.platform === "douyin";
     const worker = async () => {
-      while (this.running && (!isDouyinQueue || !this.douyinCookieExpired)) {
+      while (
+        (this.running || opts.allowWhenStopped) &&
+        (!isDouyinQueue || !this.douyinCookieExpired)
+      ) {
         const room = rooms[cursor++];
         if (!room) return;
         await this.checkRoom(room, opts).catch(() => undefined);
@@ -123,10 +134,43 @@ export class Scheduler {
     };
     await Promise.all(
       Array.from(
-        { length: Math.min(PLATFORM_CHECK_CONCURRENCY, rooms.length) },
+        {
+          length: Math.min(
+            PLATFORM_CHECK_CONCURRENCY[rooms[0]?.platform ?? "bilibili"],
+            rooms.length,
+          ),
+        },
         worker,
       ),
     );
+  }
+
+  /**
+   * 提交全量开播检测，不等待队列清空。监控页只需快速恢复可交互状态，检测
+   * 结果会通过 SSE 推送；若同步等待，房间较多时很容易超过前端请求超时。
+   */
+  queueEnabledRoomChecks(): { queued: number; alreadyRunning: boolean } {
+    if (this.enabledRoomChecks) return { queued: 0, alreadyRunning: true };
+    const rooms = this.services.rooms
+      .listEnabled()
+      .filter((room) => !this.manager.isRoomActive(room.id));
+    const task = Promise.all(
+      PLATFORMS.map((platform) =>
+        this.runChecks(
+          rooms.filter((room) => room.platform === platform),
+          { allowWhenStopped: true },
+        ),
+      ),
+    ).then(() => undefined);
+    this.enabledRoomChecks = task;
+    void task
+      .catch((error: unknown) => {
+        console.error("queued enabled-room checks failed", error);
+      })
+      .finally(() => {
+        if (this.enabledRoomChecks === task) this.enabledRoomChecks = null;
+      });
+    return { queued: rooms.length, alreadyRunning: false };
   }
 
   /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */

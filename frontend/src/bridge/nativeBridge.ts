@@ -21,6 +21,11 @@ export interface NativeBridge {
   restartService(): Promise<BootEvent>;
   getDiagnostics(): Promise<DiagnosticItem[]>;
   getWindowVisible(): Promise<boolean>;
+  getFloatingRecorderTarget(): Promise<string | null>;
+  onFloatingRecorderTarget(cb: (roomId: string | null) => void): () => void;
+  showFloatingRecorder(roomId: string, buttonSize: number): Promise<void>;
+  hideFloatingRecorder(clearTarget: boolean): Promise<void>;
+  setFloatingRecorderSize(buttonSize: number): Promise<void>;
   startDouyinAuthorization(): Promise<void>;
   onDouyinAuthorized(cb: () => void): () => void;
   startBilibiliAuthorization(): Promise<void>;
@@ -92,6 +97,35 @@ class TauriBridge implements NativeBridge {
 
   async getWindowVisible(): Promise<boolean> {
     try { return await this.invoke<boolean>('get_window_visible'); } catch { return true; }
+  }
+
+  async showFloatingRecorder(roomId: string, buttonSize: number): Promise<void> {
+    await this.invoke<void>('show_floating_recorder', { roomId, buttonSize });
+  }
+
+  async getFloatingRecorderTarget(): Promise<string | null> {
+    const state = await this.invoke<{ targetRoomId: string | null }>('get_floating_recorder_state');
+    return state.targetRoomId;
+  }
+
+  async hideFloatingRecorder(clearTarget: boolean): Promise<void> {
+    await this.invoke<void>('hide_floating_recorder', { clearTarget });
+  }
+
+  async setFloatingRecorderSize(buttonSize: number): Promise<void> {
+    await this.invoke<void>('set_floating_recorder_size', { buttonSize });
+  }
+
+  onFloatingRecorderTarget(cb: (roomId: string | null) => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<{ targetRoomId: string | null }>('floating-recorder:target', (event) => {
+        if (!disposed) cb(event.payload.targetRoomId);
+      });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
   }
 
   async startDouyinAuthorization(): Promise<void> {
@@ -274,6 +308,11 @@ class BrowserBridge implements NativeBridge {
   }
 
   async getWindowVisible(): Promise<boolean> { return !document.hidden; }
+  async getFloatingRecorderTarget(): Promise<string | null> { return null; }
+  onFloatingRecorderTarget(_cb: (roomId: string | null) => void): () => void { return () => {}; }
+  async showFloatingRecorder(_roomId: string, _buttonSize: number): Promise<void> { throw new Error('全局录制按钮仅限桌面客户端'); }
+  async hideFloatingRecorder(_clearTarget: boolean): Promise<void> { /* browser has no native overlay */ }
+  async setFloatingRecorderSize(_buttonSize: number): Promise<void> { /* browser has no native overlay */ }
 
   async startDouyinAuthorization(): Promise<void> {
     throw new Error('应用内授权仅限桌面客户端');

@@ -39,6 +39,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.theme !== undefined && s.theme !== 'light' && s.theme !== 'dark' && s.theme !== 'system') {
     throw new AppError('CONFIG_INVALID', 'theme 仅支持 light/dark/system');
   }
+  if (s.floatingRecorderSize !== undefined && (!Number.isInteger(s.floatingRecorderSize) || s.floatingRecorderSize < 20 || s.floatingRecorderSize > 100)) {
+    throw new AppError('CONFIG_INVALID', '全局录制按钮大小需在 20-100px 之间');
+  }
   const ci = s.checkIntervalSec;
   if (!ci || typeof ci.default !== 'number' || ci.default < 10 || typeof ci.bilibili !== 'number' || ci.bilibili < 10 || typeof ci.douyin !== 'number' || ci.douyin < 10) {
     throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin 且不小于 10 秒');

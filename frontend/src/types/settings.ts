@@ -50,6 +50,7 @@ export interface Settings {
   bilibiliCookie: { hasCookie: boolean };
   /** V5：主题偏好（light | dark | system） */
   theme?: ThemePreference;
+  floatingRecorderSize?: number;
   /** V5：通知偏好 */
   notifications?: NotificationPreference;
   /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
@@ -84,6 +85,7 @@ export interface SettingsInput {
   bilibiliCookie?: string;
   /** V5：主题偏好 */
   theme?: ThemePreference;
+  floatingRecorderSize?: number;
   /** #220/#221：录制完成后询问是否保留 */
   confirmAfterComplete?: boolean;
   highlightBufferSeconds?: number;

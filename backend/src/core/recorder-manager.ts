@@ -1,5 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { AppError } from "../types/error.js";
@@ -22,9 +22,12 @@ import { mp4PathFor, remuxFlvToMp4 } from "../recorder/remux.js";
 import type { RecordingEvent } from "../recorder/engine.js";
 import { FlvTimestampNormalizer } from "../recorder/stream-recorder.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
-import { ulid } from "../utils/id.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
+import {
+  PerformanceDiagnostics,
+  type PerformanceTrace,
+} from "./performance-diagnostics.js";
 
 export interface PreviewSink {
   canAccept(): boolean;
@@ -51,6 +54,8 @@ const HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS = 1_000;
 const MAX_SHARED_RECORDING_PENDING_BYTES = 32 * 1024 * 1024;
 /** 开录后多久还没写出文件即视为拿不到数据 */
 const START_TIMEOUT_MS = 30_000;
+/** Preview has no recording-level start watchdog; recycle a source that never yields its first byte. */
+const PREVIEW_START_TIMEOUT_MS = 10_000;
 /** 恢复后稳定录满这么久，就归还重连额度——几小时前的旧故障不该拖累现在这一次抖动。 */
 const STABLE_RESET_MS = 60_000;
 /** 续录前旧流收尾上限 */
@@ -104,14 +109,20 @@ interface ActiveSession {
   /** 手动停止接口等待录制记录和房间状态真正收口，避免响应先于异步生成器退出。 */
   done?: Promise<void>;
   resolveDone?: () => void;
+  startupTrace?: PerformanceTrace;
 }
 
 interface PreviewSession {
   engine: import("../recorder/engine.js").RecordingEngine;
+  /** The actual quality of this already-open upstream stream. */
+  actualQuality: string;
+  /** First upstream data arrived; a socket alone is not enough to trust a preview as live. */
+  hasReceivedData: boolean;
   done: Promise<void>;
   recording: SharedPreviewRecording | null;
   /** 仅供没有可复用 bootstrap 时走旧交接路径。 */
   transitioningToRecording: boolean;
+  startupTrace?: PerformanceTrace;
 }
 
 interface SharedPreviewRecording {
@@ -125,6 +136,7 @@ interface SharedPreviewRecording {
 }
 
 export class RecorderManager {
+  readonly performance: PerformanceDiagnostics;
   private active = new Map<string, ActiveSession>();
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
@@ -215,7 +227,9 @@ export class RecorderManager {
   constructor(
     private services: Services,
     private notifier: Notifier,
-  ) {}
+  ) {
+    this.performance = new PerformanceDiagnostics(services.clock);
+  }
 
   settings(): AppSettings {
     const stored = this.services.settings.load();
@@ -294,9 +308,18 @@ export class RecorderManager {
   // ---- 预览专用拉流（#163：预览=纯观看，不触发录制、不落盘）----
   private previewSessions = new Map<string, PreviewSession>();
   private previewTransitions = new Set<string>();
+  private previewStarts = new Map<string, Promise<void>>();
+  private highlightCleanup = new Map<string, Promise<void>>();
 
   isPreviewStreaming(roomId: string): boolean {
     return this.previewSessions.has(roomId);
+  }
+
+  isPreviewReadyForRecording(roomId: string): boolean {
+    const session = this.previewSessions.get(roomId);
+    if (!session || session.recording || !session.hasReceivedData) return false;
+    const bootstrap = this.preview?.recordingBootstrap?.(roomId);
+    return Boolean(bootstrap && bootstrap.subarray(0, 3).toString() === "FLV");
   }
 
   async enableHighlightBuffer(roomId: string): Promise<{
@@ -305,6 +328,7 @@ export class RecorderManager {
     accepting: boolean;
     disabledReason?: string;
   }> {
+    await this.highlightCleanup.get(roomId)?.catch(() => undefined);
     if (this.active.has(roomId))
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
@@ -364,6 +388,18 @@ export class RecorderManager {
     if (!buffer) return;
     this.highlightBuffers.delete(roomId);
     await buffer.clear();
+  }
+
+  private detachHighlightBufferForRecording(roomId: string): void {
+    const buffer = this.highlightBuffers.get(roomId);
+    if (!buffer) return;
+    this.highlightBuffers.delete(roomId);
+    const cleanup = buffer.clear().catch(() => undefined);
+    this.highlightCleanup.set(roomId, cleanup);
+    void cleanup.finally(() => {
+      if (this.highlightCleanup.get(roomId) === cleanup)
+        this.highlightCleanup.delete(roomId);
+    });
   }
 
   /** 清空内容但保留当前观看的缓存会话，后续预览帧会立即重新累计。 */
@@ -457,6 +493,7 @@ export class RecorderManager {
       streamTitle: `精彩时刻｜${room.displayName}`,
       quality: settings.quality,
       expectedQuality: settings.quality,
+      origin: "highlight",
     });
     const base = recordingFilePath(
       settings.recordingDirectory,
@@ -504,7 +541,13 @@ export class RecorderManager {
           filePath,
           lookbackSeconds,
           controller.signal,
-          () => this.refreshHighlightExportWatchdog(recording.id, job, roomId, filePath),
+          () =>
+            this.refreshHighlightExportWatchdog(
+              recording.id,
+              job,
+              roomId,
+              filePath,
+            ),
         );
         if (this.highlightExportJobs.get(recording.id) !== job) return;
         const endedAt = this.services.clock.iso();
@@ -538,15 +581,15 @@ export class RecorderManager {
         }
         this.pendingHighlightConfirmations.delete(recording.id);
         if (!decision) {
-          this.services.events.emit({ type: "recording:updated", data: completed });
+          this.services.events.emit({
+            type: "recording:updated",
+            data: completed,
+          });
           this.finishHighlightExportJob(recording.id, job);
           return;
         }
         if (decision.keep) {
-          await this.renameConfirmedHighlight(
-            recording.id,
-            decision.fileName,
-          );
+          await this.renameConfirmedHighlight(recording.id, decision.fileName);
           this.resumeAfterConfirmation(recording.id);
         } else {
           this.discardAfterConfirmation(recording.id);
@@ -669,12 +712,16 @@ export class RecorderManager {
       const pending = this.pendingHighlightConfirmations.get(recordingId);
       this.pendingHighlightConfirmations.delete(recordingId);
       const rec = this.services.recordings.get(recordingId);
-      const decision = pending?.decision?.keep ?? rec?.highlightConfirmationDecision;
+      const decision =
+        pending?.decision?.keep ?? rec?.highlightConfirmationDecision;
       // 不完整的 FLV 不能作为已保存录像留下；用户明确选择不保留时也应兑现决定。
       await unlink(filePath).catch(() => undefined);
       if (decision === false) {
         this.services.recordings.remove(recordingId);
-        this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
+        this.services.events.emit({
+          type: "recording:deleted",
+          data: { id: recordingId },
+        });
         return;
       }
       const err = new AppError(
@@ -730,6 +777,19 @@ export class RecorderManager {
   }
 
   async ensurePreviewStream(roomId: string): Promise<void> {
+    const existing = this.previewStarts.get(roomId);
+    if (existing) return existing;
+    const start = this.ensurePreviewStreamInner(roomId);
+    this.previewStarts.set(roomId, start);
+    try {
+      await start;
+    } finally {
+      if (this.previewStarts.get(roomId) === start)
+        this.previewStarts.delete(roomId);
+    }
+  }
+
+  private async ensurePreviewStreamInner(roomId: string): Promise<void> {
     if (this.services.resetting) return;
     if (
       this.previewSessions.has(roomId) ||
@@ -739,12 +799,15 @@ export class RecorderManager {
       return;
     const room = this.services.rooms.get(roomId);
     if (!room || room.lastLiveStatus !== "live") return;
+    const startupTrace = this.performance.begin("preview_start", room);
     try {
       const settings = this.settings();
       const cookie = await this.services.platformCookie(room.platform);
+      startupTrace.mark("platform_cookie_ready");
       const stream = await this.services
         .adapterFor(room.platform)
         .getStreamUrl(room.url, settings.quality, cookie);
+      startupTrace.mark("stream_url_ready");
       // getStreamUrl 期间可能已经点击了录制；二次检查避免迟到的 preview-only 流覆盖录制流。
       if (
         this.services.resetting ||
@@ -752,18 +815,30 @@ export class RecorderManager {
         this.previewSessions.has(roomId) ||
         this.previewTransitions.has(roomId) ||
         this.active.has(roomId)
-      )
+      ) {
+        startupTrace.finish("skipped");
         return;
+      }
       const engine = this.services.engineFor();
       const session: PreviewSession = {
         engine,
+        actualQuality: stream.actualQuality,
+        hasReceivedData: false,
         done: Promise.resolve(),
         recording: null,
         transitioningToRecording: false,
+        startupTrace,
       };
       this.previewSessions.set(roomId, session);
       session.done = (async () => {
         let streamError: ErrorObject | null = null;
+        let gotData = false;
+        let startupTimedOut = false;
+        const startupTimer = this.services.clock.setTimeout(() => {
+          if (gotData) return;
+          startupTimedOut = true;
+          void engine.stop().catch(() => undefined);
+        }, PREVIEW_START_TIMEOUT_MS);
         try {
           const input = {
             url: stream.url,
@@ -772,6 +847,11 @@ export class RecorderManager {
           };
           for await (const event of engine.start(input, null)) {
             if (event.type === "data") {
+              if (!gotData) {
+                gotData = true;
+                session.hasReceivedData = true;
+                session.startupTrace?.finish("ok");
+              }
               const sharedRecording = session.recording;
               if (sharedRecording) {
                 try {
@@ -800,6 +880,8 @@ export class RecorderManager {
             }
             if (event.type === "error") {
               streamError = event.error;
+              if (!gotData)
+                session.startupTrace?.finish("failed", event.error.code);
               break;
             }
           }
@@ -813,7 +895,14 @@ export class RecorderManager {
                   roomId,
                   retryable: true,
                 }).toObject());
+          if (!gotData)
+            session.startupTrace?.finish("failed", streamError.code);
         } finally {
+          clearTimeout2(this.services, startupTimer);
+          if (startupTimedOut && !gotData)
+            session.startupTrace?.finish("failed", "PREVIEW_START_TIMEOUT");
+          if (!gotData && !streamError)
+            session.startupTrace?.finish("failed", "STREAM_ENDED_BEFORE_DATA");
           // 只允许当前会话清理自己，避免旧拉流的 finally 误删后来创建的新会话。
           if (this.previewSessions.get(roomId) === session)
             this.previewSessions.delete(roomId);
@@ -881,7 +970,11 @@ export class RecorderManager {
           }
         }
       })();
-    } catch {
+    } catch (error) {
+      startupTrace.finish(
+        "failed",
+        error instanceof AppError ? error.code : "PREVIEW_START_FAILED",
+      );
       // 取流失败：不阻塞，前端按无帧处理
     }
   }
@@ -985,6 +1078,8 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     actualQuality: string,
     settings: AppSettings,
+    origin: import("../types/index.js").RecordingOrigin,
+    startupTrace?: PerformanceTrace,
   ): Promise<boolean> {
     const previewSession = this.previewSessions.get(room.id);
     const bootstrap = this.preview?.recordingBootstrap?.(room.id);
@@ -997,6 +1092,18 @@ export class RecorderManager {
     )
       return false;
 
+    const filePath = recordingFilePath(
+      settings.recordingDirectory,
+      room.platform,
+      room.displayName || room.id,
+      this.services.clock.iso(),
+      settings.recordingFormat,
+      settings.namingRule,
+      actualQuality,
+      room.id,
+    );
+    await this.createRecordingFile(filePath, room.id);
+    startupTrace?.mark("recording_file_ready");
     const recording = this.services.recordings.create({
       roomId: room.id,
       roomName: room.displayName,
@@ -1005,39 +1112,9 @@ export class RecorderManager {
       streamTitle: status.streamTitle ?? room.displayName,
       quality: actualQuality,
       expectedQuality: settings.quality,
+      origin,
     });
-    let filePath: string;
-    try {
-      filePath = recordingFilePath(
-        settings.recordingDirectory,
-        room.platform,
-        room.displayName || room.id,
-        recording.startedAt,
-        settings.recordingFormat,
-        settings.namingRule,
-        actualQuality,
-        room.id,
-      );
-      await mkdir(path.dirname(filePath), { recursive: true });
-    } catch (error) {
-      // 已经落了记录就必须收尾：留着 pending 记录会让「录制中」计数虚增并占用并发名额。
-      const err =
-        error instanceof AppError
-          ? error
-          : new AppError(
-              "RECORDING_DIRECTORY_INVALID",
-              "保存目录无效，录制失败",
-              { roomId: room.id, recordingId: recording.id },
-            );
-      const failed = this.services.recordings.update(recording.id, {
-        state: "failed",
-        endedAt: this.services.clock.iso(),
-        failureReason: err.toObject(),
-      });
-      this.services.events.emit({ type: "recording:updated", data: failed });
-      throw err;
-    }
-    const writer = createWriteStream(filePath);
+    const writer = createWriteStream(filePath, { flags: "a" });
     const session = this.newSession(
       recording.id,
       room.id,
@@ -1060,6 +1137,12 @@ export class RecorderManager {
       writePump: null,
       writeError: null,
     };
+    // A volume can disappear after the successful file creation. Keep an error
+    // listener for the whole writer lifetime so that a late EIO is surfaced to
+    // the recording flow instead of becoming an unhandled EventEmitter error.
+    writer.on("error", (error) => {
+      sharedRecording.writeError ??= error;
+    });
 
     try {
       this.appendSharedPreviewRecording(sharedRecording, bootstrap);
@@ -1084,6 +1167,9 @@ export class RecorderManager {
     this.services.recordings.update(recording.id, {
       state: "recording",
       filePath,
+      ...(origin === "floating"
+        ? { streamTitle: path.parse(filePath).name }
+        : {}),
     });
     this.services.rooms.setState(room.id, "recording", {
       lastCheckedAt: this.services.clock.iso(),
@@ -1104,20 +1190,33 @@ export class RecorderManager {
     return true;
   }
 
-  /**
-   * 录制开始前的保存目录可用性检查（与 /settings/validate-directory 同口径）。
-   * 必须在创建录制记录之前失败：目录无效时若先落一条 pending 记录，
-   * 「录制中」计数会随每次点击累加，还会持续占用并发名额导致后续无法录制。
-   */
-  private async assertRecordingDirectoryUsable(
-    directory: string,
+  private async startRecordingFromExistingPreview(
+    room: Room,
+    status: { streamSessionId?: string; streamTitle?: string },
+    settings: AppSettings,
+    origin: import("../types/index.js").RecordingOrigin,
+    startupTrace?: PerformanceTrace,
+  ): Promise<boolean> {
+    const preview = this.previewSessions.get(room.id);
+    if (!preview) return false;
+    return this.startSharedPreviewRecording(
+      room,
+      status,
+      preview.actualQuality,
+      settings,
+      origin,
+      startupTrace,
+    );
+  }
+
+  private async createRecordingFile(
+    filePath: string,
     roomId: string,
   ): Promise<void> {
     try {
-      await mkdir(directory, { recursive: true });
-      const probe = path.join(directory, `.lr-probe-${ulid()}`);
-      await writeFile(probe, "x", { flag: "wx" });
-      await unlink(probe);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      const file = await open(filePath, "w");
+      await file.close();
     } catch {
       throw new AppError(
         "RECORDING_DIRECTORY_INVALID",
@@ -1131,10 +1230,21 @@ export class RecorderManager {
   async maybeStartRecording(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
+    opts: {
+      manual?: boolean;
+      liveStartedAt?: string | null;
+      origin?: import("../types/index.js").RecordingOrigin;
+    } = {},
   ): Promise<boolean> {
-    if (this.services.resetting) return false;
-    if (this.active.has(room.id) || this.starting.has(room.id)) return false;
+    const startupTrace = this.performance.begin("recording_start", room);
+    if (this.services.resetting) {
+      startupTrace.finish("skipped");
+      return false;
+    }
+    if (this.active.has(room.id) || this.starting.has(room.id)) {
+      startupTrace.finish("skipped");
+      return false;
+    }
     if (this.recordingsHeld() >= this.settings().maxConcurrentRecordings) {
       const err = new AppError(
         "CONCURRENT_LIMIT_REACHED",
@@ -1146,11 +1256,23 @@ export class RecorderManager {
         lastCheckedAt: this.services.clock.iso(),
         lastError: err,
       });
+      startupTrace.finish("skipped", "CONCURRENT_LIMIT_REACHED");
       return false;
     }
     this.starting.add(room.id);
     try {
-      return await this.maybeStartRecordingInternal(room, status, opts);
+      return await this.maybeStartRecordingInternal(
+        room,
+        status,
+        opts,
+        startupTrace,
+      );
+    } catch (error) {
+      startupTrace.finish(
+        "failed",
+        error instanceof AppError ? error.code : "RECORDING_START_FAILED",
+      );
+      throw error;
     } finally {
       this.starting.delete(room.id);
     }
@@ -1166,9 +1288,15 @@ export class RecorderManager {
   private async maybeStartRecordingInternal(
     room: Room,
     status: { streamSessionId?: string; streamTitle?: string },
-    opts: { manual?: boolean; liveStartedAt?: string | null } = {},
+    opts: {
+      manual?: boolean;
+      liveStartedAt?: string | null;
+      origin?: import("../types/index.js").RecordingOrigin;
+    } = {},
+    startupTrace: PerformanceTrace,
   ): Promise<boolean> {
-    await this.disableHighlightBuffer(room.id);
+    this.detachHighlightBufferForRecording(room.id);
+    startupTrace.mark("highlight_buffer_stopped");
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
     if (
@@ -1185,14 +1313,11 @@ export class RecorderManager {
         type: "room:updated",
         data: this.enrichRoom(this.services.rooms.get(room.id)!),
       });
+      startupTrace.finish("skipped", "ALREADY_RECORDED");
       return false;
     }
 
     if (settings.recordingDirectory.length > 0) {
-      await this.assertRecordingDirectoryUsable(
-        settings.recordingDirectory,
-        room.id,
-      );
       const space = await this.services.diskGuard.inspect(
         settings.recordingDirectory,
       );
@@ -1226,15 +1351,36 @@ export class RecorderManager {
         });
       }
     }
+    startupTrace.mark("storage_checks_ready");
+
+    const origin = opts.origin ?? (opts.manual ? "manual" : "automatic");
+    if (
+      await this.startRecordingFromExistingPreview(
+        room,
+        status,
+        settings,
+        origin,
+        startupTrace,
+      )
+    ) {
+      startupTrace.mark("reused_preview_stream");
+      startupTrace.finish("ok");
+      return true;
+    }
 
     const cookie = await this.services.platformCookie(room.platform);
+    startupTrace.mark("platform_cookie_ready");
     const stream = await this.services
       .adapterFor(room.platform)
       .getStreamUrl(room.url, settings.quality, cookie);
+    startupTrace.mark("stream_url_ready");
     // The stream lookup is asynchronous. A scheduler/manual request may have
     // claimed this room while it was in flight; never create a second session
     // or report a successful manual start in that case.
-    if (this.active.has(room.id)) return false;
+    if (this.active.has(room.id)) {
+      startupTrace.finish("skipped");
+      return false;
+    }
     // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
     if (
       await this.startSharedPreviewRecording(
@@ -1242,14 +1388,21 @@ export class RecorderManager {
         status,
         stream.actualQuality,
         settings,
+        origin,
+        startupTrace,
       )
-    )
+    ) {
+      startupTrace.finish("ok");
       return true;
+    }
     this.previewTransitions.add(room.id);
     try {
       // 无观看预览时维持原有独立录制路径。
       await this.stopPreviewStream(room.id, true);
-      if (this.active.has(room.id)) return false;
+      if (this.active.has(room.id)) {
+        startupTrace.finish("skipped");
+        return false;
+      }
       const filePath = recordingFilePath(
         settings.recordingDirectory,
         room.platform,
@@ -1260,14 +1413,22 @@ export class RecorderManager {
         stream.actualQuality,
         room.id,
       );
+      await this.createRecordingFile(filePath, room.id);
+      startupTrace.mark("recording_file_ready");
+      // 悬浮录制的历史标题使用最终文件基名，确保它和设置里的命名规则完全一致。
+      const streamTitle =
+        opts.origin === "floating"
+          ? path.parse(filePath).name
+          : (status.streamTitle ?? room.displayName);
       const recording = this.services.recordings.create({
         roomId: room.id,
         roomName: room.displayName,
         platform: room.platform,
         streamSessionId: sessionId,
-        streamTitle: status.streamTitle ?? room.displayName,
+        streamTitle,
         quality: stream.actualQuality,
         expectedQuality: settings.quality,
+        origin: opts.origin ?? (opts.manual ? "manual" : "automatic"),
       });
       this.services.rooms.setState(room.id, "recording", {
         lastCheckedAt: this.services.clock.iso(),
@@ -1286,6 +1447,7 @@ export class RecorderManager {
       );
       session.done = done;
       session.resolveDone = resolveDone;
+      session.startupTrace = startupTrace;
       this.active.set(room.id, session);
       this.services.events.emit({
         type: "room:updated",
@@ -1391,6 +1553,7 @@ export class RecorderManager {
             if (!gotData) {
               gotData = true;
               clearTimeout2(this.services, pendingTimeout);
+              session.startupTrace?.finish("ok");
             }
             session.size += event.chunk.length;
             const now = this.services.clock.now();
@@ -1457,6 +1620,7 @@ export class RecorderManager {
           retryable: true,
         });
         await this.failRecording(room, recordingId, err.toObject(), "recorder");
+        session.startupTrace?.finish("failed", err.code);
         return;
       }
       await this.completeRecording(room, recordingId, session.size, "ended");
@@ -1470,6 +1634,7 @@ export class RecorderManager {
               `录制异常: ${(err as Error).message}`,
               { roomId: room.id, recordingId, retryable: true },
             );
+      session.startupTrace?.finish("failed", appErr.code);
       await this.failRecording(
         room,
         recordingId,
@@ -2008,7 +2173,11 @@ export class RecorderManager {
    * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
    */
   private finishOrConfirm(recordingId: string): void {
-    if (this.settings().confirmAfterComplete) {
+    const recording = this.services.recordings.get(recordingId);
+    if (
+      this.settings().confirmAfterComplete &&
+      recording?.origin !== "floating"
+    ) {
       this.enterPendingConfirmation(recordingId);
     } else {
       this.finishSegmentProcessing(recordingId);
@@ -2095,7 +2264,10 @@ export class RecorderManager {
     if (!rec) return;
     if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
     this.services.recordings.remove(recordingId);
-    this.services.events.emit({ type: "recording:deleted", data: { id: recordingId } });
+    this.services.events.emit({
+      type: "recording:deleted",
+      data: { id: recordingId },
+    });
   }
 
   /** 启动恢复（#220）：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
@@ -2110,7 +2282,10 @@ export class RecorderManager {
         if (rec.highlightConfirmationDecision === false) {
           if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
           this.services.recordings.remove(rec.id);
-          this.services.events.emit({ type: "recording:deleted", data: { id: rec.id } });
+          this.services.events.emit({
+            type: "recording:deleted",
+            data: { id: rec.id },
+          });
         } else {
           void this.failHighlightExport(
             rec.id,
@@ -2320,6 +2495,7 @@ function defaultsLite(): AppSettings {
     },
     dedupeWindowMinutes: 30,
     theme: "system",
+    floatingRecorderSize: 36,
     confirmAfterComplete: false,
   };
 }

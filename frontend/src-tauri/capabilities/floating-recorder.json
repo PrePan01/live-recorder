@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "floating-recorder",
+  "description": "Permissions for the global quick recording button",
+  "windows": ["floating-recorder"],
+  "permissions": ["core:default", "core:event:default", "core:window:allow-start-dragging"]
+}
