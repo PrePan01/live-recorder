@@ -160,14 +160,8 @@ export function registerRoomRoutes(
     return reply.send(response);
   });
 
-  // 监控总览刷新时使用：对所有启用的直播间立即执行一次开播检测。
-  // 等待各检测完成后再返回，前端随后重新拉取列表即可展示最终状态。
   app.post("/api/v1/rooms/check-enabled", async (_req, reply) => {
-    const rooms = services.rooms.listEnabled();
-    await Promise.all(
-      rooms.map((room) => services.scheduler.triggerImmediateCheck(room.id)),
-    );
-    return reply.send({ ok: true, checked: rooms.length });
+    return reply.send({ ok: true, ...services.scheduler.queueEnabledRoomChecks() });
   });
 
   app.post("/api/v1/rooms", async (req, reply) => {

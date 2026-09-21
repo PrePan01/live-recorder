@@ -62,7 +62,15 @@ import {
 let startupLiveCheck: Promise<void> | null = null;
 
 function triggerStartupLiveCheck(): Promise<void> {
-  startupLiveCheck ??= checkEnabledRooms();
+  if (!startupLiveCheck) {
+    const request = checkEnabledRooms().then(() => undefined);
+    startupLiveCheck = request;
+    // A failed request must not poison subsequent visits to this page: allow a
+    // later mount to issue a fresh request instead of reusing this rejection.
+    void request.catch(() => {
+      if (startupLiveCheck === request) startupLiveCheck = null;
+    });
+  }
   return startupLiveCheck;
 }
 
@@ -703,9 +711,12 @@ export default function Monitor() {
     try {
       await checkEnabledRooms();
       await fetchRooms(true);
-      message.success("已刷新并完成开播检测");
-    } catch {
-      message.error("刷新或开播检测失败，请稍后重试");
+    } catch (error) {
+      message.error(
+        error instanceof ApiError
+          ? describeError(error.code, error.message)
+          : "刷新或开播检测失败，请稍后重试",
+      );
     } finally {
       setRefreshing(false);
     }

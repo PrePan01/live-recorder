@@ -12,6 +12,14 @@ function newServices(): Services {
   return buildServices({ dbPath: ":memory:", clock: new FakeClock() });
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("waitFor timeout");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe("REST contract v1.1 (fake stack)", () => {
   it("health + service status", async () => {
     const { app } = buildApp(newServices());
@@ -357,7 +365,8 @@ describe("REST contract v1.1 (fake stack)", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, checked: 1 });
+    expect(res.json()).toMatchObject({ ok: true, queued: 1, alreadyRunning: false });
+    await waitFor(() => services.rooms.get(enabled.id)!.lastCheckedAt !== null);
     expect(services.rooms.get(enabled.id)!.lastCheckedAt).not.toBeNull();
     expect(services.rooms.get(disabled.id)!.lastCheckedAt).toBeNull();
     await app.close();
