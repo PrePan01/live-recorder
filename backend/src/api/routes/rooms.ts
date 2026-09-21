@@ -1,10 +1,15 @@
-import type { FastifyInstance } from 'fastify';
-import { AppError } from '../../types/error.js';
-import type { Platform } from '../../types/index.js';
-import type { Services } from '../../core/services.js';
-import { calculateLivePrediction, recordingCoverageIntervals, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
+import type { FastifyInstance } from "fastify";
+import { AppError } from "../../types/error.js";
+import type { Platform } from "../../types/index.js";
+import type { Services } from "../../core/services.js";
+import {
+  calculateLivePrediction,
+  recordingCoverageIntervals,
+  recordingFallbackEvents,
+  type LivePrediction,
+} from "../../core/live-prediction.js";
 
-const PLATFORMS: Platform[] = ['bilibili', 'douyin'];
+const PLATFORMS: Platform[] = ["bilibili", "douyin"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 
 export interface RoomInsight {
@@ -16,50 +21,85 @@ export interface RoomInsight {
   prediction: LivePrediction;
 }
 
-export function registerRoomRoutes(app: FastifyInstance, services: Services): void {
-  const enrich = (room: import('../../types/index.js').Room) => services.manager.enrichRoom(room);
-  let insightCache: { key: string; expiresAt: number; body: unknown } | undefined;
+export function registerRoomRoutes(
+  app: FastifyInstance,
+  services: Services,
+): void {
+  const enrich = (room: import("../../types/index.js").Room) =>
+    services.manager.enrichRoom(room);
+  let insightCache:
+    { key: string; expiresAt: number; body: unknown } | undefined;
   services.events.on((event) => {
-    if (event.type === 'room:updated' || event.type === 'recording:updated') insightCache = undefined;
+    if (event.type === "room:updated" || event.type === "recording:updated")
+      insightCache = undefined;
   });
 
-  app.get('/api/v1/rooms', async (_req, reply) => {
+  app.get("/api/v1/rooms", async (_req, reply) => {
     return reply.send({ rooms: services.rooms.list().map(enrich) });
   });
 
-  app.put('/api/v1/rooms/order', async (req, reply) => {
+  app.put("/api/v1/rooms/order", async (req, reply) => {
     const body = (req.body ?? {}) as { roomIds?: unknown };
-    if (!Array.isArray(body.roomIds) || body.roomIds.some((id) => typeof id !== 'string' || !id)) {
-      throw new AppError('CONFIG_INVALID', 'roomIds 必须是直播间 ID 数组');
+    if (
+      !Array.isArray(body.roomIds) ||
+      body.roomIds.some((id) => typeof id !== "string" || !id)
+    ) {
+      throw new AppError("CONFIG_INVALID", "roomIds 必须是直播间 ID 数组");
     }
     const rooms = services.rooms.reorder(body.roomIds as string[]).map(enrich);
     return reply.send({ rooms });
   });
 
   /** Bounded aggregate query for the monitor's health and live prediction cards. */
-  app.post('/api/v1/rooms/insights/batch', async (req, reply) => {
+  app.post("/api/v1/rooms/insights/batch", async (req, reply) => {
     const body = (req.body ?? {}) as { roomIds?: unknown };
-    if (!Array.isArray(body.roomIds) || body.roomIds.length === 0 || body.roomIds.length > 100 || body.roomIds.some((id) => typeof id !== 'string' || !id)) {
-      throw new AppError('ROOM_LINK_INVALID', 'roomIds 必须是 1-100 个非空房间 ID');
+    if (
+      !Array.isArray(body.roomIds) ||
+      body.roomIds.length === 0 ||
+      body.roomIds.length > 100 ||
+      body.roomIds.some((id) => typeof id !== "string" || !id)
+    ) {
+      throw new AppError(
+        "ROOM_LINK_INVALID",
+        "roomIds 必须是 1-100 个非空房间 ID",
+      );
     }
     const roomIds = [...new Set(body.roomIds as string[])];
-    const key = [...roomIds].sort().join(',');
+    const key = [...roomIds].sort().join(",");
     const now = services.clock.now();
-    if (insightCache?.key === key && insightCache.expiresAt > now) return reply.send(insightCache.body);
+    if (insightCache?.key === key && insightCache.expiresAt > now)
+      return reply.send(insightCache.body);
     const from60 = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
     const from30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
     const from7 = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const placeholders = roomIds.map(() => '?').join(',');
-    const rows = services.db.prepare(
-      `SELECT room_id, state, file_size_bytes, started_at, ended_at, stream_session_id FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
-    ).all(...roomIds, from60) as Array<{ room_id: string; state: string; file_size_bytes: number | null; started_at: string; ended_at: string | null; stream_session_id: string | null }>;
+    const placeholders = roomIds.map(() => "?").join(",");
+    const rows = services.db
+      .prepare(
+        `SELECT room_id, state, file_size_bytes, started_at, ended_at, stream_session_id FROM recordings WHERE room_id IN (${placeholders}) AND started_at >= ?`,
+      )
+      .all(...roomIds, from60) as Array<{
+      room_id: string;
+      state: string;
+      file_size_bytes: number | null;
+      started_at: string;
+      ended_at: string | null;
+      stream_session_id: string | null;
+    }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
-    const calibrationProfiles = services.predictionCalibration.profiles(roomIds, localDateFromMs(now - 60 * 24 * 60 * 60 * 1000));
+    const calibrationProfiles = services.predictionCalibration.profiles(
+      roomIds,
+      localDateFromMs(now - 60 * 24 * 60 * 60 * 1000),
+    );
     const coverage = services.predictionCalibration.intervals(roomIds, from60);
     // 录制起点是预测的弱证据：本机录制历史 + 随配置导入的录制起点证据，合并后再去重。
-    const recordingSessions = services.predictionCalibration.recordingSessions(roomIds, from60);
+    const recordingSessions = services.predictionCalibration.recordingSessions(
+      roomIds,
+      from60,
+    );
     const grouped = new Map(roomIds.map((id) => [id, [] as typeof rows]));
-    const eventsByRoom = new Map(roomIds.map((id) => [id, [] as typeof liveEvents]));
+    const eventsByRoom = new Map(
+      roomIds.map((id) => [id, [] as typeof liveEvents]),
+    );
     for (const row of rows) grouped.get(row.room_id)?.push(row);
     for (const event of liveEvents) eventsByRoom.get(event.roomId)?.push(event);
     const insights: Record<string, RoomInsight> = {};
@@ -67,19 +107,30 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       const records = grouped.get(id) ?? [];
       const events = eventsByRoom.get(id) ?? [];
       const week = records.filter((record) => record.started_at >= from7);
-      const completed = week.filter((record) => record.state === 'completed').length;
-      const failed = week.filter((record) => record.state === 'failed').length;
+      const completed = week.filter(
+        (record) => record.state === "completed",
+      ).length;
+      const failed = week.filter((record) => record.state === "failed").length;
       insights[id] = {
         totalRecordings: week.length,
-        totalBytes: week.reduce((sum, record) => sum + (record.file_size_bytes ?? 0), 0),
+        totalBytes: week.reduce(
+          (sum, record) => sum + (record.file_size_bytes ?? 0),
+          0,
+        ),
         completed,
         failed,
-        successRate: completed + failed === 0 ? 100 : Math.round((completed / (completed + failed)) * 100),
+        successRate:
+          completed + failed === 0
+            ? 100
+            : Math.round((completed / (completed + failed)) * 100),
         prediction: calculateLivePrediction({
           roomId: id,
           events,
           fallbackEvents: recordingFallbackEvents([
-            ...records.map((record) => ({ startedAt: record.started_at, streamSessionId: record.stream_session_id })),
+            ...records.map((record) => ({
+              startedAt: record.started_at,
+              streamSessionId: record.stream_session_id,
+            })),
             ...(recordingSessions.get(id) ?? []),
           ]),
           now,
@@ -90,7 +141,10 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
           coverage: [
             ...(coverage.get(id) ?? []),
             ...recordingCoverageIntervals(
-              records.map((record) => ({ startedAt: record.started_at, endedAt: record.ended_at })),
+              records.map((record) => ({
+                startedAt: record.started_at,
+                endedAt: record.ended_at,
+              })),
               now,
             ),
           ],
@@ -98,108 +152,166 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       };
     }
     const response = { insights, generatedAt: services.clock.iso() };
-    insightCache = { key, expiresAt: now + INSIGHT_CACHE_TTL_MS, body: response };
+    insightCache = {
+      key,
+      expiresAt: now + INSIGHT_CACHE_TTL_MS,
+      body: response,
+    };
     return reply.send(response);
   });
 
   // 监控总览刷新时使用：对所有启用的直播间立即执行一次开播检测。
   // 等待各检测完成后再返回，前端随后重新拉取列表即可展示最终状态。
-  app.post('/api/v1/rooms/check-enabled', async (_req, reply) => {
+  app.post("/api/v1/rooms/check-enabled", async (_req, reply) => {
     const rooms = services.rooms.listEnabled();
-    await Promise.all(rooms.map((room) => services.scheduler.triggerImmediateCheck(room.id)));
+    await Promise.all(
+      rooms.map((room) => services.scheduler.triggerImmediateCheck(room.id)),
+    );
     return reply.send({ ok: true, checked: rooms.length });
   });
 
-  app.post('/api/v1/rooms', async (req, reply) => {
-    const body = (req.body ?? {}) as { platform?: string; url?: string; displayName?: string; enabled?: boolean; liveNotificationEnabled?: boolean };
-    if (typeof body.url !== 'string' || body.url.trim().length === 0) {
-      throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
+  app.post("/api/v1/rooms", async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      platform?: string;
+      url?: string;
+      displayName?: string;
+      enabled?: boolean;
+      liveNotificationEnabled?: boolean;
+    };
+    if (typeof body.url !== "string" || body.url.trim().length === 0) {
+      throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
     }
     // #M2（QA 指派）：platform 缺省时按 URL 自动识别平台（与 POST /rooms/batch 一致），
     // 修复有效链接因缺 platform 被误拒 422、重复检测（409 ROOM_LINK_DUPLICATE）永远到不了的问题。
     const platform: Platform | undefined =
-      body.platform !== undefined && PLATFORMS.includes(body.platform as Platform)
+      body.platform !== undefined &&
+      PLATFORMS.includes(body.platform as Platform)
         ? (body.platform as Platform)
-        : PLATFORMS.find((p) => services.adapterFor(p).validateUrl(body.url as string));
+        : PLATFORMS.find((p) =>
+            services.adapterFor(p).validateUrl(body.url as string),
+          );
     if (!platform || !services.adapterFor(platform).validateUrl(body.url)) {
-      throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持');
+      throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
     }
     const adapter = services.adapterFor(platform);
-    if (body.liveNotificationEnabled !== undefined && typeof body.liveNotificationEnabled !== 'boolean') {
-      throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值');
+    if (
+      body.liveNotificationEnabled !== undefined &&
+      typeof body.liveNotificationEnabled !== "boolean"
+    ) {
+      throw new AppError(
+        "ROOM_LINK_INVALID",
+        "liveNotificationEnabled 必须为布尔值",
+      );
     }
     const room = services.rooms.create({
       platform,
       url: adapter.normalizeUrl(body.url),
-      displayName: typeof body.displayName === 'string' ? body.displayName : '',
+      displayName: typeof body.displayName === "string" ? body.displayName : "",
       enabled: body.enabled ?? true,
       liveNotificationEnabled: body.liveNotificationEnabled ?? false,
     });
     // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
     // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
     if (!room.displayName.trim()) {
-      void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
+      void services.scheduler
+        .triggerImmediateCheck(room.id, { nameOnly: true })
+        .catch(() => undefined);
     }
-    services.events.emit({ type: 'room:updated', data: enrich(room) });
+    services.events.emit({ type: "room:updated", data: enrich(room) });
     return reply.status(201).send({ room: enrich(room) });
   });
 
-  app.post('/api/v1/rooms/batch', async (req, reply) => {
+  app.post("/api/v1/rooms/batch", async (req, reply) => {
     const body = (req.body ?? {}) as { urls?: unknown };
     if (!Array.isArray(body.urls) || body.urls.length === 0) {
-      throw new AppError('ROOM_LINK_INVALID', 'urls 必须为非空数组');
+      throw new AppError("ROOM_LINK_INVALID", "urls 必须为非空数组");
     }
     if (body.urls.length > 100) {
-      throw new AppError('ROOM_LINK_INVALID', '单次批量最多 100 条');
+      throw new AppError("ROOM_LINK_INVALID", "单次批量最多 100 条");
     }
     // 批内+现库去重，按规范化链接识别。
     const existingRooms = services.rooms.list();
-    const existing = new Set(existingRooms.map((r) => `${r.platform}|${r.url}`));
+    const existing = new Set(
+      existingRooms.map((r) => `${r.platform}|${r.url}`),
+    );
     const seen = new Set<string>();
-    const succeeded: Array<import('../../types/index.js').Room> = [];
+    const succeeded: Array<import("../../types/index.js").Room> = [];
     const failed: Array<{ url: string; reason: string }> = [];
     for (const raw of body.urls) {
-      const url = typeof raw === 'string' ? raw.trim() : '';
+      const url = typeof raw === "string" ? raw.trim() : "";
       if (!url) {
-        failed.push({ url: typeof raw === 'string' ? raw : String(raw), reason: 'URL 为空' });
+        failed.push({
+          url: typeof raw === "string" ? raw : String(raw),
+          reason: "URL 为空",
+        });
         continue;
       }
-      const platform = PLATFORMS.find((p) => services.adapterFor(p).validateUrl(url));
+      const platform = PLATFORMS.find((p) =>
+        services.adapterFor(p).validateUrl(url),
+      );
       if (!platform) {
-        failed.push({ url, reason: '无效链接或平台不支持' });
+        failed.push({ url, reason: "无效链接或平台不支持" });
         continue;
       }
       const adapter = services.adapterFor(platform);
       const normalized = adapter.normalizeUrl(url);
       const key = `${platform}|${normalized}`;
       if (existing.has(key) || seen.has(key)) {
-        failed.push({ url, reason: '该直播间已存在' });
+        failed.push({ url, reason: "该直播间已存在" });
         continue;
       }
-      const room = services.rooms.create({ platform, url: normalized, displayName: '' });
+      const room = services.rooms.create({
+        platform,
+        url: normalized,
+        displayName: "",
+      });
       existing.add(key);
       seen.add(key);
       succeeded.push(room);
       // #162：批量添加同样即时触发检测，让显示名尽快自动解析。
-      void services.scheduler.triggerImmediateCheck(room.id, { nameOnly: true }).catch(() => undefined);
+      void services.scheduler
+        .triggerImmediateCheck(room.id, { nameOnly: true })
+        .catch(() => undefined);
     }
     if (succeeded.length > 0) {
-      services.rooms.reorder([...succeeded.map((room) => room.id), ...existingRooms.map((room) => room.id)]);
+      services.rooms.reorder([
+        ...succeeded.map((room) => room.id),
+        ...existingRooms.map((room) => room.id),
+      ]);
     }
-    const orderedSucceeded = succeeded.map((room) => services.rooms.get(room.id)!);
-    for (const room of orderedSucceeded) services.events.emit({ type: 'room:updated', data: enrich(room) });
+    const orderedSucceeded = succeeded.map((room) =>
+      services.rooms.get(room.id)!,
+    );
+    for (const room of orderedSucceeded)
+      services.events.emit({ type: "room:updated", data: enrich(room) });
     return reply.send({ succeeded: orderedSucceeded.map(enrich), failed });
   });
 
-  app.patch('/api/v1/rooms/:id', async (req, reply) => {
+  app.patch("/api/v1/rooms/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null };
-    const patch: { url?: string; displayName?: string; enabled?: boolean; autoRecord?: boolean | null; liveNotificationEnabled?: boolean; uploadEnabled?: boolean | null } = {};
+    const body = (req.body ?? {}) as {
+      url?: string;
+      displayName?: string;
+      enabled?: boolean;
+      autoRecord?: boolean | null;
+      liveNotificationEnabled?: boolean;
+      uploadEnabled?: boolean | null;
+    };
+    const patch: {
+      url?: string;
+      displayName?: string;
+      enabled?: boolean;
+      autoRecord?: boolean | null;
+      liveNotificationEnabled?: boolean;
+      uploadEnabled?: boolean | null;
+    } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
-      const adapter = services.adapterFor(existing?.platform ?? 'bilibili');
-      if (typeof body.url !== 'string' || !adapter.validateUrl(body.url)) {
-        throw new AppError('ROOM_LINK_INVALID', '链接无效或平台不支持', { roomId: id });
+      const adapter = services.adapterFor(existing?.platform ?? "bilibili");
+      if (typeof body.url !== "string" || !adapter.validateUrl(body.url)) {
+        throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持", {
+          roomId: id,
+        });
       }
       patch.url = adapter.normalizeUrl(body.url);
     }
@@ -207,134 +319,198 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
     if (body.enabled !== undefined) patch.enabled = body.enabled;
     if (body.autoRecord !== undefined) {
       // null=恢复继承全局；布尔=单独覆盖。
-      if (body.autoRecord !== null && typeof body.autoRecord !== 'boolean') {
-        throw new AppError('ROOM_LINK_INVALID', 'autoRecord 必须为布尔值或 null', { roomId: id });
+      if (body.autoRecord !== null && typeof body.autoRecord !== "boolean") {
+        throw new AppError(
+          "ROOM_LINK_INVALID",
+          "autoRecord 必须为布尔值或 null",
+          { roomId: id },
+        );
       }
       patch.autoRecord = body.autoRecord;
     }
     if (body.liveNotificationEnabled !== undefined) {
-      if (typeof body.liveNotificationEnabled !== 'boolean') {
-        throw new AppError('ROOM_LINK_INVALID', 'liveNotificationEnabled 必须为布尔值', { roomId: id });
+      if (typeof body.liveNotificationEnabled !== "boolean") {
+        throw new AppError(
+          "ROOM_LINK_INVALID",
+          "liveNotificationEnabled 必须为布尔值",
+          { roomId: id },
+        );
       }
       patch.liveNotificationEnabled = body.liveNotificationEnabled;
     }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。
-      if (body.uploadEnabled !== null && typeof body.uploadEnabled !== 'boolean') {
-        throw new AppError('ROOM_LINK_INVALID', 'uploadEnabled 必须为布尔值或 null', { roomId: id });
+      if (
+        body.uploadEnabled !== null &&
+        typeof body.uploadEnabled !== "boolean"
+      ) {
+        throw new AppError(
+          "ROOM_LINK_INVALID",
+          "uploadEnabled 必须为布尔值或 null",
+          { roomId: id },
+        );
       }
       patch.uploadEnabled = body.uploadEnabled;
     }
     const previous = services.rooms.get(id);
     const globalAuto = services.settings.load()?.autoRecord ?? false;
     const room = services.rooms.update(id, patch);
-    services.events.emit({ type: 'room:updated', data: enrich(room) });
-    if (patch.autoRecord !== undefined && previous &&
-        !(previous.autoRecord ?? globalAuto) && (room.autoRecord ?? globalAuto)) {
+    services.events.emit({ type: "room:updated", data: enrich(room) });
+    if (
+      patch.autoRecord !== undefined &&
+      previous &&
+      !(previous.autoRecord ?? globalAuto) &&
+      (room.autoRecord ?? globalAuto)
+    ) {
       await services.scheduler.triggerAutoRecordCheck(id);
     }
     return reply.send({ room: enrich(services.rooms.get(id) ?? room) });
   });
 
-  app.patch('/api/v1/rooms/:id/enable', async (req, reply) => {
+  app.patch("/api/v1/rooms/:id/enable", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { enabled?: boolean };
-    if (typeof body.enabled !== 'boolean') {
-      throw new AppError('ROOM_LINK_INVALID', 'enabled 必须为布尔值', { roomId: id });
+    if (typeof body.enabled !== "boolean") {
+      throw new AppError("ROOM_LINK_INVALID", "enabled 必须为布尔值", {
+        roomId: id,
+      });
     }
     const room = services.rooms.update(id, { enabled: body.enabled });
-    services.events.emit({ type: 'room:updated', data: enrich(room) });
+    services.events.emit({ type: "room:updated", data: enrich(room) });
     return reply.send({ room: enrich(room) });
   });
 
-  app.patch('/api/v1/rooms/:id/favorite', async (req, reply) => {
+  app.patch("/api/v1/rooms/:id/favorite", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { favorited?: boolean };
-    if (typeof body.favorited !== 'boolean') {
-      throw new AppError('ROOM_LINK_INVALID', 'favorited 必须为布尔值', { roomId: id });
+    if (typeof body.favorited !== "boolean") {
+      throw new AppError("ROOM_LINK_INVALID", "favorited 必须为布尔值", {
+        roomId: id,
+      });
     }
     const room = services.rooms.setFavorite(id, body.favorited);
-    services.events.emit({ type: 'room:updated', data: enrich(room) });
+    services.events.emit({ type: "room:updated", data: enrich(room) });
     return reply.send({ room: enrich(room) });
   });
 
-  app.delete('/api/v1/rooms/:id', async (req, reply) => {
+  app.delete("/api/v1/rooms/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const existing = services.rooms.get(id);
-    if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (!existing)
+      throw new AppError("RESOURCE_NOT_FOUND", "房间不存在", {
+        roomId: id,
+        details: { resource: "room" },
+      });
     // 正在录制时必须先收尾再删：否则收尾阶段会因为房间已不存在而中断，
     // 完整性校验 / 转封装 / 后处理 / 上传全被跳过，"停止录制"的请求也会一直挂着。
-    if (services.manager.isRoomActive(id)) await services.manager.stopRecording(id);
+    if (services.manager.isRoomActive(id))
+      await services.manager.stopRecording(id);
     // 该房间的预览拉流与精彩时刻缓存一并收掉，避免删除后仍在后台跑。
     await services.manager.stopPreviewStream(id);
     await services.manager.disableHighlightBuffer(id);
     services.rooms.remove(id);
-    services.events.emit({ type: 'room:updated', data: enrich({ ...existing, enabled: false, monitorState: 'disabled' }) });
+    services.events.emit({
+      type: "room:updated",
+      data: enrich({ ...existing, enabled: false, monitorState: "disabled" }),
+    });
     return reply.status(204).send();
   });
 
-  app.post('/api/v1/rooms/:id/check', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/check", async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (!room)
+      throw new AppError("RESOURCE_NOT_FOUND", "房间不存在", {
+        roomId: id,
+        details: { resource: "room" },
+      });
     await services.scheduler.triggerImmediateCheck(id);
     return reply.send({ ok: true });
   });
 
   // 精彩时刻只由普通观看弹窗显式启用；直播墙从不调用这些接口，避免多路缓存写盘。
-  app.post('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/highlight-buffer", async (req, reply) => {
     const { id } = req.params as { id: string };
-    return reply.send({ highlight: await services.manager.enableHighlightBuffer(id) });
+    return reply.send({
+      highlight: await services.manager.enableHighlightBuffer(id),
+    });
   });
 
-  app.delete('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+  app.delete("/api/v1/rooms/:id/highlight-buffer", async (req, reply) => {
     const { id } = req.params as { id: string };
     await services.manager.disableHighlightBuffer(id);
     return reply.status(204).send();
   });
 
-  app.post('/api/v1/rooms/:id/highlight-buffer/clear', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/highlight-buffer/clear", async (req, reply) => {
     const { id } = req.params as { id: string };
     await services.manager.clearHighlightBuffer(id);
     return reply.send({ ok: true });
   });
 
-  app.get('/api/v1/rooms/:id/highlight-buffer', async (req, reply) => {
+  app.get("/api/v1/rooms/:id/highlight-buffer", async (req, reply) => {
     const { id } = req.params as { id: string };
     return reply.send({ highlight: services.manager.highlightStatus(id) });
   });
 
-  app.post('/api/v1/rooms/:id/highlights', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/highlights", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { lookbackSeconds?: unknown };
-    if (typeof body.lookbackSeconds !== 'number') throw new AppError('CONFIG_INVALID', 'lookbackSeconds 必须为数字', { roomId: id });
-    return reply.status(202).send({ highlight: await services.manager.exportHighlight(id, body.lookbackSeconds) });
+    if (typeof body.lookbackSeconds !== "number")
+      throw new AppError("CONFIG_INVALID", "lookbackSeconds 必须为数字", {
+        roomId: id,
+      });
+    return reply.status(202).send({
+      highlight: await services.manager.exportHighlight(
+        id,
+        body.lookbackSeconds,
+      ),
+    });
   });
 
-  app.post('/api/v1/rooms/:id/stop-recording', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/stop-recording", async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (!room)
+      throw new AppError("RESOURCE_NOT_FOUND", "房间不存在", {
+        roomId: id,
+        details: { resource: "room" },
+      });
     if (!services.manager.isRoomActive(id)) {
-      throw new AppError('PREVIEW_NOT_RECORDING', '当前未在录制', { roomId: id });
+      throw new AppError("PREVIEW_NOT_RECORDING", "当前未在录制", {
+        roomId: id,
+      });
     }
     await services.manager.stopRecording(id);
     return reply.send({ ok: true });
   });
 
   // 房间健康度概览（#70）：近 N 天录制次数/大小聚合 + 成功率窗口。
-  app.get('/api/v1/rooms/:id/stats', async (req, reply) => {
+  app.get("/api/v1/rooms/:id/stats", async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (!room)
+      throw new AppError("RESOURCE_NOT_FOUND", "房间不存在", {
+        roomId: id,
+        details: { resource: "room" },
+      });
     const q = req.query as Record<string, string | undefined>;
-    const days = Math.min(30, Math.max(1, Number(q.days ?? '7') || 7));
-    const fromIso = new Date(services.clock.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const recs = services.recordings.list({ roomId: id, pageSize: 100, dateFrom: fromIso }).items;
+    const days = Math.min(30, Math.max(1, Number(q.days ?? "7") || 7));
+    const fromIso = new Date(
+      services.clock.now() - days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const recs = services.recordings.list({
+      roomId: id,
+      pageSize: 100,
+      dateFrom: fromIso,
+    }).items;
     const totalBytes = recs.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
-    const completed = recs.filter((r) => r.state === 'completed').length;
-    const failed = recs.filter((r) => r.state === 'failed').length;
-    const rate = completed + failed > 0 ? Math.round((completed / (completed + failed)) * 100) : 100;
+    const completed = recs.filter((r) => r.state === "completed").length;
+    const failed = recs.filter((r) => r.state === "failed").length;
+    const rate =
+      completed + failed > 0
+        ? Math.round((completed / (completed + failed)) * 100)
+        : 100;
     const byDay = new Map<string, { count: number; bytes: number }>();
     for (const r of recs) {
       const day = r.startedAt.slice(0, 10);
@@ -353,51 +529,110 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
       failed,
       lastCheckedAt: room.lastCheckedAt,
       lastError: room.lastError,
-      byDay: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, v]) => ({ date, count: v.count, bytes: v.bytes })),
+      byDay: [...byDay.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([date, v]) => ({ date, count: v.count, bytes: v.bytes })),
     });
   });
 
   // 手动「录制」按钮（#79）：开播状态下显式强制开始录制，绕过 autoRecord 检查。
-  app.post('/api/v1/rooms/:id/start-recording', async (req, reply) => {
+  app.post("/api/v1/rooms/:id/start-recording", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { origin?: unknown };
-    const origin = body.origin === 'floating' ? 'floating' : 'manual';
+    const origin = body.origin === "floating" ? "floating" : "manual";
     const room = services.rooms.get(id);
-    if (!room) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
+    if (!room)
+      throw new AppError("RESOURCE_NOT_FOUND", "房间不存在", {
+        roomId: id,
+        details: { resource: "room" },
+      });
     if (services.manager.isRoomActive(id)) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });
+      throw new AppError("RECORDING_NOT_AVAILABLE", "该房间正在录制中", {
+        roomId: id,
+        retryable: false,
+      });
     }
-    // 确认开播：lastLiveStatus 为准（未检测过则触发一次实时检测）。
-    let live = room.lastLiveStatus === 'live';
-    if (room.lastLiveStatus === null) {
+    // A data-bearing preview is fresher evidence of a live room than a cached
+    // platform poll, and its upstream stream can be handed straight to recording.
+    const previewReady = services.manager.isPreviewReadyForRecording(id);
+    // 没有健康预览时，lastLiveStatus 为准（未检测过则触发一次实时检测）。
+    let live = previewReady || room.lastLiveStatus === "live";
+    let status:
+      | Awaited<
+          ReturnType<ReturnType<typeof services.adapterFor>["checkLiveStatus"]>
+        >
+      | undefined;
+    if (room.lastLiveStatus === null && !previewReady) {
       const cookie = await services.platformCookie(room.platform);
-      const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
-      if (status.status === 'live' || status.status === 'offline' || status.status === 'restricted') {
+      status = await services
+        .adapterFor(room.platform)
+        .checkLiveStatus(room.url, cookie);
+      if (
+        status.status === "live" ||
+        status.status === "offline" ||
+        status.status === "restricted"
+      ) {
         services.rooms.setLiveStatus(room.id, status.status);
       }
-      live = status.status === 'live';
+      live = status.status === "live";
     }
     if (!live) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "直播间未开播，无法手动录制",
+        { roomId: id, retryable: false },
+      );
     }
-    const cookie = await services.platformCookie(room.platform);
-    const status = await services.adapterFor(room.platform).checkLiveStatus(room.url, cookie);
-    if (status.status !== 'live') {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '直播间未开播，无法手动录制', { roomId: id, retryable: false });
+    // 首次检测已得到同一份 live 状态；健康预览已经证明上游可用，二者都不必重复请求平台。
+    if (!status && !previewReady) {
+      const cookie = await services.platformCookie(room.platform);
+      status = await services
+        .adapterFor(room.platform)
+        .checkLiveStatus(room.url, cookie);
     }
-    const started = await services.manager.maybeStartRecording({ ...room, monitorState: 'idle' }, status, { manual: true, origin });
+    if (status && status.status !== "live") {
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "直播间未开播，无法手动录制",
+        { roomId: id, retryable: false },
+      );
+    }
+    const started = await services.manager.maybeStartRecording(
+      { ...room, monitorState: "idle" },
+      status ??
+        (room.currentStreamTitle
+          ? { streamTitle: room.currentStreamTitle }
+          : {}),
+      { manual: true, origin },
+    );
     if (!started) {
       if (services.manager.isRoomActive(id)) {
-        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在录制中', { roomId: id, retryable: false });
+        throw new AppError("RECORDING_NOT_AVAILABLE", "该房间正在录制中", {
+          roomId: id,
+          retryable: false,
+        });
       }
       if (services.manager.isRoomStarting(id)) {
-        throw new AppError('RECORDING_NOT_AVAILABLE', '该房间正在启动录制', { roomId: id, retryable: true });
+        throw new AppError("RECORDING_NOT_AVAILABLE", "该房间正在启动录制", {
+          roomId: id,
+          retryable: true,
+        });
       }
       const maxConcurrent = services.settings.load()?.maxConcurrentRecordings;
-      if (maxConcurrent !== undefined && services.recordings.activeCount() >= maxConcurrent) {
-        throw new AppError('CONCURRENT_LIMIT_REACHED', '录制达到最大并发数量，请在设置内增加最大并发', { roomId: id, retryable: true });
+      if (
+        maxConcurrent !== undefined &&
+        services.recordings.activeCount() >= maxConcurrent
+      ) {
+        throw new AppError(
+          "CONCURRENT_LIMIT_REACHED",
+          "录制达到最大并发数量，请在设置内增加最大并发",
+          { roomId: id, retryable: true },
+        );
       }
-      throw new AppError('RECORDING_START_FAILED', '录制未能启动，请稍后重试', { roomId: id, retryable: true });
+      throw new AppError("RECORDING_START_FAILED", "录制未能启动，请稍后重试", {
+        roomId: id,
+        retryable: true,
+      });
     }
     return reply.send({ ok: true });
   });
@@ -405,5 +640,5 @@ export function registerRoomRoutes(app: FastifyInstance, services: Services): vo
 
 function localDateFromMs(ms: number): string {
   const date = new Date(ms);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
