@@ -92,6 +92,9 @@ jobs:
       npm_config_audit: 'false'
       npm_config_fund: 'false'
       npm_config_prefer_offline: 'true'
+      npm_config_fetch_retries: '5'
+      npm_config_fetch_retry_mintimeout: '1000'
+      npm_config_fetch_retry_maxtimeout: '10000'
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -150,6 +153,9 @@ jobs:
       npm_config_audit: 'false'
       npm_config_fund: 'false'
       npm_config_prefer_offline: 'true'
+      npm_config_fetch_retries: '5'
+      npm_config_fetch_retry_mintimeout: '1000'
+      npm_config_fetch_retry_maxtimeout: '10000'
       # updater 签名：tauri.windows.conf.json 开启了 createUpdaterArtifacts，
       # 缺少私钥时 Windows 打包会直接失败（而不是产出没有 .sig 的安装包）。
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -169,10 +175,9 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      # setup-node 只缓存 npm 的下载包；这里缓存已安装依赖，命中时可跳过 Windows 上约 1 分钟的 npm ci。
+      # setup-node 只缓存 npm 的下载包；这里缓存已安装依赖，命中时可跳过平台打包任务中的 npm ci。
       # key 包含 OS、Node 主版本和三份 lockfile，避免原生依赖（如 keytar）跨平台或跨依赖树复用。
       - name: Restore installed dependencies
-        if: runner.os == 'Windows'
         id: node_modules
         uses: actions/cache/restore@v4
         with:
@@ -192,7 +197,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install dependencies
-        if: runner.os != 'Windows' || steps.node_modules.outputs.cache-hit != 'true'
+        if: steps.node_modules.outputs.cache-hit != 'true'
         run: npm run install:ci
 
       - name: Compile backend
@@ -201,7 +206,7 @@ jobs:
       # package.mjs 随后会 prune backend/node_modules；必须在裁剪前保存完整依赖，
       # 否则下一次命中缓存时会缺少 vitest/typescript 等测试依赖。
       - name: Save installed dependencies
-        if: runner.os == 'Windows' && steps.node_modules.outputs.cache-hit != 'true'
+        if: steps.node_modules.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -318,28 +323,43 @@ jobs:
         run: sha256sum -- * > SHA256SUMS.txt
 
       # 上传安装包 + 清单到对象存储（bucket，经 S3 API 签名上传）；客户端从 CDN 域名匿名下载（#28）。
-      # 未配置 Secrets（QINIU_AK/QINIU_SK）时跳过：此时清单 URL 指向 CDN 但对象不存在，
-      # 客户端自动回退 GitHub release（清单自身的 SHA256 兜底完整性）。
+      # latest.json 不再作为 GitHub Release 附件，因此 CDN 是发布成功的前置条件；
+      # 缺少凭据或上传失败时停止，避免发布一个客户端无法发现的版本。
       - name: Publish installers to object storage
-        if: env.QINIU_AK != '' && env.QINIU_SK != ''
-        # 对象存储上传失败不应阻断 GitHub Release（客户端会自动回退 GitHub 下载）；
-        # 失败会在 CI 日志中以告警呈现，便于后续修正对象存储配置。
-        continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
           AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1
           AWS_EC2_METADATA_DISABLED: 'true'
         run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::error::QINIU_AK and QINIU_SK must be configured before publishing a release."
+            exit 1
+          fi
+
+          retry() {
+            local attempt=1 max_attempts=4 delay=2
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::Command failed after ${attempt} attempts: $*"
+                return 1
+              fi
+              echo "Command failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
           # 安装包文件名含版本号 → 内容不可变，长缓存（immutable）以利 CDN 加速。
-          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive \
+          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive \
             --exclude "latest.json" \
             --exclude "releases.json" \
             --cache-control "public, max-age=31536000, immutable"
           # #43：latest.json 是「指针」，必须短缓存/回源校验，否则发版后 CDN 仍返回旧版本。
-          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/latest.json "s3://$QINIU_BUCKET/latest.json" \
+          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/latest.json "s3://$QINIU_BUCKET/latest.json" \
             --cache-control "no-cache, no-store, must-revalidate, max-age=0"
-          aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/releases.json "s3://$QINIU_BUCKET/releases.json" \
+          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/releases.json "s3://$QINIU_BUCKET/releases.json" \
             --cache-control "no-cache, no-store, must-revalidate, max-age=0"
 
       - name: Create GitHub Release
@@ -381,7 +401,10 @@ jobs:
 
           retry ensure_draft_release
 
-          retry gh release upload "$RELEASE_TAG" release-assets/* \
+          retry gh release upload "$RELEASE_TAG" \
+            release-assets/*_aarch64.dmg \
+            release-assets/*_x64-setup.exe \
+            release-assets/releases.json \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
           retry gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
