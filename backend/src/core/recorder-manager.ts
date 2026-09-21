@@ -25,6 +25,10 @@ import { HighlightBuffer } from "../recorder/highlight-buffer.js";
 import { ulid } from "../utils/id.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
+import {
+  PerformanceDiagnostics,
+  type PerformanceTrace,
+} from "./performance-diagnostics.js";
 
 export interface PreviewSink {
   canAccept(): boolean;
@@ -104,6 +108,7 @@ interface ActiveSession {
   /** 手动停止接口等待录制记录和房间状态真正收口，避免响应先于异步生成器退出。 */
   done?: Promise<void>;
   resolveDone?: () => void;
+  startupTrace?: PerformanceTrace;
 }
 
 interface PreviewSession {
@@ -112,6 +117,7 @@ interface PreviewSession {
   recording: SharedPreviewRecording | null;
   /** 仅供没有可复用 bootstrap 时走旧交接路径。 */
   transitioningToRecording: boolean;
+  startupTrace?: PerformanceTrace;
 }
 
 interface SharedPreviewRecording {
@@ -125,6 +131,7 @@ interface SharedPreviewRecording {
 }
 
 export class RecorderManager {
+  readonly performance: PerformanceDiagnostics;
   private active = new Map<string, ActiveSession>();
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
@@ -215,7 +222,9 @@ export class RecorderManager {
   constructor(
     private services: Services,
     private notifier: Notifier,
-  ) {}
+  ) {
+    this.performance = new PerformanceDiagnostics(services.clock);
+  }
 
   settings(): AppSettings {
     const stored = this.services.settings.load();
@@ -750,12 +759,15 @@ export class RecorderManager {
       return;
     const room = this.services.rooms.get(roomId);
     if (!room || room.lastLiveStatus !== "live") return;
+    const startupTrace = this.performance.begin("preview_start", room);
     try {
       const settings = this.settings();
       const cookie = await this.services.platformCookie(room.platform);
+      startupTrace.mark("platform_cookie_ready");
       const stream = await this.services
         .adapterFor(room.platform)
         .getStreamUrl(room.url, settings.quality, cookie);
+      startupTrace.mark("stream_url_ready");
       // getStreamUrl 期间可能已经点击了录制；二次检查避免迟到的 preview-only 流覆盖录制流。
       if (
         this.services.resetting ||
@@ -763,18 +775,22 @@ export class RecorderManager {
         this.previewSessions.has(roomId) ||
         this.previewTransitions.has(roomId) ||
         this.active.has(roomId)
-      )
+      ) {
+        startupTrace.finish("skipped");
         return;
+      }
       const engine = this.services.engineFor();
       const session: PreviewSession = {
         engine,
         done: Promise.resolve(),
         recording: null,
         transitioningToRecording: false,
+        startupTrace,
       };
       this.previewSessions.set(roomId, session);
       session.done = (async () => {
         let streamError: ErrorObject | null = null;
+        let gotData = false;
         try {
           const input = {
             url: stream.url,
@@ -783,6 +799,10 @@ export class RecorderManager {
           };
           for await (const event of engine.start(input, null)) {
             if (event.type === "data") {
+              if (!gotData) {
+                gotData = true;
+                session.startupTrace?.finish("ok");
+              }
               const sharedRecording = session.recording;
               if (sharedRecording) {
                 try {
@@ -811,6 +831,8 @@ export class RecorderManager {
             }
             if (event.type === "error") {
               streamError = event.error;
+              if (!gotData)
+                session.startupTrace?.finish("failed", event.error.code);
               break;
             }
           }
@@ -824,7 +846,11 @@ export class RecorderManager {
                   roomId,
                   retryable: true,
                 }).toObject());
+          if (!gotData)
+            session.startupTrace?.finish("failed", streamError.code);
         } finally {
+          if (!gotData && !streamError)
+            session.startupTrace?.finish("failed", "STREAM_ENDED_BEFORE_DATA");
           // 只允许当前会话清理自己，避免旧拉流的 finally 误删后来创建的新会话。
           if (this.previewSessions.get(roomId) === session)
             this.previewSessions.delete(roomId);
@@ -892,7 +918,11 @@ export class RecorderManager {
           }
         }
       })();
-    } catch {
+    } catch (error) {
+      startupTrace.finish(
+        "failed",
+        error instanceof AppError ? error.code : "PREVIEW_START_FAILED",
+      );
       // 取流失败：不阻塞，前端按无帧处理
     }
   }
@@ -1153,8 +1183,15 @@ export class RecorderManager {
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
   ): Promise<boolean> {
-    if (this.services.resetting) return false;
-    if (this.active.has(room.id) || this.starting.has(room.id)) return false;
+    const startupTrace = this.performance.begin("recording_start", room);
+    if (this.services.resetting) {
+      startupTrace.finish("skipped");
+      return false;
+    }
+    if (this.active.has(room.id) || this.starting.has(room.id)) {
+      startupTrace.finish("skipped");
+      return false;
+    }
     if (this.recordingsHeld() >= this.settings().maxConcurrentRecordings) {
       const err = new AppError(
         "CONCURRENT_LIMIT_REACHED",
@@ -1166,11 +1203,23 @@ export class RecorderManager {
         lastCheckedAt: this.services.clock.iso(),
         lastError: err,
       });
+      startupTrace.finish("skipped", "CONCURRENT_LIMIT_REACHED");
       return false;
     }
     this.starting.add(room.id);
     try {
-      return await this.maybeStartRecordingInternal(room, status, opts);
+      return await this.maybeStartRecordingInternal(
+        room,
+        status,
+        opts,
+        startupTrace,
+      );
+    } catch (error) {
+      startupTrace.finish(
+        "failed",
+        error instanceof AppError ? error.code : "RECORDING_START_FAILED",
+      );
+      throw error;
     } finally {
       this.starting.delete(room.id);
     }
@@ -1191,8 +1240,10 @@ export class RecorderManager {
       liveStartedAt?: string | null;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
+    startupTrace: PerformanceTrace,
   ): Promise<boolean> {
     await this.disableHighlightBuffer(room.id);
+    startupTrace.mark("highlight_buffer_stopped");
     const settings = this.settings();
     const sessionId = status.streamSessionId ?? null;
     if (
@@ -1209,6 +1260,7 @@ export class RecorderManager {
         type: "room:updated",
         data: this.enrichRoom(this.services.rooms.get(room.id)!),
       });
+      startupTrace.finish("skipped", "ALREADY_RECORDED");
       return false;
     }
 
@@ -1250,15 +1302,21 @@ export class RecorderManager {
         });
       }
     }
+    startupTrace.mark("storage_checks_ready");
 
     const cookie = await this.services.platformCookie(room.platform);
+    startupTrace.mark("platform_cookie_ready");
     const stream = await this.services
       .adapterFor(room.platform)
       .getStreamUrl(room.url, settings.quality, cookie);
+    startupTrace.mark("stream_url_ready");
     // The stream lookup is asynchronous. A scheduler/manual request may have
     // claimed this room while it was in flight; never create a second session
     // or report a successful manual start in that case.
-    if (this.active.has(room.id)) return false;
+    if (this.active.has(room.id)) {
+      startupTrace.finish("skipped");
+      return false;
+    }
     // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
     if (
       await this.startSharedPreviewRecording(
@@ -1268,13 +1326,18 @@ export class RecorderManager {
         settings,
         opts.origin ?? (opts.manual ? "manual" : "automatic"),
       )
-    )
+    ) {
+      startupTrace.finish("ok");
       return true;
+    }
     this.previewTransitions.add(room.id);
     try {
       // 无观看预览时维持原有独立录制路径。
       await this.stopPreviewStream(room.id, true);
-      if (this.active.has(room.id)) return false;
+      if (this.active.has(room.id)) {
+        startupTrace.finish("skipped");
+        return false;
+      }
       const filePath = recordingFilePath(
         settings.recordingDirectory,
         room.platform,
@@ -1317,6 +1380,7 @@ export class RecorderManager {
       );
       session.done = done;
       session.resolveDone = resolveDone;
+      session.startupTrace = startupTrace;
       this.active.set(room.id, session);
       this.services.events.emit({
         type: "room:updated",
@@ -1422,6 +1486,7 @@ export class RecorderManager {
             if (!gotData) {
               gotData = true;
               clearTimeout2(this.services, pendingTimeout);
+              session.startupTrace?.finish("ok");
             }
             session.size += event.chunk.length;
             const now = this.services.clock.now();
@@ -1488,6 +1553,7 @@ export class RecorderManager {
           retryable: true,
         });
         await this.failRecording(room, recordingId, err.toObject(), "recorder");
+        session.startupTrace?.finish("failed", err.code);
         return;
       }
       await this.completeRecording(room, recordingId, session.size, "ended");
@@ -1501,6 +1567,7 @@ export class RecorderManager {
               `录制异常: ${(err as Error).message}`,
               { roomId: room.id, recordingId, retryable: true },
             );
+      session.startupTrace?.finish("failed", appErr.code);
       await this.failRecording(
         room,
         recordingId,
