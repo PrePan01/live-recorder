@@ -248,6 +248,19 @@
   font-size: 12px;
   font-weight: 700;
 }
+.lr-stat__recording-label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.lr-stat__recording-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #ff1f1f;
+  animation: lr-recording-indicator 1s infinite;
+}
 .lr-stat__value--recording {
   color: var(--lr-success);
 }
