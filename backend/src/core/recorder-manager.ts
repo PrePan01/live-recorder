@@ -368,10 +368,13 @@ export class RecorderManager {
       this.highlightBuffers.set(roomId, buffer);
       // 共享预览流在停止录制后不会重新发送 FLV 文件头。用预览缓存的初始化段和
       // 关键帧播种精彩时刻缓存，否则新缓存会永远等待一个不会再出现的文件头。
-      const bootstrap = this.preview?.recordingBootstrap?.(roomId);
-      if (bootstrap) buffer.append(bootstrap);
+      // 只接受 FLV 头起始的 bootstrap；拿不到时保持 awaitingHeader，
+      // 由后续预览帧上的延迟播种（maybeSeedHighlightBuffer）兜底——首开时
+      // mkdir 期间到达的首帧可能已错过，不能只播一次就放弃。
+      this.seedHighlightBuffer(roomId, buffer);
     } else {
       buffer.setRetainSeconds(settings.highlightBufferSeconds ?? 300);
+      this.seedHighlightBuffer(roomId, buffer);
     }
     return {
       availableSeconds: buffer.availableSeconds(),
@@ -381,6 +384,27 @@ export class RecorderManager {
         ? { disabledReason: buffer.backpressureReason }
         : {}),
     };
+  }
+
+  /**
+   * 用预览房的 FLV 初始化段播种精彩时刻缓存。仅当 bootstrap 以 FLV 开头才写入；
+   * 失败时缓冲区保持 awaitingHeader，等预览帧路径延迟重试（首开竞态兜底）。
+   */
+  private seedHighlightBuffer(roomId: string, buffer: HighlightBuffer): boolean {
+    if (!buffer.awaitingHeader) return true;
+    const bootstrap = this.preview?.recordingBootstrap?.(roomId);
+    if (!bootstrap || bootstrap.subarray(0, 3).toString() !== "FLV")
+      return false;
+    buffer.append(bootstrap);
+    return !buffer.awaitingHeader;
+  }
+
+  /** 预览帧到达且缓冲区仍缺 FLV 头时延迟播种（A1/A3：首开丢头后恢复）。 */
+  private maybeSeedHighlightBuffer(roomId: string): HighlightBuffer | undefined {
+    const buffer = this.highlightBuffers.get(roomId);
+    if (!buffer?.awaitingHeader) return buffer;
+    this.seedHighlightBuffer(roomId, buffer);
+    return buffer;
   }
 
   async disableHighlightBuffer(roomId: string): Promise<void> {
@@ -874,8 +898,19 @@ export class RecorderManager {
                   );
                 }
               }
-              if (this.settings().highlightEnabled !== false)
+              if (this.settings().highlightEnabled !== false) {
+                // 首开竞态：mkdir 期间首帧可能已丢、enable 时 bootstrap 也可能尚不可用。
+                // 当前块不是 FLV 头时先从预览房延迟播种（此前帧已在 broadcastFrame 留底），
+                // 再 append 当前块——避免错过唯一一次文件头后永久停在 0 秒。
+                const highlight = this.highlightBuffers.get(roomId);
+                if (highlight?.awaitingHeader) {
+                  const startsFlv =
+                    event.chunk.length >= 3 &&
+                    event.chunk.subarray(0, 3).toString() === "FLV";
+                  if (!startsFlv) this.maybeSeedHighlightBuffer(roomId);
+                }
                 this.highlightBuffers.get(roomId)?.append(event.chunk);
+              }
               this.preview?.broadcastFrame(roomId, event.chunk);
             }
             if (event.type === "error") {
