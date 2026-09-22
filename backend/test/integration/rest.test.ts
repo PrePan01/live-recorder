@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -38,6 +38,52 @@ describe("REST contract v1.1 (fake stack)", () => {
       headers: { host: "127.0.0.1:43120" },
     });
     expect(status.json().serviceStatus.setupCompleted).toBe(false);
+    await app.close();
+  });
+
+  it("service status directoryAvailable: 未配置/存在可写/不存在/只读 四态判定", async () => {
+    const { app } = buildApp(newServices());
+    const statusOf = async (): Promise<boolean> => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/service/status",
+        headers: { host: "127.0.0.1:43120" },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json().serviceStatus.directoryAvailable;
+    };
+    const putDir = async (directory: string) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/settings",
+        headers: { host: "127.0.0.1:43120" },
+        payload: { recordingDirectory: directory },
+      });
+
+    // ① 未配置 → false
+    expect(await statusOf()).toBe(false);
+
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-diravail-"));
+    expect((await putDir(dir)).statusCode).toBe(200);
+    // ② 已配置且可写 → true
+    expect(await statusOf()).toBe(true);
+
+    // ③ 目录不存在 → false
+    const missing = path.join(dir, "missing-child");
+    expect((await putDir(missing)).statusCode).toBe(200);
+    expect(await statusOf()).toBe(false);
+
+    // ④ 目录只读（chmod 555）→ false；恢复后回到 true
+    if (process.platform !== "win32") {
+      const ro = await mkdtemp(path.join(tmpdir(), "lr-dirro-"));
+      await chmod(ro, 0o555);
+      expect((await putDir(ro)).statusCode).toBe(200);
+      expect(await statusOf()).toBe(false);
+      await chmod(ro, 0o755); // 还原权限便于清理
+    }
+
+    expect((await putDir(dir)).statusCode).toBe(200);
+    expect(await statusOf()).toBe(true);
     await app.close();
   });
 
