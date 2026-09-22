@@ -1,5 +1,6 @@
 // 统计看板 v2（task #51 · 评审稿 v2 notes/review-stats-dashboard.md）：
-// - 筛选：日期（精确到分 showTime）+ 平台 + 标签多选 + 房间；防抖 300ms、丢弃在途旧请求、可重置；
+// - 筛选：日期（date-only RangePicker）+ 起/止时间（TimePicker HH:mm，小时精度，task #54）
+//   + 平台 + 标签多选 + 房间；防抖 300ms、丢弃在途旧请求、可重置；
 // - 四图：每日趋势柱状 / 平台饼图 / 直播间饼图（TOP10+其他、可展开全部）/ 日历热力图（独立翻月）；
 //   每图三指标（次数/大小/时长）独立切换，默认次数、纯前端 0 请求（Q2）；
 // - 热力图仅受平台/标签/房间约束、不随上方日期（Q1=A），每次翻月单独 1 请求；
@@ -7,7 +8,7 @@
 // - 风格：孟菲斯双重遵循（lr-memphis token，冲突以项目内为准）；echarts 仅随本路由懒加载（QA G3）。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { App, Button, Card, Col, DatePicker, Empty, Row, Select, Segmented, Space, Statistic, Typography } from 'antd';
+import { App, Button, Card, Col, DatePicker, Empty, Row, Select, Segmented, Space, Statistic, TimePicker, Typography } from 'antd';
 import axios from 'axios';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -57,7 +58,12 @@ export default function Stats() {
   const tags = useTagStore((s) => s.tags);
 
   // —— 全局筛选（Q1=A 下热力图不受 range 约束）——
+  // task #54：antd 6.6.1 showTime RangePicker 为 needConfirm 交互（面板点选永不推进结束字段，
+  // 外部关闭会用旧结束日期提交，上游 antd#35851→#27779 长期设计），实机不可用；
+  // 改为 date-only RangePicker（两击自然选，History 页同款已验证）+ 起/止两个独立 TimePicker（HH:mm）。
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(defaultRange());
+  const [startTime, setStartTime] = useState<Dayjs>(() => dayjs().startOf('day'));
+  const [endTime, setEndTime] = useState<Dayjs>(() => dayjs().startOf('day').hour(23).minute(59));
   const [platform, setPlatform] = useState<string | undefined>();
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [roomId, setRoomId] = useState<string | undefined>();
@@ -92,13 +98,14 @@ export default function Stats() {
 
   const mainSeqRef = useRef(0);
   const firstMainRef = useRef(true);
-  const mainQuery = useMemo(
-    () => ({
-      ...(range ? { from: range[0].toISOString(), to: range[1].toISOString() } : {}),
-      ...filterQuery,
-    }),
-    [range, filterQuery],
-  );
+  const mainQuery = useMemo(() => {
+    if (!range) return { ...filterQuery };
+    // 小时精度（A2 闭区间语义不变）：from = 起日+起时（分内 00.000 起），to = 止日+止时（分内 59.999 止）。
+    // 默认 00:00/23:59 与旧 endOf/startOf day 构造完全等价。
+    const from = range[0].hour(startTime.hour()).minute(startTime.minute()).second(0).millisecond(0);
+    const to = range[1].hour(endTime.hour()).minute(endTime.minute()).second(59).millisecond(999);
+    return { from: from.toISOString(), to: to.toISOString(), ...filterQuery };
+  }, [range, startTime, endTime, filterQuery]);
 
   // 主查询：首载立即、筛选变更防抖 300ms；effect 清理即中止在途请求（A5/竞态红线）。
   useEffect(() => {
@@ -174,6 +181,8 @@ export default function Stats() {
 
   const resetAll = () => {
     setRange(defaultRange());
+    setStartTime(dayjs().startOf('day'));
+    setEndTime(dayjs().startOf('day').hour(23).minute(59));
     setPlatform(undefined);
     setTagIds([]);
     setRoomId(undefined);
@@ -419,10 +428,22 @@ export default function Stats() {
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
           <DatePicker.RangePicker
-            showTime={{ format: 'HH:mm' }}
-            format="YYYY-MM-DD HH:mm"
             value={range}
             onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)}
+          />
+          <TimePicker
+            aria-label="起始时间"
+            format="HH:mm"
+            allowClear={false}
+            value={startTime}
+            onChange={(v) => v && setStartTime(v)}
+          />
+          <TimePicker
+            aria-label="结束时间"
+            format="HH:mm"
+            allowClear={false}
+            value={endTime}
+            onChange={(v) => v && setEndTime(v)}
           />
           <Select
             allowClear
