@@ -389,14 +389,27 @@ export class RecorderManager {
   /**
    * 用预览房的 FLV 初始化段播种精彩时刻缓存。仅当 bootstrap 以 FLV 开头才写入；
    * 失败时缓冲区保持 awaitingHeader，等预览帧路径延迟重试（首开竞态兜底）。
+   * 取证（脱敏）：只记 roomId 后缀与 bootstrap 形态，不打内容。
    */
   private seedHighlightBuffer(roomId: string, buffer: HighlightBuffer): boolean {
     if (!buffer.awaitingHeader) return true;
     const bootstrap = this.preview?.recordingBootstrap?.(roomId);
-    if (!bootstrap || bootstrap.subarray(0, 3).toString() !== "FLV")
+    const flv = Boolean(bootstrap && bootstrap.subarray(0, 3).toString() === "FLV");
+    if (!flv) {
+      // 首开常见：预览房尚未捕获头 → 保持 awaitingHeader，后续帧延迟播种。
+      if (process.env.LIVE_RECORDER_DEBUG === "1")
+        console.warn(
+          `[highlight] seed miss room=…${roomId.slice(-6)} bootstrap=${bootstrap ? `len=${bootstrap.length}` : "null"}`,
+        );
       return false;
-    buffer.append(bootstrap);
-    return !buffer.awaitingHeader;
+    }
+    buffer.append(bootstrap!);
+    const ok = !buffer.awaitingHeader;
+    if (!ok && process.env.LIVE_RECORDER_DEBUG === "1")
+      console.warn(
+        `[highlight] seed incomplete room=…${roomId.slice(-6)} len=${bootstrap!.length}`,
+      );
+    return ok;
   }
 
   /** 预览帧到达且缓冲区仍缺 FLV 头时延迟播种（A1/A3：首开丢头后恢复）。 */
@@ -907,7 +920,17 @@ export class RecorderManager {
                   const startsFlv =
                     event.chunk.length >= 3 &&
                     event.chunk.subarray(0, 3).toString() === "FLV";
-                  if (!startsFlv) this.maybeSeedHighlightBuffer(roomId);
+                  if (!startsFlv) {
+                    const seeded = this.maybeSeedHighlightBuffer(roomId);
+                    if (
+                      seeded &&
+                      !seeded.awaitingHeader &&
+                      process.env.LIVE_RECORDER_DEBUG === "1"
+                    )
+                      console.warn(
+                        `[highlight] late seed ok room=…${roomId.slice(-6)}`,
+                      );
+                  }
                 }
                 this.highlightBuffers.get(roomId)?.append(event.chunk);
               }
