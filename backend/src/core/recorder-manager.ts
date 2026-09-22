@@ -1226,6 +1226,54 @@ export class RecorderManager {
     }
   }
 
+  /** 启动期磁盘检查：发 disk:space 事件，低空间只告警不拦截。与取流并行，建文件前必须 await。 */
+  private async inspectDiskForStartup(
+    settings: AppSettings,
+    room: Room,
+    startupTrace: PerformanceTrace,
+  ): Promise<void> {
+    try {
+      if (settings.recordingDirectory.length > 0) {
+        const space = await this.services.diskGuard.inspect(
+          settings.recordingDirectory,
+        );
+        const total = space.totalBytes || 1;
+        const low =
+          space.freeBytes < settings.diskGuard.minFreeBytes ||
+          (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
+        this.services.events.emit({
+          type: "disk:space",
+          data: {
+            directory: settings.recordingDirectory,
+            freeBytes: space.freeBytes,
+            totalBytes: space.totalBytes,
+            low,
+          },
+        });
+        // 空间不足只提醒、不拦下录制：能不能录由实际写入决定。用户宁可先录下来再清理，
+        // 也不要在开播那一刻被挡在门外——录制本身是核心能力，等清理完直播可能已经结束了。
+        // 真的写不进去时，写入失败会给出明确原因（磁盘满/权限等）。
+        if (low) {
+          const err = new AppError("DISK_SPACE_INSUFFICIENT", "磁盘空间不足", {
+            roomId: room.id,
+            details: {
+              freeBytes: space.freeBytes,
+              minFreeBytes: settings.diskGuard.minFreeBytes,
+            },
+          });
+          this.raiseAlert("error", "disk", err);
+          await this.notifier.notify("disk_space_low", room.id, {
+            title: room.displayName,
+          });
+        }
+      }
+      startupTrace.mark("storage_checks_ready");
+    } catch (error) {
+      startupTrace.mark("storage_checks_ready");
+      throw error;
+    }
+  }
+
   /** 调度器发现直播后调用：并发上限、本次开播周期去重、磁盘保护，然后启动录制。manual=手动触发，可在本次直播中显式重录。 */
   async maybeStartRecording(
     room: Room,
@@ -1317,55 +1365,34 @@ export class RecorderManager {
       return false;
     }
 
-    if (settings.recordingDirectory.length > 0) {
-      const space = await this.services.diskGuard.inspect(
-        settings.recordingDirectory,
-      );
-      const total = space.totalBytes || 1;
-      const low =
-        space.freeBytes < settings.diskGuard.minFreeBytes ||
-        (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
-      this.services.events.emit({
-        type: "disk:space",
-        data: {
-          directory: settings.recordingDirectory,
-          freeBytes: space.freeBytes,
-          totalBytes: space.totalBytes,
-          low,
-        },
-      });
-      // 空间不足只提醒、不拦下录制：能不能录由实际写入决定。用户宁可先录下来再清理，
-      // 也不要在开播那一刻被挡在门外——录制本身是核心能力，等清理完直播可能已经结束了。
-      // 真的写不进去时，写入失败会给出明确原因（磁盘满/权限等）。
-      if (low) {
-        const err = new AppError("DISK_SPACE_INSUFFICIENT", "磁盘空间不足", {
-          roomId: room.id,
-          details: {
-            freeBytes: space.freeBytes,
-            minFreeBytes: settings.diskGuard.minFreeBytes,
-          },
-        });
-        this.raiseAlert("error", "disk", err);
-        await this.notifier.notify("disk_space_low", room.id, {
-          title: room.displayName,
-        });
-      }
-    }
-    startupTrace.mark("storage_checks_ready");
+    // 磁盘检查与后续取流并行发起；低空间告警仍必须在任何建文件之前生效，
+    // 因此所有会创建文件的路径都会先 await 这里返回的 promise。
+    const diskCheckReady = this.inspectDiskForStartup(
+      settings,
+      room,
+      startupTrace,
+    );
+    // 提前路径（取流抛错/被并发抢占）可能不再 await：先挂空 catch 防未处理拒绝，
+    // 真正需要磁盘结果的路径仍 await 原 promise 以保留失败语义。
+    void diskCheckReady.catch(() => undefined);
 
     const origin = opts.origin ?? (opts.manual ? "manual" : "automatic");
-    if (
-      await this.startRecordingFromExistingPreview(
-        room,
-        status,
-        settings,
-        origin,
-        startupTrace,
-      )
-    ) {
-      startupTrace.mark("reused_preview_stream");
-      startupTrace.finish("ok");
-      return true;
+    // 已有预览会话：先等磁盘告警落地再尝试复用（复用会建文件），避免时序回退。
+    if (this.previewSessions.has(room.id)) {
+      await diskCheckReady;
+      if (
+        await this.startRecordingFromExistingPreview(
+          room,
+          status,
+          settings,
+          origin,
+          startupTrace,
+        )
+      ) {
+        startupTrace.mark("reused_preview_stream");
+        startupTrace.finish("ok");
+        return true;
+      }
     }
 
     const cookie = await this.services.platformCookie(room.platform);
@@ -1381,6 +1408,8 @@ export class RecorderManager {
       startupTrace.finish("skipped");
       return false;
     }
+    // 自此可能创建文件：磁盘检查（含低空间告警/通知）必须已完成。
+    await diskCheckReady;
     // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
     if (
       await this.startSharedPreviewRecording(

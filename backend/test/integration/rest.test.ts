@@ -1774,4 +1774,98 @@ describe("REST contract v1.1 (fake stack)", () => {
     check.mockRestore();
     await app.close();
   });
+
+  it("skips the redundant live re-check when the cached live status is within 10s", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/997",
+      displayName: "fresh-live",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: services.clock.iso(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    const check = vi.spyOn(adapter, "checkLiveStatus");
+    const start = vi
+      .spyOn(services.manager, "maybeStartRecording")
+      .mockResolvedValue(true);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(check).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
+    check.mockRestore();
+    await app.close();
+  });
+
+  it("re-checks liveness when the cached live status is older than 10s", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/996",
+      displayName: "stale-live",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: new Date(services.clock.now() - 11_000).toISOString(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    adapter.setScript([{ status: "live", streamSessionId: "s-stale" }]);
+    const check = vi.spyOn(adapter, "checkLiveStatus");
+    const start = vi
+      .spyOn(services.manager, "maybeStartRecording")
+      .mockResolvedValue(true);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
+    check.mockRestore();
+    await app.close();
+  });
+
+  it("rejects manual start when a stale live cache re-check reports offline", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/995",
+      displayName: "went-offline",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: new Date(services.clock.now() - 11_000).toISOString(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    adapter.setScript([{ status: "offline" }]);
+    const start = vi.spyOn(services.manager, "maybeStartRecording");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("RECORDING_NOT_AVAILABLE");
+    expect(start).not.toHaveBeenCalled();
+    start.mockRestore();
+    await app.close();
+  });
 });

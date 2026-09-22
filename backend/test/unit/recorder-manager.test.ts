@@ -995,6 +995,59 @@ describe("RecorderManager", () => {
     await services.manager.stopRecording(room.id);
   });
 
+  it("inspects disk space in parallel with the platform stream lookup", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-parallel-disk-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/18",
+      displayName: "P",
+    });
+
+    let streamLookupStarted = false;
+    const originalInspect = services.diskGuard.inspect.bind(
+      services.diskGuard,
+    );
+    const inspectSpy = vi
+      .spyOn(services.diskGuard, "inspect")
+      .mockImplementation(async (directory: string) => {
+        // 串行实现会先死等磁盘、永远走不到取流；并行实现下取流先启动，本 promise 才放行。
+        const deadline = Date.now() + 2_000;
+        while (!streamLookupStarted) {
+          if (Date.now() > deadline) {
+            throw new Error("disk inspect never overlapped getStreamUrl");
+          }
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        return originalInspect(directory);
+      });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    const lookupSpy = vi
+      .spyOn(adapter, "getStreamUrl")
+      .mockImplementation(async (roomUrl, quality) => {
+        streamLookupStarted = true;
+        return {
+          url: `fake://stream/${encodeURIComponent(roomUrl)}?q=${quality}`,
+          format: "flv" as const,
+          actualQuality: quality,
+        };
+      });
+
+    const started = await services.manager.maybeStartRecording(room, {
+      streamSessionId: "parallel-1",
+    });
+
+    expect(started).toBe(true);
+    expect(inspectSpy).toHaveBeenCalledOnce();
+    expect(lookupSpy).toHaveBeenCalledOnce();
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    inspectSpy.mockRestore();
+    lookupSpy.mockRestore();
+    await services.manager.stopRecording(room.id);
+  });
+
   it("stopRecording completes the current segment with code 1000", async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), "lr-b6s-"));

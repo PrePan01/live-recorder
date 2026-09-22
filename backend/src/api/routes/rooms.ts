@@ -11,6 +11,8 @@ import {
 
 const PLATFORMS: Platform[] = ["bilibili", "douyin"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
+/** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
+const MANUAL_LIVE_FRESH_MS = 10_000;
 
 export interface RoomInsight {
   totalRecordings: number;
@@ -577,8 +579,16 @@ export function registerRoomRoutes(
         { roomId: id, retryable: false },
       );
     }
-    // 首次检测已得到同一份 live 状态；健康预览已经证明上游可用，二者都不必重复请求平台。
-    if (!status && !previewReady) {
+    // 刚检测过（≤10s）的在播状态直接采信，跳过重复确认；其余情况（含状态过期）仍实探一次。
+    // 预览在播、从未检测两条路径不受影响（前者已有 previewReady 短路，后者在上方已实探）。
+    const checkedAtMs = room.lastCheckedAt
+      ? Date.parse(room.lastCheckedAt)
+      : NaN;
+    const liveFresh =
+      room.lastLiveStatus === "live" &&
+      Number.isFinite(checkedAtMs) &&
+      services.clock.now() - checkedAtMs <= MANUAL_LIVE_FRESH_MS;
+    if (!status && !previewReady && !liveFresh) {
       const cookie = await services.platformCookie(room.platform);
       status = await services
         .adapterFor(room.platform)
