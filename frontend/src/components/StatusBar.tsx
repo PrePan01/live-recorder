@@ -16,6 +16,7 @@ import { useAppearanceStore } from "../stores/appearanceStore";
 import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
 import { useRoomStore } from "../stores/roomStore";
 import { formatBytes, formatRelative } from "../utils/format";
+import { diskDisplay } from "../utils/diskDisplay";
 import { alertSourceText } from "../utils/alertText";
 import GlobalSearch from "./GlobalSearch";
 
@@ -50,7 +51,7 @@ export default function StatusBar() {
   const free = status?.disk?.freeBytes ?? 0;
   const total = status?.disk?.totalBytes ?? 1;
   const freeRatio = total > 0 ? free / total : 0;
-  const spaceDanger = free < 20_000_000_000 || freeRatio < 0.1;
+  const disk = diskDisplay(status?.directoryAvailable, free, total);
   const isSettingsPage = pathname.startsWith("/settings");
 
   return (
@@ -95,17 +96,19 @@ export default function StatusBar() {
         }}
       >
         <div className="lr-statusbar__disk">
-          <Typography.Text type={spaceDanger ? "danger" : "secondary"}>
-            {spaceDanger ? "⚠ 磁盘空间不足" : "磁盘可用"}
+          <Typography.Text type={disk.danger ? "danger" : "secondary"}>
+            {disk.text}
           </Typography.Text>
-          <Progress
-            percent={Math.round(freeRatio * 100)}
-            status={spaceDanger ? "exception" : "normal"}
-            size="small"
-            style={{ width: 120 }}
-            format={() => formatBytes(free)}
-          />
-          {spaceDanger ? <Tag color="red">需清理</Tag> : null}
+          {disk.showProgress ? (
+            <Progress
+              percent={Math.round(freeRatio * 100)}
+              status={disk.spaceDanger ? "exception" : "normal"}
+              size="small"
+              style={{ width: 120 }}
+              format={() => formatBytes(free)}
+            />
+          ) : null}
+          {disk.showCleanup ? <Tag color="red">需清理</Tag> : null}
         </div>
         <Popover
           trigger="click"

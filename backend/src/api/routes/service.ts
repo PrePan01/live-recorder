@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { access, constants } from 'node:fs/promises';
+import { access, constants, stat } from 'node:fs/promises';
 import type { Services } from '../../core/services.js';
 import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { resolveBin } from '../../utils/ffmpeg.js';
@@ -14,6 +14,23 @@ export interface SelfCheckItem {
   fixHint: string;
 }
 
+/**
+ * 保存目录可用性判定（监控总览/状态栏「保存目录不可用」警告的数据源）。
+ * 语义仅覆盖三态：未配置 / 目录不存在（或非目录）/ 目录不可写 → false；
+ * 不含磁盘空间语义（空间不足由 diskGuard 单独上报，勿混用）。
+ */
+export async function isDirectoryAvailable(directory: string | undefined | null): Promise<boolean> {
+  if (!directory) return false;
+  try {
+    const st = await stat(directory);
+    if (!st.isDirectory()) return false;
+    await access(directory, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function registerServiceRoutes(app: FastifyInstance, services: Services): void {
   app.get('/api/v1/service/status', async (_req, reply) => {
     const stored = services.settings.load();
@@ -26,6 +43,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
         version: '0.5.159',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored?.recordingDirectory?.length),
+        directoryAvailable: await isDirectoryAvailable(stored?.recordingDirectory),
         disk,
         activeRecordings: services.recordings.activeCount(),
       },

@@ -631,6 +631,31 @@ textarea.ant-input,
 .ant-alert-error {
   background: var(--lr-pink) !important;
 }
+/* 监控总览顶部「保存目录不可用」警告：通用 Alert 孟菲斯底色之上补排版与操作按钮 */
+.lr-directory-warning {
+  margin-bottom: 16px;
+}
+.lr-directory-warning .ant-alert-message {
+  color: #000 !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+.lr-directory-warning .ant-alert-action .ant-btn {
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  color: var(--lr-text) !important;
+  box-shadow: none !important;
+  font-weight: 700;
+}
+.lr-directory-warning .ant-alert-action .ant-btn:hover,
+.lr-directory-warning .ant-alert-action .ant-btn:focus {
+  background: var(--lr-teal) !important;
+  transform: translateY(-1px);
+  transition:
+    transform var(--lr-motion) var(--lr-bounce),
+    background var(--lr-motion);
+}
 .ant-typography,
 .ant-typography-secondary,
 .ant-form-item-label > label {
