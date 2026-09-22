@@ -9,7 +9,13 @@ export interface StatsQuery {
   roomId?: string;
 }
 
-export async function fetchRecordingsStats(q: StatsQuery = {}): Promise<RecordingsStats> {
-  const { data } = await http.get<RecordingsStats>('/stats/recordings', { params: q });
+export async function fetchRecordingsStats(
+  q: StatsQuery = {},
+  opts?: { signal?: AbortSignal },
+): Promise<RecordingsStats> {
+  const { data } = await http.get<RecordingsStats>('/stats/recordings', {
+    params: q,
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  });
   return data;
 }
