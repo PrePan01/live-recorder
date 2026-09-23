@@ -68,8 +68,6 @@ function triggerStartupLiveCheck(): Promise<void> {
   if (!startupLiveCheck) {
     const request = checkEnabledRooms().then(() => undefined);
     startupLiveCheck = request;
-    // A failed request must not poison subsequent visits to this page: allow a
-    // later mount to issue a fresh request instead of reusing this rejection.
     void request.catch(() => {
       if (startupLiveCheck === request) startupLiveCheck = null;
     });
@@ -85,7 +83,6 @@ function SortableRoomCardItem({
   children: React.ReactNode;
 }) {
   const sortable = useRoomSortableItem(roomId, "card");
-  /* oxlint-disable react/refs -- dnd-kit exposes callback refs and reactive sortable values */
   return (
     <Col
       xs={24}
@@ -101,7 +98,6 @@ function SortableRoomCardItem({
       {children}
     </Col>
   );
-  /* oxlint-enable react/refs */
 }
 
 const EXPANDED_CARD_ACTION_WIDTH = 96;
@@ -196,10 +192,7 @@ const RoomCard = memo(function RoomCard({
     bestAvailable !== null &&
     qualityPreference !== null &&
     qualityRank(bestAvailable) > qualityRank(qualityPreference);
-  // 只有确实还没登录时才引导去登录；房间本身没有该档位的话给了入口也没用。
   const offerBilibiliLogin = qualityShortfall && !bilibiliAuthorized;
-  // 离线时只有「检测、直播间」；开播或录制中再出现「观看、录制/停止」。
-  // 每张卡片按自己的按钮数切换，不能让两按钮卡片沿用四按钮的紧凑阈值。
   const actionCount = onAir || recording ? 4 : 2;
   const { ref, compact } = useCompactRoomCardActions(actionCount);
   return (
