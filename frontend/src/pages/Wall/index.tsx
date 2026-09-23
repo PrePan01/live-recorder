@@ -232,8 +232,6 @@ export default function Wall() {
 
   const handleGridChange = (value: string | number) => {
     const nextGrid = value as GridLayout;
-    // 新布局既会缩容、也可能去掉重复项（3x1 -> 其它）。所有不再出现在墙上的
-    // 房间都要释放预览，否则 openRoomIds 会泄漏。槽位截断由 store 负责。
     const kept = new Set(
       applyGridLayout(wallRoomIds, nextGrid).filter(Boolean),
     );
@@ -348,8 +346,6 @@ export default function Wall() {
         title="添加直播间"
         open={slotPicker !== null}
         footer={null}
-        // 选择框非受控：不销毁的话上一次选中的直播间会留到下次打开，
-        // 再次点同一个房间不触发 onChange，看起来就是「点了没反应」。
         destroyOnHidden
         onCancel={() => setSlotPicker(null)}
       >

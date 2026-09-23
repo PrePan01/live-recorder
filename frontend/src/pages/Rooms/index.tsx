@@ -133,8 +133,7 @@ export default function Rooms() {
       if (platform && r.platform !== platform) return false;
       if (state && r.monitorState !== state) return false;
       if (favOnly && !r.favorited) return false;
-      if (tagId && !r.tags.some((t) => t.id === tagId)) return false;
-      return true;
+      return !(tagId && !r.tags.some((t) => t.id === tagId));
     });
   }, [rooms, keyword, platform, state, favOnly, tagId]);
 
@@ -226,17 +225,13 @@ export default function Rooms() {
     }
   };
 
-  /**
-   * 删除直播间。正在录制的必须先停录并把已录内容存下来（后端会走收尾流程），
-   * 所以这里用一次显式确认把后果讲清楚，而不是点一下就删掉。
-   */
   const confirmDeleteRooms = (targets: Room[]) => {
     if (targets.length === 0) {
-      message.warning("请先选择要操作的直播间");
-      return;
+      return message.warning("请先选择要操作的直播间");
     }
     const recording = targets.filter(
-      (r) => r.monitorState === "recording" || r.monitorState === "reconnecting",
+      (r) =>
+        r.monitorState === "recording" || r.monitorState === "reconnecting",
     );
     const multiple = targets.length > 1;
     modal.confirm({

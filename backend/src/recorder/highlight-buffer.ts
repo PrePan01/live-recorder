@@ -60,6 +60,8 @@ export class HighlightBuffer {
 
   get isAccepting(): boolean { return !this.cleared && !this.resetting && this.disabledReason === null; }
   get backpressureReason(): 'slow_disk' | 'write_error' | null { return this.disabledReason; }
+  /** 尚未捕获 FLV 头：直播流全程只发一次头，错过需由外部延迟播种兜底。 */
+  get awaitingHeader(): boolean { return this.isAccepting && !this.headerCaptured; }
 
   append(chunk: Buffer, at = Date.now()): void {
     if (!this.isAccepting) return;
@@ -67,7 +69,12 @@ export class HighlightBuffer {
     this.pending = this.pending.length === 0 ? Buffer.from(chunk) : Buffer.concat([this.pending, chunk]);
     if (!this.headerCaptured) {
       if (this.pending.length < 13) return;
-      if (this.pending.subarray(0, 3).toString() !== 'FLV') { this.pending = Buffer.alloc(0); return; }
+      if (this.pending.subarray(0, 3).toString() !== 'FLV') {
+        // 非头首块（首开竞态错过文件头/中途加入）：丢弃后仍 awaitingHeader，
+        // 由 RecorderManager 在后续帧上延迟播种 recordingBootstrap，而不是永久干等。
+        this.pending = Buffer.alloc(0);
+        return;
+      }
       this.init.push(this.pending.subarray(0, 13));
       this.pending = this.pending.subarray(13);
       this.headerCaptured = true;

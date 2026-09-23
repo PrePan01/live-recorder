@@ -30,6 +30,9 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (response) => response,
   (error: AxiosError<unknown>) => {
+    // 主动取消的请求原样上抛（ERR_CANCELED），不误报成 NETWORK_UNAVAILABLE——
+    // 看板筛选防抖/竞态丢弃在途请求依赖该语义（task #51）。
+    if (axios.isCancel(error)) throw error;
     const raw = error.response?.data as Record<string, unknown> | undefined;
     const body = (raw?.error ?? raw) as (ApiErrorEnvelope & { roomId?: string }) | undefined;
     if (body && typeof body === 'object' && typeof body.code === 'string') {

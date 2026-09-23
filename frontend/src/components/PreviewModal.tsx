@@ -33,6 +33,7 @@ import {
   enableHighlightBuffer,
   exportHighlight,
   fetchHighlightBufferStatus,
+  type HighlightBufferStatus,
 } from "../api/rooms";
 
 const MIN_WIDTH = 640;
@@ -160,6 +161,15 @@ export default function PreviewModal({
     return () => clearTimeout(t);
   }, [recentStop]);
 
+  // 精彩时刻 enable 的代际号：StrictMode 双挂载/轮询重试会再次 enable，
+  // 过期的 unmount DELETE 不得打掉新会话（否则永久 0 秒）。
+  const highlightGenRef = useRef(new Map<string, number>());
+  const bumpHighlightGen = (id: string) => {
+    const next = (highlightGenRef.current.get(id) ?? 0) + 1;
+    highlightGenRef.current.set(id, next);
+    return next;
+  };
+
   // 此组件只用于监控页/全屏普通观看；直播墙直接使用 VideoPlayer，因此不会触发缓存。
   useEffect(() => {
     if (!enableHighlights || !highlightEnabled || recording || !onAir) {
@@ -168,23 +178,34 @@ export default function PreviewModal({
       return;
     }
     let alive = true;
+    bumpHighlightGen(room.id);
+    const applyStatus = (status: HighlightBufferStatus) => {
+      if (!alive) return;
+      setHighlightMaxSeconds(status.maxSeconds);
+      setHighlightAvailableSeconds(status.availableSeconds);
+      setHighlightDisabledReason(
+        status.accepting ? null : (status.disabledReason ?? null),
+      );
+    };
     const refresh = () =>
       void fetchHighlightBufferStatus(room.id)
         .then((status) => {
           if (!alive) return;
-          setHighlightMaxSeconds(status.maxSeconds);
-          setHighlightAvailableSeconds(status.availableSeconds);
-          setHighlightDisabledReason(
-            status.accepting ? null : (status.disabledReason ?? null),
-          );
+          applyStatus(status);
+          // B1：首开 enable 失败或被乱序 DELETE 后，轮询发现未启用则重试 enable，
+          // 而不是一直显示「正在接收直播帧」0 秒。
+          if (!status.enabled) {
+            bumpHighlightGen(room.id);
+            void enableHighlightBuffer(room.id)
+              .then(applyStatus)
+              .catch(() => undefined);
+          }
         })
         .catch(() => alive && setHighlightAvailableSeconds(0));
     void enableHighlightBuffer(room.id)
-      .then(refresh)
+      .then(applyStatus)
       .catch(() => alive && setHighlightAvailableSeconds(0));
     const timer = window.setInterval(refresh, 1_000);
-    // React Strict Mode 在开发环境会额外执行一次 effect 清理；若这里异步删除缓存，
-    // DELETE 可能晚于下一次 enable 到达，造成缓存被误删并永久显示 0 秒。
     return () => {
       alive = false;
       window.clearInterval(timer);
@@ -319,13 +340,19 @@ export default function PreviewModal({
   };
 
   // 页面卸载/切换导致弹窗被销毁时，同样要关闭精彩时刻缓存，避免泄漏。
-  useEffect(
-    () => () => {
-      if (enableHighlights)
-        void disableHighlightBuffer(room.id).catch(() => undefined);
-    },
-    [disableHighlightBuffer, enableHighlights, room.id],
-  );
+  // B2：延迟 + 代际校验——StrictMode 下「cleanup DELETE」可能晚于下一次 enable 到达；
+  // 仅当该房间此后没有更新的 enable 才真正禁用。
+  useEffect(() => {
+    const roomId = room.id;
+    return () => {
+      if (!enableHighlights) return;
+      const gen = highlightGenRef.current.get(roomId) ?? 0;
+      window.setTimeout(() => {
+        if ((highlightGenRef.current.get(roomId) ?? 0) !== gen) return;
+        void disableHighlightBuffer(roomId).catch(() => undefined);
+      }, 150);
+    };
+  }, [disableHighlightBuffer, enableHighlights, room.id]);
 
   const enterPictureInPicture = () => {
     setPreviewPlayerVisible(false);
