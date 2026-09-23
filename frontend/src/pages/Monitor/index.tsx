@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -31,6 +32,8 @@ import { bridge } from "../../stores/bootStore";
 import { useRoomStore } from "../../stores/roomStore";
 import { usePreviewStore } from "../../stores/previewStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useServiceStore } from "../../stores/serviceStore";
+import { isDirectoryUnavailable } from "../../utils/diskDisplay";
 import {
   checkEnabledRooms,
   fetchRoomInsights,
@@ -65,8 +68,6 @@ function triggerStartupLiveCheck(): Promise<void> {
   if (!startupLiveCheck) {
     const request = checkEnabledRooms().then(() => undefined);
     startupLiveCheck = request;
-    // A failed request must not poison subsequent visits to this page: allow a
-    // later mount to issue a fresh request instead of reusing this rejection.
     void request.catch(() => {
       if (startupLiveCheck === request) startupLiveCheck = null;
     });
@@ -82,7 +83,6 @@ function SortableRoomCardItem({
   children: React.ReactNode;
 }) {
   const sortable = useRoomSortableItem(roomId, "card");
-  /* oxlint-disable react/refs -- dnd-kit exposes callback refs and reactive sortable values */
   return (
     <Col
       xs={24}
@@ -98,7 +98,6 @@ function SortableRoomCardItem({
       {children}
     </Col>
   );
-  /* oxlint-enable react/refs */
 }
 
 const EXPANDED_CARD_ACTION_WIDTH = 96;
@@ -193,10 +192,7 @@ const RoomCard = memo(function RoomCard({
     bestAvailable !== null &&
     qualityPreference !== null &&
     qualityRank(bestAvailable) > qualityRank(qualityPreference);
-  // 只有确实还没登录时才引导去登录；房间本身没有该档位的话给了入口也没用。
   const offerBilibiliLogin = qualityShortfall && !bilibiliAuthorized;
-  // 离线时只有「检测、直播间」；开播或录制中再出现「观看、录制/停止」。
-  // 每张卡片按自己的按钮数切换，不能让两按钮卡片沿用四按钮的紧凑阈值。
   const actionCount = onAir || recording ? 4 : 2;
   const { ref, compact } = useCompactRoomCardActions(actionCount);
   return (
@@ -452,6 +448,7 @@ const RoomCard = memo(function RoomCard({
 
 export default function Monitor() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const {
     rooms,
     loading,
@@ -468,6 +465,12 @@ export default function Monitor() {
   const openPreviewModal = usePreviewStore((s) => s.openModal);
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
+  // 保存目录可用性：进页检测一次 + 30s 轮询。
+  const serviceStatus = useServiceStore((s) => s.status);
+  const fetchServiceStatus = useServiceStore((s) => s.fetchStatus);
+  const directoryUnavailable = isDirectoryUnavailable(
+    serviceStatus?.directoryAvailable,
+  );
   // B站登录态：整页只探测一次，结论给所有 B站卡片共用（不按房间重复请求）。
   const [bilibiliCookieStatus, setBilibiliCookieStatus] =
     useState<BilibiliCookieStatus | null>(null);
@@ -525,6 +528,12 @@ export default function Monitor() {
   useEffect(() => {
     void fetchRooms().catch(() => message.error("房间列表加载失败"));
   }, [fetchRooms, message]);
+
+  useEffect(() => {
+    void fetchServiceStatus();
+    const timer = setInterval(() => void fetchServiceStatus(), 30_000);
+    return () => clearInterval(timer);
+  }, [fetchServiceStatus]);
 
   useEffect(() => {
     let disposed = false;
@@ -982,6 +991,19 @@ export default function Monitor() {
           ></Button>
         </Space>
       </Space>
+      {directoryUnavailable ? (
+        <Alert
+          className="lr-directory-warning"
+          type="warning"
+          showIcon
+          message="当前设置的保存目录不可用"
+          action={
+            <Button size="small" onClick={() => navigate("/settings")}>
+              前往设置
+            </Button>
+          }
+        />
+      ) : null}
       {monitorRooms.length === 0 && !loading ? (
         <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
       ) : view === "列表" ? (

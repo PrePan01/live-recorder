@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -38,6 +38,52 @@ describe("REST contract v1.1 (fake stack)", () => {
       headers: { host: "127.0.0.1:43120" },
     });
     expect(status.json().serviceStatus.setupCompleted).toBe(false);
+    await app.close();
+  });
+
+  it("service status directoryAvailable: 未配置/存在可写/不存在/只读 四态判定", async () => {
+    const { app } = buildApp(newServices());
+    const statusOf = async (): Promise<boolean> => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/service/status",
+        headers: { host: "127.0.0.1:43120" },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json().serviceStatus.directoryAvailable;
+    };
+    const putDir = async (directory: string) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/settings",
+        headers: { host: "127.0.0.1:43120" },
+        payload: { recordingDirectory: directory },
+      });
+
+    // ① 未配置 → false
+    expect(await statusOf()).toBe(false);
+
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-diravail-"));
+    expect((await putDir(dir)).statusCode).toBe(200);
+    // ② 已配置且可写 → true
+    expect(await statusOf()).toBe(true);
+
+    // ③ 目录不存在 → false
+    const missing = path.join(dir, "missing-child");
+    expect((await putDir(missing)).statusCode).toBe(200);
+    expect(await statusOf()).toBe(false);
+
+    // ④ 目录只读（chmod 555）→ false；恢复后回到 true
+    if (process.platform !== "win32") {
+      const ro = await mkdtemp(path.join(tmpdir(), "lr-dirro-"));
+      await chmod(ro, 0o555);
+      expect((await putDir(ro)).statusCode).toBe(200);
+      expect(await statusOf()).toBe(false);
+      await chmod(ro, 0o755); // 还原权限便于清理
+    }
+
+    expect((await putDir(dir)).statusCode).toBe(200);
+    expect(await statusOf()).toBe(true);
     await app.close();
   });
 
@@ -1772,6 +1818,100 @@ describe("REST contract v1.1 (fake stack)", () => {
     start.mockRestore();
     ready.mockRestore();
     check.mockRestore();
+    await app.close();
+  });
+
+  it("skips the redundant live re-check when the cached live status is within 10s", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/997",
+      displayName: "fresh-live",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: services.clock.iso(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    const check = vi.spyOn(adapter, "checkLiveStatus");
+    const start = vi
+      .spyOn(services.manager, "maybeStartRecording")
+      .mockResolvedValue(true);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(check).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
+    check.mockRestore();
+    await app.close();
+  });
+
+  it("re-checks liveness when the cached live status is older than 10s", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/996",
+      displayName: "stale-live",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: new Date(services.clock.now() - 11_000).toISOString(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    adapter.setScript([{ status: "live", streamSessionId: "s-stale" }]);
+    const check = vi.spyOn(adapter, "checkLiveStatus");
+    const start = vi
+      .spyOn(services.manager, "maybeStartRecording")
+      .mockResolvedValue(true);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
+    check.mockRestore();
+    await app.close();
+  });
+
+  it("rejects manual start when a stale live cache re-check reports offline", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/995",
+      displayName: "went-offline",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    services.rooms.setState(room.id, "idle", {
+      lastCheckedAt: new Date(services.clock.now() - 11_000).toISOString(),
+    });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    adapter.setScript([{ status: "offline" }]);
+    const start = vi.spyOn(services.manager, "maybeStartRecording");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("RECORDING_NOT_AVAILABLE");
+    expect(start).not.toHaveBeenCalled();
+    start.mockRestore();
     await app.close();
   });
 });

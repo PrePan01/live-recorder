@@ -382,10 +382,8 @@ export default function History() {
         render: (q: string | null, r: Recording) => {
           if (!q) return "-";
           const label = QUALITY_LABEL[q] ?? q;
-          // 仅用录制发起时的期望画质快照判断回退；无快照（迁移前旧记录）不提示，避免用当前设置误判（PrePan）。
           const expected = r.expectedQuality;
           if (!expected || expected === q) return label;
-          // 不臆断原因：B站「房间有原画但账号未登录/无权限」与「房间本身无该档位」都可能走到这里。
           const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，本次实际录制画质为 ${label}（该直播间未提供该档位，或当前账号未取得该清晰度权限）`;
           return (
             <Tooltip title={hint}>
@@ -501,7 +499,6 @@ export default function History() {
                 />
               </Space>
             ) : u.status === "failed" ? (
-              // #18①：源文件已删除 → 明确标注且不再提供无意义的重试/详情。
               u.error?.includes("源文件已删除") ? (
                 <Tag color="red">源文件已删除</Tag>
               ) : (

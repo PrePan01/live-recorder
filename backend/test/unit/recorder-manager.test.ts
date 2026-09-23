@@ -78,6 +78,8 @@ class FakePreview implements PreviewSink {
   closed: { roomId: string; code: number; reason?: "ended" | "stream_lost" }[] =
     [];
   resets: string[] = [];
+  /** 可控 bootstrap：首开竞态用例先返回 null，模拟预览房尚未捕获 FLV 头。 */
+  bootstrap: Buffer | null = buildMinimalFlv();
   canAccept(): boolean {
     return true;
   }
@@ -97,8 +99,8 @@ class FakePreview implements PreviewSink {
   resetRoom(roomId: string): void {
     this.resets.push(roomId);
   }
-  recordingBootstrap(): Buffer {
-    return buildMinimalFlv();
+  recordingBootstrap(): Buffer | null {
+    return this.bootstrap;
   }
 }
 
@@ -995,6 +997,59 @@ describe("RecorderManager", () => {
     await services.manager.stopRecording(room.id);
   });
 
+  it("inspects disk space in parallel with the platform stream lookup", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-parallel-disk-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/18",
+      displayName: "P",
+    });
+
+    let streamLookupStarted = false;
+    const originalInspect = services.diskGuard.inspect.bind(
+      services.diskGuard,
+    );
+    const inspectSpy = vi
+      .spyOn(services.diskGuard, "inspect")
+      .mockImplementation(async (directory: string) => {
+        // 串行实现会先死等磁盘、永远走不到取流；并行实现下取流先启动，本 promise 才放行。
+        const deadline = Date.now() + 2_000;
+        while (!streamLookupStarted) {
+          if (Date.now() > deadline) {
+            throw new Error("disk inspect never overlapped getStreamUrl");
+          }
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        return originalInspect(directory);
+      });
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    const lookupSpy = vi
+      .spyOn(adapter, "getStreamUrl")
+      .mockImplementation(async (roomUrl, quality) => {
+        streamLookupStarted = true;
+        return {
+          url: `fake://stream/${encodeURIComponent(roomUrl)}?q=${quality}`,
+          format: "flv" as const,
+          actualQuality: quality,
+        };
+      });
+
+    const started = await services.manager.maybeStartRecording(room, {
+      streamSessionId: "parallel-1",
+    });
+
+    expect(started).toBe(true);
+    expect(inspectSpy).toHaveBeenCalledOnce();
+    expect(lookupSpy).toHaveBeenCalledOnce();
+    expect(services.manager.isRoomActive(room.id)).toBe(true);
+    inspectSpy.mockRestore();
+    lookupSpy.mockRestore();
+    await services.manager.stopRecording(room.id);
+  });
+
   it("stopRecording completes the current segment with code 1000", async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), "lr-b6s-"));
@@ -1433,6 +1488,77 @@ describe("RecorderManager", () => {
       beforeRestart,
     );
     expect(services.manager.isRoomActive(room.id)).toBe(false);
+  });
+
+  it("recovers highlight cache when enable finds no FLV header (首开 bootstrap null 延迟播种)", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-highlight-late-seed-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    // 首开：预览房尚未捕获头 → enable 播种失败，缓冲区应 awaitingHeader。
+    preview.bootstrap = null;
+    services.manager.preview = preview;
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/901",
+      displayName: "LateSeed",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+
+    const first = await services.manager.enableHighlightBuffer(room.id);
+    expect(first.accepting).toBe(true);
+    expect(first.availableSeconds).toBe(0);
+
+    const buffers = (
+      services.manager as unknown as {
+        highlightBuffers: Map<string, { awaitingHeader: boolean }>;
+      }
+    ).highlightBuffers;
+    expect(buffers.get(room.id)?.awaitingHeader).toBe(true);
+
+    // 预览房随后捕获到头（对应真实流 broadcastFrame 留底）。
+    preview.bootstrap = buildMinimalFlv();
+
+    // 非头首块到达 → maybeSeedHighlightBuffer 从预览房补播种后再 append。
+    const buffer = buffers.get(room.id) as unknown as {
+      awaitingHeader: boolean;
+      append: (chunk: Buffer) => void;
+    };
+    const manager = services.manager as unknown as {
+      maybeSeedHighlightBuffer: (id: string) => void;
+    };
+    const midStream = Buffer.from([9, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 17, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 21]);
+    manager.maybeSeedHighlightBuffer(room.id);
+    buffer.append(midStream);
+    expect(buffer.awaitingHeader).toBe(false);
+
+    await services.manager.disableHighlightBuffer(room.id);
+  });
+
+  it("seeds highlight buffer from preview bootstrap on enable when header is already available", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-highlight-seed-ok-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    services.manager.preview = new FakePreview();
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/902",
+      displayName: "SeedOk",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+
+    const status = await services.manager.enableHighlightBuffer(room.id);
+    expect(status.accepting).toBe(true);
+    const buffers = (
+      services.manager as unknown as {
+        highlightBuffers: Map<string, { awaitingHeader: boolean }>;
+      }
+    ).highlightBuffers;
+    // FakePreview 默认返回完整 FLV bootstrap → 立即播种成功，不再缺头。
+    expect(buffers.get(room.id)?.awaitingHeader).toBe(false);
+    await services.manager.disableHighlightBuffer(room.id);
   });
 
 });

@@ -368,10 +368,13 @@ export class RecorderManager {
       this.highlightBuffers.set(roomId, buffer);
       // 共享预览流在停止录制后不会重新发送 FLV 文件头。用预览缓存的初始化段和
       // 关键帧播种精彩时刻缓存，否则新缓存会永远等待一个不会再出现的文件头。
-      const bootstrap = this.preview?.recordingBootstrap?.(roomId);
-      if (bootstrap) buffer.append(bootstrap);
+      // 只接受 FLV 头起始的 bootstrap；拿不到时保持 awaitingHeader，
+      // 由后续预览帧上的延迟播种（maybeSeedHighlightBuffer）兜底——首开时
+      // mkdir 期间到达的首帧可能已错过，不能只播一次就放弃。
+      this.seedHighlightBuffer(roomId, buffer);
     } else {
       buffer.setRetainSeconds(settings.highlightBufferSeconds ?? 300);
+      this.seedHighlightBuffer(roomId, buffer);
     }
     return {
       availableSeconds: buffer.availableSeconds(),
@@ -381,6 +384,40 @@ export class RecorderManager {
         ? { disabledReason: buffer.backpressureReason }
         : {}),
     };
+  }
+
+  /**
+   * 用预览房的 FLV 初始化段播种精彩时刻缓存。仅当 bootstrap 以 FLV 开头才写入；
+   * 失败时缓冲区保持 awaitingHeader，等预览帧路径延迟重试（首开竞态兜底）。
+   * 取证（脱敏）：只记 roomId 后缀与 bootstrap 形态，不打内容。
+   */
+  private seedHighlightBuffer(roomId: string, buffer: HighlightBuffer): boolean {
+    if (!buffer.awaitingHeader) return true;
+    const bootstrap = this.preview?.recordingBootstrap?.(roomId);
+    const flv = Boolean(bootstrap && bootstrap.subarray(0, 3).toString() === "FLV");
+    if (!flv) {
+      // 首开常见：预览房尚未捕获头 → 保持 awaitingHeader，后续帧延迟播种。
+      if (process.env.LIVE_RECORDER_DEBUG === "1")
+        console.warn(
+          `[highlight] seed miss room=…${roomId.slice(-6)} bootstrap=${bootstrap ? `len=${bootstrap.length}` : "null"}`,
+        );
+      return false;
+    }
+    buffer.append(bootstrap!);
+    const ok = !buffer.awaitingHeader;
+    if (!ok && process.env.LIVE_RECORDER_DEBUG === "1")
+      console.warn(
+        `[highlight] seed incomplete room=…${roomId.slice(-6)} len=${bootstrap!.length}`,
+      );
+    return ok;
+  }
+
+  /** 预览帧到达且缓冲区仍缺 FLV 头时延迟播种（A1/A3：首开丢头后恢复）。 */
+  private maybeSeedHighlightBuffer(roomId: string): HighlightBuffer | undefined {
+    const buffer = this.highlightBuffers.get(roomId);
+    if (!buffer?.awaitingHeader) return buffer;
+    this.seedHighlightBuffer(roomId, buffer);
+    return buffer;
   }
 
   async disableHighlightBuffer(roomId: string): Promise<void> {
@@ -874,8 +911,29 @@ export class RecorderManager {
                   );
                 }
               }
-              if (this.settings().highlightEnabled !== false)
+              if (this.settings().highlightEnabled !== false) {
+                // 首开竞态：mkdir 期间首帧可能已丢、enable 时 bootstrap 也可能尚不可用。
+                // 当前块不是 FLV 头时先从预览房延迟播种（此前帧已在 broadcastFrame 留底），
+                // 再 append 当前块——避免错过唯一一次文件头后永久停在 0 秒。
+                const highlight = this.highlightBuffers.get(roomId);
+                if (highlight?.awaitingHeader) {
+                  const startsFlv =
+                    event.chunk.length >= 3 &&
+                    event.chunk.subarray(0, 3).toString() === "FLV";
+                  if (!startsFlv) {
+                    const seeded = this.maybeSeedHighlightBuffer(roomId);
+                    if (
+                      seeded &&
+                      !seeded.awaitingHeader &&
+                      process.env.LIVE_RECORDER_DEBUG === "1"
+                    )
+                      console.warn(
+                        `[highlight] late seed ok room=…${roomId.slice(-6)}`,
+                      );
+                  }
+                }
                 this.highlightBuffers.get(roomId)?.append(event.chunk);
+              }
               this.preview?.broadcastFrame(roomId, event.chunk);
             }
             if (event.type === "error") {
@@ -1226,6 +1284,54 @@ export class RecorderManager {
     }
   }
 
+  /** 启动期磁盘检查：发 disk:space 事件，低空间只告警不拦截。与取流并行，建文件前必须 await。 */
+  private async inspectDiskForStartup(
+    settings: AppSettings,
+    room: Room,
+    startupTrace: PerformanceTrace,
+  ): Promise<void> {
+    try {
+      if (settings.recordingDirectory.length > 0) {
+        const space = await this.services.diskGuard.inspect(
+          settings.recordingDirectory,
+        );
+        const total = space.totalBytes || 1;
+        const low =
+          space.freeBytes < settings.diskGuard.minFreeBytes ||
+          (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
+        this.services.events.emit({
+          type: "disk:space",
+          data: {
+            directory: settings.recordingDirectory,
+            freeBytes: space.freeBytes,
+            totalBytes: space.totalBytes,
+            low,
+          },
+        });
+        // 空间不足只提醒、不拦下录制：能不能录由实际写入决定。用户宁可先录下来再清理，
+        // 也不要在开播那一刻被挡在门外——录制本身是核心能力，等清理完直播可能已经结束了。
+        // 真的写不进去时，写入失败会给出明确原因（磁盘满/权限等）。
+        if (low) {
+          const err = new AppError("DISK_SPACE_INSUFFICIENT", "磁盘空间不足", {
+            roomId: room.id,
+            details: {
+              freeBytes: space.freeBytes,
+              minFreeBytes: settings.diskGuard.minFreeBytes,
+            },
+          });
+          this.raiseAlert("error", "disk", err);
+          await this.notifier.notify("disk_space_low", room.id, {
+            title: room.displayName,
+          });
+        }
+      }
+      startupTrace.mark("storage_checks_ready");
+    } catch (error) {
+      startupTrace.mark("storage_checks_ready");
+      throw error;
+    }
+  }
+
   /** 调度器发现直播后调用：并发上限、本次开播周期去重、磁盘保护，然后启动录制。manual=手动触发，可在本次直播中显式重录。 */
   async maybeStartRecording(
     room: Room,
@@ -1317,55 +1423,34 @@ export class RecorderManager {
       return false;
     }
 
-    if (settings.recordingDirectory.length > 0) {
-      const space = await this.services.diskGuard.inspect(
-        settings.recordingDirectory,
-      );
-      const total = space.totalBytes || 1;
-      const low =
-        space.freeBytes < settings.diskGuard.minFreeBytes ||
-        (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
-      this.services.events.emit({
-        type: "disk:space",
-        data: {
-          directory: settings.recordingDirectory,
-          freeBytes: space.freeBytes,
-          totalBytes: space.totalBytes,
-          low,
-        },
-      });
-      // 空间不足只提醒、不拦下录制：能不能录由实际写入决定。用户宁可先录下来再清理，
-      // 也不要在开播那一刻被挡在门外——录制本身是核心能力，等清理完直播可能已经结束了。
-      // 真的写不进去时，写入失败会给出明确原因（磁盘满/权限等）。
-      if (low) {
-        const err = new AppError("DISK_SPACE_INSUFFICIENT", "磁盘空间不足", {
-          roomId: room.id,
-          details: {
-            freeBytes: space.freeBytes,
-            minFreeBytes: settings.diskGuard.minFreeBytes,
-          },
-        });
-        this.raiseAlert("error", "disk", err);
-        await this.notifier.notify("disk_space_low", room.id, {
-          title: room.displayName,
-        });
-      }
-    }
-    startupTrace.mark("storage_checks_ready");
+    // 磁盘检查与后续取流并行发起；低空间告警仍必须在任何建文件之前生效，
+    // 因此所有会创建文件的路径都会先 await 这里返回的 promise。
+    const diskCheckReady = this.inspectDiskForStartup(
+      settings,
+      room,
+      startupTrace,
+    );
+    // 提前路径（取流抛错/被并发抢占）可能不再 await：先挂空 catch 防未处理拒绝，
+    // 真正需要磁盘结果的路径仍 await 原 promise 以保留失败语义。
+    void diskCheckReady.catch(() => undefined);
 
     const origin = opts.origin ?? (opts.manual ? "manual" : "automatic");
-    if (
-      await this.startRecordingFromExistingPreview(
-        room,
-        status,
-        settings,
-        origin,
-        startupTrace,
-      )
-    ) {
-      startupTrace.mark("reused_preview_stream");
-      startupTrace.finish("ok");
-      return true;
+    // 已有预览会话：先等磁盘告警落地再尝试复用（复用会建文件），避免时序回退。
+    if (this.previewSessions.has(room.id)) {
+      await diskCheckReady;
+      if (
+        await this.startRecordingFromExistingPreview(
+          room,
+          status,
+          settings,
+          origin,
+          startupTrace,
+        )
+      ) {
+        startupTrace.mark("reused_preview_stream");
+        startupTrace.finish("ok");
+        return true;
+      }
     }
 
     const cookie = await this.services.platformCookie(room.platform);
@@ -1381,6 +1466,8 @@ export class RecorderManager {
       startupTrace.finish("skipped");
       return false;
     }
+    // 自此可能创建文件：磁盘检查（含低空间告警/通知）必须已完成。
+    await diskCheckReady;
     // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
     if (
       await this.startSharedPreviewRecording(

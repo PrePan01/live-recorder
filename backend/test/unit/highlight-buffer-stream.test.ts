@@ -16,6 +16,28 @@ function mediaTag(size: number): Buffer {
 }
 
 describe('highlight buffer export', () => {
+  it('stays awaitingHeader after a non-FLV first chunk until an FLV seed arrives (首开丢头兜底)', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-await-'));
+    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+    await buffer.start();
+    const at = Date.now();
+    expect(buffer.awaitingHeader).toBe(true);
+    // 中途加入/首开竞态：首块不是 FLV 头，必须丢弃但不能永久放弃。
+    buffer.append(mediaTag(64), at);
+    expect(buffer.awaitingHeader).toBe(true);
+    expect(buffer.availableSeconds()).toBe(0);
+    // 延迟播种拿到头后恢复累计。
+    buffer.append(flvHeader(), at + 10);
+    buffer.append(keyframe(), at + 20);
+    buffer.append(keyframe(), at + 5_020);
+    expect(buffer.awaitingHeader).toBe(false);
+    // availableSeconds 只统计已落盘 entry，等写盘 pump 收尾。
+    for (let i = 0; i < 100 && buffer.availableSeconds() === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(buffer.availableSeconds()).toBeGreaterThan(0);
+  });
+
   it('exports a keyframe-aligned cache without loading complete segments into memory', async () => {
     const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-'));
     const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);

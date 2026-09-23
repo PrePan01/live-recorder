@@ -17,6 +17,9 @@ let error: string | null = null;
 let events: EventSource | null = null;
 let dragStart: { x: number; y: number } | null = null;
 let dragged = false;
+let dragStarted = false;
+
+const DRAG_START_DISTANCE_PX = 4;
 
 const isRecording = () => room?.monitorState === 'recording' || room?.monitorState === 'reconnecting';
 const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]!);
@@ -26,7 +29,7 @@ function applyButtonRadius(radius: number): void {
   rootStyle.setProperty('--record-button-radius', `${safeRadius}px`);
   rootStyle.setProperty('--record-button-size', `${safeRadius * 2}px`);
   rootStyle.setProperty('--record-button-border', `${Math.min(12, Math.max(3, Math.round(safeRadius * 0.12)))}px`);
-  rootStyle.setProperty('--record-button-icon-size', `${Math.min(98, Math.max(22, Math.round(safeRadius * 0.76)))}px`);
+  rootStyle.setProperty('--record-button-indicator-size', `${Math.min(76, Math.max(22, Math.round(safeRadius * 0.82)))}px`);
 }
 const formatElapsed = (startedAt: string | undefined) => {
   if (!startedAt) return '00:00:00';
@@ -57,7 +60,7 @@ function render(): void {
       <span class="recording-room-name" title="${escapeHtml(roomName)}">${escapeHtml(roomName)}</span>
       <button class="record-button ${recording ? 'record-button--active' : ''}" type="button" ${acting || !room ? 'disabled' : ''}
         aria-label="${recording ? '停止录制' : '开始录制'}" title="${escapeHtml(roomName)}">
-        <span class="record-button__camera" aria-hidden="true">${recording ? '■' : '●'}</span>
+        <span class="record-button__indicator" aria-hidden="true"></span>
       </button>
       <button class="floating-close" type="button" aria-label="关闭悬浮录制按钮" title="关闭"></button>
       <output class="recording-time ${recording ? '' : 'recording-time--hidden'}">${formatElapsed(room?.activeRecording?.startedAt)}</output>
@@ -73,13 +76,19 @@ function render(): void {
     if (event.button !== 0 || (event.target as HTMLElement).closest('.floating-close, .floating-menu')) return;
     dragStart = { x: event.clientX, y: event.clientY };
     dragged = false;
-    void getCurrentWindow().startDragging().catch(() => undefined);
+    dragStarted = false;
   });
   surface?.addEventListener('pointermove', (event) => {
-    if (!dragStart) return;
-    if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) >= 4) dragged = true;
+    if (!dragStart || dragStarted) return;
+    if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < DRAG_START_DISTANCE_PX) return;
+    // On Windows, starting a native drag from pointerdown consumes the later
+    // click event. Wait until the pointer has actually moved so a simple click
+    // on the record button always reaches toggleRecording.
+    dragged = true;
+    dragStarted = true;
+    void getCurrentWindow().startDragging().catch(() => { dragStarted = false; });
   });
-  surface?.addEventListener('pointerup', () => { dragStart = null; });
+  surface?.addEventListener('pointerup', () => { dragStart = null; dragStarted = false; });
   recordButton?.addEventListener('click', (event) => {
     if (dragged) {
       event.preventDefault();
