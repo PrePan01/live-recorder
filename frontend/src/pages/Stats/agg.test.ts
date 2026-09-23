@@ -208,9 +208,9 @@ describe('buildMonthGrid（task #55-① 日历月视图：横轴=星期、纵轴
 });
 
 describe('PIE_PALETTE_12（task #55-② 饼图色板不重复）', () => {
-  it('12 色互不重复且前两色保持平台饼原观感', () => {
+  it('12 色互不重复且前两色保持当前主题主色', () => {
     expect(PIE_PALETTE_12).toHaveLength(12);
     expect(new Set(PIE_PALETTE_12).size).toBe(12);
-    expect(PIE_PALETTE_12.slice(0, 2)).toEqual(['#ff5fa2', '#ffd500']);
+    expect(PIE_PALETTE_12.slice(0, 2)).toEqual(['#FF5FA2', '#F4C400']);
   });
 });
