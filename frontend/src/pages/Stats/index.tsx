@@ -708,7 +708,7 @@ export default function Stats() {
               chartName="heat"
               title={
                 <Space size={6} className="lr-stats-card-extra">
-                  <span>日历热力图</span>
+                  <span>热力图</span>
                 </Space>
               }
               extra={
