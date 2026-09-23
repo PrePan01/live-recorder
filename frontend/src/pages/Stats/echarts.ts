@@ -4,7 +4,9 @@
 import * as echarts from 'echarts/core';
 // 注：日历坐标系是 CalendarComponent（配合 HeatmapChart 的 calendar 系列），
 // echarts/charts 并无 CalendarChart 导入项。
-import { BarChart, HeatmapChart, PieChart } from 'echarts/charts';
+// task #55-①：echarts 6.1.0 上游 cartesian heatmap 系列不渲染（官方最小样例同现象、CDN
+// 对照 5.6.0 正常、全配置变体无解），日历月视图改用 CustomChart（格子/日号/取色全可控）。
+import { BarChart, CustomChart, HeatmapChart, PieChart } from 'echarts/charts';
 import {
   CalendarComponent,
   GridComponent,
@@ -18,6 +20,7 @@ echarts.use([
   BarChart,
   PieChart,
   HeatmapChart,
+  CustomChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,

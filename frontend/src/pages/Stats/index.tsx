@@ -1,6 +1,8 @@
 // 统计看板 v2（task #51 · 评审稿 v2 notes/review-stats-dashboard.md）：
-// - 筛选：日期（date-only RangePicker）+ 起/止时间（TimePicker HH:mm，小时精度，task #54）
+// - 筛选：合一 RangePicker（format YYYY-MM-DD HH:mm + presets 预设侧栏，task #55-③）
 //   + 平台 + 标签多选 + 房间；防抖 300ms、丢弃在途旧请求、可重置；
+//   面板保持 date-only 两击选起止（#54 不回退）；时间经输入框键入或预设直达——
+//   antd6 showTime 面板即 #54 根因，面板内选时间与两击交互互斥，保两击。
 // - 四图：每日趋势柱状 / 平台饼图 / 直播间饼图（TOP10+其他、可展开全部）/ 日历热力图（独立翻月）；
 //   每图三指标（次数/大小/时长）独立切换，默认次数、纯前端 0 请求（Q2）；
 // - 热力图仅受平台/标签/房间约束、不随上方日期（Q1=A），每次翻月单独 1 请求；
@@ -8,7 +10,7 @@
 // - 风格：孟菲斯双重遵循（lr-memphis token，冲突以项目内为准）；echarts 仅随本路由懒加载（QA G3）。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { App, Button, Card, Col, DatePicker, Empty, Row, Select, Segmented, Space, Statistic, TimePicker, Typography } from 'antd';
+import { App, Button, Card, Col, DatePicker, Empty, Row, Select, Segmented, Space, Statistic, Typography } from 'antd';
 import axios from 'axios';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -23,10 +25,14 @@ import type { RecordingsStats, StatsByDay } from '../../types/stats';
 import { EChartCard } from './EChartCard';
 import {
   METRIC_OPTIONS,
+  PIE_PALETTE_12,
+  WEEKDAY_LABELS,
+  buildMonthGrid,
   cssVar,
   formatAxisLabel,
   formatMetric,
   metricValue,
+  normalizePickedRange,
   resolveRoomName,
   rollupTop,
   toPieData,
@@ -58,12 +64,9 @@ export default function Stats() {
   const tags = useTagStore((s) => s.tags);
 
   // —— 全局筛选（Q1=A 下热力图不受 range 约束）——
-  // task #54：antd 6.6.1 showTime RangePicker 为 needConfirm 交互（面板点选永不推进结束字段，
-  // 外部关闭会用旧结束日期提交，上游 antd#35851→#27779 长期设计），实机不可用；
-  // 改为 date-only RangePicker（两击自然选，History 页同款已验证）+ 起/止两个独立 TimePicker（HH:mm）。
+  // task #54/#55-③：date-only 面板两击选起止（needConfirm 交互不可用 showTime），
+  // format 带 HH:mm 支持输入框直改时间 + presets 预设直达（含时间范围），合一筛选框。
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(defaultRange());
-  const [startTime, setStartTime] = useState<Dayjs>(() => dayjs().startOf('day'));
-  const [endTime, setEndTime] = useState<Dayjs>(() => dayjs().startOf('day').hour(23).minute(59));
   const [platform, setPlatform] = useState<string | undefined>();
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [roomId, setRoomId] = useState<string | undefined>();
@@ -100,12 +103,12 @@ export default function Stats() {
   const firstMainRef = useRef(true);
   const mainQuery = useMemo(() => {
     if (!range) return { ...filterQuery };
-    // 小时精度（A2 闭区间语义不变）：from = 起日+起时（分内 00.000 起），to = 止日+止时（分内 59.999 止）。
-    // 默认 00:00/23:59 与旧 endOf/startOf day 构造完全等价。
-    const from = range[0].hour(startTime.hour()).minute(startTime.minute()).second(0).millisecond(0);
-    const to = range[1].hour(endTime.hour()).minute(endTime.minute()).second(59).millisecond(999);
+    // 小时精度（闭区间语义与 QA 已确认口径一致）：起 = 分内 00.000、止 = 分内 59.999 归一。
+    // range 值本身已带时间（面板选日保留原时间 / 输入键入 / 预设），归一保证秒级一致性。
+    const from = range[0].second(0).millisecond(0);
+    const to = range[1].second(59).millisecond(999);
     return { from: from.toISOString(), to: to.toISOString(), ...filterQuery };
-  }, [range, startTime, endTime, filterQuery]);
+  }, [range, filterQuery]);
 
   // 主查询：首载立即、筛选变更防抖 300ms；effect 清理即中止在途请求（A5/竞态红线）。
   useEffect(() => {
@@ -181,8 +184,6 @@ export default function Stats() {
 
   const resetAll = () => {
     setRange(defaultRange());
-    setStartTime(dayjs().startOf('day'));
-    setEndTime(dayjs().startOf('day').hour(23).minute(59));
     setPlatform(undefined);
     setTagIds([]);
     setRoomId(undefined);
@@ -190,6 +191,21 @@ export default function Stats() {
     setRoomExpanded(false);
     setHeatMonth(dayjs());
   };
+
+  // —— 预设范围（task #55-③ · antd「预设范围」样式，直达含时间的范围）——
+  const rangePresets = useMemo<{ label: string; value: [Dayjs, Dayjs] }[]>(() => {
+    const d0 = () => dayjs().startOf('day');
+    const dE = () => dayjs().endOf('day');
+    const lastMonth = dayjs().subtract(1, 'month');
+    return [
+      { label: '今天', value: [d0(), dE()] },
+      { label: '昨天', value: [d0().subtract(1, 'day'), dE().subtract(1, 'day')] },
+      { label: '近7天', value: [d0().subtract(6, 'day'), dE()] },
+      { label: '近30天', value: [d0().subtract(29, 'day'), dE()] },
+      { label: '本月', value: [dayjs().startOf('month'), dE()] },
+      { label: '上月', value: [lastMonth.startOf('month'), lastMonth.endOf('month')] },
+    ];
+  }, []);
 
   // —— 调色板（读 lr token，随 themeTick 重建）——
   const tone = useMemo(
@@ -203,12 +219,6 @@ export default function Stats() {
       yellow: cssVar('--lr-yellow', '#ffd500'),
       teal: cssVar('--lr-teal', '#2ec4b6'),
       primary: cssVar('--lr-primary', '#607ae3'),
-      palette: [
-        cssVar('--lr-pink', '#ff5fa2'),
-        cssVar('--lr-yellow', '#ffd500'),
-        cssVar('--lr-teal', '#2ec4b6'),
-        cssVar('--lr-primary', '#607ae3'),
-      ],
     }),
     // themeTick：主题切换（data-theme 变更）时重新读取 token。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,7 +290,8 @@ export default function Stats() {
   const buildPieOption = useMemo(() => {
     return (data: PieDatum[]): EChartsOption =>
       ({
-        color: [...tone.palette],
+        // task #55-②：固定 12 色互不重复（TOP10+其他 11 扇区不重色），前两色保持平台饼原观感
+        color: [...PIE_PALETTE_12],
         tooltip: {
           ...tooltipBase,
           trigger: 'item',
@@ -348,29 +359,68 @@ export default function Stats() {
     return buildPieOption(roomExpanded ? data : rollupTop(data, 10));
   }, [stats, metrics.room, roomExpanded, rooms, buildPieOption]);
 
-  // 图4 日历热力图（月视图；数据 = 热力图独立查询的 byDay）
+/** custom 系列 renderItem API（task #55-①，echarts 6.1.0 heatmap 回归的替代实现） */
+interface CustomRenderApi {
+  coord: (v: number[]) => [number, number];
+  size: (v: number[]) => [number, number];
+  visual: (dim: string) => string | undefined;
+  value: (idx: number) => number;
+}
+
+  // 图4 日历热力图（task #55-①：日历月视图——横轴=周、纵轴=一周7天、格内日号、
+  // 仅 rgb(255,95,162) 粉 + 透明度分档；数据 = 热力图独立查询的 byDay）
   const heatOption = useMemo<EChartsOption | null>(() => {
     const rows = heat?.byDay ?? [];
-    if (rows.length === 0) return null;
     const m = metrics.heat;
     const byDate = new Map(rows.map((r) => [r.date, r]));
-    const values = rows.map((r) => metricValue(r, m));
-    const maxV = Math.max(...values, 0);
-    const monthStart = heatMonth.startOf('month');
-    const monthEnd = heatMonth.endOf('month');
+    const { cells, weekCount } = buildMonthGrid(heatMonth);
+    if (rows.length === 0 && heatLoading) return null;
+    const maxV = Math.max(0, ...rows.map((r) => metricValue(r, m)));
+    // 横轴：第1周…第N周；纵轴：一…日（inverse 使周一在顶）
+    const xCats = Array.from({ length: weekCount }, (_, i) => `第${i + 1}周`);
+    // 坐标 → 单元格 反查（custom renderItem 日号 / tooltip 取行数据均走此映射）
+    const cellByCoord = new Map(cells.map((c) => [`${c.week}:${c.weekday}`, c]));
+    const data = cells.map((c) => {
+      const row = byDate.get(c.date);
+      return { value: [c.week, c.weekday, row ? metricValue(row, m) : 0] };
+    });
+    // 单一粉色 rgb(255,95,162) 的 5 档透明度（PrePan：只用该粉 + 透明度分档）
+    const pink = (a: number) => `rgba(255, 95, 162, ${a})`;
     return {
+      grid: { left: 10, right: 16, top: 10, bottom: 46, containLabel: true },
       tooltip: {
         ...tooltipBase,
+        // 与饼图已验证配置对齐：显式 item 触发（缺省时 custom 系列悬停不出 tooltip）
+        trigger: 'item',
         formatter: (params: unknown) => {
-          const p = params as { data?: [string, number] };
-          const date = p.data?.[0];
-          const row = date ? byDate.get(date) : undefined;
-          if (!row) return '';
-          const lines = [`<b>${row.date}</b>`, `场次 ${row.recordings}`, `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : '0 B'}`, `时长 ${formatMetric(row.durationMs, 'durationMs')}`];
+          const p = params as { value?: [number, number, number] };
+          if (!p.value) return '';
+          const cell = cellByCoord.get(`${p.value[0]}:${p.value[1]}`);
+          if (!cell) return '';
+          const row = byDate.get(cell.date);
+          if (!row) return `<b>${cell.date}</b><br/>无录制数据`;
+          const lines = [`<b>${cell.date}</b>`, `场次 ${row.recordings}`, `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : '0 B'}`, `时长 ${formatMetric(row.durationMs, 'durationMs')}`];
           if (unmeasuredBytesNote(row)) lines.push('⚠ 含未统计大小的录制');
           if (unmeasuredDurationNote(row)) lines.push('⚠ 含未统计时长的录制');
           return lines.join('<br/>');
         },
+      },
+      xAxis: {
+        type: 'category',
+        data: xCats,
+        splitLine: { lineStyle: { color: tone.ink, width: 1.5 } },
+        axisLine: { lineStyle: { color: tone.ink, width: 2 } },
+        axisTick: { show: false },
+        axisLabel: { color: tone.muted, fontSize: 11 },
+      },
+      yAxis: {
+        type: 'category',
+        data: [...WEEKDAY_LABELS],
+        inverse: true,
+        splitLine: { lineStyle: { color: tone.ink, width: 1.5 } },
+        axisLine: { lineStyle: { color: tone.ink, width: 2 } },
+        axisTick: { show: false },
+        axisLabel: { color: tone.text, fontSize: 11 },
       },
       visualMap: {
         min: 0,
@@ -382,31 +432,49 @@ export default function Stats() {
         itemWidth: 14,
         itemHeight: 8,
         textStyle: { color: tone.muted, fontSize: 10 },
-        inRange: { color: [tone.surfaceAlt, tone.teal, tone.yellow, tone.pink] },
-      },
-      calendar: {
-        range: [monthStart.format('YYYY-MM-DD'), monthEnd.format('YYYY-MM-DD')],
-        left: 48,
-        right: 14,
-        top: 24,
-        bottom: 40,
-        cellSize: ['auto', 20],
-        splitLine: { lineStyle: { color: tone.ink, width: 2 } },
-        itemStyle: { color: tone.surface, borderWidth: 1, borderColor: tone.surfaceAlt },
-        dayLabel: { firstDayOfWeek: 1, color: tone.muted, fontSize: 10, nameMap: 'ZH' },
-        monthLabel: { color: tone.text, fontSize: 11 },
-        yearLabel: { show: false },
+        // 5 档透明度：无数据/低值 → 浅，高值 → 实色
+        inRange: { color: [pink(0.12), pink(0.32), pink(0.55), pink(0.78), pink(1)] },
       },
       series: [
         {
-          type: 'heatmap',
-          coordinateSystem: 'calendar',
-          data: rows.map((r) => [r.date, metricValue(r, m)]),
-          itemStyle: { borderColor: tone.ink, borderWidth: 1, borderRadius: 2 },
+          // echarts 6.1.0 上游 cartesian heatmap 不渲染 → custom 等价实现（见 echarts.ts 注释）
+          type: 'custom',
+          data,
+          encode: { x: 0, y: 1 },
+          renderItem: (_params: unknown, api: CustomRenderApi) => {
+            const coord = api.coord([api.value(0), api.value(1)]);
+            const size = api.size([1, 1]);
+            const color = api.visual('color') ?? 'rgba(255, 95, 162, 0.12)';
+            const w = Math.max(size[0] - 3, 2);
+            const h = Math.max(size[1] - 3, 2);
+            const cell = cellByCoord.get(`${api.value(0)}:${api.value(1)}`);
+            return {
+              type: 'group',
+              children: [
+                {
+                  type: 'rect',
+                  shape: { x: coord[0] - w / 2, y: coord[1] - h / 2, width: w, height: h, r: 2 },
+                  style: { fill: color, stroke: tone.ink, lineWidth: 1.5 },
+                },
+                {
+                  type: 'text',
+                  style: {
+                    x: coord[0],
+                    y: coord[1],
+                    text: cell ? String(cell.day) : '',
+                    fill: tone.text,
+                    fontSize: 10,
+                    textAlign: 'center',
+                    textVerticalAlign: 'middle',
+                  },
+                },
+              ],
+            };
+          },
         },
       ],
     } as unknown as EChartsOption;
-  }, [heat, metrics.heat, heatMonth, tone, tooltipBase]);
+  }, [heat, metrics.heat, heatMonth, heatLoading, tone, tooltipBase]);
 
   const totals = stats?.totals;
 
@@ -428,22 +496,11 @@ export default function Stats() {
         </Typography.Title>
         <Space className="lr-page-actions" wrap>
           <DatePicker.RangePicker
+            format="YYYY-MM-DD HH:mm"
+            placeholder={['开始日期 时间(可选)', '结束日期 时间(可选)']}
+            presets={rangePresets}
             value={range}
-            onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)}
-          />
-          <TimePicker
-            aria-label="起始时间"
-            format="HH:mm"
-            allowClear={false}
-            value={startTime}
-            onChange={(v) => v && setStartTime(v)}
-          />
-          <TimePicker
-            aria-label="结束时间"
-            format="HH:mm"
-            allowClear={false}
-            value={endTime}
-            onChange={(v) => v && setEndTime(v)}
+            onChange={(v) => setRange(v ? normalizePickedRange(v as [Dayjs, Dayjs]) : null)}
           />
           <Select
             allowClear
