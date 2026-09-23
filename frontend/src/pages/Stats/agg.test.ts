@@ -9,7 +9,6 @@ import {
   formatAxisLabel,
   formatMetric,
   metricValue,
-  normalizePickedRange,
   resolveRoomName,
   rollupTop,
   toPieData,
@@ -168,7 +167,7 @@ describe('rollupTop（Q3 默认 TOP10+其他 · QA B5）', () => {
   });
 });
 
-describe('buildMonthGrid（task #55-① 日历月视图：横轴=周、纵轴=周内天、格内=日号）', () => {
+describe('buildMonthGrid（task #55-① 日历月视图：横轴=星期、纵轴=周、格内=日号）', () => {
   it('覆盖当月全部日期，day/weekday/week 范围与键序正确', () => {
     const m = dayjs('2026-09-01');
     const { cells, weekCount } = buildMonthGrid(m);
@@ -213,24 +212,5 @@ describe('PIE_PALETTE_12（task #55-② 饼图色板不重复）', () => {
     expect(PIE_PALETTE_12).toHaveLength(12);
     expect(new Set(PIE_PALETTE_12).size).toBe(12);
     expect(PIE_PALETTE_12.slice(0, 2)).toEqual(['#ff5fa2', '#ffd500']);
-  });
-});
-
-describe('normalizePickedRange（task #55-③ 午夜结束 = 覆盖整日归一）', () => {
-  it('面板选出的午夜结束归一到当日 23:59:59.999', () => {
-    const [s, e] = normalizePickedRange([dayjs('2026-08-15 00:00'), dayjs('2026-08-20 00:00')]);
-    expect(s.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-15 00:00:00.000');
-    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-20 23:59:59.999');
-  });
-
-  it('非午夜键入时间原样保留', () => {
-    const [s, e] = normalizePickedRange([dayjs('2026-08-16 10:30'), dayjs('2026-08-16 14:30')]);
-    expect(s.format('YYYY-MM-DD HH:mm')).toBe('2026-08-16 10:30');
-    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-16 14:30:00.000');
-  });
-
-  it('预设的 endOf day（非零点）不被改动', () => {
-    const [, e] = normalizePickedRange([dayjs('2026-09-17 00:00'), dayjs('2026-09-23 23:59:59.999')]);
-    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-09-23 23:59:59.999');
   });
 });

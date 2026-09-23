@@ -225,6 +225,7 @@
   background: var(--lr-surface);
 }
 .lr-chart__overlay--loading {
+  pointer-events: none;
   background: color-mix(in srgb, var(--lr-surface) 65%, transparent);
 }
 .lr-stats-kpi__sub {
@@ -237,8 +238,99 @@
   font-weight: 400;
 }
 .lr-stats-heat__month {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
   min-width: 84px;
+  justify-content: center;
   text-align: center;
+}
+.lr-stats-heat__month-nav.ant-btn {
+  display: inline-flex !important;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0;
+  line-height: 0;
+}
+.lr-stats-heat__month-nav.ant-btn > .ant-btn-icon {
+  display: grid;
+  place-items: center;
+  margin: 0 !important;
+  line-height: 0;
+}
+.lr-stats-heat__month-nav.ant-btn .anticon {
+  display: block;
+  font-size: 12px;
+  transform: scale(1.12);
+}
+.lr-stats-card-extra.ant-space {
+  align-items: center;
+  white-space: nowrap;
+}
+.lr-stats-page .lr-page-actions {
+  flex-wrap: nowrap;
+}
+.lr-stats-range-picker {
+  width: 320px;
+}
+.lr-stats-range-picker-popup .ant-picker-panel-container,
+.lr-stats-range-picker-popup .ant-picker-panel-layout,
+.lr-stats-range-picker-popup .ant-picker-panel-container > div {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.lr-stats-range-picker-popup .ant-picker-footer {
+  display: none !important;
+}
+.lr-stats-tag-filter.ant-select-multiple {
+  height: 36px;
+  min-height: 36px;
+  overflow: hidden;
+}
+.lr-stats-tag-filter .ant-select-selection-overflow {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.lr-stats-tag-filter .ant-select-selection-item {
+  max-width: 84px;
+}
+.lr-stats-metric-toggle {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 2px !important;
+}
+.lr-stats-metric-toggle .ant-radio-button-wrapper,
+.lr-stats-metric-toggle .ant-radio-button-wrapper-checked {
+  display: flex !important;
+  min-width: 42px;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 8px !important;
+  font-size: 12px;
+  text-align: center;
+}
+.lr-stats-metric-toggle .ant-radio-button-wrapper > .ant-radio-button-label {
+  display: flex;
+  flex: 1 1 auto;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.lr-stats-room-expand.ant-btn {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 10px;
+  font-size: 12px !important;
+  line-height: 1 !important;
 }
 .lr-stat {
   flex: 1;
@@ -401,7 +493,7 @@
   border: 2px solid #fff;
   border-radius: 50%;
   background: #9aa3af;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .34);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.34);
   box-sizing: border-box;
 }
 
@@ -422,7 +514,8 @@
 }
 
 .lr-floating-recorder-toggle--enabled .lr-floating-recorder-toggle__ring,
-.lr-floating-recorder-toggle--enabled.ant-btn:hover .lr-floating-recorder-toggle__ring {
+.lr-floating-recorder-toggle--enabled.ant-btn:hover
+  .lr-floating-recorder-toggle__ring {
   background: #ed2e3b;
 }
 .lr-live-status-tag {

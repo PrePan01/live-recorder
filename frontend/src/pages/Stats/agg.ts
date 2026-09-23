@@ -1,14 +1,17 @@
 // 统计看板纯函数层（task #51 · 评审稿 v2）：指标定义/格式化、TOP10 归并、房间名解析。
 // 保持无 DOM 依赖（cssVar 有 window 守卫），可在 node 环境单测。
-import { formatBytes } from '../../utils/format';
+import { formatBytes } from "../../utils/format";
 
-export type StatMetric = 'recordings' | 'bytes' | 'durationMs';
+export type StatMetric = "recordings" | "bytes" | "durationMs";
 
 /** 三指标切换（Q2 拍板：次数/大小/时长），默认次数。 */
-export const METRIC_OPTIONS: ReadonlyArray<{ value: StatMetric; label: string }> = [
-  { value: 'recordings', label: '次数' },
-  { value: 'bytes', label: '大小' },
-  { value: 'durationMs', label: '时长' },
+export const METRIC_OPTIONS: ReadonlyArray<{
+  value: StatMetric;
+  label: string;
+}> = [
+  { value: "recordings", label: "次数" },
+  { value: "bytes", label: "大小" },
+  { value: "durationMs", label: "时长" },
 ];
 
 export interface MetricRow {
@@ -23,19 +26,19 @@ export function metricValue(row: MetricRow, metric: StatMetric): number {
 
 /** 指标值展示：0 字节显示 0 B（而非 formatBytes 的 "-"），时长不足 1 小时按分钟。 */
 export function formatMetric(value: number, metric: StatMetric): string {
-  if (metric === 'bytes') return value > 0 ? formatBytes(value) : '0 B';
-  if (metric === 'durationMs') {
+  if (metric === "bytes") return value > 0 ? formatBytes(value) : "0 B";
+  if (metric === "durationMs") {
     if (value >= 3_600_000) return `${(value / 3_600_000).toFixed(1)} 小时`;
     if (value >= 60_000) return `${Math.round(value / 60_000)} 分钟`;
-    return value > 0 ? `${Math.round(value / 1000)} 秒` : '0 分钟';
+    return value > 0 ? `${Math.round(value / 1000)} 秒` : "0 分钟";
   }
   return `${value} 场`;
 }
 
 /** 轴刻度简写（不带单位后缀的紧凑形态由轴标签承担，这里直接给可读串）。 */
 export function formatAxisLabel(value: number, metric: StatMetric): string {
-  if (metric === 'bytes') return value > 0 ? formatBytes(value) : '0 B';
-  if (metric === 'durationMs') {
+  if (metric === "bytes") return value > 0 ? formatBytes(value) : "0 B";
+  if (metric === "durationMs") {
     if (value >= 3_600_000) return `${+(value / 3_600_000).toFixed(1)} 时`;
     if (value >= 60_000) return `${Math.round(value / 60_000)} 分`;
     return `${Math.round(value / 1000)} 秒`;
@@ -66,7 +69,7 @@ export function resolveRoomName(
   const current = rooms.find((r) => r.id === roomId)?.displayName;
   if (current && current.trim()) return current.trim();
   if (snapshot && snapshot.trim()) return snapshot.trim();
-  return '未知房间';
+  return "未知房间";
 }
 
 export interface NamedMetricRow extends MetricRow {
@@ -79,13 +82,25 @@ export interface PieDatum extends MetricRow {
 }
 
 /** 饼图数据：按当前指标降序（TOPN 归并与「其他」计算都依赖该顺序）。 */
-export function toPieData(rows: readonly NamedMetricRow[], metric: StatMetric): PieDatum[] {
+export function toPieData(
+  rows: readonly NamedMetricRow[],
+  metric: StatMetric,
+): PieDatum[] {
   return rows
-    .map((r) => ({ name: r.name, recordings: r.recordings, bytes: r.bytes, durationMs: r.durationMs, value: metricValue(r, metric) }))
-    .sort((a, b) => b.value - a.value || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    .map((r) => ({
+      name: r.name,
+      recordings: r.recordings,
+      bytes: r.bytes,
+      durationMs: r.durationMs,
+      value: metricValue(r, metric),
+    }))
+    .sort(
+      (a, b) =>
+        b.value - a.value || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+    );
 }
 
-export const OTHER_NAME = '其他';
+export const OTHER_NAME = "其他";
 
 /**
  * TOP10+其他（Q3 默认形态，QA B5）：其余项归并为「其他」，
@@ -127,59 +142,62 @@ export function rollupTop(data: readonly PieDatum[], topN: number): PieDatum[] {
 
 /** 读取 lr-* 主题 token，供 echarts 使用；主题切换（data-theme）由页面驱动重建 option。 */
 export function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined' || typeof getComputedStyle !== 'function') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function")
+    return fallback;
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
   return v || fallback;
 }
 
 // ======================= task #55-① 日历月视图网格 =======================
-import type { Dayjs } from 'dayjs';
+import type { Dayjs } from "dayjs";
 
 /** 周内天标签（周一为首列） */
-export const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'] as const;
+export const WEEKDAY_LABELS = [
+  "一",
+  "二",
+  "三",
+  "四",
+  "五",
+  "六",
+  "日",
+] as const;
 
 export interface MonthCell {
   /** 日号 1-31（格内展示） */
   day: number;
   /** 周内天：0=周一 … 6=周日 */
   weekday: number;
-  /** 第几周（0 起，= 横轴分类） */
+  /** 第几周（0 起，= 纵轴分类） */
   week: number;
   /** YYYY-MM-DD（本地日，与 byDay 键一致） */
   date: string;
 }
 
 /**
- * 构建某月的日历月视图网格（GitHub 式：横轴=周、纵轴=一周7天）。
+ * 构建某月的日历月视图网格（GitHub 式：横轴=星期、纵轴=周）。
  * 与项目切日口径一致：直接用 Dayjs 本地日历字段，不涉及时区转换。
  */
-export function buildMonthGrid(month: Dayjs): { cells: MonthCell[]; weekCount: number } {
-  const first = month.startOf('month');
+export function buildMonthGrid(month: Dayjs): {
+  cells: MonthCell[];
+  weekCount: number;
+} {
+  const first = month.startOf("month");
   const firstWeekday = (first.day() + 6) % 7; // day(): 0=周日 → 0=周一 制
-  const total = first.add(1, 'month').diff(first, 'day');
+  const total = first.add(1, "month").diff(first, "day");
   const cells: MonthCell[] = [];
   for (let i = 0; i < total; i++) {
-    const d = first.add(i, 'day');
+    const d = first.add(i, "day");
     cells.push({
       day: d.date(),
       weekday: (d.day() + 6) % 7,
       week: Math.floor((firstWeekday + i) / 7),
-      date: d.format('YYYY-MM-DD'),
+      date: d.format("YYYY-MM-DD"),
     });
   }
   const weekCount = Math.floor((firstWeekday + total - 1) / 7) + 1;
   return { cells, weekCount };
-}
-
-/**
- * 面板选日归一（task #55-③）：date 面板选出的结束值时间为 00:00（date picker 语义），
- * 视为「覆盖结束整日」→ 当日 23:59:59.999（输入框显示 23:59，用户可见整日覆盖）；
- * 键入的非午夜时间（如 14:30）原样保留。已知启发式代价：刻意键入午夜结束会被视为整日。
- */
-export function normalizePickedRange(value: [Dayjs, Dayjs]): [Dayjs, Dayjs] {
-  const [start, end] = value;
-  const isMidnight = end.hour() === 0 && end.minute() === 0 && end.second() === 0 && end.millisecond() === 0;
-  return [start, isMidnight ? end.endOf('day') : end];
 }
 
 // ======================= task #55-② 饼图 12 色板 =======================
@@ -189,16 +207,16 @@ export function normalizePickedRange(value: [Dayjs, Dayjs]): [Dayjs, Dayjs] {
  * TOP10+其他 11 扇区全不重复；前两色保持平台饼图原观感，前四色保持原房间饼观感。
  */
 export const PIE_PALETTE_12: readonly string[] = [
-  '#ff5fa2', // 艳粉
-  '#ffd500', // 柠檬黄
-  '#2ec4b6', // 青绿
-  '#7b61ff', // 紫
-  '#ff8a3d', // 橙
-  '#9bdc3d', // 柠绿
-  '#00b5d8', // 天蓝
-  '#c77dff', // 浅紫罗兰
-  '#ff3d6e', // 玫红
-  '#2ecc71', // 绿
-  '#3d8bff', // 蓝
-  '#ffa62b', // 金
+  "#FF5FA2",
+  "#F4C400",
+  "#20B7A5",
+  "#7564E8",
+  "#F28C38",
+  "#8DBF3C",
+  "#3182CE",
+  "#A45BC5",
+  "#E85D5D",
+  "#30A9C6",
+  "#5667C9",
+  "#8A7868",
 ];

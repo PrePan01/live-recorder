@@ -1,28 +1,32 @@
-// 统计看板 v2（task #51 · 评审稿 v2 notes/review-stats-dashboard.md）：
-// - 筛选：合一 RangePicker（format YYYY-MM-DD HH:mm + presets 预设侧栏，task #55-③）
-//   + 平台 + 标签多选 + 房间；防抖 300ms、丢弃在途旧请求、可重置；
-//   面板保持 date-only 两击选起止（#54 不回退）；时间经输入框键入或预设直达——
-//   antd6 showTime 面板即 #54 根因，面板内选时间与两击交互互斥，保两击。
-// - 四图：每日趋势柱状 / 平台饼图 / 直播间饼图（TOP10+其他、可展开全部）/ 日历热力图（独立翻月）；
-//   每图三指标（次数/大小/时长）独立切换，默认次数、纯前端 0 请求（Q2）；
-// - 热力图仅受平台/标签/房间约束、不随上方日期（Q1=A），每次翻月单独 1 请求；
-// - 历史兼容：0 字节/进行中录制 tooltip 标注（Q5/B4）；房间名现名优先、快照兜底（图3 口径）；
-// - 风格：孟菲斯双重遵循（lr-memphis token，冲突以项目内为准）；echarts 仅随本路由懒加载（QA G3）。
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { App, Button, Card, Col, DatePicker, Empty, Row, Select, Segmented, Space, Statistic, Typography } from 'antd';
-import axios from 'axios';
-import type { Dayjs } from 'dayjs';
-import dayjs from 'dayjs';
-import type { EChartsOption } from 'echarts';
-import { fetchRecordingsStats } from '../../api/stats';
-import { useRoomStore } from '../../stores/roomStore';
-import { useTagStore } from '../../stores/tagStore';
-import { describeError } from '../../utils/errorMap';
-import { ApiError } from '../../types/error';
-import { formatBytes } from '../../utils/format';
-import type { RecordingsStats, StatsByDay } from '../../types/stats';
-import { EChartCard } from './EChartCard';
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import {
+  App,
+  Button,
+  Card,
+  Col,
+  DatePicker,
+  Empty,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Typography,
+} from "antd";
+import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import axios from "axios";
+import type { Dayjs } from "dayjs";
+import dayjs from "dayjs";
+import type { EChartsOption } from "echarts";
+import { fetchRecordingsStats } from "../../api/stats";
+import { useRoomStore } from "../../stores/roomStore";
+import { useTagStore } from "../../stores/tagStore";
+import { describeError } from "../../utils/errorMap";
+import { ApiError } from "../../types/error";
+import { formatBytes } from "../../utils/format";
+import type { RecordingsStats, StatsByDay } from "../../types/stats";
+import { EChartCard } from "./EChartCard";
+import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import {
   METRIC_OPTIONS,
   PIE_PALETTE_12,
@@ -32,7 +36,6 @@ import {
   formatAxisLabel,
   formatMetric,
   metricValue,
-  normalizePickedRange,
   resolveRoomName,
   rollupTop,
   toPieData,
@@ -40,21 +43,25 @@ import {
   unmeasuredDurationNote,
   type PieDatum,
   type StatMetric,
-} from './agg';
+} from "./agg";
 
-const PLATFORM_LABEL: Record<string, string> = { bilibili: 'B站', douyin: '抖音' };
-const HEAT_NOTE = '仅受平台/标签/房间约束，不随上方日期';
-
-type MetricKey = 'trend' | 'platform' | 'room' | 'heat';
-const DEFAULT_METRICS: Record<MetricKey, StatMetric> = {
-  trend: 'recordings',
-  platform: 'recordings',
-  room: 'recordings',
-  heat: 'recordings',
+const PLATFORM_LABEL: Record<string, string> = {
+  bilibili: "B站",
+  douyin: "抖音",
 };
 
+type MetricKey = "trend" | "platform" | "room" | "heat";
+const DEFAULT_METRICS: Record<MetricKey, StatMetric> = {
+  trend: "recordings",
+  platform: "recordings",
+  room: "recordings",
+  heat: "recordings",
+};
+const PIE_CENTER_Y = "42%";
+const PIE_LEGEND_BOTTOM = 8;
+
 function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(29, 'day').startOf('day'), dayjs().endOf('day')];
+  return [dayjs().subtract(29, "day").startOf("day"), dayjs().endOf("day")];
 }
 
 export default function Stats() {
@@ -63,9 +70,6 @@ export default function Stats() {
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
   const tags = useTagStore((s) => s.tags);
 
-  // —— 全局筛选（Q1=A 下热力图不受 range 约束）——
-  // task #54/#55-③：date-only 面板两击选起止（needConfirm 交互不可用 showTime），
-  // format 带 HH:mm 支持输入框直改时间 + presets 预设直达（含时间范围），合一筛选框。
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(defaultRange());
   const [platform, setPlatform] = useState<string | undefined>();
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -79,21 +83,25 @@ export default function Stats() {
   const [heat, setHeat] = useState<RecordingsStats | null>(null);
   const [heatLoading, setHeatLoading] = useState(false);
 
-  const [metrics, setMetrics] = useState<Record<MetricKey, StatMetric>>(DEFAULT_METRICS);
+  const [metrics, setMetrics] =
+    useState<Record<MetricKey, StatMetric>>(DEFAULT_METRICS);
   const [roomExpanded, setRoomExpanded] = useState(false);
 
   // 主题切换（data-theme）后重建 option，让 echarts 重新读取 lr-* token。
   const [themeTick, setThemeTick] = useState(0);
   useEffect(() => {
     const mo = new MutationObserver(() => setThemeTick((t) => t + 1));
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     return () => mo.disconnect();
   }, []);
 
   const filterQuery = useMemo(
     () => ({
       ...(platform ? { platform } : {}),
-      ...(tagIds.length > 0 ? { tagId: tagIds.join(',') } : {}),
+      ...(tagIds.length > 0 ? { tagId: tagIds.join(",") } : {}),
       ...(roomId ? { roomId } : {}),
     }),
     [platform, tagIds, roomId],
@@ -103,31 +111,35 @@ export default function Stats() {
   const firstMainRef = useRef(true);
   const mainQuery = useMemo(() => {
     if (!range) return { ...filterQuery };
-    // 小时精度（闭区间语义与 QA 已确认口径一致）：起 = 分内 00.000、止 = 分内 59.999 归一。
-    // range 值本身已带时间（面板选日保留原时间 / 输入键入 / 预设），归一保证秒级一致性。
     const from = range[0].second(0).millisecond(0);
     const to = range[1].second(59).millisecond(999);
     return { from: from.toISOString(), to: to.toISOString(), ...filterQuery };
   }, [range, filterQuery]);
 
-  // 主查询：首载立即、筛选变更防抖 300ms；effect 清理即中止在途请求（A5/竞态红线）。
   useEffect(() => {
     const ctrl = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (ctrl.signal.aborted) return;
-      const seq = ++mainSeqRef.current;
-      setLoading(true);
-      void fetchRecordingsStats(mainQuery, { signal: ctrl.signal })
-        .then((data) => setStats(data))
-        .catch((e: unknown) => {
-          if (!axios.isCancel(e)) {
-            message.error(e instanceof ApiError ? describeError(e.code, e.message) : '统计加载失败');
-          }
-        })
-        .finally(() => {
-          if (mainSeqRef.current === seq) setLoading(false);
-        });
-    }, firstMainRef.current ? 0 : 300);
+    const timer = window.setTimeout(
+      () => {
+        if (ctrl.signal.aborted) return;
+        const seq = ++mainSeqRef.current;
+        setLoading(true);
+        void fetchRecordingsStats(mainQuery, { signal: ctrl.signal })
+          .then((data) => setStats(data))
+          .catch((e: unknown) => {
+            if (!axios.isCancel(e)) {
+              message.error(
+                e instanceof ApiError
+                  ? describeError(e.code, e.message)
+                  : "统计加载失败",
+              );
+            }
+          })
+          .finally(() => {
+            if (mainSeqRef.current === seq) setLoading(false);
+          });
+      },
+      firstMainRef.current ? 0 : 300,
+    );
     firstMainRef.current = false;
     return () => {
       window.clearTimeout(timer);
@@ -138,12 +150,12 @@ export default function Stats() {
   // 热力图查询：所选月区间 + 平台/标签/房间；每次翻月/约束变更恰好 1 请求（D2）。
   const heatSeqRef = useRef(0);
   const firstHeatRef = useRef(true);
-  const heatMonthKey = heatMonth.format('YYYY-MM-DD');
+  const heatMonthKey = heatMonth.format("YYYY-MM-DD");
   const heatQuery = useMemo(() => {
     const m = dayjs(heatMonthKey);
     return {
-      from: m.startOf('month').toISOString(),
-      to: m.endOf('month').toISOString(),
+      from: m.startOf("month").toISOString(),
+      to: m.endOf("month").toISOString(),
       ...filterQuery,
     };
   }, [heatMonthKey, filterQuery]);
@@ -158,7 +170,11 @@ export default function Stats() {
           .then((data) => setHeat(data))
           .catch((e: unknown) => {
             if (!axios.isCancel(e)) {
-              message.error(e instanceof ApiError ? describeError(e.code, e.message) : '热力图加载失败');
+              message.error(
+                e instanceof ApiError
+                  ? describeError(e.code, e.message)
+                  : "热力图加载失败",
+              );
             }
           })
           .finally(() => {
@@ -176,7 +192,11 @@ export default function Stats() {
 
   useEffect(() => {
     if (rooms.length === 0) void fetchRooms().catch(() => undefined);
-    if (tags.length === 0) void useTagStore.getState().load().catch(() => undefined);
+    if (tags.length === 0)
+      void useTagStore
+        .getState()
+        .load()
+        .catch(() => undefined);
   }, [rooms.length, tags.length, fetchRooms]);
 
   const setMetric = (key: MetricKey, value: StatMetric) =>
@@ -193,35 +213,40 @@ export default function Stats() {
   };
 
   // —— 预设范围（task #55-③ · antd「预设范围」样式，直达含时间的范围）——
-  const rangePresets = useMemo<{ label: string; value: [Dayjs, Dayjs] }[]>(() => {
-    const d0 = () => dayjs().startOf('day');
-    const dE = () => dayjs().endOf('day');
-    const lastMonth = dayjs().subtract(1, 'month');
+  const rangePresets = useMemo<
+    { label: string; value: [Dayjs, Dayjs] }[]
+  >(() => {
+    const d0 = () => dayjs().startOf("day");
+    const dE = () => dayjs().endOf("day");
+    const lastMonth = dayjs().subtract(1, "month");
     return [
-      { label: '今天', value: [d0(), dE()] },
-      { label: '昨天', value: [d0().subtract(1, 'day'), dE().subtract(1, 'day')] },
-      { label: '近7天', value: [d0().subtract(6, 'day'), dE()] },
-      { label: '近30天', value: [d0().subtract(29, 'day'), dE()] },
-      { label: '本月', value: [dayjs().startOf('month'), dE()] },
-      { label: '上月', value: [lastMonth.startOf('month'), lastMonth.endOf('month')] },
+      { label: "今天", value: [d0(), dE()] },
+      {
+        label: "昨天",
+        value: [d0().subtract(1, "day"), dE().subtract(1, "day")],
+      },
+      { label: "近7天", value: [d0().subtract(6, "day"), dE()] },
+      { label: "近30天", value: [d0().subtract(29, "day"), dE()] },
+      { label: "本月", value: [dayjs().startOf("month"), dE()] },
+      {
+        label: "上月",
+        value: [lastMonth.startOf("month"), lastMonth.endOf("month")],
+      },
     ];
   }, []);
 
-  // —— 调色板（读 lr token，随 themeTick 重建）——
   const tone = useMemo(
     () => ({
-      ink: cssVar('--lr-ink', '#000000'),
-      text: cssVar('--lr-text', '#000000'),
-      muted: cssVar('--lr-muted', '#65616c'),
-      surface: cssVar('--lr-surface', '#ffffff'),
-      surfaceAlt: cssVar('--lr-surface-alt', '#f4f0ff'),
-      pink: cssVar('--lr-pink', '#ff5fa2'),
-      yellow: cssVar('--lr-yellow', '#ffd500'),
-      teal: cssVar('--lr-teal', '#2ec4b6'),
-      primary: cssVar('--lr-primary', '#607ae3'),
+      ink: cssVar("--lr-ink", "#000000"),
+      text: cssVar("--lr-text", "#000000"),
+      muted: cssVar("--lr-muted", "#65616c"),
+      surface: cssVar("--lr-surface", "#ffffff"),
+      surfaceAlt: cssVar("--lr-surface-alt", "#f4f0ff"),
+      pink: cssVar("--lr-pink", "#ff5fa2"),
+      yellow: cssVar("--lr-yellow", "#ffd500"),
+      teal: cssVar("--lr-teal", "#2ec4b6"),
+      primary: cssVar("--lr-primary", "#607ae3"),
     }),
-    // themeTick：主题切换（data-theme 变更）时重新读取 token。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [themeTick],
   );
 
@@ -235,45 +260,56 @@ export default function Stats() {
     [tone],
   );
 
-  // 图1 每日趋势柱状（byDay，三指标切换）
   const trendOption = useMemo<EChartsOption | null>(() => {
     const rows = stats?.byDay ?? [];
     if (rows.length === 0) return null;
     const m = metrics.trend;
     const metricRowText = (row: StatsByDay) => {
-      const lines = [`场次 ${row.recordings}`, `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : '0 B'}`, `时长 ${formatMetric(row.durationMs, 'durationMs')}`];
-      if (unmeasuredBytesNote(row)) lines.push('⚠ 含未统计大小的录制');
-      if (unmeasuredDurationNote(row)) lines.push('⚠ 含未统计时长的录制');
+      const lines = [
+        `场次 ${row.recordings}`,
+        `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : "0 B"}`,
+        `时长 ${formatMetric(row.durationMs, "durationMs")}`,
+      ];
+      if (unmeasuredBytesNote(row)) lines.push("⚠ 含未统计大小的录制");
+      if (unmeasuredDurationNote(row)) lines.push("⚠ 含未统计时长的录制");
       return lines;
     };
     return {
       grid: { left: 8, right: 14, top: 16, bottom: 4, containLabel: true },
       tooltip: {
         ...tooltipBase,
-        trigger: 'axis',
+        trigger: "axis",
         formatter: (params: unknown) => {
-          const list = Array.isArray(params) ? (params as Array<{ dataIndex?: number }>) : [params as { dataIndex?: number }];
+          const list = Array.isArray(params)
+            ? (params as Array<{ dataIndex?: number }>)
+            : [params as { dataIndex?: number }];
           const idx = list[0]?.dataIndex ?? -1;
           const row = rows[idx];
-          if (!row) return '';
-          return [`<b>${row.date}</b>`, ...metricRowText(row)].join('<br/>');
+          if (!row) return "";
+          return [`<b>${row.date}</b>`, ...metricRowText(row)].join("<br/>");
         },
       },
       xAxis: {
-        type: 'category',
+        type: "category",
         data: rows.map((d) => d.date.slice(5)),
         axisLine: { lineStyle: { color: tone.ink, width: 2 } },
         axisTick: { show: false },
         axisLabel: { color: tone.muted, fontSize: 11, hideOverlap: true },
       },
       yAxis: {
-        type: 'value',
-        splitLine: { lineStyle: { color: tone.muted, opacity: 0.25, width: 1 } },
-        axisLabel: { color: tone.muted, fontSize: 11, formatter: (v: number) => formatAxisLabel(v, m) },
+        type: "value",
+        splitLine: {
+          lineStyle: { color: tone.muted, opacity: 0.25, width: 1 },
+        },
+        axisLabel: {
+          color: tone.muted,
+          fontSize: 11,
+          formatter: (v: number) => formatAxisLabel(v, m),
+        },
       },
       series: [
         {
-          type: 'bar',
+          type: "bar",
           barMaxWidth: 26,
           data: rows.map((d) => metricValue(d, m)),
           itemStyle: {
@@ -294,33 +330,42 @@ export default function Stats() {
         color: [...PIE_PALETTE_12],
         tooltip: {
           ...tooltipBase,
-          trigger: 'item',
+          trigger: "item",
           formatter: (params: unknown) => {
             const p = params as { data?: PieDatum; percent?: number };
             const d = p.data;
-            if (!d) return '';
-            const lines = [`<b>${d.name}</b>`, `占比 ${(p.percent ?? 0).toFixed(1)}%`, `场次 ${d.recordings}`, `大小 ${d.bytes > 0 ? formatBytes(d.bytes) : '0 B'}`, `时长 ${formatMetric(d.durationMs, 'durationMs')}`];
-            if (unmeasuredBytesNote(d)) lines.push('⚠ 含未统计大小的录制');
-            if (unmeasuredDurationNote(d)) lines.push('⚠ 含未统计时长的录制');
-            return lines.join('<br/>');
+            if (!d) return "";
+            const lines = [
+              `<b>${d.name}</b>`,
+              `占比 ${(p.percent ?? 0).toFixed(1)}%`,
+              `场次 ${d.recordings}`,
+              `大小 ${d.bytes > 0 ? formatBytes(d.bytes) : "0 B"}`,
+              `时长 ${formatMetric(d.durationMs, "durationMs")}`,
+            ];
+            if (unmeasuredBytesNote(d)) lines.push("⚠ 含未统计大小的录制");
+            if (unmeasuredDurationNote(d)) lines.push("⚠ 含未统计时长的录制");
+            return lines.join("<br/>");
           },
         },
         legend: {
-          type: 'scroll',
-          bottom: 0,
+          type: "scroll",
+          bottom: PIE_LEGEND_BOTTOM,
           textStyle: { color: tone.text, fontSize: 11 },
           itemWidth: 12,
           itemHeight: 12,
         },
         series: [
           {
-            type: 'pie',
-            radius: ['44%', '70%'],
-            center: ['50%', '44%'],
+            type: "pie",
+            radius: ["44%", "70%"],
+            center: ["50%", PIE_CENTER_Y],
             data,
-            label: { color: tone.text, fontSize: 11, formatter: '{b}\n{d}%' },
+            label: { color: tone.text, fontSize: 11, formatter: "{b}\n{d}%" },
             labelLine: { lineStyle: { color: tone.muted } },
-            itemStyle: { borderColor: tone.ink, borderWidth: 2, borderRadius: 4 },
+            itemStyle: {
+              borderColor: tone.ink,
+              borderWidth: 2,
+            },
             emphasis: { scaleSize: 6 },
           },
         ],
@@ -359,15 +404,15 @@ export default function Stats() {
     return buildPieOption(roomExpanded ? data : rollupTop(data, 10));
   }, [stats, metrics.room, roomExpanded, rooms, buildPieOption]);
 
-/** custom 系列 renderItem API（task #55-①，echarts 6.1.0 heatmap 回归的替代实现） */
-interface CustomRenderApi {
-  coord: (v: number[]) => [number, number];
-  size: (v: number[]) => [number, number];
-  visual: (dim: string) => string | undefined;
-  value: (idx: number) => number;
-}
+  /** custom 系列 renderItem API（task #55-①，echarts 6.1.0 heatmap 回归的替代实现） */
+  interface CustomRenderApi {
+    coord: (v: number[]) => [number, number];
+    size: (v: number[]) => [number, number];
+    visual: (dim: string) => string | undefined;
+    value: (idx: number) => number;
+  }
 
-  // 图4 日历热力图（task #55-①：日历月视图——横轴=周、纵轴=一周7天、格内日号、
+  // 图4 日历热力图（task #55-①：日历月视图——横轴=星期、纵轴=周、格内日号、
   // 仅 rgb(255,95,162) 粉 + 透明度分档；数据 = 热力图独立查询的 byDay）
   const heatOption = useMemo<EChartsOption | null>(() => {
     const rows = heat?.byDay ?? [];
@@ -376,13 +421,14 @@ interface CustomRenderApi {
     const { cells, weekCount } = buildMonthGrid(heatMonth);
     if (rows.length === 0 && heatLoading) return null;
     const maxV = Math.max(0, ...rows.map((r) => metricValue(r, m)));
-    // 横轴：第1周…第N周；纵轴：一…日（inverse 使周一在顶）
-    const xCats = Array.from({ length: weekCount }, (_, i) => `第${i + 1}周`);
-    // 坐标 → 单元格 反查（custom renderItem 日号 / tooltip 取行数据均走此映射）
-    const cellByCoord = new Map(cells.map((c) => [`${c.week}:${c.weekday}`, c]));
+    const xCats = WEEKDAY_LABELS.map((label) => `周${label}`);
+    const yCats = Array.from({ length: weekCount }, (_, i) => `第${i + 1}周`);
+    const cellByCoord = new Map(
+      cells.map((c) => [`${c.weekday}:${c.week}`, c]),
+    );
     const data = cells.map((c) => {
       const row = byDate.get(c.date);
-      return { value: [c.week, c.weekday, row ? metricValue(row, m) : 0] };
+      return { value: [c.weekday, c.week, row ? metricValue(row, m) : 0] };
     });
     // 单一粉色 rgb(255,95,162) 的 5 档透明度（PrePan：只用该粉 + 透明度分档）
     const pink = (a: number) => `rgba(255, 95, 162, ${a})`;
@@ -391,81 +437,94 @@ interface CustomRenderApi {
       tooltip: {
         ...tooltipBase,
         // 与饼图已验证配置对齐：显式 item 触发（缺省时 custom 系列悬停不出 tooltip）
-        trigger: 'item',
+        trigger: "item",
         formatter: (params: unknown) => {
           const p = params as { value?: [number, number, number] };
-          if (!p.value) return '';
+          if (!p.value) return "";
           const cell = cellByCoord.get(`${p.value[0]}:${p.value[1]}`);
-          if (!cell) return '';
+          if (!cell) return "";
           const row = byDate.get(cell.date);
           if (!row) return `<b>${cell.date}</b><br/>无录制数据`;
-          const lines = [`<b>${cell.date}</b>`, `场次 ${row.recordings}`, `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : '0 B'}`, `时长 ${formatMetric(row.durationMs, 'durationMs')}`];
-          if (unmeasuredBytesNote(row)) lines.push('⚠ 含未统计大小的录制');
-          if (unmeasuredDurationNote(row)) lines.push('⚠ 含未统计时长的录制');
-          return lines.join('<br/>');
+          const lines = [
+            `<b>${cell.date}</b>`,
+            `场次 ${row.recordings}`,
+            `大小 ${row.bytes > 0 ? formatBytes(row.bytes) : "0 B"}`,
+            `时长 ${formatMetric(row.durationMs, "durationMs")}`,
+          ];
+          if (unmeasuredBytesNote(row)) lines.push("⚠ 含未统计大小的录制");
+          if (unmeasuredDurationNote(row)) lines.push("⚠ 含未统计时长的录制");
+          return lines.join("<br/>");
         },
       },
       xAxis: {
-        type: 'category',
+        type: "category",
         data: xCats,
         splitLine: { lineStyle: { color: tone.ink, width: 1.5 } },
-        axisLine: { lineStyle: { color: tone.ink, width: 2 } },
+        axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: { color: tone.muted, fontSize: 11 },
       },
       yAxis: {
-        type: 'category',
-        data: [...WEEKDAY_LABELS],
+        type: "category",
+        data: yCats,
         inverse: true,
         splitLine: { lineStyle: { color: tone.ink, width: 1.5 } },
-        axisLine: { lineStyle: { color: tone.ink, width: 2 } },
+        axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { color: tone.text, fontSize: 11 },
+        axisLabel: { show: false },
       },
       visualMap: {
         min: 0,
         max: maxV > 0 ? maxV : 1,
         calculable: false,
-        orient: 'horizontal',
-        left: 'center',
+        orient: "horizontal",
+        left: "center",
         bottom: 0,
         itemWidth: 14,
         itemHeight: 8,
         textStyle: { color: tone.muted, fontSize: 10 },
         // 5 档透明度：无数据/低值 → 浅，高值 → 实色
-        inRange: { color: [pink(0.12), pink(0.32), pink(0.55), pink(0.78), pink(1)] },
+        inRange: {
+          color: [pink(0), pink(0.25), pink(0.5), pink(0.75), pink(1)],
+        },
       },
       series: [
         {
-          // echarts 6.1.0 上游 cartesian heatmap 不渲染 → custom 等价实现（见 echarts.ts 注释）
-          type: 'custom',
+          type: "custom",
           data,
           encode: { x: 0, y: 1 },
           renderItem: (_params: unknown, api: CustomRenderApi) => {
             const coord = api.coord([api.value(0), api.value(1)]);
             const size = api.size([1, 1]);
-            const color = api.visual('color') ?? 'rgba(255, 95, 162, 0.12)';
+            const color = api.visual("color") ?? "rgba(255, 95, 162, 0.12)";
             const w = Math.max(size[0] - 3, 2);
             const h = Math.max(size[1] - 3, 2);
             const cell = cellByCoord.get(`${api.value(0)}:${api.value(1)}`);
             return {
-              type: 'group',
+              type: "group",
               children: [
                 {
-                  type: 'rect',
-                  shape: { x: coord[0] - w / 2, y: coord[1] - h / 2, width: w, height: h, r: 2 },
-                  style: { fill: color, stroke: tone.ink, lineWidth: 1.5 },
+                  type: "rect",
+                  shape: {
+                    x: coord[0] - w / 2,
+                    y: coord[1] - h / 2,
+                    width: w,
+                    height: h,
+                    r: 2,
+                  },
+                  // 网格分隔线是相邻日期唯一共享的边框，避免每格重复描边。
+                  style: { fill: color },
                 },
                 {
-                  type: 'text',
+                  type: "text",
                   style: {
                     x: coord[0],
                     y: coord[1],
-                    text: cell ? String(cell.day) : '',
+                    text: cell ? String(cell.day) : "",
                     fill: tone.text,
                     fontSize: 10,
-                    textAlign: 'center',
-                    textVerticalAlign: 'middle',
+                    textAlign: "center",
+                    textVerticalAlign: "middle",
                   },
                 },
               ],
@@ -479,28 +538,35 @@ interface CustomRenderApi {
   const totals = stats?.totals;
 
   const metricExtra = (key: MetricKey): ReactNode => (
-    <Segmented
-      size="small"
+    <MemphisRadioGroup
+      className="lr-stats-metric-toggle"
       aria-label="指标切换"
-      options={METRIC_OPTIONS.map((o) => ({ value: o.value as string, label: o.label }))}
+      options={METRIC_OPTIONS.map((o) => ({
+        value: o.value as string,
+        label: o.label,
+      }))}
       value={metrics[key]}
-      onChange={(v) => setMetric(key, v as StatMetric)}
+      onChange={(event) => setMetric(key, event.target.value as StatMetric)}
     />
   );
 
   return (
-    <div className="lr-page">
-      <Space className="lr-page-header" wrap>
+    <div className="lr-page lr-stats-page">
+      <Space className="lr-page-header" wrap={false}>
         <Typography.Title level={4} style={{ margin: 0 }}>
           统计看板
         </Typography.Title>
-        <Space className="lr-page-actions" wrap>
+        <Space className="lr-page-actions" wrap={false}>
           <DatePicker.RangePicker
+            className="lr-stats-range-picker"
             format="YYYY-MM-DD HH:mm"
-            placeholder={['开始日期 时间(可选)', '结束日期 时间(可选)']}
+            showTime={{ format: "HH:mm" }}
+            needConfirm={false}
+            classNames={{ popup: { root: "lr-stats-range-picker-popup" } }}
+            placeholder={["开始日期时间", "结束日期时间"]}
             presets={rangePresets}
             value={range}
-            onChange={(v) => setRange(v ? normalizePickedRange(v as [Dayjs, Dayjs]) : null)}
+            onChange={(value) => setRange(value as [Dayjs, Dayjs] | null)}
           />
           <Select
             allowClear
@@ -509,15 +575,16 @@ interface CustomRenderApi {
             value={platform}
             onChange={setPlatform}
             options={[
-              { value: 'bilibili', label: 'B站' },
-              { value: 'douyin', label: '抖音' },
+              { value: "bilibili", label: "B站" },
+              { value: "douyin", label: "抖音" },
             ]}
           />
           <Select
             mode="multiple"
             allowClear
-            placeholder="标签（可多选）"
-            style={{ minWidth: 150, maxWidth: 260 }}
+            className="lr-stats-tag-filter"
+            placeholder="标签"
+            style={{ width: 140 }}
             value={tagIds}
             onChange={(v) => setTagIds(v as string[])}
             options={tags.map((t) => ({ value: t.id, label: t.name }))}
@@ -541,16 +608,19 @@ interface CustomRenderApi {
               <Statistic
                 title="录制场次"
                 value={totals.recordings}
-                suffix={totals.failed > 0 ? `（失败 ${totals.failed}）` : undefined}
+                suffix={
+                  totals.failed > 0 ? `（失败 ${totals.failed}）` : undefined
+                }
               />
-              <Typography.Text type="secondary" className="lr-stats-kpi__sub">
-                完成 {totals.completed} · 失败 {totals.failed}
-              </Typography.Text>
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card loading={loading}>
-              <Statistic title="录制时长" value={Math.round(totals.durationMs / 3600000)} suffix="小时" />
+              <Statistic
+                title="录制时长"
+                value={Math.round(totals.durationMs / 3600000)}
+                suffix="小时"
+              />
               <Typography.Text type="secondary" className="lr-stats-kpi__sub">
                 约 {(totals.durationMs / 86400000).toFixed(1)} 天
               </Typography.Text>
@@ -558,9 +628,15 @@ interface CustomRenderApi {
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card loading={loading}>
-              <Statistic title="占用空间" value={totals.bytes} formatter={(v) => formatBytes(Number(v))} />
+              <Statistic
+                title="占用空间"
+                value={totals.bytes}
+                formatter={(v) => formatBytes(Number(v))}
+              />
               <Typography.Text type="secondary" className="lr-stats-kpi__sub">
-                {totals.recordings > 0 ? `平均每场 ${formatBytes(Math.round(totals.bytes / totals.recordings))}` : '平均每场 -'}
+                {totals.recordings > 0
+                  ? `平均每场 ${formatBytes(Math.round(totals.bytes / totals.recordings))}`
+                  : "平均每场 -"}
               </Typography.Text>
             </Card>
           </Col>
@@ -570,13 +646,12 @@ interface CustomRenderApi {
                 title="成功率"
                 value={totals.successRate}
                 suffix="%"
-                styles={{ content: { color: totals.successRate >= 80 ? undefined : '#cf1322' } }}
+                styles={{
+                  content: {
+                    color: totals.successRate >= 80 ? undefined : "#cf1322",
+                  },
+                }}
               />
-              <Typography.Text type="secondary" className="lr-stats-kpi__sub">
-                {totals.completed + totals.failed > 0
-                  ? `${totals.completed}/${totals.completed + totals.failed} 场完成判定`
-                  : '暂无完成判定'}
-              </Typography.Text>
             </Card>
           </Col>
 
@@ -584,7 +659,7 @@ interface CustomRenderApi {
             <EChartCard
               chartName="trend"
               title="每日录制趋势"
-              extra={metricExtra('trend')}
+              extra={metricExtra("trend")}
               option={trendOption}
               empty={!trendOption}
               emptyText="该区间暂无录制数据"
@@ -596,7 +671,7 @@ interface CustomRenderApi {
             <EChartCard
               chartName="platform"
               title="平台分布"
-              extra={metricExtra('platform')}
+              extra={metricExtra("platform")}
               option={platformOption}
               empty={!platformOption}
               emptyText="暂无平台数据"
@@ -604,56 +679,58 @@ interface CustomRenderApi {
               height={300}
             />
           </Col>
-          <Col xs={24} lg={10}>
+          <Col xs={24} lg={11}>
             <EChartCard
               chartName="room"
               title="直播间分布"
               extra={
-                <Space size={6}>
+                <Space size={6} className="lr-stats-card-extra">
                   <Button
                     size="small"
-                    aria-label={roomExpanded ? '收起全部' : '展开全部'}
+                    className="lr-stats-room-expand"
+                    aria-label={roomExpanded ? "收起全部" : "展开全部"}
                     onClick={() => setRoomExpanded((v) => !v)}
                   >
-                    {roomExpanded ? '收起' : '展开全部'}
+                    {roomExpanded ? "收起" : "展开全部"}
                   </Button>
-                  {metricExtra('room')}
+                  {metricExtra("room")}
                 </Space>
               }
               option={roomOption}
               empty={!roomOption}
               emptyText="暂无直播间数据"
               loading={loading}
-              height={300}
+              height={340}
             />
           </Col>
-          <Col xs={24} lg={14}>
+          <Col xs={24} lg={13}>
             <EChartCard
               chartName="heat"
               title={
-                <Space size={6} wrap>
+                <Space size={6} className="lr-stats-card-extra">
                   <span>日历热力图</span>
-                  <Typography.Text type="secondary" className="lr-stats-heat__note">
-                    （{HEAT_NOTE}）
-                  </Typography.Text>
                 </Space>
               }
               extra={
-                <Space size={6} wrap>
+                <Space size={6} className="lr-stats-card-extra">
                   <Button
                     size="small"
+                    className="lr-stats-heat__month-nav"
                     aria-label="上一月"
-                    onClick={() => setHeatMonth((m) => m.subtract(1, 'month'))}
-                  >
-                    ‹
-                  </Button>
+                    icon={<LeftOutlined />}
+                    onClick={() => setHeatMonth((m) => m.subtract(1, "month"))}
+                  />
                   <Typography.Text strong className="lr-stats-heat__month">
-                    {heatMonth.format('YYYY年MM月')}
+                    {heatMonth.format("YYYY年MM月")}
                   </Typography.Text>
-                  <Button size="small" aria-label="下一月" onClick={() => setHeatMonth((m) => m.add(1, 'month'))}>
-                    ›
-                  </Button>
-                  {metricExtra('heat')}
+                  <Button
+                    size="small"
+                    className="lr-stats-heat__month-nav"
+                    aria-label="下一月"
+                    icon={<RightOutlined />}
+                    onClick={() => setHeatMonth((m) => m.add(1, "month"))}
+                  />
+                  {metricExtra("heat")}
                 </Space>
               }
               option={heatOption}
@@ -670,7 +747,7 @@ interface CustomRenderApi {
 
       {stats ? (
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          数据刷新于 {dayjs(stats.generatedAt).format('YYYY-MM-DD HH:mm:ss')}
+          数据刷新于 {dayjs(stats.generatedAt).format("YYYY-MM-DD HH:mm:ss")}
         </Typography.Paragraph>
       ) : null}
     </div>
