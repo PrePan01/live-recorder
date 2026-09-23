@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import dayjs from 'dayjs';
 import {
   METRIC_OPTIONS,
   OTHER_NAME,
+  PIE_PALETTE_12,
+  WEEKDAY_LABELS,
+  buildMonthGrid,
   formatAxisLabel,
   formatMetric,
   metricValue,
+  normalizePickedRange,
   resolveRoomName,
   rollupTop,
   toPieData,
@@ -160,5 +165,72 @@ describe('rollupTop（Q3 默认 TOP10+其他 · QA B5）', () => {
 
   it('空数据安全', () => {
     expect(rollupTop([], 10)).toEqual([]);
+  });
+});
+
+describe('buildMonthGrid（task #55-① 日历月视图：横轴=周、纵轴=周内天、格内=日号）', () => {
+  it('覆盖当月全部日期，day/weekday/week 范围与键序正确', () => {
+    const m = dayjs('2026-09-01');
+    const { cells, weekCount } = buildMonthGrid(m);
+    expect(cells).toHaveLength(30);
+    expect(cells[0]).toEqual({ day: 1, weekday: 1, week: 0, date: '2026-09-01' }); // 2026-09-01 是周二
+    expect(cells[cells.length - 1].date).toBe('2026-09-30');
+    for (const c of cells) {
+      expect(c.weekday).toBeGreaterThanOrEqual(0);
+      expect(c.weekday).toBeLessThanOrEqual(6);
+      expect(c.week).toBeGreaterThanOrEqual(0);
+      expect(c.week).toBeLessThan(weekCount);
+      expect(WEEKDAY_LABELS[c.weekday]).toBeTruthy();
+    }
+    // 日期逐日递增、键与本地日一致
+    for (let i = 1; i < cells.length; i++) {
+      expect(dayjs(cells[i].date).diff(dayjs(cells[i - 1].date), 'day')).toBe(1);
+      expect(cells[i].day).toBe(cells[i - 1].day + 1);
+    }
+  });
+
+  it('首日为周日的月（2026-08：08-01 周六→周内 5，跨 6 周）', () => {
+    const { cells, weekCount } = buildMonthGrid(dayjs('2026-08-01'));
+    expect(cells).toHaveLength(31);
+    expect(cells[0].weekday).toBe(5); // 2026-08-01 周六
+    expect(weekCount).toBe(6);
+    expect(Math.max(...cells.map((c) => c.week))).toBe(5);
+  });
+
+  it('平月边界（2026-02：28 天）与 7/8 天跨周完整性', () => {
+    const { cells, weekCount } = buildMonthGrid(dayjs('2026-02-01'));
+    expect(cells).toHaveLength(28);
+    expect(weekCount).toBeGreaterThanOrEqual(4);
+    // 每个 weekday 至少出现 4 次
+    for (let w = 0; w < 7; w++) {
+      expect(cells.filter((c) => c.weekday === w).length).toBeGreaterThanOrEqual(4);
+    }
+  });
+});
+
+describe('PIE_PALETTE_12（task #55-② 饼图色板不重复）', () => {
+  it('12 色互不重复且前两色保持平台饼原观感', () => {
+    expect(PIE_PALETTE_12).toHaveLength(12);
+    expect(new Set(PIE_PALETTE_12).size).toBe(12);
+    expect(PIE_PALETTE_12.slice(0, 2)).toEqual(['#ff5fa2', '#ffd500']);
+  });
+});
+
+describe('normalizePickedRange（task #55-③ 午夜结束 = 覆盖整日归一）', () => {
+  it('面板选出的午夜结束归一到当日 23:59:59.999', () => {
+    const [s, e] = normalizePickedRange([dayjs('2026-08-15 00:00'), dayjs('2026-08-20 00:00')]);
+    expect(s.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-15 00:00:00.000');
+    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-20 23:59:59.999');
+  });
+
+  it('非午夜键入时间原样保留', () => {
+    const [s, e] = normalizePickedRange([dayjs('2026-08-16 10:30'), dayjs('2026-08-16 14:30')]);
+    expect(s.format('YYYY-MM-DD HH:mm')).toBe('2026-08-16 10:30');
+    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-08-16 14:30:00.000');
+  });
+
+  it('预设的 endOf day（非零点）不被改动', () => {
+    const [, e] = normalizePickedRange([dayjs('2026-09-17 00:00'), dayjs('2026-09-23 23:59:59.999')]);
+    expect(e.format('YYYY-MM-DD HH:mm:ss.SSS')).toBe('2026-09-23 23:59:59.999');
   });
 });

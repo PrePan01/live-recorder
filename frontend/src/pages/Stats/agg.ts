@@ -131,3 +131,74 @@ export function cssVar(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 }
+
+// ======================= task #55-① 日历月视图网格 =======================
+import type { Dayjs } from 'dayjs';
+
+/** 周内天标签（周一为首列） */
+export const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'] as const;
+
+export interface MonthCell {
+  /** 日号 1-31（格内展示） */
+  day: number;
+  /** 周内天：0=周一 … 6=周日 */
+  weekday: number;
+  /** 第几周（0 起，= 横轴分类） */
+  week: number;
+  /** YYYY-MM-DD（本地日，与 byDay 键一致） */
+  date: string;
+}
+
+/**
+ * 构建某月的日历月视图网格（GitHub 式：横轴=周、纵轴=一周7天）。
+ * 与项目切日口径一致：直接用 Dayjs 本地日历字段，不涉及时区转换。
+ */
+export function buildMonthGrid(month: Dayjs): { cells: MonthCell[]; weekCount: number } {
+  const first = month.startOf('month');
+  const firstWeekday = (first.day() + 6) % 7; // day(): 0=周日 → 0=周一 制
+  const total = first.add(1, 'month').diff(first, 'day');
+  const cells: MonthCell[] = [];
+  for (let i = 0; i < total; i++) {
+    const d = first.add(i, 'day');
+    cells.push({
+      day: d.date(),
+      weekday: (d.day() + 6) % 7,
+      week: Math.floor((firstWeekday + i) / 7),
+      date: d.format('YYYY-MM-DD'),
+    });
+  }
+  const weekCount = Math.floor((firstWeekday + total - 1) / 7) + 1;
+  return { cells, weekCount };
+}
+
+/**
+ * 面板选日归一（task #55-③）：date 面板选出的结束值时间为 00:00（date picker 语义），
+ * 视为「覆盖结束整日」→ 当日 23:59:59.999（输入框显示 23:59，用户可见整日覆盖）；
+ * 键入的非午夜时间（如 14:30）原样保留。已知启发式代价：刻意键入午夜结束会被视为整日。
+ */
+export function normalizePickedRange(value: [Dayjs, Dayjs]): [Dayjs, Dayjs] {
+  const [start, end] = value;
+  const isMidnight = end.hour() === 0 && end.minute() === 0 && end.second() === 0 && end.millisecond() === 0;
+  return [start, isMidnight ? end.endOf('day') : end];
+}
+
+// ======================= task #55-② 饼图 12 色板 =======================
+
+/**
+ * 互不重复的 12 色（孟菲斯四色基调 + 同饱和/亮度扩展）：
+ * TOP10+其他 11 扇区全不重复；前两色保持平台饼图原观感，前四色保持原房间饼观感。
+ */
+export const PIE_PALETTE_12: readonly string[] = [
+  '#ff5fa2', // 艳粉
+  '#ffd500', // 柠檬黄
+  '#2ec4b6', // 青绿
+  '#7b61ff', // 紫
+  '#ff8a3d', // 橙
+  '#9bdc3d', // 柠绿
+  '#00b5d8', // 天蓝
+  '#c77dff', // 浅紫罗兰
+  '#ff3d6e', // 玫红
+  '#2ecc71', // 绿
+  '#3d8bff', // 蓝
+  '#ffa62b', // 金
+];
