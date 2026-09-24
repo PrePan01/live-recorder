@@ -41,6 +41,22 @@ const backendDir = path.join(root, 'backend');
 console.log('[package] 精简后端 node_modules 为生产依赖…');
 run('npm', ['prune', '--omit=dev'], backendDir);
 
+// 1.6) 清理生产依赖自带的 test/tests 目录（发布物不含测试代码，约 5.65MB；task #67）
+//      仅作用于本次打包拷贝源，打包完成后的步骤 4 会 npm ci 恢复完整依赖，不影响开发环境。
+const stripDepTests = (dir) => {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const child = path.join(dir, e.name);
+    if (e.name === 'test' || e.name === 'tests') rmSync(child, { recursive: true, force: true });
+    else stripDepTests(child);
+  }
+};
+const depRoot = path.join(backendDir, 'node_modules');
+if (existsSync(depRoot)) {
+  stripDepTests(depRoot);
+  console.log('[package] 已清理依赖内 test/tests 目录');
+}
+
 // 2) tauri build（含前端 vite build + bundle-resources；后端已在步骤 1 构建并精简，跳过 bundle-resources 内重建）
 console.log('[package] 2/4 tauri build…');
 process.env.LR_SKIP_BACKEND_BUILD = '1';
