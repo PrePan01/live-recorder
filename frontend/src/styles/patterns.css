@@ -1032,3 +1032,20 @@
     transform: translateY(-50%);
   }
 }
+
+/* 设置页 · 管线区块整行（task #68，F1 裁定 A）：宽屏 DOM 序=主列|侧列 首行配对原样→
+   管线整行→尾列；<lg 断点用 order 复原拆分前的窄屏顺序（主→管线→尾→侧） */
+@media (max-width: 1023px) {
+  .lr-settings-col-main {
+    order: 1;
+  }
+  .lr-settings-col-pipeline {
+    order: 2;
+  }
+  .lr-settings-col-tail {
+    order: 3;
+  }
+  .lr-settings-col-side {
+    order: 4;
+  }
+}
