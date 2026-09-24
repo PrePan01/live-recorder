@@ -372,6 +372,57 @@ describe('管线封面可选步骤 exportCover（task #71）', () => {
   });
 });
 
+describe('管线 verify 开关门控（task #73，修说谎开关）', () => {
+  async function seedJunk(): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/vf${Math.random().toString(36).slice(2, 8)}`, displayName: 'v' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-vf', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-vf-'));
+    const file = path.join(dir, 'broken.mp4');
+    await writeFile(file, 'not-a-real-video');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { services, rec, file };
+  }
+
+  function enableVerify(services: Services, verify: boolean): void {
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, pipeline: { enabled: true, verify, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true } });
+  }
+
+  async function runTo(services: Services, recId: string): Promise<void> {
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it.runIf(FFMPEG_OK)('verify:false → 本步 skipped、损坏源不中断 run、integrity 不置 failed（开关生效）', async () => {
+    const { services, rec, file } = await seedJunk();
+    enableVerify(services, false);
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'verify')?.status).toBe('skipped');
+    // 损坏源在关校验时不再拦截（旧行为：此处 run=failed）
+    expect(services.recordings.get(rec.id)!.integrity).not.toBe('failed');
+    expect(services.recordings.get(rec.id)!.pipelineStatus).not.toBe('failed');
+    await expect(access(file)).resolves.toBeUndefined(); // 源不动
+  });
+
+  it.runIf(FFMPEG_OK)('默认开（真 ffprobe）：损坏源照旧 verify failed + run failed + integrity=failed（现状不回退）', async () => {
+    const { services, rec, file } = await seedJunk();
+    enableVerify(services, true);
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'verify')?.status).toBe('failed');
+    expect(services.recordings.get(rec.id)!.integrity).toBe('failed');
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('failed');
+    await expect(access(file)).resolves.toBeUndefined(); // 失败保留源
+  });
+});
+
 describe('孤儿管线 run 启动恢复（task #59 / QA C4）', () => {
   async function seedOrphan(opts: { file: string | null; runStatus: 'queued' | 'running' }) {
     const services = newServices();

@@ -110,17 +110,22 @@ export class PipelineManager {
       if (!recording || !recording.filePath) throw new Error('recording 无文件');
 
       // ① verify：ffprobe 校验源文件可播（损坏 → failed，保留源文件）。
+      // verify 开关门控（默认开，关=本步 skipped 不探测，run 快照语义——task #73 修「说谎开关」）。
       const verify = this.pipelineRepo.createArtifact({ runId: run.id, step: 'verify' });
-      this.pipelineRepo.setArtifact(verify.id, { status: 'running', startedAt: this.services.clock.iso() });
-      const integrity = await checkFileIntegrity(recording.filePath);
-      if (integrity === 'failed') {
-        this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: '源文件损坏或截断', endedAt: this.services.clock.iso() });
-        this.services.recordings.update(recording.id, { integrity: 'failed', state: 'completed', pipelineStatus: 'failed' });
-        this.finish(run.id, 'failed');
-        return;
+      if (config.verify) {
+        this.pipelineRepo.setArtifact(verify.id, { status: 'running', startedAt: this.services.clock.iso() });
+        const integrity = await checkFileIntegrity(recording.filePath);
+        if (integrity === 'failed') {
+          this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: '源文件损坏或截断', endedAt: this.services.clock.iso() });
+          this.services.recordings.update(recording.id, { integrity: 'failed', state: 'completed', pipelineStatus: 'failed' });
+          this.finish(run.id, 'failed');
+          return;
+        }
+        if (integrity === 'verified') this.services.recordings.update(recording.id, { integrity: 'verified' });
+        this.pipelineRepo.setArtifact(verify.id, { status: 'ok', endedAt: this.services.clock.iso() });
+      } else {
+        this.pipelineRepo.setArtifact(verify.id, { status: 'skipped', endedAt: this.services.clock.iso() });
       }
-      if (integrity === 'verified') this.services.recordings.update(recording.id, { integrity: 'verified' });
-      this.pipelineRepo.setArtifact(verify.id, { status: 'ok', endedAt: this.services.clock.iso() });
 
       // ② sidecar：写入元数据（真实时长/片段数/清晰度/大小）。
       const sidecar = this.pipelineRepo.createArtifact({ runId: run.id, step: 'sidecar' });
