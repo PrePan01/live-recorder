@@ -146,7 +146,12 @@ export async function compressOrRemux(inputPath: string, crf: number | null): Pr
     ? ['-y', '-i', inputPath, '-c', 'copy', '-f', 'mp4', tempPath]
     : ['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath];
   const res = await runFfmpeg(args);
-  if (!res.ok || !(await finalizeMp4(tempPath, outPath))) return null;
+  if (!res.ok) {
+    // ffmpeg 失败：清理半截 .part（否则失败路径永久残留，task #63 用例「临时零残留」断言）。
+    await discardTemp(tempPath);
+    return null;
+  }
+  if (!(await finalizeMp4(tempPath, outPath))) return null;
   const st = await stat(outPath).catch(() => null);
   return st ? { outPath, sizeBytes: st.size } : null;
 }

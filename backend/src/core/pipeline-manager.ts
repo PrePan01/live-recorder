@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Services } from './services.js';
 import type { PipelineConfig } from '../types/index.js';
@@ -193,8 +193,13 @@ export class PipelineManager {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
           const comp = await compressOrRemux(recording.filePath, config.crf);
           if (comp) {
-            // 成功产物不删除源文件；更新 filePath 指向新产物（源仍在）。
+            const sourcePath = recording.filePath;
+            // 成功：先落库 filePath 指向新产物（⑥归档/上传/历史拿 MP4），再删源（PrePan 拍板 A，task #63）。
+            // 删除位于 compressOrRemux 内 finalizeMp4 校验通过之后；先更新后删——中途崩溃只会多留源文件，绝不丢数据；
+            // 删除失败不回滚（宁可两份），同内联 remux 语义；失败/skipped 路径不进此分支，源保留。
             this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
+            recording.filePath = comp.outPath;
+            await unlink(sourcePath).catch(() => undefined);
             this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
           } else {
             this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩/转封装失败，保留源文件', endedAt: this.services.clock.iso() });
