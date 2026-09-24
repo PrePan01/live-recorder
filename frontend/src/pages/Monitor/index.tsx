@@ -485,7 +485,6 @@ export default function Monitor() {
   );
   const [keyword, setKeyword] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  // 停止后冷却：避免「停止→立即重录」竞态（后端 active 移除晚于 SSE 更新，误 409）。
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
   const [insights, setInsights] = useState<Record<string, RoomInsight>>({});
   const [floatingRoomId, setFloatingRoomId] = useState<string | null>(null);
