@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
+import { recoverOrphanPipelineRuns } from '../../src/core/recovery.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
 import { OPENLIST_2FA_REQUIRED, OPENLIST_AUTH_FAILED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
 
@@ -221,6 +222,86 @@ describe('管线导出音频 exportAudio（task #57，评估稿 c0e54a5f）', ()
     expect(bad.statusCode).toBe(422);
     expect(bad.json().error.code).toBe('PIPELINE_CONFIG_INVALID');
     await app.close();
+  });
+});
+
+describe('孤儿管线 run 启动恢复（task #59 / QA C4）', () => {
+  async function seedOrphan(opts: { file: string | null; runStatus: 'queued' | 'running' }) {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/o${Math.random().toString(36).slice(2, 8)}`, displayName: 'o' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-o', streamTitle: 't' });
+    let file: string | null = null;
+    if (opts.file !== null) {
+      const dir = await mkdtemp(path.join(tmpdir(), 'lr-orphan-'));
+      file = path.join(dir, 'qa_kill.mp4');
+      await writeFile(file, opts.file);
+      services.recordings.update(rec.id, { state: 'processing', filePath: file, pipelineStatus: 'running' });
+    } else {
+      services.recordings.update(rec.id, { state: 'processing', pipelineStatus: 'running' });
+    }
+    const run = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { attempt: 0 } });
+    services.pipeline.repo.setRunStatus(run.id, opts.runStatus);
+    const art = services.pipeline.repo.createArtifact({ runId: run.id, step: 'audio' });
+    services.pipeline.repo.setArtifact(art.id, { status: 'running', startedAt: services.clock.iso() });
+    return { services, rec, run, art, file };
+  }
+
+  it('孤儿 run/artifact → failed、recording 复位、.part 清理、源与既有产物不动、retry 放行', async () => {
+    const { services, rec, run, art, file } = await seedOrphan({ file: 'source-bytes', runStatus: 'running' });
+    // 模拟杀进程后的半截产物与同目录既有产物
+    const dir = path.dirname(file!);
+    const part = path.join(dir, 'qa_kill.mp3.part');
+    const sibling = path.join(dir, 'keep.mp3');
+    await writeFile(part, 'half-written');
+    await writeFile(sibling, 'existing-mp3');
+
+    expect(await recoverOrphanPipelineRuns(services)).toBe(1);
+
+    const runAfter = services.pipeline.repo.getRun(run.id)!;
+    expect(runAfter.status).toBe('failed');
+    expect(runAfter.endedAt).toBeTruthy();
+    const artAfter = services.pipeline.repo.artifact(art.id)!;
+    expect(artAfter.status).toBe('failed');
+    expect(artAfter.error).toContain('服务重启中断');
+    const recAfter = services.recordings.get(rec.id)!;
+    expect(recAfter.state).toBe('completed');
+    expect(recAfter.pipelineStatus).toBe('failed');
+    // .part 半截被清；源与同目录既有 mp3 不动
+    await expect(access(part)).rejects.toThrow();
+    await expect(access(sibling)).resolves.toBeUndefined();
+    await expect(access(file!)).resolves.toBeUndefined();
+
+    // 恢复后 retry 放行（原守卫 500 → 现 200）
+    enablePipeline(services);
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const retry = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/pipeline/retry` });
+    expect(retry.statusCode).toBe(200);
+    await waitFor(() => {
+      const r = services.recordings.get(rec.id)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued';
+    });
+    await app.close();
+  });
+
+  it('守卫：孤儿 run 未恢复（queued）时 retry → 409 RECORDING_NOT_AVAILABLE（原 500）', async () => {
+    const { services, rec } = await seedOrphan({ file: 'src', runStatus: 'queued' });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/pipeline/retry` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('RECORDING_NOT_AVAILABLE');
+    await app.close();
+  });
+
+  it('无文件的 processing 孤儿：recording → failed（服务重启中断，可重试原因）', async () => {
+    const { services, rec, run } = await seedOrphan({ file: null, runStatus: 'running' });
+    expect(await recoverOrphanPipelineRuns(services)).toBe(1);
+    const recAfter = services.recordings.get(rec.id)!;
+    expect(recAfter.state).toBe('failed');
+    expect(recAfter.pipelineStatus).toBe('failed');
+    expect(recAfter.failureReason?.message).toContain('服务重启中断');
+    expect(services.pipeline.repo.getRun(run.id)!.status).toBe('failed');
   });
 });
 

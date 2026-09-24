@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { buildApp } from '../api/server.js';
 import { buildServices, defaultDataDir } from '../core/services.js';
-import { recoverStaleRecordings } from '../core/recovery.js';
+import { recoverStaleRecordings, recoverOrphanPipelineRuns } from '../core/recovery.js';
 import { DEFAULT_HOST, APP_VERSION, API_VERSION } from './types.js';
 import type { AppInstance } from './types.js';
 import { InstanceLock } from './instance-lock.js';
@@ -82,6 +82,13 @@ export async function startSidecar(
           console.log(`recovered ${count} stale recording session(s)`);
       })
       .catch((error) => console.error('recording recovery failed', error));
+    // task #59：孤儿管线 run（执行中被杀）恢复——failed+复位 recording+放开 retry+清 .part 半截。
+    void recoverOrphanPipelineRuns(services)
+      .then((count) => {
+        if (count > 0)
+          console.log(`recovered ${count} orphaned pipeline run(s)`);
+      })
+      .catch((error) => console.error('pipeline recovery failed', error));
     // #220：重启时遗留的「待确认保留」录制按默认保留恢复管线/上传。
     services.manager.resumePendingConfirmations();
     // 恢复重启前排队中的上传任务（#195：上传队列为内存态，DB 中 queued/running 需启动续传）。

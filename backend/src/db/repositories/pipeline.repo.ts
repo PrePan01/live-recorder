@@ -71,6 +71,16 @@ export class PipelineRepository {
     return this.getRun(row.id);
   }
 
+  /** 按状态集取 run（含 artifacts）——启动恢复扫描孤儿 run（task #59）。 */
+  listRunsByStatuses(statuses: PipelineRunStatus[]): PipelineRun[] {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT id FROM pipeline_runs WHERE status IN (${placeholders}) ORDER BY created_at ASC`)
+      .all(...statuses) as Array<{ id: string }>;
+    return rows.map((r) => this.getRun(r.id)).filter((r): r is PipelineRun => r !== null);
+  }
+
   setRunStatus(id: string, status: PipelineRunStatus, endedAt: string | null = null): void {
     this.db
       .prepare(`UPDATE pipeline_runs SET status = ?, started_at = COALESCE(started_at, ?), ended_at = COALESCE(?, ended_at) WHERE id = ?`)
