@@ -605,7 +605,7 @@ export default function SettingsPage() {
         />
       ) : null}
       <Row className="lr-settings-grid" gutter={[16, 16]}>
-        <Col xs={24} lg={14} className="lr-settings-col-main">
+        <Col xs={24} lg={14}>
           <Card
             className="lr-settings-card lr-settings-card--primary"
             title="服务设置"
@@ -907,8 +907,24 @@ export default function SettingsPage() {
           <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
+          <Card className="lr-settings-card" title="后处理管线">
+            <PipelineConfigCard />
+          </Card>
+          <Card className="lr-settings-card" title="自动上传">
+            <OpenListConfigCard />
+          </Card>
+          <ResetSettingsCard
+            onExport={onExport}
+            exporting={exporting}
+            beforeReset={() => {
+              if (debounceRef.current) {
+                clearTimeout(debounceRef.current);
+                debounceRef.current = null;
+              }
+            }}
+          />
         </Col>
-        <Col xs={24} lg={10} className="lr-settings-col-side">
+        <Col xs={24} lg={10}>
           <Card
             className="lr-settings-card lr-notification-card"
             title="通知设置"
@@ -1228,28 +1244,6 @@ export default function SettingsPage() {
               )}
             />
           </Card>
-        </Col>
-        {/* task #68：管线区块拉出为整行（F1 裁定 A）——宽屏首行 [主列|侧列] 配对原样、
-            管线整行、尾列（自动上传/重置）随其后；<lg 用 order 复原原窄屏顺序 */}
-        <Col xs={24} className="lr-settings-col-pipeline">
-          <Card className="lr-settings-card" title="后处理管线">
-            <PipelineConfigCard />
-          </Card>
-        </Col>
-        <Col xs={24} lg={14} className="lr-settings-col-tail">
-          <Card className="lr-settings-card" title="自动上传">
-            <OpenListConfigCard />
-          </Card>
-          <ResetSettingsCard
-            onExport={onExport}
-            exporting={exporting}
-            beforeReset={() => {
-              if (debounceRef.current) {
-                clearTimeout(debounceRef.current);
-                debounceRef.current = null;
-              }
-            }}
-          />
         </Col>
       </Row>
       <footer className="lr-settings-footer" aria-label="相关链接">

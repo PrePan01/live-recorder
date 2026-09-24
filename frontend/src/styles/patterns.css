@@ -872,22 +872,20 @@
   font-weight: 900;
 }
 
-/* 设置页 · 后处理管线——步骤卡与连接件（task #65，孟菲斯描边语言：黑框、零投影） */
+/* 设置页 · 后处理管线——步骤卡与连接件（task #65/#69：纵向为唯一形态，不依赖宽度横排；
+   孟菲斯描边语言：黑框、零投影） */
 .lr-pipeline-flow {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
+  flex-direction: column;
   margin: 4px 0 6px;
-  container-type: inline-size;
-  container-name: lrPipeline;
 }
 .lr-pipeline-step {
   position: relative;
   display: flex;
-  flex: 1 1 150px;
-  min-width: 140px;
+  flex: 0 0 auto;
+  width: 100%;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 12px 12px;
   border: 2px solid var(--lr-ink);
   background: var(--lr-surface);
@@ -939,6 +937,11 @@
 .lr-pipeline-step__spacer {
   flex: 1 1 auto;
 }
+.lr-pipeline-step__desc {
+  color: var(--lr-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
 .lr-pipeline-step .ant-form-item {
   margin-bottom: 0;
 }
@@ -949,33 +952,32 @@
 }
 .lr-pipeline-link {
   position: relative;
-  flex: 0 0 40px;
-  align-self: stretch;
-  min-height: 56px;
+  width: 100%;
+  height: 26px;
+  flex: 0 0 auto;
 }
 .lr-pipeline-link::before {
   position: absolute;
-  top: 50%;
-  left: 6px;
-  right: 5px;
-  height: 3px;
+  top: 3px;
+  bottom: 7px;
+  left: 20px;
+  width: 3px;
   background: var(--lr-ink);
   content: "";
-  transform: translateY(-50%);
 }
 .lr-pipeline-link::after {
   position: absolute;
-  top: 50%;
-  right: 3px;
+  bottom: 2px;
+  left: 20px;
   border: 5px solid transparent;
-  border-left: 7px solid var(--lr-ink);
+  border-top: 7px solid var(--lr-ink);
   content: "";
-  transform: translateY(-50%);
+  transform: translateX(-50%);
 }
 .lr-pipeline-link__dot {
   position: absolute;
   top: 50%;
-  left: 50%;
+  left: 21px;
   width: 10px;
   height: 10px;
   border: 2px solid var(--lr-ink);
@@ -986,7 +988,7 @@
   position: absolute;
   z-index: 1;
   top: 50%;
-  left: 50%;
+  right: 4px;
   padding: 1px 6px;
   border: 1px solid var(--lr-ink);
   background: var(--lr-surface);
@@ -994,58 +996,5 @@
   font-size: 10px;
   line-height: 16px;
   white-space: nowrap;
-  transform: translate(-50%, -50%);
-}
-/* 容器不够横排一条线（<940px）：纵向流水线，连接件转竖管 */
-@container lrPipeline (max-width: 939px) {
-  .lr-pipeline-step {
-    flex: 1 1 100%;
-  }
-  .lr-pipeline-link {
-    flex: 0 0 auto;
-    width: 100%;
-    height: 26px;
-    min-height: 26px;
-  }
-  .lr-pipeline-link::before {
-    top: 3px;
-    bottom: 7px;
-    left: 20px;
-    width: 3px;
-    height: auto;
-    transform: none;
-  }
-  .lr-pipeline-link::after {
-    top: auto;
-    bottom: 2px;
-    left: 20px;
-    border: 5px solid transparent;
-    border-top: 7px solid var(--lr-ink);
-    transform: translateX(-50%);
-  }
-  .lr-pipeline-link__dot {
-    left: 21px;
-  }
-  .lr-pipeline-link__chip {
-    right: 4px;
-    left: auto;
-    transform: translateY(-50%);
-  }
-}
-
-/* 设置页 · 管线区块整行（task #68，F1 裁定 A）：宽屏 DOM 序=主列|侧列 首行配对原样→
-   管线整行→尾列；<lg 断点用 order 复原拆分前的窄屏顺序（主→管线→尾→侧） */
-@media (max-width: 1023px) {
-  .lr-settings-col-main {
-    order: 1;
-  }
-  .lr-settings-col-pipeline {
-    order: 2;
-  }
-  .lr-settings-col-tail {
-    order: 3;
-  }
-  .lr-settings-col-side {
-    order: 4;
-  }
+  transform: translateY(-50%);
 }
