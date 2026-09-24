@@ -15,6 +15,7 @@ function StepCard({
   num,
   label,
   tip,
+  desc,
   on,
   switchNode,
   children,
@@ -22,6 +23,7 @@ function StepCard({
   num: string;
   label: string;
   tip: string;
+  desc: string;
   on: boolean;
   switchNode: ReactNode;
   children?: ReactNode;
@@ -43,6 +45,8 @@ function StepCard({
         <span className="lr-pipeline-step__spacer" />
         {switchNode}
       </div>
+      {/* task #69：步骤内说明文案卡内可见（不得删，原 extra/label 文案恢复） */}
+      <div className="lr-pipeline-step__desc">{desc}</div>
       {children ? (
         <div className="lr-pipeline-step__ctrl">{children}</div>
       ) : null}
@@ -139,6 +143,8 @@ export default function PipelineConfigCard() {
   const archiveOn = Form.useWatch("archiveEnabled", form) === true;
   const verifyOn = Form.useWatch("verify", form) === true;
   const audioOn = Form.useWatch("exportAudio", form) === true;
+  const segVal = Number(Form.useWatch("segmentSeconds", form) ?? 0);
+  const crfVal = Form.useWatch("crf", form);
 
   return (
     <Form
@@ -161,6 +167,7 @@ export default function PipelineConfigCard() {
             num="1"
             label="完整性校验"
             tip="ffprobe 校验录制文件完整性；失败标记 partial 并告警"
+            desc="ffprobe 完整性校验"
             on={verifyOn}
             switchNode={
               <Form.Item name="verify" valuePropName="checked" noStyle>
@@ -173,6 +180,11 @@ export default function PipelineConfigCard() {
             num="2"
             label="切片"
             tip="按秒切分录制文件；关=不切片（写 0），开=每 N 秒一片（首开默认 10s）"
+            desc={
+              segOn && segVal > 0
+                ? `每 ${segVal}s 切片（0 = 不切片）`
+                : "0 = 不切片"
+            }
             on={segOn}
             switchNode={
               <Form.Item
@@ -197,6 +209,7 @@ export default function PipelineConfigCard() {
             num="3"
             label="导出音频"
             tip="录制完成后自动转换出 MP3（192k CBR）；关=不导出"
+            desc="录制完成后自动转换出 MP3"
             on={audioOn}
             switchNode={
               <Form.Item
@@ -213,6 +226,11 @@ export default function PipelineConfigCard() {
             num="4"
             label="压缩"
             tip="转封装/压缩为 MP4；CRF 越低质量越高（首开默认 23），关=保持源格式不压缩"
+            desc={
+              crfOn && crfVal != null
+                ? `CRF ${crfVal}（越低质量越高，0-51）`
+                : "空 = 不压缩（0-51）"
+            }
             on={crfOn}
             switchNode={
               <Form.Item name="crfEnabled" valuePropName="checked" noStyle>
@@ -231,6 +249,7 @@ export default function PipelineConfigCard() {
             num="5"
             label="归档"
             tip="完成后移动到归档目录；关=不归档（写空）"
+            desc="空 = 不归档；开启前先填目录"
             on={archiveOn}
             switchNode={
               <Form.Item
