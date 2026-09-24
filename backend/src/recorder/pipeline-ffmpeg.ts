@@ -1,7 +1,10 @@
-import { mkdir, stat, copyFile, rm } from 'node:fs/promises';
+import { mkdir, stat, copyFile, rm, rename } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
 import { discardTemp, finalizeMp4, runFfmpegTracked } from './ffmpeg-run.js';
+import { checkFileIntegrity } from './integrity.js';
+import { resolveBin } from '../utils/ffmpeg.js';
 
 export function ffmpegThreadCount(logicalCores = availableParallelism()): number {
   return Math.max(1, Math.min(4, Math.floor(Math.max(1, logicalCores) / 2)));
@@ -48,6 +51,82 @@ export async function segmentFile(inputPath: string, outputDir: string, baseName
     .filter((f) => f.startsWith(`${baseName}_seg_`) && f.endsWith('.ts'))
     .sort();
   return { segments: files.map((f) => path.join(outputDir, f)), pattern };
+}
+
+export interface AudioExportResult {
+  ok: boolean;
+  /** ok=true 时为 mp3 路径与大小；失败时 reason：no_audio=预检无音轨，encode_failed=转码/校验失败 */
+  outPath?: string;
+  sizeBytes?: number;
+  reason?: 'no_audio' | 'encode_failed';
+}
+
+/** ffprobe 预检首条音轨：true=有音轨，false=确认无音轨，null=ffprobe 缺失/超时/解析失败（不阻断，交给 ffmpeg 判定）。 */
+function probeHasAudioStream(filePath: string): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: boolean | null) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    const child = spawn(
+      resolveBin('ffprobe'),
+      ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_type', '-of', 'json', filePath],
+      { windowsHide: true },
+    );
+    let out = '';
+    child.stdout.on('data', (d: Buffer) => (out += d.toString()));
+    child.on('error', () => done(null));
+    child.on('close', (code) => {
+      if (code !== 0) return done(null);
+      try {
+        const parsed = JSON.parse(out) as { streams?: unknown[] };
+        done(Array.isArray(parsed.streams) && parsed.streams.length > 0);
+      } catch {
+        done(null);
+      }
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      done(null);
+    }, 10_000);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+}
+
+/**
+ * 导出音频（mp3，CBR 192k，评估稿 c0e54a5f）：同目录同基名 `.mp3`，同名已存在则覆盖。
+ * 安全链：ffprobe 预检音轨（无音轨明确失败不静默）→ 编码写 .part → ffprobe 校验可播 → 删旧产物 → 原子改名就位。
+ * 任何路径不删源文件；失败不留临时残留。
+ */
+export async function exportAudioToMp3(inputPath: string): Promise<AudioExportResult> {
+  const outPath = inputPath.replace(/\.[^.]+$/, '.mp3');
+  if (outPath === inputPath) return { ok: false, reason: 'encode_failed' };
+  if ((await probeHasAudioStream(inputPath)) === false) return { ok: false, reason: 'no_audio' };
+
+  const tempPath = `${outPath}.part`;
+  await discardTemp(tempPath);
+  const res = await runFfmpeg(['-y', '-i', inputPath, '-vn', '-map', 'a:0', '-c:a', 'libmp3lame', '-b:a', '192k', '-f', 'mp3', tempPath]);
+  if (!res.ok) {
+    await discardTemp(tempPath);
+    return { ok: false, reason: 'encode_failed' };
+  }
+  // 校验可播（退出码 0 也可能写出坏文件）才就位；先删旧产物支持覆盖（Windows rename 不覆盖既有文件）。
+  if ((await checkFileIntegrity(tempPath)) === 'failed') {
+    await discardTemp(tempPath);
+    return { ok: false, reason: 'encode_failed' };
+  }
+  await rm(outPath, { force: true }).catch(() => undefined);
+  try {
+    await rename(tempPath, outPath);
+  } catch {
+    await discardTemp(tempPath);
+    return { ok: false, reason: 'encode_failed' };
+  }
+  const st = await stat(outPath).catch(() => null);
+  return st ? { ok: true, outPath, sizeBytes: st.size } : { ok: false, reason: 'encode_failed' };
 }
 
 export interface CompressResult {

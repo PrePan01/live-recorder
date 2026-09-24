@@ -3,6 +3,7 @@ export type PipelineStep =
   | 'sidecar'
   | 'cover'
   | 'segment'
+  | 'audio'
   | 'compress'
   | 'archive';
 

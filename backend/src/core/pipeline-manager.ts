@@ -5,7 +5,7 @@ import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
-import { extractCoverFrame, segmentFile, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
+import { extractCoverFrame, segmentFile, exportAudioToMp3, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
 import type { Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
 interface QueueEntry {
@@ -36,7 +36,7 @@ export class PipelineManager {
   pipelineConfig(): PipelineConfig {
     const settings = this.services.settings.load();
     const stored = settings?.pipeline;
-    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, ...(stored ?? {}) };
+    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, ...(stored ?? {}) };
   }
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
@@ -157,6 +157,28 @@ export class PipelineManager {
         } else {
           this.pipelineRepo.setArtifact(segArt.id, { status: 'failed', error: '切片失败', endedAt: this.services.clock.iso() });
           finalStatus = 'partial';
+        }
+      }
+
+      // ④b audio：导出音频（pipeline.exportAudio，默认关——评估稿 c0e54a5f）。
+      // 吃源文件：此时 recording.filePath 尚未被 compress 更新，避免 crf 压缩的音频二次世代损失；失败隔离同 compress 口径。
+      if (config.exportAudio) {
+        const audioArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'audio' });
+        this.pipelineRepo.setArtifact(audioArt.id, { status: 'running', startedAt: this.services.clock.iso() });
+        const audio = await exportAudioToMp3(recording.filePath);
+        if (audio.ok) {
+          this.pipelineRepo.setArtifact(audioArt.id, { status: 'ok', path: audio.outPath!, sizeBytes: audio.sizeBytes!, endedAt: this.services.clock.iso() });
+        } else {
+          const reason = audio.reason === 'no_audio' ? '源文件无音轨，无法导出音频' : '音频转码失败，保留源文件';
+          this.pipelineRepo.setArtifact(audioArt.id, { status: 'failed', error: reason, endedAt: this.services.clock.iso() });
+          finalStatus = 'partial';
+          // 失败不静默（同 compress 口径）：仅本步 partial，视频产物/其余步骤/上传不受影响。
+          this.services.alerts.create({
+            level: 'warning',
+            source: 'pipeline',
+            message: `音频导出失败（${reason}），视频产物与上传不受影响（${recording.id}）`,
+            occurredAt: this.services.clock.iso(),
+          });
         }
       }
 

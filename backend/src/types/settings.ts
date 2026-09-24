@@ -121,6 +121,8 @@ export interface PipelineConfig {
   archiveDirectory: string;
   /** 管线并发上限（V5 定 N=2，录制主链路优先）。 */
   maxConcurrency: number;
+  /** 导出音频（mp3，CBR 192k）；默认关，只对之后触发的 run 生效（评估稿 c0e54a5f）。 */
+  exportAudio: boolean;
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -130,6 +132,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   crf: null,
   archiveDirectory: '',
   maxConcurrency: 2,
+  exportAudio: false,
 };
 
 export interface SettingsView {
