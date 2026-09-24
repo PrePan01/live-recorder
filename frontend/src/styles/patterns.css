@@ -871,3 +871,164 @@
   color: #000;
   font-weight: 900;
 }
+
+/* 设置页 · 后处理管线——步骤卡与连接件（task #65，孟菲斯描边语言：黑框、零投影） */
+.lr-pipeline-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin: 4px 0 6px;
+  container-type: inline-size;
+  container-name: lrPipeline;
+}
+.lr-pipeline-step {
+  position: relative;
+  display: flex;
+  flex: 1 1 150px;
+  min-width: 140px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-surface);
+  box-shadow: none;
+}
+.lr-pipeline-step--on::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  left: -2px;
+  height: 4px;
+  background: var(--lr-pink);
+}
+.lr-pipeline-step:not(.lr-pipeline-step--on) {
+  opacity: 0.62;
+}
+.lr-pipeline-step__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lr-pipeline-step__num {
+  display: grid;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-primary);
+  color: #000;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+.lr-pipeline-step:not(.lr-pipeline-step--on) .lr-pipeline-step__num {
+  background: var(--lr-surface);
+  color: var(--lr-ink);
+}
+.lr-pipeline-step__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+.lr-pipeline-step__spacer {
+  flex: 1 1 auto;
+}
+.lr-pipeline-step .ant-form-item {
+  margin-bottom: 0;
+}
+.lr-pipeline-step__ctrl .ant-form-item-label > label {
+  height: auto;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+.lr-pipeline-link {
+  position: relative;
+  flex: 0 0 40px;
+  align-self: stretch;
+  min-height: 56px;
+}
+.lr-pipeline-link::before {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  right: 5px;
+  height: 3px;
+  background: var(--lr-ink);
+  content: "";
+  transform: translateY(-50%);
+}
+.lr-pipeline-link::after {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  border: 5px solid transparent;
+  border-left: 7px solid var(--lr-ink);
+  content: "";
+  transform: translateY(-50%);
+}
+.lr-pipeline-link__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-pink);
+  transform: translate(-50%, -50%);
+}
+.lr-pipeline-link__chip {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  padding: 1px 6px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+/* 容器不够横排一条线（<940px）：纵向流水线，连接件转竖管 */
+@container lrPipeline (max-width: 939px) {
+  .lr-pipeline-step {
+    flex: 1 1 100%;
+  }
+  .lr-pipeline-link {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 26px;
+    min-height: 26px;
+  }
+  .lr-pipeline-link::before {
+    top: 3px;
+    bottom: 7px;
+    left: 20px;
+    width: 3px;
+    height: auto;
+    transform: none;
+  }
+  .lr-pipeline-link::after {
+    top: auto;
+    bottom: 2px;
+    left: 20px;
+    border: 5px solid transparent;
+    border-top: 7px solid var(--lr-ink);
+    transform: translateX(-50%);
+  }
+  .lr-pipeline-link__dot {
+    left: 21px;
+  }
+  .lr-pipeline-link__chip {
+    right: 4px;
+    left: auto;
+    transform: translateY(-50%);
+  }
+}
