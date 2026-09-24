@@ -953,22 +953,24 @@
 .lr-pipeline-link {
   position: relative;
   width: 100%;
-  height: 26px;
+  height: 32px;
   flex: 0 0 auto;
 }
+/* task #70：连接件几何重校——竖线/圆点/箭头统中心线 x25（与步骤徽标同轴），
+   圆点作线上关节（y4-14）、底端箭头分离（y17-29），消除三重叠压 */
 .lr-pipeline-link::before {
   position: absolute;
-  top: 3px;
-  bottom: 7px;
-  left: 20px;
+  top: 2px;
+  bottom: 12px;
+  left: 23.5px;
   width: 3px;
   background: var(--lr-ink);
   content: "";
 }
 .lr-pipeline-link::after {
   position: absolute;
-  bottom: 2px;
-  left: 20px;
+  bottom: 3px;
+  left: 25px;
   border: 5px solid transparent;
   border-top: 7px solid var(--lr-ink);
   content: "";
@@ -976,8 +978,8 @@
 }
 .lr-pipeline-link__dot {
   position: absolute;
-  top: 50%;
-  left: 21px;
+  top: 9px;
+  left: 25px;
   width: 10px;
   height: 10px;
   border: 2px solid var(--lr-ink);
@@ -987,7 +989,7 @@
 .lr-pipeline-link__chip {
   position: absolute;
   z-index: 1;
-  top: 50%;
+  top: 16px;
   right: 4px;
   padding: 1px 6px;
   border: 1px solid var(--lr-ink);

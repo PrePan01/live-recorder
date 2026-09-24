@@ -148,6 +148,24 @@ describe("buildPipelinePayload（保存：载荷与旧逐字节同构）", () =>
     expect(payload.crf).toBe(0);
   });
 
+  it("exportCover 直通载荷（布尔原生字段，不派生不剥除）", () => {
+    const payload = buildPipelinePayload({
+      enabled: true,
+      verify: true,
+      segmentSeconds: 0,
+      exportAudio: true,
+      exportCover: false,
+      crf: null,
+      archiveDirectory: "",
+      maxConcurrency: 2,
+      segmentEnabled: false,
+      crfEnabled: false,
+      archiveEnabled: false,
+    });
+    expect(payload.exportCover).toBe(false);
+    expect(buildPipelinePayload({ exportCover: true }).exportCover).toBe(true);
+  });
+
   it("总开关关闭时步骤字段真未挂载 ⇒ 不注入派生键（键集与旧一致）", () => {
     const payload = buildPipelinePayload({
       enabled: false,

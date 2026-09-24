@@ -42,4 +42,5 @@ export interface PipelineConfig {
   maxConcurrency: number;
   /** 导出音频文件开关（task #57/#58）：默认关，只影响之后触发的 run（启动时快照） */
   exportAudio: boolean;
+  exportCover: boolean;
 }
