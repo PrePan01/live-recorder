@@ -4,11 +4,9 @@ import {
   Button,
   Collapse,
   DatePicker,
-  Drawer,
   Input,
   Modal,
   Popconfirm,
-  Progress,
   Select,
   Space,
   Switch,
@@ -20,19 +18,16 @@ import {
   ExportOutlined,
   CopyOutlined,
 } from "@ant-design/icons";
-import { EXPORT_STATUS_COLOR } from "./components/historyUtils";
 import { buildRecordingColumns } from "./components/recordingColumns";
+import PlayerModal from "./components/PlayerModal";
+import PipelineDrawer from "./components/PipelineDrawer";
+import ExportTasksDrawer from "./components/ExportTasksDrawer";
 import dayjs from "dayjs";
 import { useRecordingStore } from "../../stores/recordingStore";
 import { useRoomStore } from "../../stores/roomStore";
 import { useResizableColumns } from "../../hooks/useResizableColumns";
-import FilePlayer from "../../components/FilePlayer";
-import { recordingFileUrl } from "../../api/client";
-import { formatTime } from "../../utils/format";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
-import PipelineTimeline from "../../components/PipelineTimeline";
-import UploadStatus from "../../components/UploadStatus";
 import { createExport, cancelExport, fetchExports } from "../../api/export";
 import { fetchUploads, retryUpload, uploadRecording } from "../../api/openlist";
 import {
@@ -430,37 +425,8 @@ export default function History() {
           }}
         />
       )}
-      <Modal
-        title={`播放：${playing?.streamTitle || playing?.id || ""}`}
-        open={playing !== null}
-        footer={null}
-        width={820}
-        destroyOnHidden
-        onCancel={() => setPlaying(null)}
-      >
-        {playing ? (
-          <FilePlayer
-            url={recordingFileUrl(playing.id)}
-            filePath={playing.filePath}
-          />
-        ) : null}
-      </Modal>
-      <Drawer
-        title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ""}`}
-        open={pipelineRec !== null}
-        size={520}
-        onClose={() => setPipelineRec(null)}
-      >
-        {pipelineRec ? (
-          <Space orientation="vertical" style={{ width: "100%" }} size={20}>
-            <PipelineTimeline recordingId={pipelineRec.id} />
-            <Typography.Title level={5} style={{ marginBottom: 0 }}>
-              上传
-            </Typography.Title>
-            <UploadStatus recordingId={pipelineRec.id} />
-          </Space>
-        ) : null}
-      </Drawer>
+      <PlayerModal playing={playing} onClose={() => setPlaying(null)} />
+      <PipelineDrawer pipelineRec={pipelineRec} onClose={() => setPipelineRec(null)} />
       <Modal
         title="重命名录制"
         open={renaming !== null}
@@ -516,72 +482,17 @@ export default function History() {
           />
         </Space>
       </Modal>
-      <Drawer
-        title="导出任务"
+      <ExportTasksDrawer
         open={exportDrawer}
-        size={460}
         onClose={() => setExportDrawer(false)}
-      >
-        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
-          <Button size="small" onClick={() => void refreshExports()}>
-            刷新
-          </Button>
-          {exportJobs.length === 0 ? (
-            <Typography.Text type="secondary">暂无导出任务</Typography.Text>
-          ) : (
-            exportJobs.slice(0, 10).map((j) => (
-              <div key={j.id}>
-                <Space size={8} wrap>
-                  <Tag color={EXPORT_STATUS_COLOR[j.status]}>{j.status}</Tag>
-                  {j.status === "running" ? (
-                    <Progress
-                      percent={j.progress}
-                      size="small"
-                      style={{ width: 120 }}
-                    />
-                  ) : null}
-                  {j.outputPath ? (
-                    <Typography.Text
-                      type="secondary"
-                      style={{ fontSize: 12 }}
-                      ellipsis
-                    >
-                      {j.outputPath}
-                    </Typography.Text>
-                  ) : null}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {formatTime(j.updatedAt)}
-                  </Typography.Text>
-                  {j.status === "queued" || j.status === "running" ? (
-                    <Popconfirm
-                      title="取消导出？已生成内容保留"
-                      onConfirm={() =>
-                        void cancelExport(j.id)
-                          .then(() => void refreshExports())
-                          .catch((e) =>
-                            message.error(describeError(e.code, e.message)),
-                          )
-                      }
-                    >
-                      <Button size="small" danger>
-                        取消
-                      </Button>
-                    </Popconfirm>
-                  ) : null}
-                </Space>
-                {j.error ? (
-                  <Typography.Text
-                    type="danger"
-                    style={{ display: "block", fontSize: 12 }}
-                  >
-                    {j.error}
-                  </Typography.Text>
-                ) : null}
-              </div>
-            ))
-          )}
-        </Space>
-      </Drawer>
+        jobs={exportJobs}
+        onRefresh={() => void refreshExports()}
+        onCancelJob={(id) =>
+          void cancelExport(id)
+            .then(() => void refreshExports())
+            .catch((e) => message.error(describeError(e.code, e.message)))
+        }
+      />
       {/* #19：上传失败错误详情——分级展示（可执行建议 + 错误码 + 原始错误全文）+ 复制。 */}
       <Modal
         title={`上传错误详情${uploadErrorDetail ? `：${uploadErrorDetail.title}` : ""}`}
