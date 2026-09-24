@@ -643,6 +643,7 @@ export default function SettingsPage() {
                 </Form.Item>
                 <Form.Item label="全局录制按钮大小" name="floatingRecorderSize">
                   <Slider
+                    style={{ width: "50%" }}
                     min={20}
                     max={100}
                     step={1}
@@ -903,11 +904,11 @@ export default function SettingsPage() {
               }}
             />
           </Card>
-          <Card className="lr-settings-card" title="后处理管线">
-            <PipelineConfigCard />
-          </Card>
           <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
+          </Card>
+          <Card className="lr-settings-card" title="后处理管线">
+            <PipelineConfigCard />
           </Card>
           <Card className="lr-settings-card" title="自动上传">
             <OpenListConfigCard />

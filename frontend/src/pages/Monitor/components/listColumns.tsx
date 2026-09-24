@@ -1,5 +1,3 @@
-// Monitor 拆分（task #61）：列表视图列定义——自 index.tsx 原样迁移为工厂函数；
-// 闭包依赖改为显式入参（原标识符名），列体/渲染/错误文案/类名零改动。
 import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import type { App } from "antd";
 import type { ColumnsType } from "antd/es/table";

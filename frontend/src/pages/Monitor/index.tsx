@@ -48,13 +48,11 @@ export default function Monitor() {
   const openPreviewModal = usePreviewStore((s) => s.openModal);
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
-  // 保存目录可用性：进页检测一次 + 30s 轮询。
   const serviceStatus = useServiceStore((s) => s.status);
   const fetchServiceStatus = useServiceStore((s) => s.fetchStatus);
   const directoryUnavailable = isDirectoryUnavailable(
     serviceStatus?.directoryAvailable,
   );
-  // B站登录态：整页只探测一次，结论给所有 B站卡片共用（不按房间重复请求）。
   const [bilibiliCookieStatus, setBilibiliCookieStatus] =
     useState<BilibiliCookieStatus | null>(null);
   const [view, setView] = useState<"卡片" | "列表">(() =>

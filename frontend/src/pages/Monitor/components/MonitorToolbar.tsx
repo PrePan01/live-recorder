@@ -1,5 +1,3 @@
-// Monitor 拆分（task #61）：页头工具条（状态筛选/平台筛选/视图切换/搜索/刷新）——
-// 自 index.tsx 原样迁移；状态与回调以原标识符名作 props 传入，JSX/类名/孟菲斯控件零改动。
 import { Button, Input, Space, Tooltip, Typography } from "antd";
 import {
   AppstoreOutlined,
@@ -42,94 +40,94 @@ export function MonitorToolbar({
   handleRefresh,
 }: MonitorToolbarProps) {
   return (
-      <Space className="lr-page-header" wrap>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          监控总览
-        </Typography.Title>
-        <Space className="lr-page-actions" wrap>
-          <MemphisRadioGroup
-            options={[
-              { label: "全部", value: "全部" },
-              { label: `开播中 ${liveCount}`, value: "开播中" },
-              { label: `录制中 ${recordingCount}`, value: "录制中" },
-              { label: "收藏", value: "收藏" },
-            ]}
-            value={filter}
-            onChange={(e) =>
-              setFilter(e.target.value as "全部" | "开播中" | "录制中" | "收藏")
-            }
-          />
-          <MemphisRadioGroup
-            className="lr-platform-filter"
-            aria-label="平台筛选"
-            options={[
-              { label: "全部", value: "全部" },
-              {
-                label: (
-                  <Tooltip title="B站">
-                    <PlatformIcon platform="bilibili" />
-                  </Tooltip>
-                ),
-                value: "bilibili",
-              },
-              {
-                label: (
-                  <Tooltip title="抖音">
-                    <PlatformIcon platform="douyin" />
-                  </Tooltip>
-                ),
-                value: "douyin",
-              },
-            ]}
-            value={platformFilter}
-            onChange={(e) =>
-              setPlatformFilter(e.target.value as "全部" | Platform)
-            }
-          />
-          <MemphisRadioGroup
-            className="lr-monitor-view-toggle"
-            aria-label="显示方式"
-            options={[
-              {
-                label: (
-                  <Tooltip title="卡片视图">
-                    <AppstoreOutlined />
-                  </Tooltip>
-                ),
-                value: "卡片",
-              },
-              {
-                label: (
-                  <Tooltip title="列表视图">
-                    <UnorderedListOutlined />
-                  </Tooltip>
-                ),
-                value: "列表",
-              },
-            ]}
-            value={view}
-            onChange={(e) => {
-              const nextView = e.target.value as "卡片" | "列表";
-              setView(nextView);
-              localStorage.setItem("lr-monitor-view", nextView);
-            }}
-          />
-          <Input.Search
-            allowClear
-            placeholder="搜索房间"
-            style={{ width: 180 }}
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-          <Button
-            aria-label="刷新"
-            icon={<ReloadOutlined />}
-            loading={loading || refreshing}
-            onClick={() => {
-              void handleRefresh().catch(() => undefined);
-            }}
-          ></Button>
-        </Space>
+    <Space className="lr-page-header" wrap>
+      <Typography.Title level={4} style={{ margin: 0 }}>
+        监控总览
+      </Typography.Title>
+      <Space className="lr-page-actions" wrap>
+        <MemphisRadioGroup
+          options={[
+            { label: "全部", value: "全部" },
+            { label: `开播中 ${liveCount}`, value: "开播中" },
+            { label: `录制中 ${recordingCount}`, value: "录制中" },
+            { label: "收藏", value: "收藏" },
+          ]}
+          value={filter}
+          onChange={(e) =>
+            setFilter(e.target.value as "全部" | "开播中" | "录制中" | "收藏")
+          }
+        />
+        <MemphisRadioGroup
+          className="lr-platform-filter"
+          aria-label="平台筛选"
+          options={[
+            { label: "全部", value: "全部" },
+            {
+              label: (
+                <Tooltip title="B站">
+                  <PlatformIcon platform="bilibili" />
+                </Tooltip>
+              ),
+              value: "bilibili",
+            },
+            {
+              label: (
+                <Tooltip title="抖音">
+                  <PlatformIcon platform="douyin" />
+                </Tooltip>
+              ),
+              value: "douyin",
+            },
+          ]}
+          value={platformFilter}
+          onChange={(e) =>
+            setPlatformFilter(e.target.value as "全部" | Platform)
+          }
+        />
+        <MemphisRadioGroup
+          className="lr-monitor-view-toggle"
+          aria-label="显示方式"
+          options={[
+            {
+              label: (
+                <Tooltip title="卡片视图">
+                  <AppstoreOutlined />
+                </Tooltip>
+              ),
+              value: "卡片",
+            },
+            {
+              label: (
+                <Tooltip title="列表视图">
+                  <UnorderedListOutlined />
+                </Tooltip>
+              ),
+              value: "列表",
+            },
+          ]}
+          value={view}
+          onChange={(e) => {
+            const nextView = e.target.value as "卡片" | "列表";
+            setView(nextView);
+            localStorage.setItem("lr-monitor-view", nextView);
+          }}
+        />
+        <Input.Search
+          allowClear
+          placeholder="搜索房间"
+          style={{ width: 180 }}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
+        <Button
+          aria-label="刷新"
+          icon={<ReloadOutlined />}
+          loading={loading || refreshing}
+          onClick={() => {
+            void handleRefresh().catch(() => undefined);
+          }}
+        ></Button>
       </Space>
+    </Space>
   );
 }
