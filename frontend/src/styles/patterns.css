@@ -883,7 +883,6 @@
   position: relative;
   display: flex;
   flex: 0 0 auto;
-  width: 100%;
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px 12px;
@@ -956,47 +955,238 @@
   height: 32px;
   flex: 0 0 auto;
 }
-/* task #70：连接件几何重校——竖线/圆点/箭头统中心线 x25（与步骤徽标同轴），
-   圆点作线上关节（y4-14）、底端箭头分离（y17-29），消除三重叠压 */
-.lr-pipeline-link::before {
-  position: absolute;
-  top: 2px;
-  bottom: 12px;
-  left: 23.5px;
-  width: 3px;
-  background: var(--lr-ink);
-  content: "";
+/* ---- task #72 管线连接件（设计基线 PM 5761a776 · PrePan 确认；孟菲斯：lr-teal 流动色、
+   lr-bounce 过冲、黑描边 2-3px、零投影、reduced-motion 降级）---- */
+.lr-pipeline-flow {
+  position: relative;
 }
-.lr-pipeline-link::after {
+/* 低密度孟菲斯纸屑点缀（2 处，远离管轴 x25，不干扰读数） */
+.lr-pipeline-flow::before {
   position: absolute;
-  bottom: 3px;
-  left: 25px;
-  border: 5px solid transparent;
-  border-top: 7px solid var(--lr-ink);
+  top: 12%;
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--lr-ink);
+  border-radius: 50%;
+  background: var(--lr-teal);
   content: "";
-  transform: translateX(-50%);
+  pointer-events: none;
 }
-.lr-pipeline-link__dot {
+.lr-pipeline-flow::after {
   position: absolute;
-  top: 9px;
-  left: 25px;
+  right: 44px;
+  bottom: 14%;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-pink);
+  content: "";
+  pointer-events: none;
+  transform: rotate(45deg);
+}
+/* 连接件：48px 竖段（法兰环+双线管+箭头喷口+流动点），全部与步骤徽标同轴 x25 */
+.lr-pipeline-link {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  flex: 0 0 auto;
+}
+/* 双线管：左右 2px 黑描边 + 浅底内芯 */
+.lr-pipeline-link__tube {
+  position: absolute;
+  top: 10px;
+  bottom: 16px;
+  left: 19px;
+  width: 12px;
+  border-right: 2px solid var(--lr-ink);
+  border-left: 2px solid var(--lr-ink);
+  background: var(--lr-surface-alt);
+  transform-origin: top center;
+  transition: border-color 200ms linear, background-color 200ms linear;
+}
+/* 法兰环接头（管端小圆环，黑描边；上下环均焊在管端=设计性衔接） */
+.lr-pipeline-link__tube::before,
+.lr-pipeline-link__tube::after {
+  position: absolute;
+  left: 50%;
   width: 10px;
   height: 10px;
   border: 2px solid var(--lr-ink);
-  background: var(--lr-pink);
-  transform: translate(-50%, -50%);
-}
-.lr-pipeline-link__chip {
-  position: absolute;
-  z-index: 1;
-  top: 16px;
-  right: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--lr-ink);
+  border-radius: 50%;
   background: var(--lr-surface);
-  color: var(--lr-muted);
+  content: "";
+  transform: translateX(-50%);
+  transition: border-color 200ms linear, background-color 200ms linear;
+}
+.lr-pipeline-link__tube::before {
+  top: -7px;
+}
+.lr-pipeline-link__tube::after {
+  bottom: -7px;
+}
+/* 青绿三角箭头：外层黑描边三角 + 内层 lr-teal 填充（双伪元素） */
+.lr-pipeline-link__head {
+  position: absolute;
+  bottom: 0;
+  left: 25px;
+  width: 16px;
+  height: 11px;
+  transform: translateX(-50%);
+}
+.lr-pipeline-link__head::before,
+.lr-pipeline-link__head::after {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  border-style: solid;
+  border-color: transparent;
+  content: "";
+  transform: translateX(-50%);
+  transition: border-top-color 200ms linear;
+}
+.lr-pipeline-link__head::before {
+  border-width: 11px 8px 0;
+  border-top-color: var(--lr-ink);
+}
+.lr-pipeline-link__head::after {
+  bottom: 1.5px;
+  border-width: 8px 5px 0;
+  border-top-color: var(--lr-teal);
+}
+/* 流动点：teal 圆点沿管内循环（容器 --flowing（≥2 开启）且该段 live 才出现） */
+.lr-pipeline-link__flow {
+  position: absolute;
+  top: 11px;
+  left: 25px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--lr-ink);
+  border-radius: 50%;
+  background: var(--lr-teal);
+  opacity: 0;
+}
+.lr-pipeline-flow--flowing .lr-pipeline-link--live .lr-pipeline-link__flow {
+  animation: lr-pipe-flowdot 4s linear infinite;
+}
+@keyframes lr-pipe-flowdot {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 14px);
+  }
+}
+/* 接通生长动效：live 类添加时管段 250ms 过冲生长 + 箭头弹出（孟菲斯既定缓动） */
+.lr-pipeline-link--live .lr-pipeline-link__tube {
+  animation: lr-pipe-grow 250ms var(--lr-bounce) both;
+}
+.lr-pipeline-link--live .lr-pipeline-link__head {
+  animation: lr-pipe-headpop 250ms var(--lr-bounce) both;
+}
+@keyframes lr-pipe-grow {
+  from {
+    opacity: 0.35;
+    transform: scaleY(0.25);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+@keyframes lr-pipe-headpop {
+  from {
+    transform: translateX(-50%) scale(0.4);
+  }
+  to {
+    transform: translateX(-50%) scale(1);
+  }
+}
+/* 断流灰化（旁路/未达段）：管壁、环、箭头退 muted，流动点不出现 */
+.lr-pipeline-link:not(.lr-pipeline-link--live) .lr-pipeline-link__tube {
+  border-color: var(--lr-muted);
+  background: transparent;
+}
+.lr-pipeline-link:not(.lr-pipeline-link--live) .lr-pipeline-link__tube::before,
+.lr-pipeline-link:not(.lr-pipeline-link--live) .lr-pipeline-link__tube::after {
+  border-color: var(--lr-muted);
+  background: transparent;
+}
+.lr-pipeline-link:not(.lr-pipeline-link--live) .lr-pipeline-link__head::before,
+.lr-pipeline-link:not(.lr-pipeline-link--live) .lr-pipeline-link__head::after {
+  border-top-color: var(--lr-muted);
+}
+/* 开关切换爆发动效：箭头脉冲 + 流动点加速冲刺 + 开启卡顶边展开点亮 */
+.lr-pipeline-flow--burst .lr-pipeline-link--live .lr-pipeline-link__head {
+  animation: lr-pipe-headpulse 600ms var(--lr-bounce);
+}
+.lr-pipeline-flow--burst .lr-pipeline-link--live .lr-pipeline-link__flow {
+  animation-duration: 0.9s;
+}
+.lr-pipeline-flow--burst .lr-pipeline-step--on::after {
+  animation: lr-pipe-topbar 600ms var(--lr-bounce);
+  transform-origin: left center;
+}
+@keyframes lr-pipe-headpulse {
+  0% {
+    transform: translateX(-50%) scale(1);
+  }
+  40% {
+    transform: translateX(-50%) scale(1.55);
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+  }
+}
+@keyframes lr-pipe-topbar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+/* 关闭步骤卡：灰化 + 虚线描边（旁路语义）；有主流存在时再挂线外缩进（200ms 改道） */
+.lr-pipeline-step {
+  transition:
+    margin-left 200ms ease,
+    opacity 200ms linear,
+    border-color 200ms linear;
+}
+.lr-pipeline-step:not(.lr-pipeline-step--on) {
+  border-style: dashed;
+}
+.lr-pipeline-step.is-bypass {
+  margin-left: 14px;
+}
+/* 旁路徽标：teal 底黑字方牌（黄/粉/青底禁白字·对比达标） */
+.lr-pipeline-step__bypass {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1.5px solid var(--lr-ink);
+  background: var(--lr-teal);
+  color: #000;
   font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
-  transform: translateY(-50%);
+  font-weight: 900;
+  line-height: 15px;
+}
+/* reduced-motion 全降瞬时（孟菲斯规范）；流动点以静态可见保留指示 */
+@media (prefers-reduced-motion: reduce) {
+  .lr-pipeline-flow *,
+  .lr-pipeline-flow::before,
+  .lr-pipeline-flow::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .lr-pipeline-flow--flowing .lr-pipeline-link--live .lr-pipeline-link__flow {
+    opacity: 1;
+  }
 }
