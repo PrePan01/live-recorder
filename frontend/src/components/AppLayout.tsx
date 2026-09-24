@@ -162,29 +162,30 @@ export default function AppLayout() {
         <Content
           className="lr-app-content"
           style={{
-            padding: "clamp(12px, 2vw, 24px)",
             overflow: "auto",
             minWidth: 0,
             position: "relative",
           }}
         >
-          {/* Keep navigation and the status bar alive when one page fails. */}
-          <LazyRouteErrorBoundary key={pathname}>
-            <Suspense
-              fallback={
-                <div
-                  style={{
-                    minHeight: 180,
-                    display: "grid",
-                    placeItems: "center",
-                    background: "#fff",
-                  }}
-                ></div>
-              }
-            >
-              <Outlet />
-            </Suspense>
-          </LazyRouteErrorBoundary>
+          <div className="lr-app-content__inner">
+            {/* Keep navigation and the status bar alive when one page fails. */}
+            <LazyRouteErrorBoundary key={pathname}>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      minHeight: 180,
+                      display: "grid",
+                      placeItems: "center",
+                      background: "#fff",
+                    }}
+                  ></div>
+                }
+              >
+                <Outlet />
+              </Suspense>
+            </LazyRouteErrorBoundary>
+          </div>
           {isPending ? (
             <div
               role="status"

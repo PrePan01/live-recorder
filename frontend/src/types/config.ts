@@ -45,6 +45,25 @@ export interface PredictionImportSummary {
   recordingSessions: number;
 }
 
+export interface RecordingArchiveEntry {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  streamSessionId: string | null;
+  streamTitle: string;
+  roomName: string;
+  state: 'completed' | 'failed';
+  fileSizeBytes: number;
+  retryCount: number;
+  quality: string | null;
+  integrity: string | null;
+  createdAt: string;
+}
+
+export interface RecordingArchive {
+  rooms: Array<{ platform: string; url: string; recordings: RecordingArchiveEntry[] }>;
+}
+
 /** v1.4：配置导出 */
 export interface ExportConfig {
   version: 1;
@@ -52,6 +71,7 @@ export interface ExportConfig {
   settings: Settings;
   rooms: Room[];
   alerts: Alert[];
+  recordings: RecordingArchive;
   prediction: { rooms: PredictionArchiveRoom[] };
 }
 
@@ -69,6 +89,7 @@ export interface ImportConfigInput {
   settings?: Partial<Settings>;
   rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean }>;
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
+  recordings?: RecordingArchive;
 }
 
 export interface ImportResult {
@@ -77,6 +98,8 @@ export interface ImportResult {
   importedRooms: number;
   skippedRooms: number;
   importedAlerts: number;
+  /** 旧备份没有录制历史时为 null。 */
+  recordings: { matchedRooms: number; skippedRooms: number; recordings: number } | null;
   /** 文件里没有开播预测数据时为 null。 */
   prediction: PredictionImportSummary | null;
 }

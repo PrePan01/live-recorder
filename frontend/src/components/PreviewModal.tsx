@@ -41,6 +41,8 @@ const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
 /** 弹窗主体左右内边距合计（antd 默认各 24）：视频区宽度 = 弹窗宽度 - 该值。 */
 const MODAL_BODY_PADDING_X = 48;
+/** Ant Modal 在视口两侧至少保留 16px，视频缩放也必须预留这段空间。 */
+const MODAL_VIEWPORT_GUTTER_X = 32;
 /** 标题栏 + 主体上下内边距 + 视频下方操作行 + 居中留白：竖屏据此把画面压在可视高度内。 */
 const MODAL_CHROME_HEIGHT = 190;
 /** 竖屏拖拽缩放的画面高度下限，避免缩到不可用。 */
@@ -90,6 +92,7 @@ export default function PreviewModal({
   const [streamRatio, setStreamRatio] = useState(16 / 9);
   // 竖屏画面高度（宽度按比例算出）；null = 用满可视高度上限，用户拖拽后才取值。
   const [portraitHeight, setPortraitHeight] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [highlightSeconds, setHighlightSeconds] = useState(30);
   const [highlightMaxSeconds, setHighlightMaxSeconds] = useState(300);
@@ -132,6 +135,11 @@ export default function PreviewModal({
 
   // 画面按流的真实宽高比排版：横屏按宽度，竖屏按高度（默认用满可视高度，可拖拽缩放）。
   const maxVideoHeight = Math.max(180, viewportHeight - MODAL_CHROME_HEIGHT);
+  const maxModalWidth = Math.max(
+    MODAL_BODY_PADDING_X + 1,
+    viewportWidth - MODAL_VIEWPORT_GUTTER_X,
+  );
+  const maxVideoWidth = Math.max(1, maxModalWidth - MODAL_BODY_PADDING_X);
   const portrait = streamRatio < 1;
   const videoBox = portrait
     ? fitPreviewBoxByHeight(
@@ -139,8 +147,15 @@ export default function PreviewModal({
         portraitHeight ?? maxVideoHeight,
         maxVideoHeight,
       )
-    : fitPreviewBox(streamRatio, Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoHeight);
-  const modalWidth = Math.ceil(videoBox.width + MODAL_BODY_PADDING_X);
+    : fitPreviewBox(
+        streamRatio,
+        Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
+        maxVideoHeight,
+      );
+  const modalWidth = Math.min(
+    maxModalWidth,
+    Math.ceil(videoBox.width + MODAL_BODY_PADDING_X),
+  );
   // 画中画同样按真实比例，以固定宽度为基准，并且不超过窗口高度。
   const pictureBox = fitPreviewBox(
     streamRatio,
@@ -148,9 +163,12 @@ export default function PreviewModal({
     Math.max(120, viewportHeight - 20),
   );
 
-  // 窗口高度变化时重算竖屏画面的高度上限。
+  // 视口变化时重算画面边界，避免横屏拖大后再缩小窗口时视频越界。
   useEffect(() => {
-    const onResize = () => setViewportHeight(window.innerHeight);
+    const onResize = () => {
+      setViewportWidth(window.innerWidth);
+      setViewportHeight(window.innerHeight);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -462,7 +480,11 @@ export default function PreviewModal({
       setWidth(
         Math.min(
           MAX_WIDTH,
-          Math.max(MIN_WIDTH, drag.startW + (ev.clientX - drag.startX)),
+          maxModalWidth,
+          Math.max(
+            Math.min(MIN_WIDTH, maxModalWidth),
+            drag.startW + (ev.clientX - drag.startX),
+          ),
         ),
       );
     };

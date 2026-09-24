@@ -546,6 +546,9 @@ export default function SettingsPage() {
               : ""),
         );
       }
+      if (result.recordings) {
+        parts.push(`录制历史 ${result.recordings.recordings} 条`);
+      }
       message.success(`导入完成：${parts.join("，")}`);
       await load();
     } catch (e) {

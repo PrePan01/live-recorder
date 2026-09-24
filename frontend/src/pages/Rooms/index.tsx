@@ -833,9 +833,9 @@ export default function Rooms() {
         <Form form={form} layout="vertical">
           <Form.Item
             name="url"
-            label="直播链接"
+            label="直播间链接"
             rules={[
-              { required: true, message: "请输入直播链接" },
+              { required: true, message: "请输入直播间链接" },
               {
                 validator: (_, v: string) =>
                   !v || guessPlatform(v)
@@ -871,7 +871,6 @@ export default function Rooms() {
             name="liveNotificationEnabled"
             label="开播提醒"
             valuePropName="checked"
-            extra="检测到该直播间从未开播变为开播时发送桌面通知"
           >
             <Switch />
           </Form.Item>

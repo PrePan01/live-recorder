@@ -143,6 +143,9 @@
   background: var(--lr-bg);
   scrollbar-gutter: stable;
 }
+.lr-app-content__inner {
+  padding: clamp(12px, 2vw, 24px);
+}
 .lr-app-footer {
   border-top: 3px solid var(--lr-ink);
   background: var(--lr-surface) !important;

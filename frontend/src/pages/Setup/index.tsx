@@ -126,7 +126,7 @@ export default function Setup() {
     <main className="lr-setup-page">
       <header className="lr-setup-brand" aria-label="直播录制台">
         <img src="/icon1.png" alt="" draggable={false} />
-        <span>直播录制台</span>
+        <span>欢迎使用 直播录制台</span>
       </header>
       <Card className="lr-setup-card" title="首次设置">
         <Steps

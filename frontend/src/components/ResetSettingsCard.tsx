@@ -136,7 +136,7 @@ export default function ResetSettingsCard({
             </Button>
           </Space>
           <Typography.Text type="secondary">
-            导出包含当前配置、房间、告警与开播预测记录，不包含录像文件或密码/Cookie/令牌。凭证恢复后需重新填写。
+            导出包含当前配置、房间、告警、录制历史数据与开播预测记录，不包含录像文件或密码/Cookie/令牌。凭证恢复后需重新填写。
           </Typography.Text>
           <Checkbox
             checked={keepRecordings}
