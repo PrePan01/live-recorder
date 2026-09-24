@@ -38,12 +38,27 @@ export default function PipelineConfigCard() {
       );
   };
 
+  // 总开关刚开启时 exportAudio 字段才挂载：回填服务端值再保存，
+  // 避免把 undefined 发回覆盖既有配置（task #58）。
+  const onValuesChange = (
+    _changed: Record<string, unknown>,
+    all: Record<string, unknown>,
+  ) => {
+    if (all.enabled && all.exportAudio === undefined && config) {
+      const v = config.exportAudio ?? false;
+      form.setFieldValue("exportAudio", v);
+      save({ ...all, exportAudio: v });
+      return;
+    }
+    save(all);
+  };
+
   return (
     <Form
       form={form}
       layout="vertical"
       size="small"
-      onValuesChange={(_, all) => save(all)}
+      onValuesChange={onValuesChange}
     >
       <Form.Item
         label="启用后处理管线"
@@ -72,6 +87,16 @@ export default function PipelineConfigCard() {
             }
           >
             <InputNumber min={0} max={86400} style={{ width: "100%" }} />
+          </Form.Item>
+          {/* task #58：导出音频文件——总开关未启用时整块不展示（PrePan 修正）；
+              默认关，只影响之后触发的 run（配置在 run 启动时快照） */}
+          <Form.Item
+            label="导出音频文件"
+            name="exportAudio"
+            valuePropName="checked"
+            extra="录制完成后自动转换出 MP3（CBR 192k，仅留录制目录）"
+          >
+            <Switch />
           </Form.Item>
           <Form.Item
             label="压缩档位 CRF（0-51，空=不压缩）"
