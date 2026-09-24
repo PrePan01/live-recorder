@@ -94,7 +94,7 @@ export default function PipelineConfigCard() {
             label="导出音频文件"
             name="exportAudio"
             valuePropName="checked"
-            extra="录制完成后自动转换出 MP3（CBR 192k，仅留录制目录）"
+            extra="录制完成后自动转换出 MP3"
           >
             <Switch />
           </Form.Item>

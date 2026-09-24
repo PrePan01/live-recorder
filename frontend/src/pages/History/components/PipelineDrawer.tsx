@@ -1,4 +1,3 @@
-// 拆分（task #62）：管线详情抽屉——自 index.tsx 原样迁移，props 显式。
 import { Drawer, Space, Typography } from "antd";
 import PipelineTimeline from "../../../components/PipelineTimeline";
 import UploadStatus from "../../../components/UploadStatus";
@@ -12,22 +11,21 @@ export default function PipelineDrawer({
   onClose: () => void;
 }) {
   return (
-      <Drawer
-        title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ""}`}
-        open={pipelineRec !== null}
-        size={520}
-        onClose={onClose}
-      >
-        {pipelineRec ? (
-          <Space orientation="vertical" style={{ width: "100%" }} size={20}>
-            <PipelineTimeline recordingId={pipelineRec.id} />
-            <Typography.Title level={5} style={{ marginBottom: 0 }}>
-              上传
-            </Typography.Title>
-            <UploadStatus recordingId={pipelineRec.id} />
-          </Space>
-        ) : null}
-      </Drawer>
-
+    <Drawer
+      title={`管线：${pipelineRec?.streamTitle || pipelineRec?.id || ""}`}
+      open={pipelineRec !== null}
+      size={520}
+      onClose={onClose}
+    >
+      {pipelineRec ? (
+        <Space orientation="vertical" style={{ width: "100%" }} size={20}>
+          <PipelineTimeline recordingId={pipelineRec.id} />
+          <Typography.Title level={5} style={{ marginBottom: 0 }}>
+            上传
+          </Typography.Title>
+          <UploadStatus recordingId={pipelineRec.id} />
+        </Space>
+      ) : null}
+    </Drawer>
   );
 }

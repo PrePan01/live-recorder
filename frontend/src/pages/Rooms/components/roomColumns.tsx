@@ -1,7 +1,15 @@
-// 拆分（task #62）：直播间表格列定义——自 index.tsx 原样迁移为工厂函数；
-// 闭包依赖改为显式入参（原标识符名），列体/渲染/文案/类名零改动。
 import type { Dispatch, SetStateAction } from "react";
-import { App, Button, Input, Select, Space, Switch, Tag, Tooltip, Typography } from "antd";
+import {
+  App,
+  Button,
+  Input,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import {
   DeleteOutlined,
   EditOutlined,

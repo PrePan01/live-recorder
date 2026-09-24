@@ -1,4 +1,3 @@
-// 拆分（task #62）：历史页常量/工具——自 index.tsx 原样迁移，零改动。
 import { bridge } from "../../../stores/bootStore";
 
 const QUALITY_LABEL: Record<string, string> = {
