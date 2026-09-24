@@ -123,6 +123,8 @@ export interface PipelineConfig {
   maxConcurrency: number;
   /** 导出音频（mp3，CBR 192k）；默认关，只对之后触发的 run 生效（评估稿 c0e54a5f）。 */
   exportAudio: boolean;
+  /** 封面导出（管线可选步骤，默认开保持现状行为，关=skipped 不执行，task #71）。 */
+  exportCover: boolean;
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -133,6 +135,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   archiveDirectory: '',
   maxConcurrency: 2,
   exportAudio: false,
+  exportCover: true,
 };
 
 export interface SettingsView {

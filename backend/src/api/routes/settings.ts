@@ -370,6 +370,9 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
   if (config.exportAudio !== undefined && typeof config.exportAudio !== 'boolean') {
     return new AppError('PIPELINE_CONFIG_INVALID', 'exportAudio 必须为布尔值');
   }
+  if (config.exportCover !== undefined && typeof config.exportCover !== 'boolean') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'exportCover 必须为布尔值');
+  }
   return null;
 }
 

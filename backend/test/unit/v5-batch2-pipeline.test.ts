@@ -304,6 +304,74 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
   });
 });
 
+describe('管线封面可选步骤 exportCover（task #71）', () => {
+  async function seedMp4(): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/cov${Math.random().toString(36).slice(2, 8)}`, displayName: 'c' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-cov', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cov-'));
+    const file = path.join(dir, 'x.mp4');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { services, rec, file };
+  }
+
+  async function runTo(services: Services, recId: string): Promise<void> {
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it('配置：默认开、PUT 关闭往返、非布尔 422（载荷只加不改）', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/pipeline' })).json();
+    expect(def.pipeline.exportCover).toBe(true);
+    const off = (await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: false } })).json();
+    expect(off.pipeline.exportCover).toBe(false);
+    expect(off.pipeline.exportAudio).toBe(false); // 既有键不受影响
+    const on = (await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: true } })).json();
+    expect(on.pipeline.exportCover).toBe(true);
+    const bad = await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: 'yes' } });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('PIPELINE_CONFIG_INVALID');
+    await app.close();
+  });
+
+  it.runIf(FFMPEG_OK)('关：cover 步 skipped、不产出 .covers/封面、run ok（现状行为唯一变化=可关）', async () => {
+    const { services, rec, file } = await seedMp4();
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: false } });
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'cover')?.status).toBe('skipped');
+    await expect(access(path.join(path.dirname(file), '.covers'))).rejects.toThrow(); // 未执行不建目录
+    expect(services.recordings.get(rec.id)!.coverPath).toBeFalsy();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('默认开（旧配置无键经内联默认回填）：cover 执行出封面，现状不回退', async () => {
+    const { services, rec, file } = await seedMp4();
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    // 直接 save 不带 exportCover —— 模拟升级前旧配置对象
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false } as never });
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    const cover = run.artifacts.find((a) => a.step === 'cover');
+    expect(cover?.status).toBe('ok');
+    expect(services.recordings.get(rec.id)!.coverPath).toBeTruthy();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+});
+
 describe('孤儿管线 run 启动恢复（task #59 / QA C4）', () => {
   async function seedOrphan(opts: { file: string | null; runStatus: 'queued' | 'running' }) {
     const services = newServices();

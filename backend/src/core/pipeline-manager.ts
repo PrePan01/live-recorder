@@ -36,7 +36,7 @@ export class PipelineManager {
   pipelineConfig(): PipelineConfig {
     const settings = this.services.settings.load();
     const stored = settings?.pipeline;
-    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, ...(stored ?? {}) };
+    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, ...(stored ?? {}) };
   }
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
@@ -135,15 +135,19 @@ export class PipelineManager {
       this.services.recordings.update(recording.id, { metadata });
       this.pipelineRepo.setArtifact(sidecar.id, { status: 'ok', path: recording.filePath, sizeBytes: st.size, endedAt: this.services.clock.iso() });
 
-      // ③ cover：封面帧（可选，失败不阻断）。
-      const coverDir = path.join(path.dirname(recording.filePath), '.covers');
-      await mkdir(coverDir, { recursive: true });
-      const cover = await extractCoverFrame(recording.filePath, coverDir, path.basename(recording.filePath).replace(/\.[^.]+$/, ''));
-      if (cover) {
-        this.services.recordings.update(recording.id, { coverPath: cover.coverPath });
-      }
+      // ③ cover：封面帧（可选，失败不阻断；exportCover 默认开，关=本步 skipped 不执行——task #71，run 快照语义同 exportAudio）。
       const coverArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'cover' });
-      this.pipelineRepo.setArtifact(coverArt.id, cover ? { status: 'ok', path: cover.coverPath, sizeBytes: cover.sizeBytes, endedAt: this.services.clock.iso() } : { status: 'skipped', endedAt: this.services.clock.iso() });
+      if (config.exportCover) {
+        const coverDir = path.join(path.dirname(recording.filePath), '.covers');
+        await mkdir(coverDir, { recursive: true });
+        const cover = await extractCoverFrame(recording.filePath, coverDir, path.basename(recording.filePath).replace(/\.[^.]+$/, ''));
+        if (cover) {
+          this.services.recordings.update(recording.id, { coverPath: cover.coverPath });
+        }
+        this.pipelineRepo.setArtifact(coverArt.id, cover ? { status: 'ok', path: cover.coverPath, sizeBytes: cover.sizeBytes, endedAt: this.services.clock.iso() } : { status: 'skipped', endedAt: this.services.clock.iso() });
+      } else {
+        this.pipelineRepo.setArtifact(coverArt.id, { status: 'skipped', endedAt: this.services.clock.iso() });
+      }
 
       // ④ segment：切片（segmentSeconds>0 时）。
       if (config.segmentSeconds > 0) {
