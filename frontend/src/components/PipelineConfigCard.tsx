@@ -81,8 +81,13 @@ export default function PipelineConfigCard() {
     fetchPipelineConfig()
       .then((c) => {
         setConfig(c);
-        // 旧语义反推三个步骤开关的初值（0/null/空串=关，task #65）。
-        form.setFieldsValue({ ...c, ...derivePipelineSwitches(c) });
+        // 旧语义反推三个步骤开关的初值（0/null/空串=关，task #65）；
+        // exportCover 兼容后端热更前的缺键（缺=默认开，task #70）。
+        form.setFieldsValue({
+          ...c,
+          exportCover: c.exportCover ?? true,
+          ...derivePipelineSwitches(c),
+        });
       })
       .catch((e) =>
         message.error(
@@ -107,12 +112,20 @@ export default function PipelineConfigCard() {
     changed: Record<string, unknown>,
     all: Record<string, unknown>,
   ) => {
-    // 总开关刚开启时 exportAudio 字段才挂载：回填服务端值再保存，
-    // 避免把 undefined 发回覆盖既有配置（task #58）。
-    if (all.enabled && all.exportAudio === undefined && config) {
-      const v = config.exportAudio ?? false;
-      form.setFieldValue("exportAudio", v);
-      save({ ...all, exportAudio: v });
+    // 总开关刚开启时步骤字段才挂载：回填服务端值再保存，
+    // 避免把 undefined 发回覆盖既有配置（task #58；#70 起兼回填 exportCover）。
+    if (
+      all.enabled &&
+      config &&
+      (all.exportAudio === undefined || all.exportCover === undefined)
+    ) {
+      const patch: Record<string, unknown> = {};
+      if (all.exportAudio === undefined)
+        patch.exportAudio = config.exportAudio ?? false;
+      if (all.exportCover === undefined)
+        patch.exportCover = config.exportCover ?? true;
+      form.setFieldsValue(patch);
+      save({ ...all, ...patch });
       return;
     }
 
@@ -143,6 +156,7 @@ export default function PipelineConfigCard() {
   const archiveOn = Form.useWatch("archiveEnabled", form) === true;
   const verifyOn = Form.useWatch("verify", form) === true;
   const audioOn = Form.useWatch("exportAudio", form) === true;
+  const coverOn = Form.useWatch("exportCover", form) === true;
   const segVal = Number(Form.useWatch("segmentSeconds", form) ?? 0);
   const crfVal = Form.useWatch("crf", form);
 
@@ -157,7 +171,7 @@ export default function PipelineConfigCard() {
         label="启用后处理管线"
         name="enabled"
         valuePropName="checked"
-        extra="录制完成后执行校验/切片/压缩/归档"
+        extra="录制完成后执行校验/封面/切片/压缩/归档"
       >
         <Switch />
       </Form.Item>
@@ -175,15 +189,33 @@ export default function PipelineConfigCard() {
               </Form.Item>
             }
           />
-          <PipeLink auto="元数据 · 封面 · 自动执行" />
+          <PipeLink auto="2 元数据 · 自动执行" />
+          {/* task #70：封面导出可选步骤（exportCover 默认开，BE #71 契约；关=step skipped） */}
           <StepCard
-            num="2"
+            num="3"
+            label="封面"
+            tip="导出封面帧用于历史列表展示；默认开"
+            desc="录制完成后导出封面帧"
+            on={coverOn}
+            switchNode={
+              <Form.Item
+                name="exportCover"
+                valuePropName="checked"
+                noStyle
+              >
+                <Switch />
+              </Form.Item>
+            }
+          />
+          <PipeLink />
+          <StepCard
+            num="4"
             label="切片"
-            tip="按秒切分录制文件；关=不切片（写 0），开=每 N 秒一片（首开默认 10s）"
+            tip="按秒切分录制文件；首开默认 10 秒"
             desc={
               segOn && segVal > 0
-                ? `每 ${segVal}s 切片（0 = 不切片）`
-                : "0 = 不切片"
+                ? `每 ${segVal} 秒切分录制文件`
+                : "按秒切分录制文件"
             }
             on={segOn}
             switchNode={
@@ -206,9 +238,9 @@ export default function PipelineConfigCard() {
           {/* task #58：导出音频文件——总开关未启用时整块不展示（PrePan 修正）；
               默认关，只影响之后触发的 run（配置在 run 启动时快照） */}
           <StepCard
-            num="3"
+            num="5"
             label="导出音频"
-            tip="录制完成后自动转换出 MP3（192k CBR）；关=不导出"
+            tip="录制完成后自动转换出 MP3（192k CBR）"
             desc="录制完成后自动转换出 MP3"
             on={audioOn}
             switchNode={
@@ -223,13 +255,13 @@ export default function PipelineConfigCard() {
           />
           <PipeLink />
           <StepCard
-            num="4"
+            num="6"
             label="压缩"
-            tip="转封装/压缩为 MP4；CRF 越低质量越高（首开默认 23），关=保持源格式不压缩"
+            tip="转封装/压缩为 MP4；CRF 越低质量越高，首开默认 23"
             desc={
               crfOn && crfVal != null
-                ? `CRF ${crfVal}（越低质量越高，0-51）`
-                : "空 = 不压缩（0-51）"
+                ? `CRF ${crfVal}，越低质量越高（0-51）`
+                : "转封装/压缩输出 MP4"
             }
             on={crfOn}
             switchNode={
@@ -246,10 +278,10 @@ export default function PipelineConfigCard() {
           </StepCard>
           <PipeLink />
           <StepCard
-            num="5"
+            num="7"
             label="归档"
-            tip="完成后移动到归档目录；关=不归档（写空）"
-            desc="空 = 不归档；开启前先填目录"
+            tip="完成后移动到归档目录；开启前需先填写路径"
+            desc="完成后移动到归档目录"
             on={archiveOn}
             switchNode={
               <Form.Item
