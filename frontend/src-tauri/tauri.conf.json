@@ -35,7 +35,9 @@
       "nsis"
     ],
     "resources": {
-      "../../backend": "backend"
+      "../../backend/dist": "backend/dist",
+      "../../backend/node_modules": "backend/node_modules",
+      "../../backend/package.json": "backend/package.json"
     },
     "icon": [
       "icons/32x32.png",
