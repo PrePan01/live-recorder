@@ -70,6 +70,29 @@ describe("DouyinAdapter", () => {
     ]);
   });
 
+  it("uses the enter API's 1080px avatar_large URL without a second page request", async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() =>
+        livePayload({
+          user: {
+            nickname: "抖音主播",
+            avatar_thumb: {
+              url_list: ["https://p3.douyinpic.com/img/a~c5_100x100.jpeg"],
+            },
+            avatar_large: {
+              url_list: ["https://p9.douyinpic.com/img/a~c5_1080x1080.jpeg"],
+            },
+          },
+        }),
+      ),
+    );
+    await expect(
+      a.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x"),
+    ).resolves.toMatchObject({
+      avatarUrl: "https://p9.douyinpic.com/img/a~c5_1080x1080.jpeg",
+    });
+  });
+
   it("昵称解析不到时用房间号占位，绝不用直播间标题冒充主播昵称（添加房间显示名回归）", async () => {
     // enter 缺 user.nickname 且页面解析不到昵称：以前 displayName 会用 title 兜底，
     // 添加房间后「显示名」就变成了当场的直播标题。昵称只能来自昵称源，取不到就用占位。
@@ -695,6 +718,20 @@ describe("DouyinAdapter", () => {
     const p = await a.fetchAnchorProfile("13579", undefined, "有昵称");
     expect(p).toEqual({ name: "有昵称", avatar: null });
     expect(pageHits).toBe(0);
+  });
+
+  it("优先保存 SSR avatar_larger.url_list 的高清头像", async () => {
+    const a = new DouyinAdapter(
+      (async () =>
+        new Response(
+          `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;主播&quot;,&quot;avatar&quot;:&quot;https://p3.douyinpic.com/img/tos/a~c5_100x100.jpeg&quot;}"></div><script>{"avatar_larger":{"url_list":["https://p9.douyinpic.com/img/tos/a~c5_1080x1080.jpeg"]}}</script></html>`,
+          { status: 200, headers: { "content-type": "text/html" } },
+        )) as typeof fetch,
+    );
+    await expect(a.fetchAnchorProfile("24680")).resolves.toEqual({
+      name: "主播",
+      avatar: "https://p9.douyinpic.com/img/tos/a~c5_1080x1080.jpeg",
+    });
   });
 
 });

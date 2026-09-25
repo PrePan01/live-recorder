@@ -4,6 +4,7 @@ import {
   Button,
   Col,
   Card,
+  Popover,
   Popconfirm,
   Space,
   Tag,
@@ -156,20 +157,62 @@ export const RoomCard = memo(function RoomCard({
         className={`lr-room-card ${onAir ? "lr-room-card--live" : "lr-room-card--offline"} ${layout === "list" ? "lr-room-card--list" : ""}`}
         styles={{ body: { padding: 14 } }}
         title={
-          <Space className="lr-room-card__title-row" align="center">
-            <Tooltip title={room.displayName}>
-              <Typography.Text className="lr-room-card__title" strong ellipsis>
-                {room.displayName}
-              </Typography.Text>
-            </Tooltip>
-            {room.titleFallbackUsed ? (
-              <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  （回退标题）
+          <>
+            <div className="lr-room-card__corner">
+              <div className="lr-room-card__corner-rot">
+                <Popover
+                  content={
+                    <div className="lr-room-card__avatar-preview">
+                      <RoomAvatar
+                        platform={room.platform}
+                        avatarUrl={room.avatarUrl}
+                        name={room.displayName}
+                        live={onAir}
+                        size={120}
+                      />
+                    </div>
+                  }
+                  mouseEnterDelay={0.15}
+                  placement="rightTop"
+                  trigger="hover"
+                >
+                  <span
+                    className="lr-room-card__avatar-trigger"
+                    aria-label="查看高清头像"
+                  >
+                    <RoomAvatar
+                      platform={room.platform}
+                      avatarUrl={room.avatarUrl}
+                      name={room.displayName}
+                      live={onAir}
+                      size={40}
+                    />
+                  </span>
+                </Popover>
+                <span className="lr-room-card__corner-logo">
+                  <PlatformLogoTag platform={room.platform} />
+                </span>
+              </div>
+            </div>
+            <Space className="lr-room-card__title-row" align="center">
+              <Tooltip title={room.displayName}>
+                <Typography.Text
+                  className="lr-room-card__title"
+                  strong
+                  ellipsis
+                >
+                  {room.displayName}
                 </Typography.Text>
               </Tooltip>
-            ) : null}
-          </Space>
+              {room.titleFallbackUsed ? (
+                <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    （回退标题）
+                  </Typography.Text>
+                </Tooltip>
+              ) : null}
+            </Space>
+          </>
         }
         extra={
           <Space size={0}>
@@ -213,22 +256,6 @@ export const RoomCard = memo(function RoomCard({
           </Space>
         }
       >
-        {/* 头像角饰：clip 对齐卡片左上角裁切（口径更正=容器裁剪仅溢出一小部分），
-            内层 15° 斜置，平台 logo 缩小附右下角反旋正立；随卡同步动效 */}
-        <div className="lr-room-card__corner">
-          <div className="lr-room-card__corner-rot">
-            <RoomAvatar
-              platform={room.platform}
-              avatarUrl={room.avatarUrl}
-              name={room.displayName}
-              live={onAir}
-              size={50}
-            />
-            <span className="lr-room-card__corner-logo">
-              <PlatformLogoTag platform={room.platform} />
-            </span>
-          </div>
-        </div>
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
           <LiveStatusTag
             status={room.lastLiveStatus}

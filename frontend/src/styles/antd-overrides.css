@@ -22,7 +22,7 @@
 .ant-card-head {
   min-height: 45px !important;
   padding: 0 14px !important;
-  border-bottom: 1px solid var(--lr-ink) !important;
+  border-bottom: 1px dashed var(--lr-ink) !important;
   background: transparent !important;
 }
 .ant-card-head-title {

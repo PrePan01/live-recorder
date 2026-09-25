@@ -35,12 +35,22 @@ interface DouyinEnterData {
     id?: string;
     status?: number;
     title?: string;
-    user?: { nickname?: string };
+    user?: {
+      nickname?: string;
+      avatar_thumb?: DouyinImage;
+      avatar_medium?: DouyinImage;
+      avatar_large?: DouyinImage;
+      avatar_larger?: DouyinImage;
+    };
     stream_url?: {
       flv_pull_url?: Record<string, string>;
       default_resolution?: string;
     };
   }>;
+}
+
+interface DouyinImage {
+  url_list?: unknown;
 }
 
 interface DouyinEnterResponse {
@@ -61,6 +71,21 @@ function decodeEntities(s: string): string {
 
 /** 主播昵称 TTL 缓存：昵称基本不变，避免每次检测都拉直播间页面。 */
 const NICK_TTL_MS = 10 * 60_000;
+
+/** enter 接口已携带多个头像档位；优先取高清地址，避免再请求直播间 HTML。 */
+function preferredAvatarUrl(
+  ...images: Array<DouyinImage | undefined>
+): string | null {
+  for (const image of images) {
+    if (!Array.isArray(image?.url_list)) continue;
+    const url = image.url_list.find(
+      (item): item is string =>
+        typeof item === "string" && /^https?:\/\//.test(item),
+    );
+    if (url) return url;
+  }
+  return null;
+}
 
 function classifyStatusError(
   json: DouyinEnterResponse,
@@ -114,15 +139,6 @@ function enterHint(json: DouyinEnterResponse): string {
   return typeof raw?.prompts === "string" ? raw.prompts : "";
 }
 
-/**
- * “当前不在播”判定，只作用于**没有任何房间条目**（data.data 为空或缺失）的响应。
- * 抖音对已结束的房间有两种形状：
- * ① status_code=0 且没有房间条目（稳定未开播）；
- * ② 刚下播的一段时间内返回 status_code=30003 + “room has finished”，同样没有房间条目。
- * 以前只识别了 ①：②会落到 PLATFORM_CHANGED，于是房间下播后会误报“平台接口有变动”
- * （实测 status_code=30003 / hint="room has finished"）。
- * 凭证/风控类响应（8、10011、需登录等）不在本判定内，仍走原分类逻辑。
- */
 function isNotLiveResponse(json: DouyinEnterResponse): boolean {
   if ((json.data?.data?.length ?? 0) > 0) return false;
   if (json.status_code === 0) return true;
@@ -174,7 +190,10 @@ function isNetworkError(err: unknown): boolean {
 export class DouyinAdapter implements PlatformAdapter {
   readonly platform = "douyin" as const;
 
-  private nickCache = new Map<string, { name: string; avatar: string | null; at: number }>();
+  private nickCache = new Map<
+    string,
+    { name: string; avatar: string | null; at: number }
+  >();
   /**
    * enter 请求串行化：并发撞到抖音边缘节点会集中得到 444，再被立即重试放大成
    * 所有房间同时报“接口暂时不可用”，所以同一时刻只发一个 enter 请求。
@@ -203,8 +222,8 @@ export class DouyinAdapter implements PlatformAdapter {
    * data-anchor-info 也没有 nickname 字段，昵称解析必然失败（退化成用直播间标题充当昵称）。
    * 该页面与 enter 接口同属 live.douyin.com，使用同一份凭证不新增信任边界。
    *
-   * 同一次抓取顺带解析头像（avatar/avatar_thumb，仅收 http(s) 直链）——昵称/头像同源同缓存，
-   * 检测周期 0 额外请求；nicknameHint 存在时沿用旧逻辑不拉页面（头像降级 null，绝不为头像多发请求）。
+   * 同一次抓取顺带解析头像（avatar/avatar_thumb，仅收 http(s) 直链）——昵称/头像同源同缓存。
+   * enter 接口有高清头像时由调用方直接使用；nicknameHint 存在时无需再拉页面。
    */
   async fetchAnchorProfile(
     roomId: string,
@@ -229,6 +248,15 @@ export class DouyinAdapter implements PlatformAdapter {
       const html = await res.text();
       const asHttpUrl = (raw: string): string =>
         /^https?:\/\//.test(raw) ? raw : "";
+      const profileJson = html.replace(/\\"/g, '"').replace(/\\\//g, "/");
+      const avatarUrlFromList = (field: string): string => {
+        const match = profileJson.match(
+          new RegExp(
+            `"${field}"\\s*:\\s*\\{[\\s\\S]{0,2000}?"url_list"\\s*:\\s*\\[\\s*"([^"\\\\]+)"`,
+          ),
+        );
+        return match ? asHttpUrl(match[1]!.trim()) : "";
+      };
       let name = "";
       let avatar = "";
       // ① data-anchor-info 属性：HTML 实体编码的 JSON（{nickname, avatar, ...}）。
@@ -238,11 +266,19 @@ export class DouyinAdapter implements PlatformAdapter {
           const info = JSON.parse(decodeEntities(attr[1]!)) as {
             nickname?: unknown;
             avatar?: unknown;
+            avatar_larger?: unknown;
+            avatar_medium?: unknown;
           };
           const n =
             typeof info.nickname === "string" ? info.nickname.trim() : "";
           if (n) name = n;
-          const a = typeof info.avatar === "string" ? info.avatar.trim() : "";
+          const a =
+            [info.avatar_larger, info.avatar_medium, info.avatar]
+              .find(
+                (value): value is string =>
+                  typeof value === "string" && value.trim().length > 0,
+              )
+              ?.trim() ?? "";
           if (a) avatar = asHttpUrl(a);
         } catch {
           // 尝试其他来源
@@ -255,15 +291,28 @@ export class DouyinAdapter implements PlatformAdapter {
         );
         if (m) name = m[1]!.trim();
       }
-      // ③ SSR JSON 头像回退（avatar / avatar_thumb），仅收 http(s) 直链防脏值。
+      // ③ SSR 中的 avatar_larger / avatar_large 是含 url_list 的对象，通常为 1080px。
+      // 无论 data-anchor-info 是否已有普通头像，都用这个高清 URL 覆盖它。
+      const highResAvatar =
+        avatarUrlFromList("avatar_larger") || avatarUrlFromList("avatar_large");
+      if (highResAvatar) avatar = highResAvatar;
       if (!avatar) {
-        const m = html.match(
+        const mediumAvatar = avatarUrlFromList("avatar_medium");
+        const medium = html.match(
+          /(?:\\?"avatar_medium\\?"\s*:\s*\\?"|"avatar_medium"\s*:\s*")([^"\\]{1,400})/,
+        );
+        const fallback = html.match(
           /(?:\\?"avatar(?:_thumb)?\\?"\s*:\s*\\?"|"avatar(?:_thumb)?"\s*:\s*")([^"\\]{1,400})/,
         );
-        if (m) avatar = asHttpUrl(m[1]!.trim());
+        const m = medium ?? fallback;
+        avatar = mediumAvatar || (m ? asHttpUrl(m[1]!.trim()) : "");
       }
       if (!name) return { name: null, avatar: avatar || null };
-      this.nickCache.set(roomId, { name, avatar: avatar || null, at: Date.now() });
+      this.nickCache.set(roomId, {
+        name,
+        avatar: avatar || null,
+        at: Date.now(),
+      });
       return { name, avatar: avatar || null };
     } catch {
       return { name: null, avatar: null };
@@ -516,11 +565,22 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
-    const profile = await this.fetchAnchorProfile(
-      roomId,
-      cookie,
-      entry.user?.nickname?.trim() || undefined,
+    const entryAvatar = preferredAvatarUrl(
+      entry.user?.avatar_larger,
+      entry.user?.avatar_large,
+      entry.user?.avatar_medium,
+      entry.user?.avatar_thumb,
     );
+    const profile = entryAvatar
+      ? {
+          name: entry.user?.nickname?.trim() || null,
+          avatar: entryAvatar,
+        }
+      : await this.fetchAnchorProfile(
+          roomId,
+          cookie,
+          entry.user?.nickname?.trim() || undefined,
+        );
     const nickname = profile.name || "";
     const streamTitle = entry.title;
     const base = nickname

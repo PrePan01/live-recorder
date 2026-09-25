@@ -146,11 +146,6 @@
   font-weight: 900;
 }
 
-/* ---- 设置页视觉层级规范（task #74 · PrePan 98d3cd6e）----
-   L1 卡标题 16/900 → L2 小节标题 14/800 → L3 表单标签 13/600 → L4 控件正文（antd small 原生）
-   → L5 辅助说明 12/400 muted；间距 4/8 节奏（form-item 16、label 4、extra 4、body 16、section 16）。
-   作用域仅设置页（.lr-settings-grid/.lr-settings-card），不动全局 antd 主题；
-   置于本文件前段=管线等更具体规则仍在其后按层叠序自然覆盖。 */
 .lr-settings-card .ant-card-head .ant-card-head-title {
   font-size: 16px;
 }
@@ -516,7 +511,7 @@
   color: var(--lr-error);
 }
 .lr-room-card {
-  border-top-width: 5px !important;
+  border-top-width: 3px !important;
   transition: transform 260ms var(--lr-bounce) !important;
 }
 .lr-room-card,
@@ -577,6 +572,7 @@
   overflow: hidden;
   font-size: 16px;
   line-height: 1.2;
+  padding-left: 14px;
 }
 
 .lr-floating-recorder-toggle.ant-btn {
@@ -1250,7 +1246,6 @@
   }
 }
 
-/* 监控卡片/历史列表 · 主播头像（孟菲斯：2px 黑描边圆、开播撞色环用 outline 非投影、首字降级） */
 .lr-room-avatar {
   position: relative;
   display: inline-grid;
@@ -1259,7 +1254,6 @@
   height: var(--lr-avatar-size, 32px);
   overflow: hidden;
   place-items: center;
-  border: 2px solid var(--lr-ink);
   border-radius: 50%;
   background: var(--lr-surface-alt);
   color: #000;
@@ -1287,49 +1281,73 @@
   outline-offset: 1px;
 }
 
-/* 监控卡片 · 头像角饰（口径更正版）：clip 层对齐卡片左上角、裁掉「只溢出的一小部分」
-   （裁线与卡片边框对齐，随卡同步动效）；内层 15° 斜置放大头像；平台 logo 缩小附右下角反旋正立 */
 .lr-room-card__container {
   position: relative;
 }
 .lr-room-card__container .lr-room-card {
   position: relative;
 }
+.lr-room-card .ant-card-head {
+  position: relative;
+}
 .lr-room-card__corner {
   position: absolute;
   z-index: 2;
-  /* 对齐卡片外缘（border-top 5 / border-left 2 的孟菲斯描边厚度） */
-  top: -5px;
-  left: -2px;
-  width: 50px;
+  left: 0;
+  top: 50%;
+  width: 60px;
   height: 50px;
   overflow: hidden;
-  pointer-events: none;
+  transform: translateY(-50%);
+  pointer-events: auto;
 }
 .lr-room-card__corner-rot {
   position: absolute;
-  top: -12px;
-  left: -12px;
+  top: 0;
+  left: 8px;
   width: 50px;
   height: 50px;
-  transform: rotate(15deg);
+}
+.lr-room-card__avatar-trigger {
+  position: absolute;
+  display: inline-flex;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: zoom-in;
+}
+.lr-room-card__avatar-preview {
+  width: 120px;
+  height: 120px;
+}
+.lr-room-card__avatar-preview .lr-room-avatar {
+  width: 120px;
+  height: 120px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
 }
 .lr-room-card__corner-logo {
   position: absolute;
   z-index: 1;
-  right: -5px;
-  bottom: -5px;
-  transform: rotate(-15deg) scale(0.78);
+  right: 4px;
+  bottom: 2px;
   transform-origin: right bottom;
 }
 .lr-room-card__corner-logo .lr-platform-logo-tag {
   display: inline-flex;
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  min-height: 12px;
   align-items: center;
   margin: 0;
-  padding: 0 3px;
-  border: 1.5px solid var(--lr-ink) !important;
+  padding: 0 !important;
+  opacity: 0.8;
 }
-/* 标题避让头像占位（别压住卡内标题文字） */
+.lr-room-card__corner-logo .lr-platform-icon {
+  width: 10px;
+  height: 10px;
+}
 .lr-room-card .lr-room-card__title-row {
   padding-left: 30px;
 }
