@@ -1,3 +1,4 @@
+import { unknownStatusFallback } from './status-fallback.js';
 import { AppError } from '../types/error.js';
 import type { ErrorObject, Quality } from '../types/index.js';
 import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapter.js';
@@ -69,12 +70,12 @@ function isNetworkError(err: unknown): boolean {
 
 /**
  * 平台 HTTP 状态 → 用户看得懂的分类。
- * 5xx/限流是平台侧暂时不可用（可重试）；只有明确的接口不存在（404/405/410/501）才算"接口有变动"。
+ * 5xx/限流是平台侧暂时不可用（可重试）；只有明确的接口不存在（404/405）才算"接口有变动"（410/501 按规格入其余桶）。
  * 过去任何非 2xx 都走"接口有变动、等待适配更新"，把一次平台抖动报成了需要等更新的故障，
  * 而且不重试。状态码只留在 details 里，不进给用户看的文案。
  */
 function biliHttpError(status: number): AppError {
-  if (status === 404 || status === 405 || status === 410 || status === 501) {
+  if (status === 404 || status === 405) {
     return new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', { details: { httpStatus: status } });
   }
   return new AppError('NETWORK_UNAVAILABLE', 'B站接口暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: status } });
@@ -271,7 +272,8 @@ export class BilibiliAdapter implements PlatformAdapter {
       return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {}).toObject() };
+      // 第一层兜底：B 站 body 层业务码未知时说中性真话（原码透传），不断言接口变动。
+      return { status: 'error', error: unknownStatusFallback({ code: data.code, hint: (data as { msg?: string; message?: string }).msg ?? (data as { message?: string }).message, scope: 'bilibili-room' }).toObject() };
     }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);

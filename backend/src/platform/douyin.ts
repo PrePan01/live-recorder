@@ -1,3 +1,4 @@
+import { unknownStatusFallback } from './status-fallback.js';
 import { AppError } from "../types/error.js";
 import type { Quality } from "../types/index.js";
 import type {
@@ -145,7 +146,8 @@ function classifyStatusError(
       { retryable: false },
     );
   }
-  return new AppError("PLATFORM_CHANGED", "平台接口有变动，请稍后重试", {});
+  // 第一层兜底：未知 body 码说中性真话（原码+平台提示透传），不再断言接口变动。
+  return unknownStatusFallback({ code, hint: message.slice(0, 120), scope: "douyin-enter" });
 }
 
 /** enter 响应里平台侧的提示文案（message/prompts），用于区分限流/结束等语义。 */
