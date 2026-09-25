@@ -585,14 +585,20 @@ export default function SettingsPage() {
           >
             导出配置
           </Button>
-          <Button
-            size="small"
-            icon={<UploadOutlined />}
-            loading={importing}
-            onClick={() => fileRef.current?.click()}
+          <Popconfirm
+            title="导入将应用备份中的设置并合并房间/告警等数据，当前设置可能被覆盖。选择备份文件？"
+            okText="选择文件"
+            cancelText="取消"
+            onConfirm={() => fileRef.current?.click()}
           >
-            导入配置
-          </Button>
+            <Button
+              size="small"
+              icon={<UploadOutlined />}
+              loading={importing}
+            >
+              导入配置
+            </Button>
+          </Popconfirm>
         </Space>
       </div>
       {diskDanger ? (
