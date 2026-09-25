@@ -145,6 +145,41 @@
   font-family: var(--lr-display);
   font-weight: 900;
 }
+
+/* ---- 设置页视觉层级规范（task #74 · PrePan 98d3cd6e）----
+   L1 卡标题 16/900 → L2 小节标题 14/800 → L3 表单标签 13/600 → L4 控件正文（antd small 原生）
+   → L5 辅助说明 12/400 muted；间距 4/8 节奏（form-item 16、label 4、extra 4、body 16、section 16）。
+   作用域仅设置页（.lr-settings-grid/.lr-settings-card），不动全局 antd 主题；
+   置于本文件前段=管线等更具体规则仍在其后按层叠序自然覆盖。 */
+.lr-settings-card .ant-card-head .ant-card-head-title {
+  font-size: 16px;
+}
+.lr-settings-grid .lr-settings-section__title.ant-typography {
+  font-size: 14px;
+  font-weight: 800;
+}
+.lr-settings-grid .ant-form-item .ant-form-item-label {
+  padding-bottom: 4px;
+}
+.lr-settings-grid .ant-form-item-label > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.lr-settings-grid .ant-col .ant-form-item:not(.lr-pipeline-step .ant-form-item) {
+  margin-bottom: 16px;
+}
+.lr-settings-grid .ant-form-item-extra {
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--lr-muted);
+}
+.lr-settings-card > .ant-card-body {
+  padding: 16px !important;
+}
+.lr-settings-grid .lr-settings-section {
+  padding-top: 16px;
+}
 .lr-notification-matrix {
   display: grid;
   width: 100%;
