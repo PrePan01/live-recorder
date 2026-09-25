@@ -157,14 +157,6 @@ export const RoomCard = memo(function RoomCard({
         styles={{ body: { padding: 14 } }}
         title={
           <Space className="lr-room-card__title-row" align="center">
-            <RoomAvatar
-              platform={room.platform}
-              avatarUrl={room.avatarUrl}
-              name={room.displayName}
-              live={onAir}
-              size={32}
-            />
-            <PlatformLogoTag platform={room.platform} />
             <Tooltip title={room.displayName}>
               <Typography.Text className="lr-room-card__title" strong ellipsis>
                 {room.displayName}
@@ -221,6 +213,22 @@ export const RoomCard = memo(function RoomCard({
           </Space>
         }
       >
+        {/* 头像角饰：clip 对齐卡片左上角裁切（口径更正=容器裁剪仅溢出一小部分），
+            内层 15° 斜置，平台 logo 缩小附右下角反旋正立；随卡同步动效 */}
+        <div className="lr-room-card__corner">
+          <div className="lr-room-card__corner-rot">
+            <RoomAvatar
+              platform={room.platform}
+              avatarUrl={room.avatarUrl}
+              name={room.displayName}
+              live={onAir}
+              size={50}
+            />
+            <span className="lr-room-card__corner-logo">
+              <PlatformLogoTag platform={room.platform} />
+            </span>
+          </div>
+        </div>
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
           <LiveStatusTag
             status={room.lastLiveStatus}
