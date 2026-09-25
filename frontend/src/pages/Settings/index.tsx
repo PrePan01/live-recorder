@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   App,
   Alert,
@@ -202,6 +202,7 @@ function CredentialManual({
 export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
+  const navigate = useNavigate();
   const { settings, load, save } = useSettingsStore();
 
   // 无障碍：antd 不把 aria-label 透传到滑杆手柄（role=slider 需自带名字）——挂载后补写一次。
@@ -1241,6 +1242,18 @@ export default function SettingsPage() {
                               }
                             >
                               重试
+                            </Button>
+                          ) : null,
+                          a.roomId ? (
+                            <Button
+                              key="view"
+                              size="small"
+                              type="link"
+                              onClick={() =>
+                                navigate(`/history?roomId=${a.roomId}`)
+                              }
+                            >
+                              查看
                             </Button>
                           ) : null,
                           <Button

@@ -54,7 +54,12 @@ export default function History() {
     (s) => s.requestTwoFactorPrompt,
   );
   const [grouped, setGrouped] = useState(false);
-  const [roomId, setRoomId] = useState<string | undefined>();
+  // 支持 /history?roomId= 深链（设置页告警「查看」入口落点，仅初始化读取一次）。
+  const [roomId, setRoomId] = useState<string | undefined>(
+    () =>
+      new URLSearchParams(window.location.search).get("roomId") ??
+      undefined,
+  );
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
     null,
   );
