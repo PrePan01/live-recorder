@@ -118,6 +118,23 @@ function classifyStatusError(
       { retryable: temporary },
     );
   }
+  // 诊断包实测（2026-09-25）：可见范围房间（4003034，同一房间 20+ 连发）与瞬时繁忙（10001
+  // Service Unavailable）此前都落进底部通用兜底，误报成「平台接口有变动」——实际前者是主播的
+  // 正常业务设置、后者是平台瞬时状态，都不是接口变更。
+  if (code === 4003034 || /可见范围|不在主播设置/.test(message)) {
+    return new AppError(
+      "ROOM_CONTENT_UNAVAILABLE",
+      "主播设置了可见范围，当前账号无法查看该直播间",
+      { retryable: true },
+    );
+  }
+  if (code === 10001 || /service unavailable/i.test(message)) {
+    return new AppError(
+      "PLATFORM_CHANGED",
+      "抖音接口暂时繁忙，请稍后重试",
+      { retryable: true },
+    );
+  }
   const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
     return new AppError(

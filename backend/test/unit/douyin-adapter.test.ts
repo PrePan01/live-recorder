@@ -465,6 +465,40 @@ describe("DouyinAdapter", () => {
     ).toBe("DOUYIN_COOKIE_EXPIRED");
   });
 
+  it('4003034「不在主播可见范围」判为内容不可用并给真话，不报接口变动（诊断包实测同房 20+ 连发）', async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() => ({
+        status_code: 4003034,
+        data: { message: "你不在主播设置的可见范围内，无法进入TA的直播间" },
+      })),
+    );
+    const result = await a.checkLiveStatus(
+      "https://live.douyin.com/19849559464",
+      "sessionid=x",
+    );
+    expect(result.status).toBe("error");
+    expect(result.error?.code).toBe("ROOM_CONTENT_UNAVAILABLE");
+    expect(result.error?.message).toContain("可见范围");
+    expect(result.error?.message).not.toContain("接口有变动");
+  });
+
+  it('10001 Service Unavailable 判为暂时繁忙可重试，不报接口变动（诊断包实测）', async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() => ({
+        status_code: 10001,
+        data: { message: "Service Unavailable" },
+      })),
+    );
+    const result = await a.checkLiveStatus(
+      "https://live.douyin.com/150603357176",
+      "sessionid=x",
+    );
+    expect(result.status).toBe("error");
+    expect(result.error?.message).toContain("繁忙");
+    expect(result.error?.message).not.toContain("接口有变动");
+    expect(result.error?.retryable).toBe(true);
+  });
+
   it("maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure", async () => {
     // 444 会在有效登录态下偶发出现；不能让设置页显示“已登录”而监控页要求重新授权。
     const a = new DouyinAdapter(statusFetcher(444));
