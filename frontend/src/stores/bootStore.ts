@@ -1,11 +1,42 @@
 import { create } from 'zustand';
-import type { AppInstance, BootState, DiagnosticItem } from '../types/desktop';
+import type {
+  AppInstance,
+  BootEvent,
+  BootState,
+  DiagnosticItem,
+} from '../types/desktop';
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
 import { EndpointResolver } from '../api/endpoint';
 import { setErrorDiagnosticContext } from '../utils/errorDiagnostics';
 
 export const bridge = detectBridge();
+
+/** 启动/重启等待上限：原生进程卡死时降级到既有的可重试错误页，而不是永久停在「加载中」。 */
+const START_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** 实例解析代际：作废迟到的 getAppInstance 结果，防止快速重启后回写旧端口。 */
+let instanceSeq = 0;
 
 interface BootStateStore {
   state: BootState;
@@ -31,9 +62,9 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
     if (get().loading) return;
     set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
     const timer = setTimeout(() => set({ slow: true }), 15_000);
-    try {
-      const event = await bridge.startService();
+    const applySuccess = (event: BootEvent) => {
       if (event.instance) {
+        instanceSeq += 1;
         if (EndpointResolver.instanceId !== event.instance.instanceId) {
           useServiceStore.setState({
             status: null,
@@ -50,6 +81,15 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
         diagnostics: event.diagnostics,
         loading: false,
       });
+    };
+    let raw: Promise<BootEvent> | null = null;
+    try {
+      raw = bridge.startService();
+      // 超时后原生结果弃用；吞掉其迟到的 rejection，避免孤儿未处理异常。
+      raw.catch(() => undefined);
+      applySuccess(
+        await withTimeout(raw, START_TIMEOUT_MS, "本地服务启动超时（30 秒未就绪）"),
+      );
     } catch (error) {
       set({
         state: 'degraded',
@@ -62,6 +102,16 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           },
         ],
       });
+      // 超时降级后原生若自行就绪且期间无人重试：静默补成功
+      //（保留「最终成功无需重试」的既有语义，用户不用白点一次重试）。
+      raw
+        ?.then((late) => {
+          const snapshot = get();
+          if (snapshot.state === 'degraded' && !snapshot.loading) {
+            applySuccess(late);
+          }
+        })
+        .catch(() => undefined);
     } finally {
       clearTimeout(timer);
       set({ slow: false });
@@ -71,9 +121,9 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
     if (get().loading) return;
     set({ loading: true, slow: false, state: 'booting', diagnostics: [] });
     const timer = setTimeout(() => set({ slow: true }), 15_000);
-    try {
-      const event = await bridge.restartService();
+    const applySuccess = (event: BootEvent) => {
       if (event.instance) {
+        instanceSeq += 1;
         if (EndpointResolver.instanceId !== event.instance.instanceId) {
           useServiceStore.setState({
             status: null,
@@ -90,6 +140,14 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
         diagnostics: event.diagnostics,
         loading: false,
       });
+    };
+    let raw: Promise<BootEvent> | null = null;
+    try {
+      raw = bridge.restartService();
+      raw.catch(() => undefined);
+      applySuccess(
+        await withTimeout(raw, START_TIMEOUT_MS, "本地服务重启超时（30 秒未就绪）"),
+      );
     } catch (error) {
       set({
         state: 'degraded',
@@ -102,6 +160,14 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
           },
         ],
       });
+      raw
+        ?.then((late) => {
+          const snapshot = get();
+          if (snapshot.state === 'degraded' && !snapshot.loading) {
+            applySuccess(late);
+          }
+        })
+        .catch(() => undefined);
     } finally {
       clearTimeout(timer);
       set({ slow: false });
@@ -116,6 +182,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
   },
   setState: (s) => set({ state: s }),
   setInstance: (i) => {
+    instanceSeq += 1;
     EndpointResolver.set(i);
     set({ instance: i });
   },
@@ -135,8 +202,10 @@ export function subscribeBridgeEvents() {
         // Resolve it before the next SSE/API request so the recovered process
         // is actually used instead of leaving the UI on a stale endpoint.
         if (state === 'ready') {
+          const seq = ++instanceSeq;
           void bridge.getAppInstance().then((instance) => {
-            if (!instance) return;
+            // 迟到的解析结果作废：期间若有更新的启动/重启/实例切换，以最新为准。
+            if (!instance || seq !== instanceSeq) return;
             if (EndpointResolver.instanceId !== instance.instanceId) {
               useServiceStore.setState({ status: null, loading: false, error: null });
             }
