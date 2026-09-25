@@ -101,6 +101,12 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
       return reply.status(httpStatusFor(err.code)).send({ error: err.toObject() });
     }
     const validation = (err as { statusCode?: number; code?: string; message?: string });
+    // 请求体超限（如超大备份导入）：413 友好提示，不落 500 内部错误。
+    if (validation.statusCode === 413 || validation.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      return reply.status(413).send({
+        error: { code: 'CONFIG_INVALID', message: '内容过大，超出处理上限，请检查导入文件', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
+      });
+    }
     // 客户端请求非法（字段校验 FST_ERR_VALIDATION*、空 JSON body FST_ERR_CTP* 等）→ 400，
     // 归为 CONFIG_LOAD_FAILED，不落 500 内部错误（QA：空 body+JSON Content-Type 曾误报 500）。
     if (validation.statusCode === 400 && (validation.code?.startsWith('FST_ERR_VALIDATION') || validation.code?.startsWith('FST_ERR_CTP'))) {
@@ -108,7 +114,8 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
         error: { code: 'CONFIG_INVALID', message: '请求字段非法', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false },
       });
     }
-    const alert = services.alerts.create({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });
+    // 同文案未读告警只刷新时间不新建：持续崩溃的接口不应把告警中心刷成流水（与 scheduler 同款去重）。
+    const alert = services.alerts.createOrRefresh({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });
     services.events.emit({ type: 'alert:created', data: alert });
     return reply.status(500).send({
       error: { code: 'SERVICE_UNAVAILABLE', message: '服务内部错误', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: true },

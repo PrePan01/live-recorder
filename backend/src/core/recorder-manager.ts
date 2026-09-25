@@ -1,5 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { access, mkdir, open, rename, unlink } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { AppError } from "../types/error.js";
@@ -800,6 +800,15 @@ export class RecorderManager {
     const ext = path.extname(rec.filePath);
     const nextPath = path.join(path.dirname(rec.filePath), `${safeBase}${ext}`);
     try {
+      // 同名已存在：跳过改文件名避免覆盖另一条录像的文件（POSIX 会静默顶掉且其 filePath 指向错内容；
+      // Windows rename 本就拒绝存在目标——统一为双平台都不覆盖，仅更新标题名。
+      const targetTaken = await access(nextPath)
+        .then(() => true)
+        .catch(() => false);
+      if (targetTaken) {
+        this.services.recordings.update(recordingId, { streamTitle: base.trim() });
+        return;
+      }
       await rename(rec.filePath, nextPath);
       this.services.recordings.update(recordingId, {
         streamTitle: base.trim(),
@@ -1793,11 +1802,20 @@ export class RecorderManager {
     // 消耗一次额度后继续等下一轮，只有额度耗尽才收尾。绝不能把"没探测成功"当成"主播下播"——
     // 那会在网络抖动时把一次好录制无声结束掉。
     for (;;) {
+      const prevState = this.services.rooms.get(room.id)?.monitorState;
       const recording = this.services.recordings.update(recordingId, {
         state: "reconnecting",
         retryCount: effective,
       });
       this.services.rooms.setState(room.id, "reconnecting");
+      // 状态真变了才补发房间事件：退避循环每轮重试都会重复 setState，无守卫则每轮广播冗余 room:updated；
+      // 而只发 recording:updated 会让监控卡片/列表停留在「录制中」直到下个检测周期（前端靠 room:updated 切「重连中」）。
+      if (prevState !== "reconnecting") {
+        const fresh = this.services.rooms.get(room.id);
+        if (fresh) {
+          this.services.events.emit({ type: "room:updated", data: this.enrichRoom(fresh) });
+        }
+      }
       this.services.events.emit({ type: "recording:updated", data: recording });
 
       const delay = settings.retry.delaysSeconds[effective];

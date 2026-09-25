@@ -425,7 +425,6 @@ export function registerRecordingRoutes(
     if (csvWorkers) {
       try {
         lease = await csvWorkers.acquire(filters);
-        await lease.start();
       } catch (error) {
         if ((error as Error).message === "CSV_QUEUE_FULL") {
           throw new AppError(
@@ -437,6 +436,22 @@ export function registerRecordingRoutes(
         throw new AppError(
           "SERVICE_UNAVAILABLE",
           "CSV 导出工作线程不可用，请稍后重试",
+          { retryable: true },
+        );
+      }
+      // 租约到手立即挂释放：close 监听必须先于 start 与一切后续失败点，
+      // 否则 start 失败时 active 永不归还，连续两次后 CSV 导出永久报队列繁忙（只能重启恢复）。
+      // release 幂等：正常完成/中途断开/异常路径由它统一收口（原监听点在下方，重复挂不生效重复释放）。
+      reply.raw.once("close", () => {
+        void lease?.release();
+      });
+      try {
+        await lease.start();
+      } catch (error) {
+        await lease.release();
+        throw new AppError(
+          "SERVICE_UNAVAILABLE",
+          "CSV 导出工作线程启动失败，请稍后重试",
           { retryable: true },
         );
       }
@@ -459,13 +474,7 @@ export function registerRecordingRoutes(
       "Content-Disposition",
       'attachment; filename="recordings.csv"',
     );
-    // Fastify's async generator finalizer handles normal completion; this
-    // additionally releases a long-lived read transaction as soon as a client
-    // cancels a download before consuming the first/next batch.
-    if (lease)
-      reply.raw.once("close", () => {
-        void lease?.release();
-      });
+    // （释放监听已在租约到手时提前挂载，见上方 close 监听——先于 start 与一切失败点。）
     async function* rows(): AsyncGenerator<string> {
       let cursor:
         | import("../../db/repositories/recording.repo.js").RecordingExportCursor

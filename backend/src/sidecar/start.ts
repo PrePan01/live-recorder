@@ -95,6 +95,10 @@ export async function startSidecar(
     const resumedUploads = services.uploader.resumePending();
     if (resumedUploads > 0)
       console.log(`resumed ${resumedUploads} pending upload job(s)`);
+    // 导出任务恢复：内存队列随进程消失且目标目录未落库——遗留 queued/running 置失败引导重新导出。
+    const recoveredExports = services.exporter.recoverInterrupted();
+    if (recoveredExports > 0)
+      console.log(`recovered ${recoveredExports} interrupted export job(s)`);
 
     const extraOrigins = opts.extraOrigins ?? [
       'http://localhost:5173',

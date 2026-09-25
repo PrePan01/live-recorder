@@ -1938,4 +1938,56 @@ describe("REST contract v1.1 (fake stack)", () => {
     await app.close();
   });
 
+
+  it("内部错误告警同文案去重：连续两次 500 只留一条告警", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const boom = () => {
+      throw new Error("boom-internal");
+    };
+    vi.spyOn(services.settings, "load").mockImplementationOnce(boom as never).mockImplementationOnce(boom as never);
+    const url = "/api/v1/settings";
+    const first = await app.inject({ method: "GET", url, headers: { host: "127.0.0.1:43120" } });
+    const second = await app.inject({ method: "GET", url, headers: { host: "127.0.0.1:43120" } });
+    expect(first.statusCode).toBe(500);
+    expect(second.statusCode).toBe(500);
+    const same = services.alerts.list({ limit: 100 }).filter((a: { message: string }) => a.message.includes("boom-internal"));
+    expect(same).toHaveLength(1);
+    vi.restoreAllMocks();
+    await app.close();
+  });
+
+  it("配置导入接受超 1MiB 备份（bodyLimit 单路由放宽；此前默认 1MiB 直接 413/500）", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const rooms = Array.from({ length: 12000 }, (_, i) => ({
+      platform: i % 2 ? "bilibili" : "douyin",
+      url: `https://live.bilibili.com/big${i}`,
+      displayName: `备份房间编号${i}号测试数据用以撑大请求体`,
+    }));
+    const payload = JSON.stringify({ config: { rooms } });
+    expect(payload.length).toBeGreaterThan(1024 * 1024);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/config/import",
+      headers: { host: "127.0.0.1:43120", "content-type": "application/json" },
+      payload,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().importedRooms).toBe(12000);
+    await app.close();
+  });
+
+  it("导出任务重启恢复：遗留 queued/running 置失败（服务重启中断，可重新导出）", async () => {
+    const services = newServices();
+    const job = services.exporter.exportRepo.create({ recordingIds: ["rec-x"] });
+    services.exporter.exportRepo.update(job.id, { status: "running", progress: 40 });
+    expect(services.exporter.recoverInterrupted()).toBe(1);
+    const after = services.exporter.exportRepo.get(job.id)!;
+    expect(after.status).toBe("failed");
+    expect(after.error).toContain("服务重启中断");
+    // 幂等：再次恢复无遗留
+    expect(services.exporter.recoverInterrupted()).toBe(0);
+  });
+
 });

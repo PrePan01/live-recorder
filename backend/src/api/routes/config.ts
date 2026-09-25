@@ -199,8 +199,13 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     }
   });
 
-  app.post('/api/v1/config/import', async (req, reply) => {
-    const body = (req.body ?? {}) as { config?: ImportConfigInput };
+  // 备份文件随录制历史线性增大（数千条即超默认 1MiB）：单路由放宽到 64MiB，
+  // 超限由 errorHandler 归为 413 友好提示（此前落 500 误导排查方向）。
+  app.post(
+    '/api/v1/config/import',
+    { bodyLimit: 64 * 1024 * 1024 },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as { config?: ImportConfigInput };
     const incoming = body.config;
     if (!incoming || typeof incoming !== 'object') {
       throw new AppError('CONFIG_LOAD_FAILED', '导入内容缺失');
