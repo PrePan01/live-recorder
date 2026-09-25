@@ -98,9 +98,15 @@ export default function Monitor() {
   const onStopRoom = useCallback(
     (room: Room) => {
       setRecentStop((prev) => ({ ...prev, [room.id]: Date.now() }));
-      void stopRoomRecording(room.id).catch(() =>
-        message.error("停止请求失败"),
-      );
+      void stopRoomRecording(room.id).catch(() => {
+        // 停止失败时撤回「刚停止」标记，不把失败窗口演成已停止。
+        setRecentStop((prev) => {
+          const next = { ...prev };
+          delete next[room.id];
+          return next;
+        });
+        message.error("停止请求失败");
+      });
     },
     [message, stopRoomRecording],
   );
