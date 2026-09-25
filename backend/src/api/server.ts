@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { AppError, httpStatusFor } from '../types/error.js';
+import { defaultMessageFor, AppError, httpStatusFor } from '../types/error.js';
 import type { Services } from '../core/services.js';
 import { registerRoomRoutes } from './routes/rooms.js';
 import { registerRecordingRoutes } from './routes/recordings.js';
@@ -98,7 +98,12 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) {
-      return reply.status(httpStatusFor(err.code)).send({ error: err.toObject() });
+      const obj = err.toObject();
+      // 兜住空/纯空白 message：13 码默认文案在案，前端 describeError 永不空转（#20 后端面）。
+      if (!obj.message || obj.message.trim().length === 0) {
+        obj.message = defaultMessageFor(err.code) ?? '请求处理失败';
+      }
+      return reply.status(httpStatusFor(err.code)).send({ error: obj });
     }
     const validation = (err as { statusCode?: number; code?: string; message?: string });
     // 请求体超限（如超大备份导入）：413 友好提示，不落 500 内部错误。

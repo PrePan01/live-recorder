@@ -29,6 +29,24 @@ const CAUSE_LABEL: Partial<Record<ErrorCode, string>> = {
   RECORDING_START_FAILED: "录制异常",
 };
 
+/**
+ * 建录像文件失败 → 按 errno 归因：超长名/权限/磁盘满各有各的说法，
+ * 不再一律报「保存目录无效」（R-2：用户改不了目录时会被这句带偏排查方向）。
+ */
+export function fileCreateError(error: unknown, roomId: string): AppError {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENAMETOOLONG') {
+    return new AppError('RECORDING_DIRECTORY_INVALID', '文件名或路径过长，无法保存录像（请缩短房间显示名）', { roomId });
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return new AppError('DIRECTORY_NOT_WRITABLE', '没有保存目录的写入权限，请更换保存目录', { roomId });
+  }
+  if (code === 'ENOSPC') {
+    return new AppError('DISK_SPACE_INSUFFICIENT', '磁盘空间不足，无法创建录像文件', { roomId });
+  }
+  return new AppError('RECORDING_DIRECTORY_INVALID', '保存目录无效，录制失败', { roomId });
+}
+
 export function failureText(code: ErrorCode, fallbackMessage?: string): string {
   return FAILURE_TEXT[code] ?? fallbackMessage ?? "录制已停止";
 }

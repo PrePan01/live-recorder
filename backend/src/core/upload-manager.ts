@@ -219,6 +219,13 @@ export class RealWebDavClient implements WebDavClient {
         body: JSON.stringify({ username, password }),
         signal: AbortSignal.timeout(15_000),
       });
+      // 4xx（除 402 走 2FA 分支、429 限流）：服务端确定不给 token——先于 body 解析缓存降级，
+      // 旧版 OpenList 的 404 HTML 也不会因解析失败漏进「不缓存」路径。
+      if (res.status >= 400 && res.status < 500 && res.status !== 402 && res.status !== 429) {
+        this.apiTokens.set(root, null);
+        return null;
+      }
+      if (!res.ok) return null; // 5xx/429 瞬时：不缓存，下次上传重新探测。
       const payload = (await res.json()) as {
         code?: number;
         message?: string;
@@ -236,11 +243,20 @@ export class RealWebDavClient implements WebDavClient {
         typeof payload.data?.token === "string"
           ? payload.data.token
           : null;
-      this.apiTokens.set(root, token);
+      if (token !== null) {
+        this.apiTokens.set(root, token);
+      } else if (
+        (res.status >= 400 && res.status < 500 && res.status !== 429) ||
+        (payload.code !== undefined && payload.code >= 400 && payload.code < 500)
+      ) {
+        // 4xx（除限流）= 服务端确定不给 token（旧版/代理禁用/拒绝）：缓存降级，同键不再反复探测。
+        this.apiTokens.set(root, null);
+      }
+      // 其余（5xx、2xx 但契约不符等瞬时态）不缓存——下次上传重新探测。
       return token;
     } catch {
-      // 旧版 OpenList、2FA 或 API 被代理禁用时继续使用标准 WebDAV，不影响原功能。
-      this.apiTokens.set(root, null);
+      // U-2：瞬时网络错误（超时/断网/DNS 抖动）不缓存「无 API」——否则同键终身降级直到重启；
+      // 旧版 OpenList/代理禁用 API 的确定性 4xx 路径已在上面缓存，这里只留瞬时态。
       return null;
     }
   }
@@ -629,7 +645,12 @@ export class RealWebDavClient implements WebDavClient {
       });
       // 凭据错误不能当作「分片端点不支持」回退：否则会白白重传整个文件，且最终仍会被拒。
       throwIfAuthFailure(res, "分片上传");
-      if (!res.ok) return failUnsupported();
+      // U-4：仅 404/405（端点确实不存在）才是「不支持」；瞬时 5xx/429 抛错交给外层单分片幂等重试，
+      // 不再整条 multipart 作废回落整文件重传。
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 405) return failUnsupported();
+        throw new Error(`分片上传失败（HTTP ${res.status}）`);
+      }
       if (index === 0) {
         try {
           const payload = (await res.json()) as {
@@ -686,7 +707,11 @@ export class RealWebDavClient implements WebDavClient {
         },
       );
       throwIfAuthFailure(completeRes, "合并分片");
-      if (!completeRes.ok) return failUnsupported();
+      // 与分片同口径：404/405 才算端点不支持，瞬时 5xx 抛错进入既有重试路径。
+      if (!completeRes.ok) {
+        if (completeRes.status === 404 || completeRes.status === 405) return failUnsupported();
+        throw new Error(`合并分片失败（HTTP ${completeRes.status}）`);
+      }
       const completePayload = (await completeRes.json()) as {
         code?: number;
         data?: { task?: { id?: string } };
@@ -819,7 +844,17 @@ export class RealWebDavClient implements WebDavClient {
     onProgress: (pct: number) => void,
     serverUrl?: string,
   ): Promise<void> {
-    const size = statSync(localPath).size;
+    let size: number;
+    try {
+      size = statSync(localPath).size;
+    } catch (err) {
+      // U-3：run() 首行 existsSync 通过后、stat 前文件被删的竞态——直接以 #18 同款文案上抛，
+      // run() catch 落立即失败，省一次无意义的 5 秒退避（终点语义与 #18 完全一致）。
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('源文件已删除，无法上传');
+      }
+      throw err;
+    }
     const authorization = `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}`;
     await this.ensureParentCollections(remotePath, authorization, serverUrl);
     // 先探测 OpenList API 登录态：#13 账号启用 2FA 时无法静默换取 token。
@@ -1313,6 +1348,16 @@ export class UploadManager {
     } catch (err) {
       if (this.repo.get(jobId)?.status === "cancelled") return;
       const message = err instanceof Error ? err.message : "上传失败";
+      // U-3：put 入口竞态补抛的「源文件已删除」——源已不在，退避重试必然再失败，立即落终态。
+      if (message.includes("源文件已删除")) {
+        this.repo.update(jobId, {
+          status: "failed",
+          retryCount: job.retryCount + 1,
+          error: message,
+        });
+        this.emit(jobId);
+        return;
+      }
       // #13：2FA 需要一次性码，重试无意义（没有码必然再 402）。直接失败交 FE 弹窗输入验证码，
       // 避免 5s/15s/45s 退避循环让用户等很久才看到弹窗（PrePan：提示后没有立即弹出）。
       if (message.includes(OPENLIST_2FA_REQUIRED)) {

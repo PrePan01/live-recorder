@@ -53,12 +53,22 @@ export class Notifier {
     const emailKey = `email:${roomId}:${event}`;
     if (!preferences.email[preferenceKey] || !config || !config.enabled || !config.host || !this.canSend(emailKey)) return;
     this.pending += 1;
+    let timeoutHandle: unknown;
     try {
-      await this.mailer.send(config, { to: config.recipients, subject, text: subject });
+      // M-1：邮件发送 30 秒硬顶——SMTP 黑洞时 nodemailer 默认超时可达分钟级，
+      // 而此 await 在录制收尾关键链（管线/上传入队在通知之后），不得被拖住。
+      const sendPromise = this.mailer.send(config, { to: config.recipients, subject, text: subject });
+      await Promise.race([
+        sendPromise,
+        new Promise<never>((_, reject) => {
+          timeoutHandle = this.clock.setTimeout(() => reject(new Error('SMTP_SEND_TIMEOUT')), 30_000);
+        }),
+      ]);
       this.lastSent.set(emailKey, this.clock.now());
     } catch {
       this.alerts.create({ level: 'warning', source: 'smtp', message: `SMTP 通知发送失败（${event}）`, occurredAt: this.clock.iso() });
     } finally {
+      if (timeoutHandle !== undefined) this.clock.clearTimeout(timeoutHandle);
       this.pending -= 1;
     }
   }

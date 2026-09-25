@@ -10,6 +10,7 @@ import type {
   Room,
 } from "../types/index.js";
 import {
+  fileCreateError,
   causeLabel,
   failureText,
   humanizeFailure,
@@ -1284,12 +1285,8 @@ export class RecorderManager {
       await mkdir(path.dirname(filePath), { recursive: true });
       const file = await open(filePath, "w");
       await file.close();
-    } catch {
-      throw new AppError(
-        "RECORDING_DIRECTORY_INVALID",
-        "保存目录无效，录制失败",
-        { roomId },
-      );
+    } catch (error) {
+      throw fileCreateError(error, roomId);
     }
   }
 
