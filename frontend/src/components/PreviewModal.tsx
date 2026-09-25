@@ -223,10 +223,29 @@ export default function PreviewModal({
     void enableHighlightBuffer(room.id)
       .then(applyStatus)
       .catch(() => alive && setHighlightAvailableSeconds(0));
-    const timer = window.setInterval(refresh, 1_000);
+    let timer: number | null = null;
+    const startTick = () => {
+      if (timer === null) timer = window.setInterval(refresh, 1_000);
+    };
+    const stopTick = () => {
+      if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    // 后台暂停预览轮询，回前台立即刷一次再恢复（预览画面/时长显示不滞后）。
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        refresh();
+        startTick();
+      } else stopTick();
+    };
+    if (document.visibilityState === "visible") startTick();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stopTick();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [room.id, recording, onAir, enableHighlights, highlightEnabled]);
 

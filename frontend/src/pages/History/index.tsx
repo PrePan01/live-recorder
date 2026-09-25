@@ -84,7 +84,11 @@ export default function History() {
       (r) => r.state === "recording" || r.state === "reconnecting",
     );
     if (!hasRecording) return;
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    const timer = setInterval(() => {
+      // 后台不刷相对时间（表格无人观看）；回前台下一次心跳即更新。
+      if (document.visibilityState !== "visible") return;
+      setTick((t) => t + 1);
+    }, 1000);
     return () => clearInterval(timer);
   }, [items]);
 

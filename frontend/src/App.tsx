@@ -38,7 +38,11 @@ function SetupGuard({ children }: { children: JSX.Element }) {
   useEffect(() => {
     if (status) return;
     void fetchStatus();
-    const timer = setInterval(() => void fetchStatus(), 5000);
+    const timer = setInterval(() => {
+      // 后台不轮询界面状态（业务在后端；仅连接建立前的短窗口，回前台下一轮即补）。
+      if (document.visibilityState !== "visible") return;
+      void fetchStatus();
+    }, 5000);
     return () => clearInterval(timer);
   }, [status, fetchStatus]);
 

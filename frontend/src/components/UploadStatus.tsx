@@ -52,9 +52,14 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   // 99%（云端收尾）阶段实时刷新等待时长，避免进度停在 99 看起来卡死（PrePan：上传卡 99 无状态）。
   const [, setTick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    if (loading || jobs.length === 0) return;
+    const timer = setInterval(() => {
+      // 仅在有在役任务且前台时滴答（进度文案无人看时不必每秒重渲）。
+      if (document.visibilityState !== "visible") return;
+      setTick((t) => t + 1);
+    }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [loading, jobs.length]);
 
   if (!loading && jobs.length === 0) {
     return (

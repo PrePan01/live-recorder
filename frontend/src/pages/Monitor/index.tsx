@@ -117,7 +117,10 @@ export default function Monitor() {
 
   useEffect(() => {
     void fetchServiceStatus();
-    const timer = setInterval(() => void fetchServiceStatus(), 30_000);
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void fetchServiceStatus();
+    }, 30_000);
     return () => clearInterval(timer);
   }, [fetchServiceStatus]);
 
