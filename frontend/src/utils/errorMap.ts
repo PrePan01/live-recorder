@@ -34,6 +34,19 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   PREVIEW_LIMIT_REACHED: "预览数已达上限（9 路）",
   PREVIEW_NOT_RECORDING: "当前未在录制，无法预览",
   QUALITY_DOWNGRADED: "清晰度已自动降级",
+  ROOM_CONTENT_UNAVAILABLE: "直播间内容不可用，无法获取直播源",
+  RECORDING_NOT_AVAILABLE: "当前没有可录制的直播",
+  RESOURCE_NOT_FOUND: "请求的内容不存在",
+  TAG_INVALID: "标签名称不符合要求",
+  SEARCH_QUERY_INVALID: "搜索内容不合法，请修改关键词",
+  SEARCH_TIMEOUT: "搜索超时，请稍后重试",
+  DIAGNOSTIC_ACTION_INVALID: "该诊断操作当前不可用",
+  DIAGNOSTIC_CONFLICT: "有诊断操作正在进行，请稍候再试",
+  PIPELINE_CONFIG_INVALID: "后处理管线配置有误，请到设置页检查",
+  CHECK_FAILED: "检测失败，请稍后重试",
+  CONFIG_INVALID: "配置内容无效",
+  RECORDING_EMPTY: "录制内容为空（未收到直播数据）",
+  RECORDING_REMUX_FAILED: "视频转封装失败，可重试或检查磁盘空间",
 };
 
 export function describeError(
