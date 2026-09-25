@@ -346,6 +346,10 @@ export const RoomCard = memo(function RoomCard({
             ) : (
               room.lastError.message
             )}
+            {/* retryable 语义呈现（同类问题扫描：API 一直带该字段但展示层从未消费） */}
+            <Typography.Text type="secondary">
+              {room.lastError.retryable ? "（可重试）" : "（需人工处理）"}
+            </Typography.Text>
           </Typography.Paragraph>
         ) : null}
         <div
