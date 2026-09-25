@@ -53,6 +53,11 @@ export const HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS = 1_000;
 /** 录像待写上限大小 */
 const MAX_SHARED_RECORDING_PENDING_BYTES = 32 * 1024 * 1024;
+/** 写积压触顶后、判定「真死」前的持续等待宽限（PrePan：繁忙=等待，录制不中断）。
+ * 标定依据：录制目录可为 USB 盘（PrePan 有意配置），USB 休眠/重协商瞬断达秒级至十秒级；
+ * 32MB 积压在常见码率下已覆盖约 20-40 秒缓冲，叠加 180 秒宽限足以扛 USB 级波动；
+ * 持续三分钟完全排不出（设备真死）才停录。 */
+const SHARED_WRITER_SLOW_GRACE_MS = 180_000;
 /** 开录后多久还没写出文件即视为拿不到数据 */
 const START_TIMEOUT_MS = 30_000;
 /** Preview has no recording-level start watchdog; recycle a source that never yields its first byte. */
@@ -126,7 +131,7 @@ interface PreviewSession {
   startupTrace?: PerformanceTrace;
 }
 
-interface SharedPreviewRecording {
+export interface SharedPreviewRecording {
   session: ActiveSession;
   writer: WriteStream;
   normalizer: FlvTimestampNormalizer;
@@ -134,6 +139,10 @@ interface SharedPreviewRecording {
   pendingWriteBytes: number;
   writePump: Promise<void> | null;
   writeError: Error | null;
+  /** 首次积压触顶时刻（null=未降级）；排空恢复后清零，用于持续时长判定。 */
+  degradedSince: number | null;
+  /** 降级期间因无法入队而丢弃的字节数（磁盘恢复前本就写不进盘的部分）。 */
+  droppedBytes: number;
 }
 
 export class RecorderManager {
@@ -1073,16 +1082,43 @@ export class RecorderManager {
     if (recording.writeError) throw recording.writeError;
     // FlvTimestampNormalizer 会原地改写时间戳；写盘必须处理副本，不能污染仍要
     // 广播给 mpegts 的原始预览帧，否则预览时间轴会在开始录制时跳回 0。
+    const enqueueNow = this.services.clock.now();
     for (const part of recording.normalizer.push(Buffer.from(chunk))) {
       if (
         recording.pendingWriteBytes + part.length >
         MAX_SHARED_RECORDING_PENDING_BYTES
       ) {
-        throw new Error("录制磁盘写入过慢");
+        // 积压触顶≠立刻停录（PrePan：繁忙应等待）。首次触顶记起点；从触顶起持续
+        // 排不出去超过宽限（设备真死）才停。否则丢弃这一段——盘恢复前它本就写不
+        // 进去——录制会话继续，恢复排空后回到正常写入。
+        if (
+          recording.degradedSince !== null &&
+          enqueueNow - recording.degradedSince > SHARED_WRITER_SLOW_GRACE_MS
+        ) {
+          throw new Error("录制磁盘写入过慢");
+        }
+        if (recording.degradedSince === null) {
+          recording.degradedSince = enqueueNow;
+          console.warn(
+            `[write-degraded] ${recording.session.recordingId} 写积压触顶(32MB)，进入等待恢复：丢弃新到块、录制不中断`,
+          );
+        }
+        recording.droppedBytes += part.length;
+        continue;
       }
       recording.session.size += part.length;
       recording.pendingWrites.push(part);
       recording.pendingWriteBytes += part.length;
+    }
+    // 排空过半=瞬时繁忙结束（USB 唤醒/同盘抢 IO 结束）：清降级起点重新计时。
+    if (
+      recording.degradedSince !== null &&
+      recording.pendingWriteBytes <= MAX_SHARED_RECORDING_PENDING_BYTES / 2
+    ) {
+      console.warn(
+        `[write-degraded] ${recording.session.recordingId} 写入恢复排空，降级解除（累计丢弃 ${recording.droppedBytes} 字节）`,
+      );
+      recording.degradedSince = null;
     }
     // 共享录制也要记"最后一份数据的时间"：否则中断/收尾时无法判断静默了多久，
     // 缺失时长会被算成整段录制时长（或干脆算不出来）。
@@ -1122,7 +1158,11 @@ export class RecorderManager {
         recording.pendingWriteBytes + remaining.length >
         MAX_SHARED_RECORDING_PENDING_BYTES
       ) {
-        throw new Error("录制磁盘写入过慢");
+        // 收尾冲刷不杀：余量是归一器最后的分片（有界小量），超帽也入队排出，绝不
+        // 在此抛错——否则录完反而丢尾（QA 复测口径③：停止时已有数据完整）。
+        console.warn(
+          `[write-degraded] ${recording.session.recordingId} 收尾冲刷超帽，仍强制排出保尾`,
+        );
       }
       recording.session.size += remaining.length;
       recording.pendingWrites.push(remaining);
@@ -1202,6 +1242,8 @@ export class RecorderManager {
       normalizer: new FlvTimestampNormalizer({ rebaseFromFirstMedia: true }),
       pendingWrites: [],
       pendingWriteBytes: 0,
+      degradedSince: null,
+      droppedBytes: 0,
       writePump: null,
       writeError: null,
     };

@@ -96,6 +96,14 @@ export function writeFailure(
 ): AppError {
   if (err instanceof AppError) return err;
   const message = (err as Error)?.message ?? "";
+  if (/ENODEV|ENXIO|EIO:/.test(message)) {
+    // 设备级消失（USB 拔出/掉盘）：与「繁忙」区分，明确告知不可恢复原因（PM 口径②）。
+    return new AppError(
+      "RECORDING_WRITE_FAILED",
+      "存储设备已断开（U 盘可能被拔出），录制已停止",
+      { ...context, retryable: false, details: { cause: message } },
+    );
+  }
   if (message.includes("写入过慢")) {
     return new AppError(
       "RECORDING_WRITE_SLOW",
