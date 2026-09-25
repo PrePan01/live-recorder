@@ -38,6 +38,29 @@ function withTimeout<T>(
 /** 实例解析代际：作废迟到的 getAppInstance 结果，防止快速重启后回写旧端口。 */
 let instanceSeq = 0;
 
+/**
+ * 浏览器模式的降级自动复检：健康探测2 秒未就绪即报「未就绪」（属慢启动而非真故障），
+ * 用户常只是干等——无人点重试时每 15 秒自动复检一次，后端就绪即自动进工作台。
+ * 桌面端不启用：挂起场景已有「迟到成功静默补恢复」，快速失败=真故障交人工重试
+ *（避免反复拉起原生启动）。
+ */
+let degradedRecheck: ReturnType<typeof setInterval> | null = null;
+
+function armDegradedRecheck(): void {
+  if (bridge.isDesktop || degradedRecheck) return;
+  degradedRecheck = setInterval(() => {
+    const snapshot = useBootStore.getState();
+    if (snapshot.state !== 'degraded' || snapshot.loading) {
+      if (degradedRecheck) {
+        clearInterval(degradedRecheck);
+        degradedRecheck = null;
+      }
+      return;
+    }
+    void snapshot.boot();
+  }, 15_000);
+}
+
 interface BootStateStore {
   state: BootState;
   instance: AppInstance | null;
@@ -115,6 +138,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
     } finally {
       clearTimeout(timer);
       set({ slow: false });
+      if (get().state === 'degraded') armDegradedRecheck();
     }
   },
   async restart() {
@@ -171,6 +195,7 @@ export const useBootStore = create<BootStateStore>((set, get) => ({
     } finally {
       clearTimeout(timer);
       set({ slow: false });
+      if (get().state === 'degraded') armDegradedRecheck();
     }
   },
   async refreshDiagnostics() {
