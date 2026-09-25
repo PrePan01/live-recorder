@@ -48,7 +48,6 @@ export function SortableRoomCardItem({
       ref={sortable.setNodeRef}
       style={sortable.style}
       className={`lr-sortable-card ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
-      {...sortable.attributes}
       {...sortable.listeners}
     >
       {children}

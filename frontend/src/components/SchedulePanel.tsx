@@ -153,7 +153,7 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
       dataIndex: "enabled",
       width: 70,
       render: (v: boolean, s) => (
-        <Switch checked={v} onChange={(c) => void toggle(s, c)} />
+        <Switch aria-label="启用该排程" checked={v} onChange={(c) => void toggle(s, c)} />
       ),
     },
     {
@@ -226,10 +226,10 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
               name="startTime"
               rules={[{ required: true, message: "必填" }]}
             >
-              <TimePicker format="HH:mm" />
+              <TimePicker aria-label="开始时间" format="HH:mm" />
             </Form.Item>
             <Form.Item label="结束时间（可选）" name="endTime">
-              <TimePicker format="HH:mm" />
+              <TimePicker aria-label="结束时间（可选）" format="HH:mm" />
             </Form.Item>
           </Space>
           <Form.Item
@@ -249,7 +249,7 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
             />
           </Form.Item>
           <Form.Item label="启用" name="enabled" valuePropName="checked">
-            <Switch />
+            <Switch aria-label="启用" />
           </Form.Item>
         </Form>
       </Modal>

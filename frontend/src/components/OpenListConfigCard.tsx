@@ -189,11 +189,12 @@ export default function OpenListConfigCard() {
         />
       </Form.Item>
       <Form.Item label="启用自动上传" name="enabled" valuePropName="checked">
-        <Switch loading={checking} />
+        <Switch loading={checking} aria-label="启用自动上传" />
       </Form.Item>
       <Form.Item label="上传成功后删除本地文件">
         {deleteSourceAfterUpload ? (
           <Switch
+          aria-label="上传成功后删除本地文件"
             checked
             onChange={(enabled) => {
               if (!enabled) saveDeleteSourceAfterUpload(false);
@@ -206,20 +207,12 @@ export default function OpenListConfigCard() {
             cancelText="取消"
             onConfirm={() => saveDeleteSourceAfterUpload(true)}
           >
-            {/* 关闭时 Switch 不接收指针事件，只有确认后才可能改为开启。 */}
-            <span
-              role="button"
-              tabIndex={0}
-              style={{ display: "inline-flex" }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.currentTarget.click();
-                }
-              }}
-            >
-              <Switch checked={false} style={{ pointerEvents: "none" }} />
-            </span>
+            {/* 关闭态：Switch 即确认弹层触发器（受控 false + 空 onChange 仅保持外观，确认后才真正保存）。 */}
+            <Switch
+              aria-label="上传成功后删除本地文件"
+              checked={false}
+              onChange={() => undefined}
+            />
           </Popconfirm>
         )}
       </Form.Item>

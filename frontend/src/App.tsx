@@ -81,6 +81,30 @@ export default function App() {
   }, [pathname]);
 
   useEffect(() => {
+    // 无障碍：antd Select 的 aria-label 不透传到内层 combobox input（label[for] 又指向
+    // 不可标注的容器）——就近回填（控件自身 aria-label → 所属 Form.Item 标签文本）。
+    const fill = () => {
+      document
+        .querySelectorAll<HTMLInputElement>("input.ant-select-input")
+        .forEach((el) => {
+          if (el.hasAttribute("aria-label")) return;
+          const own =
+            el.closest(".ant-select")?.getAttribute("aria-label") ?? null;
+          const fiLabel = el
+            .closest(".ant-form-item")
+            ?.querySelector(".ant-form-item-label label")
+            ?.textContent?.trim();
+          const name = own || (fiLabel || null);
+          if (name) el.setAttribute("aria-label", name);
+        });
+    };
+    fill();
+    const observer = new MutationObserver(fill);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const unsub = subscribeBridgeEvents();
     if (useBootStore.getState().state === "booting") void boot();
     return unsub;

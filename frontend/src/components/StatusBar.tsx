@@ -103,6 +103,7 @@ export default function StatusBar() {
           </Typography.Text>
           {disk.showProgress ? (
             <Progress
+              aria-label="磁盘可用空间"
               percent={Math.round(freeRatio * 100)}
               status={disk.spaceDanger ? "exception" : "normal"}
               size="small"

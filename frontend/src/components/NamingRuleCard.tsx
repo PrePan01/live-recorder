@@ -63,6 +63,7 @@ export default function NamingRuleCard() {
       <Space wrap>
         <span>预设：</span>
         <Select
+          aria-label="命名规则预设"
           style={{ width: 240 }}
           placeholder="选择预设模板"
           options={NAMING_PRESETS}

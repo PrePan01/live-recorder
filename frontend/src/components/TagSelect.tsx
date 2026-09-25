@@ -57,6 +57,7 @@ export default function TagSelect({ value, onChange, disabled }: TagSelectProps)
           </Form.Item>
           <Form.Item name="color" initialValue={PRESET_COLORS[0]} noStyle>
             <Select
+              aria-label="标签颜色"
               className="lr-tag-color-select"
               style={{ width: 112 }}
               popupMatchSelectWidth={false}

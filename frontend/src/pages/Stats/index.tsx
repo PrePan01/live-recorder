@@ -563,6 +563,7 @@ export default function Stats() {
             showTime={{ format: "HH:mm" }}
             needConfirm={false}
             classNames={{ popup: { root: "lr-stats-range-picker-popup" } }}
+            aria-label="统计日期范围"
             placeholder={["开始日期时间", "结束日期时间"]}
             presets={rangePresets}
             value={range}
@@ -570,6 +571,7 @@ export default function Stats() {
           />
           <Select
             allowClear
+            aria-label="平台筛选"
             placeholder="平台"
             style={{ width: 110 }}
             value={platform}
@@ -583,6 +585,7 @@ export default function Stats() {
             mode="multiple"
             allowClear
             className="lr-stats-tag-filter"
+            aria-label="标签筛选"
             placeholder="标签"
             style={{ width: 140 }}
             value={tagIds}
@@ -591,6 +594,7 @@ export default function Stats() {
           />
           <Select
             allowClear
+            aria-label="房间筛选"
             placeholder="房间"
             style={{ width: 160 }}
             value={roomId}

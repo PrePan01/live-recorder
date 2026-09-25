@@ -114,7 +114,7 @@ export default function EmailConfigCard() {
       onValuesChange={(_, all) => save(all)}
     >
       <Form.Item label="启用邮件通知" name="enabled" valuePropName="checked">
-        <Switch />
+        <Switch aria-label="启用邮件通知" />
       </Form.Item>
       <Form.Item label="服务商预设">
         <Select
@@ -136,7 +136,7 @@ export default function EmailConfigCard() {
         </Col>
         <Col xs={12} sm={5}>
           <Form.Item label="TLS" name="secure" valuePropName="checked">
-            <Switch />
+            <Switch aria-label="TLS" />
           </Form.Item>
         </Col>
       </Row>

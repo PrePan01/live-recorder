@@ -336,12 +336,13 @@ export default function History() {
         </Typography.Title>
         <Space>
           <Typography.Text type="secondary">按场次分组</Typography.Text>
-          <Switch checked={grouped} onChange={setGrouped} />
+          <Switch aria-label="按场次分组" checked={grouped} onChange={setGrouped} />
         </Space>
       </Space>
       <Space className="lr-filter-bar" wrap>
         <Select
           allowClear
+          aria-label="按房间筛选"
           placeholder="按房间筛选"
           style={{ width: 200 }}
           value={roomId}
@@ -349,6 +350,7 @@ export default function History() {
           options={rooms.map((r) => ({ value: r.id, label: r.displayName }))}
         />
         <DatePicker.RangePicker
+          aria-label="录制日期范围"
           value={dateRange}
           onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
         />

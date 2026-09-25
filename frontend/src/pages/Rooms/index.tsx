@@ -640,7 +640,7 @@ export default function Rooms() {
             label="开播提醒"
             valuePropName="checked"
           >
-            <Switch />
+            <Switch aria-label="开播提醒" />
           </Form.Item>
           {editing ? (
             <Form.Item label="标签">

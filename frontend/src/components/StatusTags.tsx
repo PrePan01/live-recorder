@@ -1,6 +1,17 @@
+import type { CSSProperties } from 'react';
 import { Tag } from 'antd';
 import type { MonitorState } from '../types/room';
 import type { RecordingIntegrity, RecordingState } from '../types/recording';
+
+/**
+ * 完成态标签的对比度达标配色：antd 预设 green（#389e0d/#f6ffed）仅 3.37:1，
+ * 达不到孟菲斯可访问性条款的 4.5:1——深绿文字保证可读。
+ */
+const DONE_TAG_STYLE: CSSProperties = {
+  color: '#1e7b21',
+  background: '#f6ffed',
+  borderColor: '#a9d98f',
+};
 
 const MONITOR_META: Record<MonitorState, { color: string; text: string }> = {
   idle: { color: 'default', text: '空闲' },
@@ -30,16 +41,28 @@ const INTEGRITY_META: Record<RecordingIntegrity, { color: string; text: string }
 
 export function MonitorStateTag({ state }: { state: MonitorState }) {
   const meta = MONITOR_META[state] ?? { color: 'default', text: state };
-  return <Tag color={meta.color}>{meta.text}</Tag>;
+  return (
+    <Tag color={meta.color} style={meta.color === 'green' ? DONE_TAG_STYLE : undefined}>
+      {meta.text}
+    </Tag>
+  );
 }
 
 export function RecordingStateTag({ state }: { state: RecordingState }) {
   const meta = RECORDING_META[state] ?? { color: 'default', text: state };
-  return <Tag color={meta.color}>{meta.text}</Tag>;
+  return (
+    <Tag color={meta.color} style={meta.color === 'green' ? DONE_TAG_STYLE : undefined}>
+      {meta.text}
+    </Tag>
+  );
 }
 
 export function IntegrityTag({ integrity }: { integrity: RecordingIntegrity | null }) {
   if (!integrity) return <Tag>待校验</Tag>;
   const meta = INTEGRITY_META[integrity] ?? { color: 'default', text: integrity };
-  return <Tag color={meta.color}>{meta.text}</Tag>;
+  return (
+    <Tag color={meta.color} style={meta.color === 'green' ? DONE_TAG_STYLE : undefined}>
+      {meta.text}
+    </Tag>
+  );
 }

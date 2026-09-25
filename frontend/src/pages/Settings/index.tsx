@@ -203,6 +203,23 @@ export default function SettingsPage() {
   const { message } = App.useApp();
   const { hash } = useLocation();
   const { settings, load, save } = useSettingsStore();
+
+  // 无障碍：antd 不把 aria-label 透传到滑杆手柄（role=slider 需自带名字）——挂载后补写一次。
+  useEffect(() => {
+    let tries = 0;
+    const timer = setInterval(() => {
+      const handle = document.querySelector(".ant-slider-handle");
+      if (handle) {
+        if (!handle.hasAttribute("aria-label")) {
+          handle.setAttribute("aria-label", "全局录制按钮大小");
+        }
+        clearInterval(timer);
+      } else if (++tries > 20) {
+        clearInterval(timer);
+      }
+    }, 300);
+    return () => clearInterval(timer);
+  }, []);
   const rooms = useRoomStore((s) => s.rooms);
   const emailNotificationsEnabled = settings?.mail.enabled ?? false;
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
@@ -670,7 +687,7 @@ export default function SettingsPage() {
                       noStyle
                       rules={[{ required: true, message: "必填" }]}
                     >
-                      <Input onBlur={() => void checkDir()} />
+                      <Input aria-label="保存目录" onBlur={() => void checkDir()} />
                     </Form.Item>
                     <Button onClick={() => setPickerOpen(true)}>浏览…</Button>
                     <Button onClick={() => void checkDir()}>校验</Button>
@@ -697,7 +714,7 @@ export default function SettingsPage() {
                   name="confirmAfterComplete"
                   valuePropName="checked"
                 >
-                  <Switch />
+                  <Switch aria-label="录制完成后询问是否保留" />
                 </Form.Item>
                 <Row gutter={16}>
                   <Col xs={24} md={8}>
@@ -716,7 +733,7 @@ export default function SettingsPage() {
                       name="quality"
                       extra="拿不到所选清晰度时，自动改录能录到的最高清晰度"
                     >
-                      <Select
+                      <Select aria-label="默认清晰度"
                         options={[
                           { value: "original", label: "原画" },
                           { value: "1080p", label: "1080p" },
@@ -732,7 +749,7 @@ export default function SettingsPage() {
                       name="recordingFormat"
                       extra="FLV：无损最快；MP4：录制完成后自动转换，依赖FFmpeg"
                     >
-                      <Select
+                      <Select aria-label="录制格式"
                         options={[
                           { value: "source_flv", label: "FLV" },
                           { value: "mp4_after", label: "MP4" },
@@ -774,7 +791,7 @@ export default function SettingsPage() {
                     name="autoRecord"
                     valuePropName="checked"
                   >
-                    <Switch />
+                    <Switch aria-label="检测到开播自动录制" />
                   </Form.Item>
                   <Typography.Title
                     className="lr-settings-section__title"
@@ -848,7 +865,7 @@ export default function SettingsPage() {
                     name="highlightEnabled"
                     valuePropName="checked"
                   >
-                    <Switch />
+                    <Switch aria-label="开启精彩时刻" />
                   </Form.Item>
                   <Form.Item
                     label="精彩时刻缓存上限"
@@ -957,6 +974,7 @@ export default function SettingsPage() {
                     <span>{label}</span>
                     <div className="lr-notification-matrix__cell">
                       <Switch
+                      aria-label={`${label} 桌面通知`}
                         checked={preferences?.desktop[key] ?? false}
                         onChange={(value) =>
                           void saveNotifications({
@@ -969,6 +987,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="lr-notification-matrix__cell">
                       <Switch
+                      aria-label={`${label} 邮件通知`}
                         checked={preferences?.email[key] ?? false}
                         disabled={!emailNotificationsEnabled}
                         onChange={(value) =>
@@ -988,6 +1007,7 @@ export default function SettingsPage() {
                 style={{ marginBottom: 0 }}
               >
                 <InputNumber
+                  aria-label="通知去重时间（分钟）"
                   min={1}
                   max={1440}
                   value={preferences?.dedupeWindowMinutes}
@@ -1192,6 +1212,7 @@ export default function SettingsPage() {
               </Space>
             }
           >
+            <div tabIndex={0} aria-label="告警列表">
             <List
               dataSource={alerts}
               locale={{ emptyText: "暂无告警" }}
@@ -1256,6 +1277,7 @@ export default function SettingsPage() {
                 </List.Item>
               )}
             />
+              </div>
           </Card>
         </Col>
       </Row>

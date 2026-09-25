@@ -93,6 +93,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       width: 120,
       render: (v: boolean | null, room) => (
         <Select
+          aria-label="字体大小"
           size="small"
           value={v === null ? "inherit" : v ? "on" : "off"}
           style={{ width: 100 }}
@@ -127,6 +128,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       width: 100,
       render: (v: boolean, room) => (
         <Switch
+        aria-label={`开播提醒 ${room.displayName}`}
           checked={v}
           onChange={(checked) =>
             void setLiveNotification(room.id, checked).catch((e) =>
@@ -235,6 +237,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       width: 70,
       render: (v: boolean, room) => (
         <Switch
+        aria-label={`启用 ${room.displayName}`}
           checked={v}
           onChange={(checked) =>
             void toggleRoom(room.id, checked).catch((e) =>
