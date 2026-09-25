@@ -643,10 +643,7 @@ export default function Rooms() {
             <Switch />
           </Form.Item>
           {editing ? (
-            <Form.Item
-              label="标签"
-              extra="单直播间最多 20 个；在弹层内可创建/删除标签"
-            >
+            <Form.Item label="标签">
               <TagSelect value={tagIds} onChange={setTagIds} />
             </Form.Item>
           ) : null}

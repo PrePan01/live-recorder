@@ -1,5 +1,3 @@
-// Monitor 拆分（task #61）：房间卡片块（SortableRoomCardItem/卡片工具/自适应 hook/RoomCard）
-// ——自 index.tsx 原样迁移，仅补导入；hooks、memo、类名与孟菲斯样式零改动。
 import { memo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {

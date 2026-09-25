@@ -20,7 +20,6 @@ const EXPORT_STATUS_COLOR: Record<string, string> = {
   cancelled: "default",
 };
 
-/** 打开外部远端链接：Tauri webview 不能靠 <a target=_blank>，用原生 shell；浏览器降级 window.open。 */
 function openExternalUrl(url: string): void {
   void bridge.openPath(url).catch(() => {
     window.open(url, "_blank", "noopener,noreferrer");

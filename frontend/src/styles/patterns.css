@@ -165,7 +165,9 @@
   font-size: 13px;
   font-weight: 600;
 }
-.lr-settings-grid .ant-col .ant-form-item:not(.lr-pipeline-step .ant-form-item) {
+.lr-settings-grid
+  .ant-col
+  .ant-form-item:not(.lr-pipeline-step .ant-form-item) {
   margin-bottom: 16px;
 }
 .lr-settings-grid .ant-form-item-extra {
@@ -179,6 +181,74 @@
 }
 .lr-settings-grid .lr-settings-section {
   padding-top: 16px;
+}
+.lr-floating-recorder-size {
+  max-width: 460px;
+}
+.lr-floating-recorder-size__control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+.lr-floating-recorder-size__control .ant-slider {
+  margin: 0;
+  padding-block: 8px;
+}
+.lr-floating-recorder-size__control .ant-slider-rail,
+.lr-floating-recorder-size__control .ant-slider-track {
+  height: 8px !important;
+  border-radius: 0 !important;
+}
+.lr-floating-recorder-size__control .ant-slider-rail {
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-surface-alt) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-track {
+  background: var(--lr-primary) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-handle {
+  /* The thicker custom rail needs the handle offset from Ant Design's 4px
+     rail calculation so their visual centers stay aligned. */
+  translate: 0 4px;
+}
+.lr-floating-recorder-size__control .ant-slider-handle::after {
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-primary) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-handle:focus-visible::after {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 3px;
+}
+.lr-floating-recorder-size__value {
+  display: grid;
+  min-width: 68px;
+  height: 36px;
+  padding: 0 8px;
+  place-items: center;
+  background: var(--lr-surface);
+  box-shadow: 3px 3px 0 var(--lr-primary);
+  color: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+.lr-floating-recorder-size__bounds {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+@media (max-width: 480px) {
+  .lr-floating-recorder-size__control {
+    gap: 10px;
+  }
+  .lr-floating-recorder-size__value {
+    min-width: 60px;
+    padding: 0 6px;
+  }
 }
 .lr-notification-matrix {
   display: grid;

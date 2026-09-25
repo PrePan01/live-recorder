@@ -641,14 +641,21 @@ export default function SettingsPage() {
                     disabled={false}
                   />
                 </Form.Item>
-                <Form.Item label="全局录制按钮大小" name="floatingRecorderSize">
-                  <Slider
-                    style={{ width: "50%" }}
-                    min={20}
-                    max={100}
-                    step={1}
-                    tooltip={{ formatter: (value) => `${value ?? 36}px` }}
-                  />
+                <Form.Item
+                  className="lr-floating-recorder-size"
+                  label="全局录制按钮大小"
+                >
+                  <div className="lr-floating-recorder-size__control">
+                    <Form.Item name="floatingRecorderSize" noStyle>
+                      <Slider
+                        aria-label="全局录制按钮大小"
+                        min={20}
+                        max={100}
+                        step={1}
+                        tooltip={{ formatter: (value) => `${value ?? 36}px` }}
+                      />
+                    </Form.Item>
+                  </div>
                 </Form.Item>
                 <Form.Item label="保存目录">
                   <Space.Compact style={{ width: "100%" }}>

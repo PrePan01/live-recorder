@@ -14,10 +14,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  ExportOutlined,
-  CopyOutlined,
-} from "@ant-design/icons";
+import { ExportOutlined, CopyOutlined } from "@ant-design/icons";
 import { buildRecordingColumns } from "./components/recordingColumns";
 import PlayerModal from "./components/PlayerModal";
 import PipelineDrawer from "./components/PipelineDrawer";
@@ -30,9 +27,7 @@ import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import { createExport, cancelExport, fetchExports } from "../../api/export";
 import { fetchUploads, retryUpload, uploadRecording } from "../../api/openlist";
-import {
-  classifyUploadError,
-} from "../../utils/uploadError";
+import { classifyUploadError } from "../../utils/uploadError";
 import { useUploadStore } from "../../stores/uploadStore";
 import type { ExportJob } from "../../types/export";
 import type { Recording } from "../../types/recording";
@@ -77,7 +72,6 @@ export default function History() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [, setTick] = useState(0);
-  // #19：上传失败任务的「查看详情」弹窗（错误码 + 可执行建议 + 原始错误全文 + 复制）。
   const [uploadErrorDetail, setUploadErrorDetail] = useState<{
     recordingId: string;
     title: string;
@@ -290,19 +284,20 @@ export default function History() {
   };
 
   const columns = useMemo(
-    () => buildRecordingColumns({
-      roomLabel,
-      openDirectory,
-      removeRecording,
-      message,
-      handleManualUpload,
-      handleUploadErrorDetail,
-      setRenaming,
-      setRenameValue,
-      setPlaying,
-      setPipelineRec,
-      retryUploadFor,
-    }),
+    () =>
+      buildRecordingColumns({
+        roomLabel,
+        openDirectory,
+        removeRecording,
+        message,
+        handleManualUpload,
+        handleUploadErrorDetail,
+        setRenaming,
+        setRenameValue,
+        setPlaying,
+        setPipelineRec,
+        retryUploadFor,
+      }),
     [
       roomLabel,
       openDirectory,
@@ -426,7 +421,10 @@ export default function History() {
         />
       )}
       <PlayerModal playing={playing} onClose={() => setPlaying(null)} />
-      <PipelineDrawer pipelineRec={pipelineRec} onClose={() => setPipelineRec(null)} />
+      <PipelineDrawer
+        pipelineRec={pipelineRec}
+        onClose={() => setPipelineRec(null)}
+      />
       <Modal
         title="重命名录制"
         open={renaming !== null}

@@ -1,4 +1,11 @@
-import { Suspense, useEffect, useState, useTransition } from "react";
+import {
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { Layout, Menu, Spin } from "antd";
 import {
   DashboardOutlined,
@@ -78,6 +85,7 @@ const ITEMS = [
 export default function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const contentRef = useRef<HTMLDivElement>(null);
   // Keep the clicked item responsive while the next route is rendering. The
   // route update is intentionally lower priority so a heavy page cannot make
   // the navigation surface feel stuck.
@@ -95,6 +103,13 @@ export default function AppLayout() {
 
   useEffect(() => {
     setPendingPath(null);
+  }, [pathname]);
+
+  // The layout's content area stays mounted across routes, so reset its scroll
+  // position before paint. Otherwise a tall page can leave the next page
+  // rendered at the same vertical offset.
+  useLayoutEffect(() => {
+    contentRef.current?.scrollTo({ top: 0, left: 0 });
   }, [pathname]);
 
   const selectedPath = pendingPath ?? pathname;
@@ -160,6 +175,7 @@ export default function AppLayout() {
           <AppVersion />
         </Sider>
         <Content
+          ref={contentRef}
           className="lr-app-content"
           style={{
             overflow: "auto",
