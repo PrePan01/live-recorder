@@ -104,7 +104,9 @@ export default function History() {
         : undefined,
       dateTo: dateRange ? dateRange[1].endOf("day").toISOString() : undefined,
     };
-    void fetchHistory(q);
+    void fetchHistory(q).catch(() =>
+      message.error("历史列表加载失败，请稍后重试"),
+    );
     if (rooms.length === 0) void fetchRooms();
   }, [fetchHistory, roomId, dateRange]);
 
@@ -223,7 +225,9 @@ export default function History() {
       try {
         await uploadRecording(recordingId);
         message.success("已触发上传");
-        void fetchHistory();
+        void fetchHistory().catch(() =>
+          message.error("历史列表刷新失败，请稍后重试"),
+        );
       } catch (e) {
         const msg = e instanceof ApiError ? e.message : "上传失败";
         message.error(msg);
@@ -416,7 +420,9 @@ export default function History() {
             total,
             showSizeChanger: true,
             onChange: (p, ps) =>
-              void fetchHistory({ page: p, pageSize: ps, roomId }),
+              void fetchHistory({ page: p, pageSize: ps, roomId }).catch(
+                () => message.error("历史列表加载失败，请稍后重试"),
+              ),
           }}
         />
       )}
