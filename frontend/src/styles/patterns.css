@@ -1329,8 +1329,8 @@
 .lr-room-card__corner-logo {
   position: absolute;
   z-index: 1;
-  right: 4px;
-  bottom: 2px;
+  right: 8px;
+  bottom: 0;
   transform-origin: right bottom;
 }
 .lr-room-card__corner-logo .lr-platform-logo-tag {
