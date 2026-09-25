@@ -1286,3 +1286,50 @@
   outline: 3px solid var(--lr-pink);
   outline-offset: 1px;
 }
+
+/* 监控卡片 · 头像角饰（口径更正版）：clip 层对齐卡片左上角、裁掉「只溢出的一小部分」
+   （裁线与卡片边框对齐，随卡同步动效）；内层 15° 斜置放大头像；平台 logo 缩小附右下角反旋正立 */
+.lr-room-card__container {
+  position: relative;
+}
+.lr-room-card__container .lr-room-card {
+  position: relative;
+}
+.lr-room-card__corner {
+  position: absolute;
+  z-index: 2;
+  /* 对齐卡片外缘（border-top 5 / border-left 2 的孟菲斯描边厚度） */
+  top: -5px;
+  left: -2px;
+  width: 50px;
+  height: 50px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.lr-room-card__corner-rot {
+  position: absolute;
+  top: -12px;
+  left: -12px;
+  width: 50px;
+  height: 50px;
+  transform: rotate(15deg);
+}
+.lr-room-card__corner-logo {
+  position: absolute;
+  z-index: 1;
+  right: -5px;
+  bottom: -5px;
+  transform: rotate(-15deg) scale(0.78);
+  transform-origin: right bottom;
+}
+.lr-room-card__corner-logo .lr-platform-logo-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 3px;
+  border: 1.5px solid var(--lr-ink) !important;
+}
+/* 标题避让头像占位（别压住卡内标题文字） */
+.lr-room-card .lr-room-card__title-row {
+  padding-left: 30px;
+}
