@@ -215,6 +215,25 @@ export default function Monitor() {
     [message, reorderRooms],
   );
 
+  // 渐进分片渲染：首屏同步出前 20 张卡，其余每片 6 张在帧间隙挂载——
+  // 把百卡一次成帧的长任务（实测 5.4s、滚动冻结 6.7s）拆为亚秒小片，卡片分批出现；
+  // 排序不受影响（DND 层按全量 ids 计算，见 RoomSortableProvider）。
+  const [shown, setShown] = useState(20);
+  useEffect(() => {
+    if (view !== "卡片") return; // 列表视图不参与分片：否则 state 推进会连发整表重渲染
+    if (shown >= monitorRooms.length) return;
+    let raf = 0;
+    const timer = setTimeout(() => {
+      raf = requestAnimationFrame(() =>
+        setShown((s) => Math.min(s + 6, monitorRooms.length)),
+      );
+    }, 50);
+    return () => {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [shown, monitorRooms.length, view]);
+
   const platformRooms = rooms.filter(
     (r) =>
       r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
@@ -393,7 +412,7 @@ export default function Monitor() {
           onReorder={commitRoomOrder}
         >
           <Row gutter={[16, 16]}>
-            {monitorRooms.map((room) => (
+            {monitorRooms.slice(0, shown).map((room) => (
               <SortableRoomCardItem key={room.id} roomId={room.id}>
                 <RoomCard
                   room={room}
