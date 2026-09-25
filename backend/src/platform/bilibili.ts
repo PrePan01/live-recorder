@@ -1,4 +1,4 @@
-import { unknownStatusFallback } from './status-fallback.js';
+import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
 import { AppError } from '../types/error.js';
 import type { ErrorObject, Quality } from '../types/index.js';
 import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapter.js';
@@ -272,8 +272,10 @@ export class BilibiliAdapter implements PlatformAdapter {
       return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
-      // 第一层兜底：B 站 body 层业务码未知时说中性真话（原码透传），不断言接口变动。
-      return { status: 'error', error: unknownStatusFallback({ code: data.code, hint: (data as { msg?: string; message?: string }).msg ?? (data as { message?: string }).message, scope: 'bilibili-room' }).toObject() };
+      const biliHint = (data as { msg?: string; message?: string }).msg ?? (data as { message?: string }).message;
+      // 第二层语义族（文本优先）→ 第一层中性兜底：body 业务码未知时先归族、归不了说真话。
+      const family = familyBySemantics({ code: data.code, hint: biliHint, scope: 'bilibili-room' });
+      return { status: 'error', error: (family ?? unknownStatusFallback({ code: data.code, hint: biliHint, scope: 'bilibili-room' })).toObject() };
     }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);

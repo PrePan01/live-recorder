@@ -1,4 +1,4 @@
-import { unknownStatusFallback } from './status-fallback.js';
+import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
 import { AppError } from "../types/error.js";
 import type { Quality } from "../types/index.js";
 import type {
@@ -136,6 +136,9 @@ function classifyStatusError(
       { retryable: true },
     );
   }
+  // 第二层：语义族归类（文本路优先）。认识语义就不再落通用中性兜底。
+  const family = familyBySemantics({ code, hint: message, scope: "douyin-enter" });
+  if (family) return family;
   const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
     return new AppError(
