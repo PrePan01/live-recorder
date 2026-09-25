@@ -657,7 +657,7 @@ export default function SettingsPage() {
                       noStyle
                       rules={[{ required: true, message: "必填" }]}
                     >
-                      <Input />
+                      <Input onBlur={() => void checkDir()} />
                     </Form.Item>
                     <Button onClick={() => setPickerOpen(true)}>浏览…</Button>
                     <Button onClick={() => void checkDir()}>校验</Button>

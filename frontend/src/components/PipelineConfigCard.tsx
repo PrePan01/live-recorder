@@ -1,8 +1,26 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Form, Input, InputNumber, Select, Switch, Tooltip } from "antd";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  App,
+  Button,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tooltip,
+} from "antd";
 import { fetchPipelineConfig, updatePipelineConfig } from "../api/pipeline";
+import { validateDirectory } from "../api/settings";
 import { describeError } from "../utils/errorMap";
 import { ApiError } from "../types/error";
+import DirectoryPicker from "./DirectoryPicker";
 import {
   FIRST_ENABLE_CRF,
   FIRST_ENABLE_SEGMENT_SECONDS,
@@ -10,14 +28,13 @@ import {
   derivePipelineSwitches,
 } from "./pipelineConfigForm";
 
-/** 管线步骤卡：序号徽标 + 步骤名（hover 轻提示）+ 开关 + 可选参数控件；关态=旁路（线外缩进）。 */
+/** 每个步骤共享左侧总线；启用时从卡片左侧进出，关闭时由总线直通。 */
 function StepCard({
   num,
   label,
   tip,
   desc,
   on,
-  bypass,
   switchNode,
   children,
 }: {
@@ -26,58 +43,81 @@ function StepCard({
   tip: string;
   desc: string;
   on: boolean;
-  bypass: boolean;
   switchNode: ReactNode;
   children?: ReactNode;
 }) {
   return (
     <div
-      className={`lr-pipeline-step${
-        on
-          ? " lr-pipeline-step--on is-on"
-          : bypass
-            ? " is-bypass"
-            : ""
-      }`}
+      className={`lr-pipeline-row${on ? " is-on" : " is-bypass"}`}
       data-step={num}
     >
-      <div className="lr-pipeline-step__head">
-        <Tooltip title={tip}>
+      <svg
+        className="lr-pipeline-bypass"
+        width="48"
+        height="100%"
+        aria-hidden="true"
+      >
+        <line
+          className="lr-pipeline-route__wall"
+          x1="24"
+          y1="0"
+          x2="24"
+          y2="100%"
+        />
+        <line
+          className="lr-pipeline-route__core"
+          x1="24"
+          y1="0"
+          x2="24"
+          y2="100%"
+        />
+        <line
+          className="lr-pipeline-route__flow"
+          x1="24"
+          y1="0"
+          x2="24"
+          y2="100%"
+        />
+      </svg>
+      {(["in", "out"] as const).map((port) => {
+        const path = port === "in" ? "M24 0 V40 H48" : "M48 0 H24 V40";
+        return (
+          <svg
+            key={port}
+            className={`lr-pipeline-route lr-pipeline-route--${port}`}
+            width="54"
+            height="40"
+            viewBox="0 0 54 40"
+            aria-hidden="true"
+          >
+            <path className="lr-pipeline-route__wall" d={path} />
+            <path className="lr-pipeline-route__core" d={path} />
+            <path className="lr-pipeline-route__flow" d={path} />
+            <circle
+              className="lr-pipeline-port"
+              cx="48"
+              cy={port === "in" ? 40 : 0}
+              r="5"
+            />
+          </svg>
+        );
+      })}
+      <div className="lr-pipeline-step">
+        <div className="lr-pipeline-step__head">
           <span className="lr-pipeline-step__num" aria-hidden="true">
-            {num}
+            {num.padStart(2, "0")}
           </span>
-        </Tooltip>
-        <Tooltip title={tip}>
-          <span className="lr-pipeline-step__name">{label}</span>
-        </Tooltip>
-        {bypass && !on ? (
-          <span className="lr-pipeline-step__bypass">旁路</span>
+          <Tooltip title={tip}>
+            <span className="lr-pipeline-step__name">{label}</span>
+          </Tooltip>
+          <span className="lr-pipeline-step__spacer" />
+          {switchNode}
+        </div>
+        <div className="lr-pipeline-step__desc">{desc}</div>
+        {children ? (
+          <div className="lr-pipeline-step__ctrl">{children}</div>
         ) : null}
-        <span className="lr-pipeline-step__spacer" />
-        {switchNode}
       </div>
-      {/* task #69/#70：步骤内说明文案卡内可见（不得删，功能描述口径） */}
-      <div className="lr-pipeline-step__desc">{desc}</div>
-      {children ? (
-        <div className="lr-pipeline-step__ctrl">{children}</div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * 步骤间连接件（task #72 重设计）：中空管段+两端接头法兰+箭头喷口+粉色流向点。
- * live=主流流经（上/下均有开启步骤，旁路不断流）；非 live=断流灰化静默。
- */
-function PipeLink({ live }: { live: boolean }) {
-  return (
-    <div
-      className={`lr-pipeline-link${live ? " lr-pipeline-link--live" : ""}`}
-      aria-hidden="true"
-    >
-      <span className="lr-pipeline-link__tube" />
-      <span className="lr-pipeline-link__flow" />
-      <span className="lr-pipeline-link__head" />
     </div>
   );
 }
@@ -88,16 +128,12 @@ export default function PipelineConfigCard() {
     ReturnType<typeof fetchPipelineConfig>
   > | null>(null);
   const [form] = Form.useForm();
-  // 开关切换时的接通/断开爆发动效（箭头脉冲+流速瞬时加快）。
-  const [burst, setBurst] = useState(false);
-  const burstTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const flowRef = useRef<HTMLDivElement>(null);
+  const [archivePickerOpen, setArchivePickerOpen] = useState(false);
   useEffect(() => {
     fetchPipelineConfig()
       .then((c) => {
         setConfig(c);
-        // 旧语义反推三个步骤开关的初值（0/null/空串=关，task #65）；
-        // exportCover 兼容后端热更前的缺键（缺=默认开，task #70）。
         form.setFieldsValue({
           ...c,
           exportCover: c.exportCover ?? true,
@@ -113,13 +149,6 @@ export default function PipelineConfigCard() {
       );
   }, [form, message]);
 
-  useEffect(
-    () => () => {
-      if (burstTimer.current) clearTimeout(burstTimer.current);
-    },
-    [],
-  );
-
   const save = (values: Record<string, unknown>) => {
     void updatePipelineConfig(buildPipelinePayload(values))
       .then((c) => setConfig(c))
@@ -130,18 +159,10 @@ export default function PipelineConfigCard() {
       );
   };
 
-  const triggerBurst = () => {
-    if (burstTimer.current) clearTimeout(burstTimer.current);
-    setBurst(true);
-    burstTimer.current = setTimeout(() => setBurst(false), 700);
-  };
-
   const onValuesChange = (
     changed: Record<string, unknown>,
     all: Record<string, unknown>,
   ) => {
-    // 总开关刚开启时步骤字段才挂载：回填服务端值再保存，
-    // 避免把 undefined 发回覆盖既有配置（task #58；#70 起兼回填 exportCover）。
     if (
       all.enabled &&
       config &&
@@ -165,19 +186,6 @@ export default function PipelineConfigCard() {
       form.setFieldValue("crf", FIRST_ENABLE_CRF);
     }
 
-    // task #72：步骤开关/总闸切换触发接通-断开动效（归档不再阻止开启——
-    // 未填路径载荷为空、运行时由后端跳过该步，PrePan 2a6ee1c8）。
-    const STEP_KEYS = [
-      "enabled",
-      "verify",
-      "exportCover",
-      "segmentEnabled",
-      "exportAudio",
-      "crfEnabled",
-      "archiveEnabled",
-    ];
-    if (STEP_KEYS.some((k) => k in changed)) triggerBurst();
-
     save(all);
   };
 
@@ -189,177 +197,233 @@ export default function PipelineConfigCard() {
   const coverOn = Form.useWatch("exportCover", form) === true;
   const segVal = Number(Form.useWatch("segmentSeconds", form) ?? 0);
   const crfVal = Form.useWatch("crf", form);
+  const archiveDirectory = Form.useWatch("archiveDirectory", form);
 
-  // 流向规则（PrePan ff5469b9）：主流只沿开启步骤流动；连接件 live =
-  // 上方存在开启步骤 且 下方存在开启步骤（旁路时主流不断）。
-  const stepOn = [verifyOn, coverOn, segOn, audioOn, crfOn, archiveOn];
-  const firstOn = stepOn.findIndex(Boolean);
-  const flowExists = firstOn !== -1;
-  const lastOn = flowExists
-    ? stepOn.length - 1 - [...stepOn].reverse().findIndex(Boolean)
-    : -1;
-  const liveAt = (i: number) => firstOn <= i && lastOn >= i + 1;
-  // 循环流动点仅在 ≥2 个开启步骤时出现（设计基线：单点无流可流）。
-  const flowing = stepOn.filter(Boolean).length >= 2;
+  const enabled = Form.useWatch("enabled", form) === true;
+
+  useLayoutEffect(() => {
+    const root = flowRef.current;
+    if (!root) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let segments: { element: SVGGeometryElement; distance: number }[] = [];
+    let frame = 0;
+    const paint = (time: number) => {
+      const travel = reducedMotion.matches ? 0 : time * 0.02;
+      for (const { element, distance } of segments) {
+        element.style.strokeDashoffset = String((distance - travel) % 18);
+      }
+    };
+    const measure = () => {
+      let distance = 0;
+      segments = [];
+      const pipelineRow = root.querySelectorAll(".lr-pipeline-row");
+      pipelineRow.forEach((row) => {
+        const selector = row.classList.contains("is-on")
+          ? ".lr-pipeline-route .lr-pipeline-route__flow"
+          : ".lr-pipeline-bypass .lr-pipeline-route__flow";
+        row
+          .querySelectorAll<SVGGeometryElement>(selector)
+          .forEach((element) => {
+            segments.push({ element, distance });
+            distance += element.getTotalLength();
+          });
+      });
+      paint(performance.now());
+    };
+    const tick = (time: number) => {
+      paint(time);
+      frame = requestAnimationFrame(tick);
+    };
+    const updateMotion = () => {
+      cancelAnimationFrame(frame);
+      paint(performance.now());
+      if (!reducedMotion.matches) frame = requestAnimationFrame(tick);
+    };
+    const observer = new ResizeObserver(measure);
+    root
+      .querySelectorAll(".lr-pipeline-row")
+      .forEach((row) => observer.observe(row));
+    measure();
+    updateMotion();
+    reducedMotion.addEventListener("change", updateMotion);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      reducedMotion.removeEventListener("change", updateMotion);
+    };
+  }, [enabled, verifyOn, coverOn, segOn, audioOn, crfOn, archiveOn]);
 
   return (
     <Form
       form={form}
       layout="vertical"
       size="small"
+      className="lr-pipeline-config"
       onValuesChange={onValuesChange}
     >
-      <Form.Item
-        label="启用后处理管线"
-        name="enabled"
-        valuePropName="checked"
-        extra="录制完成后执行校验/封面/切片/压缩/归档"
-      >
-        <Switch />
+      <Form.Item label="启用后处理管线" name="enabled" valuePropName="checked">
+        <Switch aria-label="启用后处理管线" />
       </Form.Item>
-      {config?.enabled ? (
-        <div
-          className={
-            `lr-pipeline-flow${burst ? " lr-pipeline-flow--burst" : ""}` +
-            (flowing ? " lr-pipeline-flow--flowing" : "")
-          }
-        >
-          <StepCard
-            num="1"
-            label="完整性校验"
-            tip="ffprobe 校验录制文件完整性；失败标记 partial 并告警"
-            desc="ffprobe 完整性校验"
-            on={verifyOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item name="verify" valuePropName="checked" noStyle>
-                <Switch />
-              </Form.Item>
-            }
+      {enabled ? (
+        <>
+          <Form.Item label="管线并发" name="maxConcurrency" extra="固定上限 2">
+            <Select disabled options={[{ value: 2, label: "2" }]} />
+          </Form.Item>
+          <div ref={flowRef} className="lr-pipeline-flow">
+            <div className="lr-pipeline-terminal">
+              <i />
+              录制完成
+            </div>
+            <StepCard
+              num="1"
+              label="完整性校验"
+              tip="校验录制文件完整性，源文件损坏时终止管线并保留源文件"
+              desc="完整性校验"
+              on={verifyOn}
+              switchNode={
+                <Form.Item name="verify" valuePropName="checked" noStyle>
+                  <Switch aria-label="完整性校验" />
+                </Form.Item>
+              }
+            />
+            <StepCard
+              num="2"
+              label="封面"
+              tip="导出封面用于历史列表展示；默认开"
+              desc="录制完成后导出封面"
+              on={coverOn}
+              switchNode={
+                <Form.Item name="exportCover" valuePropName="checked" noStyle>
+                  <Switch aria-label="封面" />
+                </Form.Item>
+              }
+            />
+            <StepCard
+              num="3"
+              label="切片"
+              tip="按秒切分录制文件；默认 10 秒"
+              desc={
+                segOn && segVal > 0
+                  ? `每 ${segVal} 秒切分录制文件`
+                  : "按秒切分录制文件"
+              }
+              on={segOn}
+              switchNode={
+                <Form.Item
+                  name="segmentEnabled"
+                  valuePropName="checked"
+                  noStyle
+                >
+                  <Switch aria-label="切片" />
+                </Form.Item>
+              }
+            >
+              {segOn ? (
+                <Form.Item label="切片秒数" name="segmentSeconds">
+                  <InputNumber min={1} max={86400} style={{ width: "100%" }} />
+                </Form.Item>
+              ) : null}
+            </StepCard>
+            <StepCard
+              num="4"
+              label="导出音频"
+              tip="录制完成后自动导出 MP3）"
+              desc="录制完成后自动导出 MP3"
+              on={audioOn}
+              switchNode={
+                <Form.Item name="exportAudio" valuePropName="checked" noStyle>
+                  <Switch aria-label="导出音频" />
+                </Form.Item>
+              }
+            />
+            <StepCard
+              num="5"
+              label="压缩"
+              tip="转封装/压缩为 MP4；压缩档位越低质量越高"
+              desc={
+                crfOn && crfVal != null
+                  ? `压缩档位 ${crfVal}，越低质量越高（0-51）`
+                  : "视频文件压缩"
+              }
+              on={crfOn}
+              switchNode={
+                <Form.Item name="crfEnabled" valuePropName="checked" noStyle>
+                  <Switch aria-label="压缩" />
+                </Form.Item>
+              }
+            >
+              {crfOn ? (
+                <Form.Item label="压缩档位 CRF" name="crf">
+                  <InputNumber min={0} max={51} style={{ width: "100%" }} />
+                </Form.Item>
+              ) : null}
+            </StepCard>
+            <StepCard
+              num="6"
+              label="归档"
+              tip="复制视频到归档目录；未填路径时运行中跳过该步"
+              desc="复制视频至归档目录，保留原文件；未填目录时跳过"
+              on={archiveOn}
+              switchNode={
+                <Form.Item
+                  name="archiveEnabled"
+                  valuePropName="checked"
+                  noStyle
+                >
+                  <Switch aria-label="归档" />
+                </Form.Item>
+              }
+            >
+              {archiveOn ? (
+                <Form.Item label="归档目录">
+                  <Space.Compact style={{ width: "100%" }}>
+                    <Form.Item
+                      name="archiveDirectory"
+                      noStyle
+                      validateTrigger="onBlur"
+                      rules={[
+                        {
+                          validator: async (_, value?: string) => {
+                            const directory = value?.trim();
+                            if (!directory) return;
+                            try {
+                              await validateDirectory(directory);
+                            } catch (error) {
+                              throw new Error(
+                                error instanceof ApiError
+                                  ? describeError(error.code, error.message)
+                                  : "目录不可用",
+                              );
+                            }
+                          },
+                        },
+                      ]}
+                    >
+                      <Input placeholder="输入归档路径，或点击浏览选择目录" />
+                    </Form.Item>
+                    <Button onClick={() => setArchivePickerOpen(true)}>
+                      浏览…
+                    </Button>
+                  </Space.Compact>
+                </Form.Item>
+              ) : null}
+            </StepCard>
+            <div className="lr-pipeline-terminal lr-pipeline-terminal--end">
+              <i />
+              处理完成
+            </div>
+          </div>
+          <DirectoryPicker
+            open={archivePickerOpen}
+            initialPath={archiveDirectory?.trim() || undefined}
+            onClose={() => setArchivePickerOpen(false)}
+            onPick={(directory) => {
+              form.setFieldValue("archiveDirectory", directory);
+              save({ ...form.getFieldsValue(), archiveDirectory: directory });
+            }}
           />
-          <PipeLink live={liveAt(0)} />
-          {/* task #70：封面导出可选步骤（exportCover 默认开，BE #71 契约；关=step skipped）；
-              task #72：元数据步仅去展示（实际流程照旧），封面升第 2 步 */}
-          <StepCard
-            num="2"
-            label="封面"
-            tip="导出封面帧用于历史列表展示；默认开"
-            desc="录制完成后导出封面帧"
-            on={coverOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item
-                name="exportCover"
-                valuePropName="checked"
-                noStyle
-              >
-                <Switch />
-              </Form.Item>
-            }
-          />
-          <PipeLink live={liveAt(1)} />
-          <StepCard
-            num="3"
-            label="切片"
-            tip="按秒切分录制文件；首开默认 10 秒"
-            desc={
-              segOn && segVal > 0
-                ? `每 ${segVal} 秒切分录制文件`
-                : "按秒切分录制文件"
-            }
-            on={segOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item
-                name="segmentEnabled"
-                valuePropName="checked"
-                noStyle
-              >
-                <Switch />
-              </Form.Item>
-            }
-          >
-            {segOn ? (
-              <Form.Item label="切片秒数" name="segmentSeconds">
-                <InputNumber min={1} max={86400} style={{ width: "100%" }} />
-              </Form.Item>
-            ) : null}
-          </StepCard>
-          <PipeLink live={liveAt(2)} />
-          {/* task #58：导出音频文件——总开关未启用时整块不展示（PrePan 修正）；
-              默认关，只影响之后触发的 run（配置在 run 启动时快照） */}
-          <StepCard
-            num="4"
-            label="导出音频"
-            tip="录制完成后自动转换出 MP3（192k CBR）"
-            desc="录制完成后自动转换出 MP3"
-            on={audioOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item
-                name="exportAudio"
-                valuePropName="checked"
-                noStyle
-              >
-                <Switch />
-              </Form.Item>
-            }
-          />
-          <PipeLink live={liveAt(3)} />
-          <StepCard
-            num="5"
-            label="压缩"
-            tip="转封装/压缩为 MP4；CRF 越低质量越高，首开默认 23"
-            desc={
-              crfOn && crfVal != null
-                ? `CRF ${crfVal}，越低质量越高（0-51）`
-                : "转封装/压缩输出 MP4"
-            }
-            on={crfOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item name="crfEnabled" valuePropName="checked" noStyle>
-                <Switch />
-              </Form.Item>
-            }
-          >
-            {crfOn ? (
-              <Form.Item label="压缩档位 CRF" name="crf">
-                <InputNumber min={0} max={51} style={{ width: "100%" }} />
-              </Form.Item>
-            ) : null}
-          </StepCard>
-          <PipeLink live={liveAt(4)} />
-          {/* task #72：归档反转——开开关才显示路径输入，不再先填先校验；
-              未填路径载荷为空，运行时后端跳过该步 */}
-          <StepCard
-            num="6"
-            label="归档"
-            tip="完成后移动到归档目录；未填路径时运行中跳过该步"
-            desc="完成后移动到归档目录"
-            on={archiveOn}
-            bypass={flowExists}
-            switchNode={
-              <Form.Item
-                name="archiveEnabled"
-                valuePropName="checked"
-                noStyle
-              >
-                <Switch />
-              </Form.Item>
-            }
-          >
-            {archiveOn ? (
-              <Form.Item label="归档目录" name="archiveDirectory">
-                <Input placeholder="/path/to/archive" />
-              </Form.Item>
-            ) : null}
-          </StepCard>
-        </div>
+        </>
       ) : null}
-      <Form.Item label="管线并发" name="maxConcurrency" extra="固定上限 2">
-        <Select disabled options={[{ value: 2, label: "2" }]} />
-      </Form.Item>
     </Form>
   );
 }

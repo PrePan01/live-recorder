@@ -147,6 +147,7 @@ export default function Setup() {
                 placeholder="输入保存路径，或点击浏览选择目录"
                 value={dir}
                 onChange={(e) => changeDirectory(e.target.value)}
+                onBlur={() => void validate()}
                 onPressEnter={() => void validate()}
               />
               <Button onClick={() => setPickerOpen(true)}>浏览…</Button>
