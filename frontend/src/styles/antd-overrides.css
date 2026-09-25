@@ -511,6 +511,8 @@ textarea.ant-input,
 .ant-tag-red,
 .ant-tag-error {
   background: var(--lr-pink);
+  /* 孟菲斯粉底禁白字/暗红字：黑字在粉底两主题下均 ≥4.5:1（axe 实测错误态红标超阈）。 */
+  color: #000 !important;
 }
 .lr-platform-logo-tag {
   display: inline-grid !important;
