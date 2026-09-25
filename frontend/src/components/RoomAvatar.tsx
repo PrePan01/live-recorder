@@ -61,6 +61,7 @@ export default function RoomAvatar({
           alt=""
           loading="lazy"
           decoding="async"
+          referrerPolicy="no-referrer"
           width={size}
           height={size}
           onError={() => setFailed(true)}
