@@ -14,6 +14,7 @@ import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/errorMap";
 import { formatRelative } from "../../../utils/format";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
+import RoomAvatar from "../../../components/RoomAvatar";
 import { MonitorStateTag } from "../../../components/StatusTags";
 import LiveStatusTag from "../../../components/LiveStatusTag";
 import type { Room } from "../../../types/room";
@@ -82,6 +83,13 @@ export function buildMonitorListColumns(
       ellipsis: true,
       render: (v: string, room) => (
         <Space size={4}>
+          <RoomAvatar
+            platform={room.platform}
+            avatarUrl={room.avatarUrl}
+            name={v}
+            live={room.lastLiveStatus === "live"}
+            size={22}
+          />
           <span>{v}</span>
           {room.titleFallbackUsed ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>

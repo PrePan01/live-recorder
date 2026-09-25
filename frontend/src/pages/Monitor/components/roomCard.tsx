@@ -20,6 +20,7 @@ import {
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
+import RoomAvatar from "../../../components/RoomAvatar";
 import RoomStats from "../../../components/RoomStats";
 import RoomHealth from "../../../components/RoomHealth";
 import LiveStatusTag from "../../../components/LiveStatusTag";
@@ -156,6 +157,13 @@ export const RoomCard = memo(function RoomCard({
         styles={{ body: { padding: 14 } }}
         title={
           <Space className="lr-room-card__title-row" align="center">
+            <RoomAvatar
+              platform={room.platform}
+              avatarUrl={room.avatarUrl}
+              name={room.displayName}
+              live={onAir}
+              size={32}
+            />
             <PlatformLogoTag platform={room.platform} />
             <Tooltip title={room.displayName}>
               <Typography.Text className="lr-room-card__title" strong ellipsis>
