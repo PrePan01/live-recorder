@@ -55,7 +55,7 @@ interface BiliPlayResponse {
 /** getRoomPlayInfo 已不再返回 room_info/anchor_info，改用以下两个免 Cookie 端点补充名称信息。 */
 interface BiliAnchorResponse {
   code?: number;
-  data?: { info?: { uname?: string } };
+  data?: { info?: { uname?: string; face?: string } };
 }
 
 interface BiliRoomInfoResponse {
@@ -180,7 +180,7 @@ export class BilibiliAdapter implements PlatformAdapter {
   }
 
   /** getRoomPlayInfo 响应已不含主播名/标题；用 get_anchor_in_room 取昵称、get_info 取标题，均免 Cookie 且无风控。 */
-  private async fetchRoomMeta(roomId: number): Promise<{ uname?: string; title?: string }> {
+  private async fetchRoomMeta(roomId: number): Promise<{ uname?: string; title?: string; face?: string }> {
     const headers = {
       'User-Agent': UA,
       Referer: `${this.roomBase}/${roomId}`,
@@ -196,8 +196,9 @@ export class BilibiliAdapter implements PlatformAdapter {
       }).then(async (r) => (r.ok ? ((await r.json()) as BiliRoomInfoResponse) : null)).catch(() => null),
     ]);
     const uname = anchor?.code === 0 ? anchor.data?.info?.uname : undefined;
+    const face = anchor?.code === 0 ? anchor.data?.info?.face : undefined;
     const title = info?.code === 0 ? info.data?.title : undefined;
-    return { ...(uname ? { uname } : {}), ...(title ? { title } : {}) };
+    return { ...(uname ? { uname } : {}), ...(title ? { title } : {}), ...(face ? { face } : {}) };
   }
 
   /** 取流：优先 http_stream/flv + avc；在全部 codec 中选择最接近目标档位的流。
@@ -276,12 +277,15 @@ export class BilibiliAdapter implements PlatformAdapter {
     const meta = await this.fetchRoomMeta(roomId);
     const title = data.data.room_info?.title ?? meta.title ?? '';
     const uname = data.data.anchor_info?.base_info?.uname ?? meta.uname;
+    // 头像取自已在调的 get_anchor_in_room（0 额外请求）；缺失降级不置空。
+    const face = meta.face?.trim() || undefined;
+    const avatarUrl = face && /^https?:\/\//.test(face) ? face : undefined;
     if (data.data.live_status !== 1) {
-      return { status: 'offline', ...(uname ? { displayName: uname } : {}) };
+      return { status: 'offline', ...(uname ? { displayName: uname } : {}), ...(avatarUrl ? { avatarUrl } : {}) };
     }
     const hasStream = Boolean(data.data.playurl_info?.playurl?.stream?.length);
     if (!hasStream) {
-      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查B站授权', { retryable: false }).toObject() };
+      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), ...(avatarUrl ? { avatarUrl } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查B站授权', { retryable: false }).toObject() };
     }
     // B站每次开播的 live_time 不同，用它标识本场直播，避免把同一房间的多次开播误判为同一场。
     const liveTime = data.data.live_time;
@@ -293,6 +297,7 @@ export class BilibiliAdapter implements PlatformAdapter {
       ...(startedAt ? { platformStartedAt: startedAt } : {}),
       streamTitle: title,
       ...(uname ? { displayName: uname } : {}),
+      ...(avatarUrl ? { avatarUrl } : {}),
       availableQualities: [...new Set(this.availableQns(data).map(qnToQuality))],
     };
   }

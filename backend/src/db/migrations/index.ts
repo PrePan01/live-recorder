@@ -857,6 +857,18 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
         );
     },
   },
+  {
+    // 监控卡片主播头像：平台检测周期顺带写入的可空列；历史房间不回填（懒补），UI 需兑底 null。
+    version: 38,
+    up: (db) => {
+      const has = db
+        .prepare(
+          `SELECT 1 AS x FROM pragma_table_info('rooms') WHERE name = 'avatar_url'`,
+        )
+        .get();
+      if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN avatar_url TEXT;`);
+    },
+  },
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

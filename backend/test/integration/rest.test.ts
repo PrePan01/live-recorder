@@ -1914,4 +1914,28 @@ describe("REST contract v1.1 (fake stack)", () => {
     start.mockRestore();
     await app.close();
   });
+
+  it("room avatarUrl: 新建默认 null、update 往返与清空、rooms 列表暴露（迁移 v38）", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/rooms",
+      headers: { host: "127.0.0.1:43120" },
+      payload: { platform: "bilibili", url: "https://live.bilibili.com/99887766", displayName: "头像房" },
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().room.id;
+    expect(created.json().room.avatarUrl ?? null).toBeNull();
+
+    services.rooms.update(id, { avatarUrl: "https://i0.hdslb.com/bfs/face/api.jpg" });
+    let list = await app.inject({ method: "GET", url: "/api/v1/rooms", headers: { host: "127.0.0.1:43120" } });
+    expect(list.json().rooms.find((r: { id: string }) => r.id === id).avatarUrl).toBe("https://i0.hdslb.com/bfs/face/api.jpg");
+
+    services.rooms.update(id, { avatarUrl: null });
+    list = await app.inject({ method: "GET", url: "/api/v1/rooms", headers: { host: "127.0.0.1:43120" } });
+    expect(list.json().rooms.find((r: { id: string }) => r.id === id).avatarUrl).toBeNull();
+    await app.close();
+  });
+
 });

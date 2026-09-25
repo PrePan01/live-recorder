@@ -651,4 +651,50 @@ describe("DouyinAdapter", () => {
       spy.mockRestore();
     }
   });
+
+  it("头像与昵称同次页面抓取解析并 TTL 缓存（检测周期 0 额外请求），非 http 脏值拒绝", async () => {
+    let pageHits = 0;
+    const fetcher = (async (url: unknown) => {
+      const u = String(url);
+      if (u.includes("/webcast/room/web/enter")) {
+        return new Response(JSON.stringify(livePayload({ user: {} })), { status: 200 });
+      }
+      pageHits += 1;
+      return new Response(
+        `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;青泠&quot;,&quot;avatar&quot;:&quot;https://p3.douyinpic.com/a.jpg&quot;}">x</div></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    }) as typeof fetch;
+    const a = new DouyinAdapter(fetcher);
+    const live = await a.checkLiveStatus("https://live.douyin.com/667788", "sessionid=x");
+    expect(live.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
+    expect(pageHits).toBe(1);
+    // TTL 缓存内第二次检测不再拉页面 = 0 额外请求实证
+    const again = await a.checkLiveStatus("https://live.douyin.com/667788", "sessionid=x");
+    expect(pageHits).toBe(1);
+    expect(again.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
+
+    // 非 http 脏值（沿用验收 #2a 夹具 avatar:"x"）→ 拒绝为 null
+    const dirty = await new DouyinAdapter(
+      (async () =>
+        new Response(
+          `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;乙&quot;,&quot;avatar&quot;:&quot;x&quot;}">y</div></html>`,
+          { status: 200, headers: { "content-type": "text/html" } },
+        )) as typeof fetch,
+    ).fetchAnchorProfile("991122");
+    expect(dirty.avatar).toBeNull();
+  });
+
+  it("nicknameHint（enter 接口昵称）时不拉页面：头像降级 null，绝不为头像多发请求", async () => {
+    let pageHits = 0;
+    const fetcher = (async () => {
+      pageHits += 1;
+      return new Response("<html></html>", { status: 200 });
+    }) as typeof fetch;
+    const a = new DouyinAdapter(fetcher);
+    const p = await a.fetchAnchorProfile("13579", undefined, "有昵称");
+    expect(p).toEqual({ name: "有昵称", avatar: null });
+    expect(pageHits).toBe(0);
+  });
+
 });

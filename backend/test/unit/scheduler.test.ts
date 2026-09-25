@@ -749,4 +749,30 @@ describe('Scheduler', () => {
     // 前端靠 alert:updated 更新已读状态，收敛时必须推送。
     expect(updates).toContain(unresolved[0]!.id);
   });
+
+  it("检测顺带持久化主播头像：有值写入、结果缺失不清空（兼容历史），名称填补不回归", async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/701', displayName: '' });
+    // 迁移 v38 列就位：新房间头像默认 null（历史房间=同一形态，UI 按 null 兜底）
+    expect(services.rooms.get(room.id)!.avatarUrl).toBeNull();
+
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '自动识别名', avatarUrl: 'https://i0.hdslb.com/bfs/face/x.jpg' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    let r = services.rooms.get(room.id)!;
+    expect(r.displayName).toBe('自动识别名');
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+
+    // 结果不带头像 → 不清空已有值；非空名称不被覆盖
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '另一个名字' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    r = services.rooms.get(room.id)!;
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+    expect(r.displayName).toBe('自动识别名');
+  });
+
 });

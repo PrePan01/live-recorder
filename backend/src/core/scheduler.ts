@@ -364,14 +364,16 @@ export class Scheduler {
     // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
     // 不让这个已在途请求的结果覆盖全局失效标记。
     if (room.platform === "douyin" && this.douyinCookieExpired) return;
-    // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
-    // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
+    // 适配器已从平台响应提取主播昵称/头像；检测成功后持久化并通过 SSE 推送，
+    // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名与头像。
     const detectedName = status.displayName?.trim();
-    // 仅填补空名称，保留用户手动设置的自定义名称。
+    const detectedAvatar = status.avatarUrl?.trim() || null;
+    // 名称仅填补空（保留用户自定义）；头像仅平台给出新值时更新，缺失/失败不清空已有值（兼容历史+静默降级）。
+    const patch: Partial<Pick<Room, "displayName" | "avatarUrl">> = {};
+    if (detectedName && !room.displayName.trim()) patch.displayName = detectedName;
+    if (detectedAvatar && detectedAvatar !== room.avatarUrl) patch.avatarUrl = detectedAvatar;
     const checkedRoom =
-      detectedName && !room.displayName.trim()
-        ? this.services.rooms.update(room.id, { displayName: detectedName })
-        : room;
+      Object.keys(patch).length > 0 ? this.services.rooms.update(room.id, patch) : room;
     if (checkedRoom !== room) this.emitRoom(room.id);
     // #128 抖音标题回退加固：记录标题来源/回退标记，SSE 供前端展示回退/占位状态。
     if (status.titleSource) {

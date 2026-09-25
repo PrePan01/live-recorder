@@ -9,6 +9,8 @@ export interface LiveStatusResult {
   platformStartedAt?: string;
   streamTitle?: string;
   displayName?: string;
+  /** 主播头像（平台响应自带、检测周期顺带提取，0 额外请求；缺失不置空已有值）。 */
+  avatarUrl?: string;
   availableQualities?: Quality[];
   error?: ErrorObject;
   /** V5 #128 标题来源：adapter=主源识别、fallback=回退源、placeholder=安全占位。 */

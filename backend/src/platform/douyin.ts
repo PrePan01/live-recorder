@@ -174,7 +174,7 @@ function isNetworkError(err: unknown): boolean {
 export class DouyinAdapter implements PlatformAdapter {
   readonly platform = "douyin" as const;
 
-  private nickCache = new Map<string, { name: string; at: number }>();
+  private nickCache = new Map<string, { name: string; avatar: string | null; at: number }>();
   /**
    * enter 请求串行化：并发撞到抖音边缘节点会集中得到 444，再被立即重试放大成
    * 所有房间同时报“接口暂时不可用”，所以同一时刻只发一个 enter 请求。
@@ -202,13 +202,20 @@ export class DouyinAdapter implements PlatformAdapter {
    * 必须携带会话 Cookie：匿名请求会被抖音挡在“验证码中间页”，页面里既没有
    * data-anchor-info 也没有 nickname 字段，昵称解析必然失败（退化成用直播间标题充当昵称）。
    * 该页面与 enter 接口同属 live.douyin.com，使用同一份凭证不新增信任边界。
+   *
+   * 同一次抓取顺带解析头像（avatar/avatar_thumb，仅收 http(s) 直链）——昵称/头像同源同缓存，
+   * 检测周期 0 额外请求；nicknameHint 存在时沿用旧逻辑不拉页面（头像降级 null，绝不为头像多发请求）。
    */
-  async fetchAnchorNickname(
+  async fetchAnchorProfile(
     roomId: string,
     cookie?: string,
-  ): Promise<string | null> {
+    nicknameHint?: string,
+  ): Promise<{ name: string | null; avatar: string | null }> {
+    const hint = nicknameHint?.trim() || "";
     const cached = this.nickCache.get(roomId);
-    if (cached && Date.now() - cached.at < NICK_TTL_MS) return cached.name;
+    if (cached && Date.now() - cached.at < NICK_TTL_MS)
+      return { name: cached.name, avatar: cached.avatar };
+    if (hint) return { name: hint, avatar: null };
     try {
       const res = await this.fetcher(`https://live.douyin.com/${roomId}`, {
         signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
@@ -218,19 +225,25 @@ export class DouyinAdapter implements PlatformAdapter {
           ...(cookie ? { Cookie: cookie } : {}),
         },
       });
-      if (!res.ok) return null;
+      if (!res.ok) return { name: null, avatar: null };
       const html = await res.text();
+      const asHttpUrl = (raw: string): string =>
+        /^https?:\/\//.test(raw) ? raw : "";
       let name = "";
+      let avatar = "";
       // ① data-anchor-info 属性：HTML 实体编码的 JSON（{nickname, avatar, ...}）。
       const attr = html.match(/data-anchor-info="([^"]*)"/);
       if (attr) {
         try {
           const info = JSON.parse(decodeEntities(attr[1]!)) as {
             nickname?: unknown;
+            avatar?: unknown;
           };
           const n =
             typeof info.nickname === "string" ? info.nickname.trim() : "";
           if (n) name = n;
+          const a = typeof info.avatar === "string" ? info.avatar.trim() : "";
+          if (a) avatar = asHttpUrl(a);
         } catch {
           // 尝试其他来源
         }
@@ -238,15 +251,22 @@ export class DouyinAdapter implements PlatformAdapter {
       // ② SSR JSON："nickname":"X" 或 \"nickname\":\"X\"。
       if (!name) {
         const m = html.match(
-          /(?:\\?"nickname\\?"\s*:\s*\\?"|"nickname"\s*:\s*")([^"\\]{1,80})/,
+          /(?:\\?"nickname\\?"\s*:\s*\\?"|"nickname\?"\s*:\s*")([^"\\]{1,80})/,
         );
         if (m) name = m[1]!.trim();
       }
-      if (!name) return null;
-      this.nickCache.set(roomId, { name, at: Date.now() });
-      return name;
+      // ③ SSR JSON 头像回退（avatar / avatar_thumb），仅收 http(s) 直链防脏值。
+      if (!avatar) {
+        const m = html.match(
+          /(?:\\?"avatar(?:_thumb)?\\?"\s*:\s*\\?"|"avatar(?:_thumb)?"\s*:\s*")([^"\\]{1,400})/,
+        );
+        if (m) avatar = asHttpUrl(m[1]!.trim());
+      }
+      if (!name) return { name: null, avatar: avatar || null };
+      this.nickCache.set(roomId, { name, avatar: avatar || null, at: Date.now() });
+      return { name, avatar: avatar || null };
     } catch {
-      return null;
+      return { name: null, avatar: null };
     }
   }
 
@@ -496,20 +516,24 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
-    const nickname =
-      entry.user?.nickname?.trim() ||
-      (await this.fetchAnchorNickname(roomId, cookie)) ||
-      "";
+    const profile = await this.fetchAnchorProfile(
+      roomId,
+      cookie,
+      entry.user?.nickname?.trim() || undefined,
+    );
+    const nickname = profile.name || "";
     const streamTitle = entry.title;
     const base = nickname
       ? {
           displayName: nickname,
           ...(streamTitle ? { streamTitle } : {}),
+          ...(profile.avatar ? { avatarUrl: profile.avatar } : {}),
           titleSource: "adapter" as const,
           titleFallbackUsed: false,
         }
       : {
           ...(streamTitle ? { streamTitle } : {}),
+          ...(profile.avatar ? { avatarUrl: profile.avatar } : {}),
           ...(await this.titleFallback(roomId, cookie)),
         };
     if (entry.status !== 2) {
