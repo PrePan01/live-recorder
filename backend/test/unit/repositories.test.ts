@@ -431,4 +431,19 @@ describe('AlertRepository', () => {
     expect(alerts.get(platformWide.id)!.resolved).toBe(false);
     expect(alerts.resolveForRoom('room_a', 'platform')).toHaveLength(0);
   });
+
+  it('uses WAL + synchronous NORMAL pairing（常驻写入型进程的 fsync 减负）', async () => {
+    // :memory: 不支持 WAL（journal_mode 返回 memory），必须用临时文件库验证生产路径
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const path = await import('node:path');
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-prag-'));
+    const db = openDatabase(path.join(dir, 'x.db'));
+    expect(String(db.pragma('journal_mode', { simple: true }))).toBe('wal');
+    // 1=NORMAL（未设置时默认 2=FULL；WAL 标准配对为 NORMAL，掉电安全边界仍由 WAL 保证）
+    expect(db.pragma('synchronous', { simple: true })).toBe(1);
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
 });

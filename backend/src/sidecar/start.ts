@@ -1,3 +1,4 @@
+import { installFfmpegExitReap, reapTrackedFfmpegs } from '../recorder/ffmpeg-registry.js';
 import path from 'node:path';
 import { buildApp } from '../api/server.js';
 import { buildServices, defaultDataDir } from '../core/services.js';
@@ -36,6 +37,7 @@ export interface SidecarResult {
 export async function startSidecar(
   opts: SidecarOptions,
 ): Promise<SidecarResult> {
+  installFfmpegExitReap();
   const host = opts.host ?? DEFAULT_HOST;
   const stateDir = opts.stateDir ?? path.join(defaultDataDir(), 'state');
   const instanceId = opts.instanceId ?? `inst_${ulid()}`;
@@ -139,6 +141,12 @@ export async function startSidecar(
         try {
           await app.close();
         } finally {
+          try {
+            // 收割仍在跑的 ffmpeg：不收割则后端一退即成孤儿进程（macOS 实测不随父进程带走）。
+            await reapTrackedFfmpegs(3_000);
+          } catch {
+            // best-effort：收割故障不影响收束流程。
+          }
           try {
             if (await lock.held()) await removeReadyFile(readyFile);
           } finally {

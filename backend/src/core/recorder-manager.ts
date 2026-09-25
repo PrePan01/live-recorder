@@ -1,4 +1,4 @@
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, statSync, type WriteStream } from "node:fs";
 import { access, mkdir, open, rename, unlink } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
@@ -1334,10 +1334,60 @@ export class RecorderManager {
           });
         }
       }
+      // 归档盘守卫（best-effort）：归档目录在另一块盘时，满盘会让分片搬运/归档写入失败，
+      // 此前只查录像目录、归档盘无人看。与录像目录同卷时上面的检查已覆盖，跳过。
+      await this.inspectArchiveDiskGuard(settings, room);
       startupTrace.mark("storage_checks_ready");
     } catch (error) {
       startupTrace.mark("storage_checks_ready");
       throw error;
+    }
+  }
+
+  /** 归档目录空间检查——绝不抛错（守卫自身故障或目录未建都不影响录制启动）。 */
+  private async inspectArchiveDiskGuard(
+    settings: AppSettings,
+    room: Room,
+  ): Promise<void> {
+    try {
+      const dir = settings.pipeline?.archiveDirectory?.trim();
+      if (!dir || dir.length === 0) return;
+      if (settings.recordingDirectory) {
+        try {
+          if (statSync(dir).dev === statSync(settings.recordingDirectory).dev) return;
+        } catch {
+          // 归档目录尚未创建：仍按路径检查（diskGuard 自行容错）。
+        }
+      }
+      const space = await this.services.diskGuard.inspect(dir);
+      const total = space.totalBytes || 1;
+      const low =
+        space.freeBytes < settings.diskGuard.minFreeBytes ||
+        (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
+      this.services.events.emit({
+        type: "disk:space",
+        data: {
+          directory: dir,
+          freeBytes: space.freeBytes,
+          totalBytes: space.totalBytes,
+          low,
+        },
+      });
+      if (low) {
+        const err = new AppError("DISK_SPACE_INSUFFICIENT", "归档目录所在磁盘空间不足", {
+          roomId: room.id,
+          details: {
+            freeBytes: space.freeBytes,
+            minFreeBytes: settings.diskGuard.minFreeBytes,
+          },
+        });
+        this.raiseAlert("error", "disk", err);
+        await this.notifier.notify("disk_space_low", room.id, {
+          title: room.displayName,
+        });
+      }
+    } catch {
+      // best-effort：见方法注释。
     }
   }
 
@@ -1838,7 +1888,9 @@ export class RecorderManager {
       );
 
       await new Promise<void>((resolve) => {
-        this.services.clock.setTimeout(() => resolve(), delay * 1000);
+        // 退避抖动 ±20%：多个房间同参数退避会在同一时刻同时打回平台/探测端，错峰后恢复流量摊开。
+        const jittered = delay * 1000 * (0.8 + Math.random() * 0.4);
+        this.services.clock.setTimeout(() => resolve(), jittered);
       });
       // 退避期间用户点了停止：按手动停止收尾。直接 return 会把记录永远留在"重连中"、占着并发名额，
       // 停止录制的请求也会一直挂在 session.done 上（唯一的出口是重启服务）。
@@ -2117,10 +2169,9 @@ export class RecorderManager {
       settings.retry.delaysSeconds[effective] ?? settings.retry.maxAttempts;
     // 短暂退避后重拉流：连续断连时避免高频空转，正常重连 gap 远小于调度器间隔。
     await new Promise<void>((resolve) => {
-      this.services.clock.setTimeout(
-        () => resolve(),
-        Math.min(rapid, 5) * 1000,
-      );
+      // 与断流退避同款 ±20% 抖动：避免批量房间自然收口后同时重拉。
+      const rapidJittered = Math.min(rapid, 5) * 1000 * (0.8 + Math.random() * 0.4);
+      this.services.clock.setTimeout(() => resolve(), rapidJittered);
     });
     if (this.active.get(room.id)?.stopRequested) {
       await this.completeRecording(room, recordingId, size, "ended", {

@@ -7,6 +7,8 @@ import { checkFileIntegrity } from './integrity.js';
  * 进度静默超过该时长才判定卡死：转封装正常时持续有进度输出，慢盘只是慢、不会静默。
  * 不用「总时长」上限——同一份 5GB 在不同磁盘上耗时差几十倍，任何固定值都会误杀大文件。
  */
+import { trackFfmpeg } from './ffmpeg-registry.js';
+
 export const DEFAULT_STALL_MS = 60_000;
 /** 判定卡死后等待进程真正退出的上限（SIGKILL 可能卡在不可中断 I/O 上，迟到数十秒）。 */
 export const DEFAULT_KILL_GRACE_MS = 30_000;
@@ -36,6 +38,7 @@ export function runFfmpegTracked(args: string[], options: FfmpegRunOptions = {})
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   return new Promise((resolve) => {
     const child = spawn(resolveBin('ffmpeg'), ['-nostats', '-progress', 'pipe:1', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const untrack = trackFfmpeg(child);
     let stderr = '';
     let stalled = false;
     let settled = false;
@@ -67,8 +70,8 @@ export function runFfmpegTracked(args: string[], options: FfmpegRunOptions = {})
       if (lines.some((line) => PROGRESS_LINE.test(line.trim()))) armStall();
     });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.on('error', () => settle(null));
-    child.on('close', (code) => settle(code));
+    child.on('error', () => { untrack(); settle(null); });
+    child.on('close', (code) => { untrack(); settle(code); });
 
     armStall();
   });
