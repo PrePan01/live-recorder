@@ -552,11 +552,11 @@ export default function Stats() {
 
   return (
     <div className="lr-page lr-stats-page">
-      <Space className="lr-page-header" wrap={false}>
+      <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           统计看板
         </Typography.Title>
-        <Space className="lr-page-actions" wrap={false}>
+        <Space className="lr-page-actions" wrap>
           <DatePicker.RangePicker
             className="lr-stats-range-picker"
             format="YYYY-MM-DD HH:mm"
