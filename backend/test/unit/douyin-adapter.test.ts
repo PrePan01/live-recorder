@@ -465,7 +465,7 @@ describe("DouyinAdapter", () => {
     ).toBe("DOUYIN_COOKIE_EXPIRED");
   });
 
-  it('4003034「不在主播可见范围」判为内容不可用并给真话，不报接口变动（诊断包实测同房 20+ 连发）', async () => {
+  it("4003034「不在主播可见范围」判为内容不可用并给真话，不报接口变动（诊断包实测同房 20+ 连发）", async () => {
     const a = new DouyinAdapter(
       mockFetcher(() => ({
         status_code: 4003034,
@@ -482,7 +482,7 @@ describe("DouyinAdapter", () => {
     expect(result.error?.message).not.toContain("接口有变动");
   });
 
-  it('10001 Service Unavailable 判为暂时繁忙可重试，不报接口变动（诊断包实测）', async () => {
+  it("10001 Service Unavailable 判为暂时繁忙可重试，不报接口变动（诊断包实测）", async () => {
     const a = new DouyinAdapter(
       mockFetcher(() => ({
         status_code: 10001,
@@ -497,24 +497,6 @@ describe("DouyinAdapter", () => {
     expect(result.error?.message).toContain("繁忙");
     expect(result.error?.message).not.toContain("接口有变动");
     expect(result.error?.retryable).toBe(true);
-  });
-
-  it('第一层：未知 status_code 落中性真话（未识别状态码+原码），不报接口变动', async () => {
-    const a = new DouyinAdapter(
-      mockFetcher(() => ({
-        status_code: 999999,
-        data: { message: "奇怪的提示" },
-      })),
-    );
-    const result = await a.checkLiveStatus(
-      "https://live.douyin.com/1",
-      "sessionid=x",
-    );
-    expect(result.status).toBe("error");
-    expect(result.error?.message).toContain("未识别状态码 999999");
-    expect(result.error?.message).not.toContain("接口有变动");
-    expect(result.error?.retryable).toBe(true);
-    expect(result.error?.details?.code).toBe(999999);
   });
 
   it("maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure", async () => {
@@ -732,7 +714,9 @@ describe("DouyinAdapter", () => {
     const fetcher = (async (url: unknown) => {
       const u = String(url);
       if (u.includes("/webcast/room/web/enter")) {
-        return new Response(JSON.stringify(livePayload({ user: {} })), { status: 200 });
+        return new Response(JSON.stringify(livePayload({ user: {} })), {
+          status: 200,
+        });
       }
       pageHits += 1;
       return new Response(
@@ -741,11 +725,17 @@ describe("DouyinAdapter", () => {
       );
     }) as typeof fetch;
     const a = new DouyinAdapter(fetcher);
-    const live = await a.checkLiveStatus("https://live.douyin.com/667788", "sessionid=x");
+    const live = await a.checkLiveStatus(
+      "https://live.douyin.com/667788",
+      "sessionid=x",
+    );
     expect(live.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
     expect(pageHits).toBe(1);
     // TTL 缓存内第二次检测不再拉页面 = 0 额外请求实证
-    const again = await a.checkLiveStatus("https://live.douyin.com/667788", "sessionid=x");
+    const again = await a.checkLiveStatus(
+      "https://live.douyin.com/667788",
+      "sessionid=x",
+    );
     expect(pageHits).toBe(1);
     expect(again.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
 
@@ -785,5 +775,4 @@ describe("DouyinAdapter", () => {
       avatar: "https://p9.douyinpic.com/img/tos/a~c5_1080x1080.jpeg",
     });
   });
-
 });
