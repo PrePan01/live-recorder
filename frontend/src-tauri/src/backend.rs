@@ -606,6 +606,15 @@ fn backend_cmd() -> String {
             return explicit;
         }
     }
+    // `tauri dev` copies bundle resources next to target/debug/app. On macOS,
+    // executing that copied Node binary can be rejected by the OS even though
+    // the original signed binary is valid. The development launcher already
+    // requires Node on PATH, so prefer that runtime before inspecting bundled
+    // resources. Release builds retain the self-contained runtime below.
+    #[cfg(debug_assertions)]
+    if command_exists("node") {
+        return "node".to_string();
+    }
     // 1) Packaged node: <bundle Resources>/node（Windows 为 node.exe）
     if let Some(res) = bundled_resources_dir() {
         let bundled = if cfg!(windows) {

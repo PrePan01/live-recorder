@@ -773,7 +773,8 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
             s.downloaded = update.asset.size;
         })),
         Err(error) => {
-            // 保留 .part 供下次续传（弱网下不必从 0 重下）。
+            // .part 已在每源耗尽时清理（防跨源字节拼接，见上方循环），总失败不留残片——
+            // 下次触发下载从头开始；同源内跨分片续传仍有效（每源自身的重试窗口内）。
             publish(&app, |s| {
                 s.phase = "available".into();
                 s.error = Some(error.clone());

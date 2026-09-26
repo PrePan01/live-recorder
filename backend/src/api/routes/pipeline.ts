@@ -23,7 +23,8 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法重试管线', { recordingId: id });
     const result = services.pipeline.retry(id);
     if (!result.ok) {
-      throw new AppError('CONFIG_LOAD_FAILED', '管线正在排队或运行中，无法重试', { recordingId: id });
+      // 409 而非 500：排队/运行中属冲突态（task #59，原 CONFIG_LOAD_FAILED→500 错误类）。
+      throw new AppError('RECORDING_NOT_AVAILABLE', '管线正在排队或运行中，无法重试', { recordingId: id });
     }
     return reply.send({ ok: true, run: result.run });
   });

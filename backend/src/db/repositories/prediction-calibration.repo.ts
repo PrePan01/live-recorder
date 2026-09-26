@@ -125,10 +125,11 @@ export class PredictionCalibrationRepository {
     );
   }
 
-  allRecordingSessions(): Array<PredictionRecordingSession & { roomId: string }> {
+  /** sinceIso：导出用 60 天窗口（与 recordings 证据同口径，N-2——否则全表载入随开播历史线性膨胀）。 */
+  allRecordingSessions(sinceIso: string): Array<PredictionRecordingSession & { roomId: string }> {
     return this.db
-      .prepare('SELECT room_id AS roomId, started_at AS startedAt, stream_session_id AS streamSessionId FROM prediction_recording_sessions ORDER BY started_at')
-      .all() as Array<PredictionRecordingSession & { roomId: string }>;
+      .prepare('SELECT room_id AS roomId, started_at AS startedAt, stream_session_id AS streamSessionId FROM prediction_recording_sessions WHERE started_at >= ? ORDER BY started_at')
+      .all(sinceIso) as Array<PredictionRecordingSession & { roomId: string }>;
   }
 
   pendingBefore(targetDate: string): PredictionForecast[] {

@@ -529,6 +529,43 @@ describe('Scheduler', () => {
     await settle(clock, 200);
   });
 
+  it('同场内平台更换 streamSessionId 也不得自动重开（手动停标记与 session id 解耦），下播清标记后恢复', async () => {
+    const { services, clock } = newServices();
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-sess-churn-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/77', displayName: 'churn' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-a' },
+      // 手动停止后：平台侧断点重推导致 session id 变化——仍属同一场，禁止自动重开。
+      { status: 'live', streamSessionId: 'id-b' },
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-c' },
+    ]);
+    await services.scheduler.checkRoom(room);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]?.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+    // 标记已落库且同场 live 检测不重启（session id 换了也不重启）。
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession).toBeTruthy();
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    // 下播：liveStartedAt 与标记一并清空。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.rooms.get(room.id)!.liveStartedAt).toBeNull();
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession ?? null).toBeNull();
+    // 新的未开播→开播沿：自动录制恢复。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    await services.manager.stopRecording(room.id);
+    await settle(clock, 200);
+  });
+
   it('room autoRecord=false blocks even manual /check from auto-starting (PrePan)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-roomoff-'));
@@ -749,4 +786,30 @@ describe('Scheduler', () => {
     // 前端靠 alert:updated 更新已读状态，收敛时必须推送。
     expect(updates).toContain(unresolved[0]!.id);
   });
+
+  it("检测顺带持久化主播头像：有值写入、结果缺失不清空（兼容历史），名称填补不回归", async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/701', displayName: '' });
+    // 迁移 v38 列就位：新房间头像默认 null（历史房间=同一形态，UI 按 null 兜底）
+    expect(services.rooms.get(room.id)!.avatarUrl).toBeNull();
+
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '自动识别名', avatarUrl: 'https://i0.hdslb.com/bfs/face/x.jpg' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    let r = services.rooms.get(room.id)!;
+    expect(r.displayName).toBe('自动识别名');
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+
+    // 结果不带头像 → 不清空已有值；非空名称不被覆盖
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '另一个名字' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    r = services.rooms.get(room.id)!;
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+    expect(r.displayName).toBe('自动识别名');
+  });
+
 });

@@ -1,5 +1,5 @@
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { createWriteStream, statSync, type WriteStream } from "node:fs";
+import { access, mkdir, open, rename, unlink } from "node:fs/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { AppError } from "../types/error.js";
@@ -10,6 +10,7 @@ import type {
   Room,
 } from "../types/index.js";
 import {
+  fileCreateError,
   causeLabel,
   failureText,
   humanizeFailure,
@@ -52,6 +53,11 @@ export const HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS = 1_000;
 /** 录像待写上限大小 */
 const MAX_SHARED_RECORDING_PENDING_BYTES = 32 * 1024 * 1024;
+/** 写积压触顶后、判定「真死」前的持续等待宽限（PrePan：繁忙=等待，录制不中断）。
+ * 标定依据：录制目录可为 USB 盘（PrePan 有意配置），USB 休眠/重协商瞬断达秒级至十秒级；
+ * 32MB 积压在常见码率下已覆盖约 20-40 秒缓冲，叠加 180 秒宽限足以扛 USB 级波动；
+ * 持续三分钟完全排不出（设备真死）才停录。 */
+const SHARED_WRITER_SLOW_GRACE_MS = 180_000;
 /** 开录后多久还没写出文件即视为拿不到数据 */
 const START_TIMEOUT_MS = 30_000;
 /** Preview has no recording-level start watchdog; recycle a source that never yields its first byte. */
@@ -125,7 +131,7 @@ interface PreviewSession {
   startupTrace?: PerformanceTrace;
 }
 
-interface SharedPreviewRecording {
+export interface SharedPreviewRecording {
   session: ActiveSession;
   writer: WriteStream;
   normalizer: FlvTimestampNormalizer;
@@ -133,6 +139,10 @@ interface SharedPreviewRecording {
   pendingWriteBytes: number;
   writePump: Promise<void> | null;
   writeError: Error | null;
+  /** 首次积压触顶时刻（null=未降级）；排空恢复后清零，用于持续时长判定。 */
+  degradedSince: number | null;
+  /** 降级期间因无法入队而丢弃的字节数（磁盘恢复前本就写不进盘的部分）。 */
+  droppedBytes: number;
 }
 
 export class RecorderManager {
@@ -391,10 +401,15 @@ export class RecorderManager {
    * 失败时缓冲区保持 awaitingHeader，等预览帧路径延迟重试（首开竞态兜底）。
    * 取证（脱敏）：只记 roomId 后缀与 bootstrap 形态，不打内容。
    */
-  private seedHighlightBuffer(roomId: string, buffer: HighlightBuffer): boolean {
+  private seedHighlightBuffer(
+    roomId: string,
+    buffer: HighlightBuffer,
+  ): boolean {
     if (!buffer.awaitingHeader) return true;
     const bootstrap = this.preview?.recordingBootstrap?.(roomId);
-    const flv = Boolean(bootstrap && bootstrap.subarray(0, 3).toString() === "FLV");
+    const flv = Boolean(
+      bootstrap && bootstrap.subarray(0, 3).toString() === "FLV",
+    );
     if (!flv) {
       // 首开常见：预览房尚未捕获头 → 保持 awaitingHeader，后续帧延迟播种。
       if (process.env.LIVE_RECORDER_DEBUG === "1")
@@ -413,7 +428,9 @@ export class RecorderManager {
   }
 
   /** 预览帧到达且缓冲区仍缺 FLV 头时延迟播种（A1/A3：首开丢头后恢复）。 */
-  private maybeSeedHighlightBuffer(roomId: string): HighlightBuffer | undefined {
+  private maybeSeedHighlightBuffer(
+    roomId: string,
+  ): HighlightBuffer | undefined {
     const buffer = this.highlightBuffers.get(roomId);
     if (!buffer?.awaitingHeader) return buffer;
     this.seedHighlightBuffer(roomId, buffer);
@@ -800,6 +817,15 @@ export class RecorderManager {
     const ext = path.extname(rec.filePath);
     const nextPath = path.join(path.dirname(rec.filePath), `${safeBase}${ext}`);
     try {
+      const targetTaken = await access(nextPath)
+        .then(() => true)
+        .catch(() => false);
+      if (targetTaken) {
+        this.services.recordings.update(recordingId, {
+          streamTitle: base.trim(),
+        });
+        return;
+      }
       await rename(rec.filePath, nextPath);
       this.services.recordings.update(recordingId, {
         streamTitle: base.trim(),
@@ -944,7 +970,6 @@ export class RecorderManager {
             }
           }
         } catch (err) {
-          // 预览拉流异常：预览本身静默收束（前端自己重连），但若挂着共享录制，原因要留给下面的接力判定。
           streamError =
             err instanceof AppError
               ? err.toObject()
@@ -961,13 +986,9 @@ export class RecorderManager {
             session.startupTrace?.finish("failed", "PREVIEW_START_TIMEOUT");
           if (!gotData && !streamError)
             session.startupTrace?.finish("failed", "STREAM_ENDED_BEFORE_DATA");
-          // 只允许当前会话清理自己，避免旧拉流的 finally 误删后来创建的新会话。
           if (this.previewSessions.get(roomId) === session)
             this.previewSessions.delete(roomId);
           let sharedRecording = session.recording;
-          // 录制已交回普通路径继续时，这里的预览房间不能收：观看端还连着，
-          // 收掉会把它的 FLV 初始化段一并删掉，之后重连永远起不来（画面卡在断网前那一秒）。
-          // 收尾交给录制生命周期——录制真结束时 completeRecording 会带正确原因关闭房间。
           let handedOver = false;
           if (sharedRecording) {
             session.recording = null;
@@ -988,9 +1009,6 @@ export class RecorderManager {
                 true,
               );
             }
-            // 上游结束不再直接把录制收尾（那会丢掉重试机会、也不记录任何原因）：
-            // 把会话交回普通录制路径，由它决定"还在播就续录、真下播就正常收尾、重试用尽才中断"。
-            // 退出中不接力：写流已落盘，记录状态交给下次启动的恢复流程统一收口。
             if (flushed && !this.shuttingDown) {
               handedOver = true;
               const activeSession = sharedRecording.session;
@@ -1044,16 +1062,10 @@ export class RecorderManager {
   ): Promise<void> {
     const session = this.previewSessions.get(roomId);
     if (!session) return;
-    // 点击录制后，预览拉流会被复用为录制数据源。此时最后一个预览客户端
-    // 断开只表示弹窗已关闭，不能停止上游流，否则会把正在写入的录制直接收尾。
-    // transitioningToRecording 是旧交接路径的显式停止，必须仍然允许执行。
     if (session.recording && !transitioningToRecording) return;
     if (transitioningToRecording) session.transitioningToRecording = true;
     await session.engine.stop().catch(() => undefined);
     await session.done.catch(() => undefined);
-    // WebSocket 可能因 mpegts.js 的短暂重连而一度变成“最后一个客户端断开”。
-    // 不能在这里清理精彩时刻缓存，否则播放器重连成功后缓存已丢失且前端不会重新启用。
-    // 普通观看窗口卸载、关闭总开关、开始实时录制和服务重置会显式清理它。
   }
 
   private appendSharedPreviewRecording(
@@ -1061,18 +1073,40 @@ export class RecorderManager {
     chunk: Buffer,
   ): void {
     if (recording.writeError) throw recording.writeError;
-    // FlvTimestampNormalizer 会原地改写时间戳；写盘必须处理副本，不能污染仍要
-    // 广播给 mpegts 的原始预览帧，否则预览时间轴会在开始录制时跳回 0。
+    const enqueueNow = this.services.clock.now();
     for (const part of recording.normalizer.push(Buffer.from(chunk))) {
       if (
         recording.pendingWriteBytes + part.length >
         MAX_SHARED_RECORDING_PENDING_BYTES
       ) {
-        throw new Error("录制磁盘写入过慢");
+        if (
+          recording.degradedSince !== null &&
+          enqueueNow - recording.degradedSince > SHARED_WRITER_SLOW_GRACE_MS
+        ) {
+          throw new Error("录制磁盘写入过慢");
+        }
+        if (recording.degradedSince === null) {
+          recording.degradedSince = enqueueNow;
+          console.warn(
+            `[write-degraded] ${recording.session.recordingId} 写积压触顶(32MB)，进入等待恢复：丢弃新到块、录制不中断`,
+          );
+        }
+        recording.droppedBytes += part.length;
+        continue;
       }
       recording.session.size += part.length;
       recording.pendingWrites.push(part);
       recording.pendingWriteBytes += part.length;
+    }
+    // 排空过半=瞬时繁忙结束（USB 唤醒/同盘抢 IO 结束）：清降级起点重新计时。
+    if (
+      recording.degradedSince !== null &&
+      recording.pendingWriteBytes <= MAX_SHARED_RECORDING_PENDING_BYTES / 2
+    ) {
+      console.warn(
+        `[write-degraded] ${recording.session.recordingId} 写入恢复排空，降级解除（累计丢弃 ${recording.droppedBytes} 字节）`,
+      );
+      recording.degradedSince = null;
     }
     // 共享录制也要记"最后一份数据的时间"：否则中断/收尾时无法判断静默了多久，
     // 缺失时长会被算成整段录制时长（或干脆算不出来）。
@@ -1112,7 +1146,11 @@ export class RecorderManager {
         recording.pendingWriteBytes + remaining.length >
         MAX_SHARED_RECORDING_PENDING_BYTES
       ) {
-        throw new Error("录制磁盘写入过慢");
+        // 收尾冲刷不杀：余量是归一器最后的分片（有界小量），超帽也入队排出，绝不
+        // 在此抛错——否则录完反而丢尾（QA 复测口径③：停止时已有数据完整）。
+        console.warn(
+          `[write-degraded] ${recording.session.recordingId} 收尾冲刷超帽，仍强制排出保尾`,
+        );
       }
       recording.session.size += remaining.length;
       recording.pendingWrites.push(remaining);
@@ -1192,6 +1230,8 @@ export class RecorderManager {
       normalizer: new FlvTimestampNormalizer({ rebaseFromFirstMedia: true }),
       pendingWrites: [],
       pendingWriteBytes: 0,
+      degradedSince: null,
+      droppedBytes: 0,
       writePump: null,
       writeError: null,
     };
@@ -1275,12 +1315,8 @@ export class RecorderManager {
       await mkdir(path.dirname(filePath), { recursive: true });
       const file = await open(filePath, "w");
       await file.close();
-    } catch {
-      throw new AppError(
-        "RECORDING_DIRECTORY_INVALID",
-        "保存目录无效，录制失败",
-        { roomId },
-      );
+    } catch (error) {
+      throw fileCreateError(error, roomId);
     }
   }
 
@@ -1325,10 +1361,65 @@ export class RecorderManager {
           });
         }
       }
+      // 归档盘守卫（best-effort）：归档目录在另一块盘时，满盘会让分片搬运/归档写入失败，
+      // 此前只查录像目录、归档盘无人看。与录像目录同卷时上面的检查已覆盖，跳过。
+      await this.inspectArchiveDiskGuard(settings, room);
       startupTrace.mark("storage_checks_ready");
     } catch (error) {
       startupTrace.mark("storage_checks_ready");
       throw error;
+    }
+  }
+
+  /** 归档目录空间检查——绝不抛错（守卫自身故障或目录未建都不影响录制启动）。 */
+  private async inspectArchiveDiskGuard(
+    settings: AppSettings,
+    room: Room,
+  ): Promise<void> {
+    try {
+      const dir = settings.pipeline?.archiveDirectory?.trim();
+      if (!dir || dir.length === 0) return;
+      if (settings.recordingDirectory) {
+        try {
+          if (statSync(dir).dev === statSync(settings.recordingDirectory).dev)
+            return;
+        } catch {
+          // 归档目录尚未创建：仍按路径检查（diskGuard 自行容错）。
+        }
+      }
+      const space = await this.services.diskGuard.inspect(dir);
+      const total = space.totalBytes || 1;
+      const low =
+        space.freeBytes < settings.diskGuard.minFreeBytes ||
+        (space.freeBytes / total) * 100 < settings.diskGuard.minFreePercent;
+      this.services.events.emit({
+        type: "disk:space",
+        data: {
+          directory: dir,
+          freeBytes: space.freeBytes,
+          totalBytes: space.totalBytes,
+          low,
+        },
+      });
+      if (low) {
+        const err = new AppError(
+          "DISK_SPACE_INSUFFICIENT",
+          "归档目录所在磁盘空间不足",
+          {
+            roomId: room.id,
+            details: {
+              freeBytes: space.freeBytes,
+              minFreeBytes: settings.diskGuard.minFreeBytes,
+            },
+          },
+        );
+        this.raiseAlert("error", "disk", err);
+        await this.notifier.notify("disk_space_low", room.id, {
+          title: room.displayName,
+        });
+      }
+    } catch {
+      // best-effort：见方法注释。
     }
   }
 
@@ -1576,23 +1667,16 @@ export class RecorderManager {
   ): Promise<void> {
     const settings = this.settings();
     const engine = this.services.engineFor();
-    // 本次拉流的代次：代次由接过接力的那一路（resumeSession）推进，被取代的旧会话据此停止处理事件。
     const generation = session.generation;
     session.engine = engine;
     session.filePath = filePath;
     this.services.rooms.setState(room.id, "recording");
-    // 只有真正新开一场录制时才清空预览头缓冲（跨录制不残留旧头，QA #150）。
-    // 续录不能清：续录段会跳过 FLV 头（文件里已有），清了之后头再也补不回来，
-    // 中途打开预览的观众会收不到初始化段（预览起不来、从预览点录制也会退化成另开一路拉流）。
     if (session.segments === 0) this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
-    // 「拿不到数据」的判据是收到第一份数据，而不是文件被创建：
-    // 平台返回 200 后卡住不吐字节时 file_created 会先触发，只看它就会把这种情况判定成"已开始录"，一直挂到天荒地老。
     let gotData = false;
     const pendingTimeout = this.services.clock.setTimeout(() => {
       if (!gotData) {
-        // 拿不到数据与断流是同一件事：同样进入重试，而不是一次判死（网络慢时白丢一次录制）。
         const err = new AppError(
           "RECORDING_START_TIMEOUT",
           "等待直播数据超时",
@@ -1793,11 +1877,23 @@ export class RecorderManager {
     // 消耗一次额度后继续等下一轮，只有额度耗尽才收尾。绝不能把"没探测成功"当成"主播下播"——
     // 那会在网络抖动时把一次好录制无声结束掉。
     for (;;) {
+      const prevState = this.services.rooms.get(room.id)?.monitorState;
       const recording = this.services.recordings.update(recordingId, {
         state: "reconnecting",
         retryCount: effective,
       });
       this.services.rooms.setState(room.id, "reconnecting");
+      // 状态真变了才补发房间事件：退避循环每轮重试都会重复 setState，无守卫则每轮广播冗余 room:updated；
+      // 而只发 recording:updated 会让监控卡片/列表停留在「录制中」直到下个检测周期（前端靠 room:updated 切「重连中」）。
+      if (prevState !== "reconnecting") {
+        const fresh = this.services.rooms.get(room.id);
+        if (fresh) {
+          this.services.events.emit({
+            type: "room:updated",
+            data: this.enrichRoom(fresh),
+          });
+        }
+      }
       this.services.events.emit({ type: "recording:updated", data: recording });
 
       const delay = settings.retry.delaysSeconds[effective];
@@ -1820,7 +1916,9 @@ export class RecorderManager {
       );
 
       await new Promise<void>((resolve) => {
-        this.services.clock.setTimeout(() => resolve(), delay * 1000);
+        // 退避抖动 ±20%：多个房间同参数退避会在同一时刻同时打回平台/探测端，错峰后恢复流量摊开。
+        const jittered = delay * 1000 * (0.8 + Math.random() * 0.4);
+        this.services.clock.setTimeout(() => resolve(), jittered);
       });
       // 退避期间用户点了停止：按手动停止收尾。直接 return 会把记录永远留在"重连中"、占着并发名额，
       // 停止录制的请求也会一直挂在 session.done 上（唯一的出口是重启服务）。
@@ -2006,6 +2104,15 @@ export class RecorderManager {
     const session = this.active.get(roomId);
     if (!session) return;
     session.stopRequested = true;
+    {
+      const room = this.services.rooms.get(roomId);
+      if (room) {
+        this.services.rooms.setAutoRecordStopped(
+          room.id,
+          room.liveStartedAt ?? this.services.clock.iso(),
+        );
+      }
+    }
     const previewSession = this.previewSessions.get(roomId);
     const sharedRecording = previewSession?.recording;
     if (previewSession && sharedRecording?.session === session) {
@@ -2097,12 +2204,10 @@ export class RecorderManager {
     }
     const rapid =
       settings.retry.delaysSeconds[effective] ?? settings.retry.maxAttempts;
-    // 短暂退避后重拉流：连续断连时避免高频空转，正常重连 gap 远小于调度器间隔。
     await new Promise<void>((resolve) => {
-      this.services.clock.setTimeout(
-        () => resolve(),
-        Math.min(rapid, 5) * 1000,
-      );
+      const rapidJittered =
+        Math.min(rapid, 5) * 1000 * (0.8 + Math.random() * 0.4);
+      this.services.clock.setTimeout(() => resolve(), rapidJittered);
     });
     if (this.active.get(room.id)?.stopRequested) {
       await this.completeRecording(room, recordingId, size, "ended", {
@@ -2303,8 +2408,6 @@ export class RecorderManager {
       );
       return;
     }
-    // 精彩时刻的确认框会在缓存文件复制完成前出现。超时默认保留也必须等
-    // 导出完成，否则会把一个尚不存在的 filePath 交给后处理管线。
     const pendingHighlight =
       this.pendingHighlightConfirmations.get(recordingId);
     if (pendingHighlight) {
@@ -2403,8 +2506,6 @@ export class RecorderManager {
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
     if (rec.filePath) this.verifyIntegrity(rec);
-    // mp4_after（且管线未启用）：先完成 FLV→MP4 转封装再入队管线/上传——
-    // 避免上传抢在转封装前按旧 filePath 把 FLV 传走（PrePan：偶现转 mp4 失败上传的却是 flv）。
     if (
       this.settings().recordingFormat === "mp4_after" &&
       rec.filePath &&
@@ -2511,14 +2612,12 @@ export class RecorderManager {
     source: string,
     preservePreview = false,
   ): Promise<void> {
-    // 退出中：同上，只放掉会话（记录留给恢复流程，避免退出时写库/发邮件）。
     if (this.shuttingDown) {
       this.active.get(room.id)?.resolveDone?.();
       this.active.delete(room.id);
       return;
     }
     const session = this.active.get(room.id);
-    // 用户看到的原因必须是"人话"：技术性 message 换成对应场景的说明，原文留在 details 里备查。
     const failure = humanizeFailure(err);
     const rec = this.services.recordings.update(recordingId, {
       state: "failed",
@@ -2556,6 +2655,7 @@ export class RecorderManager {
       occurredAt: this.services.clock.iso(),
       roomId: err.roomId,
       errorCode: err.code,
+      retryable: err.retryable,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }

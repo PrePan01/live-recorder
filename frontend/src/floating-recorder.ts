@@ -13,6 +13,7 @@ let targetRoomId: string | null = null;
 let room: Room | null = null;
 let acting = false;
 let timer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let error: string | null = null;
 let events: EventSource | null = null;
 let dragStart: { x: number; y: number } | null = null;
@@ -162,8 +163,17 @@ void (async () => {
   await listen<FloatingState>('floating-recorder:target', (event) => void setTarget(event.payload));
   await listen<void>('floating-recorder:moved', () => { dragged = true; });
   subscribeRoomUpdates();
-  timer = setInterval(() => { if (isRecording()) render(); }, 1000);
-  setInterval(() => void refresh(), 5000);
+  // 界面刷新仅在窗口可见时进行（隐藏时每秒重绘/每5秒自问无人观看）；
+  // 回前台立即补一次，录制计时显示不滞后。
+  timer = setInterval(() => { if (!document.hidden && isRecording()) render(); }, 1000);
+  refreshTimer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void refresh();
+  });
 })();
 
-window.addEventListener('beforeunload', () => { if (timer) clearInterval(timer); events?.close(); });
+window.addEventListener('beforeunload', () => {
+  if (timer) clearInterval(timer);
+  if (refreshTimer) clearInterval(refreshTimer);
+  events?.close();
+});
