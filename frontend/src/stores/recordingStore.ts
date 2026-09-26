@@ -19,6 +19,9 @@ function normalizeRecording(rec: Recording): Recording {
 
 const TERMINAL_STATES = new Set<Recording["state"]>(["completed", "failed"]);
 
+/** 列表请求代际：后发先至，旧响应不再覆盖新筛选/翻页的结果。 */
+let historyEpoch = 0;
+
 interface RecordingState {
   items: Recording[];
   total: number;
@@ -62,9 +65,12 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   query: {},
   async fetchHistory(q) {
     const query = { ...get().query, ...q };
+    const epoch = ++historyEpoch;
     set({ loading: true, query });
     try {
       const res = await fetchRecordings(query);
+      // 旧代际响应直接丢弃：快速切筛选/连点翻页时以最后一次请求为准。
+      if (epoch !== historyEpoch) return;
       set({
         items: res.items.map(normalizeRecording),
         total: res.total,
@@ -72,8 +78,11 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         pageSize: res.pageSize,
         loading: false,
       });
-    } catch {
+    } catch (error) {
+      if (epoch !== historyEpoch) return;
       set({ loading: false });
+      // 失败上抛给页面提示，不再静默吞掉（旧列表会停在屏上无任何反馈）。
+      throw error;
     }
   },
   async openDirectory(id) {

@@ -40,10 +40,12 @@ export default function StatusBar() {
   }, [fetchAlerts]);
 
   useEffect(() => {
-    const t = setInterval(
-      () => void useServiceStore.getState().fetchStatus(),
-      300_000,
-    );
+    const t = setInterval(() => {
+      // 后台暂停界面状态轮询，回前台由 5 分钟下一拍（或 SSE patch）补上；
+      // 状态栏为低频展示面，不做立即补刷。
+      if (document.visibilityState !== "visible") return;
+      void useServiceStore.getState().fetchStatus();
+    }, 300_000);
     return () => clearInterval(t);
   }, []);
 
@@ -101,6 +103,7 @@ export default function StatusBar() {
           </Typography.Text>
           {disk.showProgress ? (
             <Progress
+              aria-label="磁盘可用空间"
               percent={Math.round(freeRatio * 100)}
               status={disk.spaceDanger ? "exception" : "normal"}
               size="small"

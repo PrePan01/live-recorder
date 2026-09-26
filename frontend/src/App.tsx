@@ -38,7 +38,11 @@ function SetupGuard({ children }: { children: JSX.Element }) {
   useEffect(() => {
     if (status) return;
     void fetchStatus();
-    const timer = setInterval(() => void fetchStatus(), 5000);
+    const timer = setInterval(() => {
+      // 后台不轮询界面状态（业务在后端；仅连接建立前的短窗口，回前台下一轮即补）。
+      if (document.visibilityState !== "visible") return;
+      void fetchStatus();
+    }, 5000);
     return () => clearInterval(timer);
   }, [status, fetchStatus]);
 
@@ -75,6 +79,30 @@ export default function App() {
   useEffect(() => {
     recordRecentErrorAction(`navigation:${pathname}`);
   }, [pathname]);
+
+  useEffect(() => {
+    // 无障碍：antd Select 的 aria-label 不透传到内层 combobox input（label[for] 又指向
+    // 不可标注的容器）——就近回填（控件自身 aria-label → 所属 Form.Item 标签文本）。
+    const fill = () => {
+      document
+        .querySelectorAll<HTMLInputElement>("input.ant-select-input")
+        .forEach((el) => {
+          if (el.hasAttribute("aria-label")) return;
+          const own =
+            el.closest(".ant-select")?.getAttribute("aria-label") ?? null;
+          const fiLabel = el
+            .closest(".ant-form-item")
+            ?.querySelector(".ant-form-item-label label")
+            ?.textContent?.trim();
+          const name = own || (fiLabel || null);
+          if (name) el.setAttribute("aria-label", name);
+        });
+    };
+    fill();
+    const observer = new MutationObserver(fill);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const unsub = subscribeBridgeEvents();

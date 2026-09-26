@@ -8,6 +8,7 @@ interface RoomRow {
   platform: string;
   url: string;
   display_name: string;
+  avatar_url: string | null;
   enabled: number;
   favorited: number;
   auto_record: number | null;
@@ -53,12 +54,15 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     platform: row.platform as Platform,
     url: row.url,
     displayName: row.display_name,
+    avatarUrl: row.avatar_url,
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
     liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     liveStartedAt: row.live_started_at,
+    autoRecordStoppedSession:
+      (row as { auto_record_stopped_session?: string | null }).auto_record_stopped_session ?? null,
     currentStreamTitle: row.current_stream_title,
     availableQualities: parseQualities(row.available_qualities),
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
@@ -116,6 +120,7 @@ export class RoomRepository {
       platform: input.platform,
       url: input.url,
       displayName: input.displayName,
+      avatarUrl: null,
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
@@ -158,7 +163,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -168,11 +173,12 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
           next.displayName,
+          next.avatarUrl,
           next.enabled ? 1 : 0,
           next.favorited ? 1 : 0,
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
@@ -245,9 +251,17 @@ export class RoomRepository {
               WHEN ? = 'live' THEN COALESCE(live_started_at, ?)
               ELSE live_started_at
             END,
+            auto_record_stopped_session = CASE WHEN ? = 'offline' THEN NULL ELSE auto_record_stopped_session END,
             updated_at = ?
         WHERE id = ?`)
-      .run(status, status, status, liveStartedAt ?? null, nowIso(), id);
+      .run(status, status, status, liveStartedAt ?? null, status, nowIso(), id);
+  }
+
+  /** 记录「本开播周期内已被用户手动停止」：调度器自动录制在本场内跳过（下播由 setLiveStatus 清空）。 */
+  setAutoRecordStopped(id: string, sessionTs: string): void {
+    this.db
+      .prepare('UPDATE rooms SET auto_record_stopped_session = ?, updated_at = ? WHERE id = ?')
+      .run(sessionTs, nowIso(), id);
   }
 
   /** 保存本次检测到的可录清晰度；空数组表示未知（未开播/平台未给出），不展示过期的「最高可录」。 */

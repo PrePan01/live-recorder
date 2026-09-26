@@ -1,11 +1,11 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Services } from './services.js';
 import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
 import { checkFileIntegrity } from '../recorder/integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
-import { extractCoverFrame, segmentFile, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
+import { extractCoverFrame, segmentFile, exportAudioToMp3, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
 import type { Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
 interface QueueEntry {
@@ -36,7 +36,7 @@ export class PipelineManager {
   pipelineConfig(): PipelineConfig {
     const settings = this.services.settings.load();
     const stored = settings?.pipeline;
-    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, ...(stored ?? {}) };
+    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, ...(stored ?? {}) };
   }
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
@@ -110,17 +110,22 @@ export class PipelineManager {
       if (!recording || !recording.filePath) throw new Error('recording 无文件');
 
       // ① verify：ffprobe 校验源文件可播（损坏 → failed，保留源文件）。
+      // verify 开关门控（默认开，关=本步 skipped 不探测，run 快照语义——task #73 修「说谎开关」）。
       const verify = this.pipelineRepo.createArtifact({ runId: run.id, step: 'verify' });
-      this.pipelineRepo.setArtifact(verify.id, { status: 'running', startedAt: this.services.clock.iso() });
-      const integrity = await checkFileIntegrity(recording.filePath);
-      if (integrity === 'failed') {
-        this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: '源文件损坏或截断', endedAt: this.services.clock.iso() });
-        this.services.recordings.update(recording.id, { integrity: 'failed', state: 'completed', pipelineStatus: 'failed' });
-        this.finish(run.id, 'failed');
-        return;
+      if (config.verify) {
+        this.pipelineRepo.setArtifact(verify.id, { status: 'running', startedAt: this.services.clock.iso() });
+        const integrity = await checkFileIntegrity(recording.filePath);
+        if (integrity === 'failed') {
+          this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: '源文件损坏或截断', endedAt: this.services.clock.iso() });
+          this.services.recordings.update(recording.id, { integrity: 'failed', state: 'completed', pipelineStatus: 'failed' });
+          this.finish(run.id, 'failed');
+          return;
+        }
+        if (integrity === 'verified') this.services.recordings.update(recording.id, { integrity: 'verified' });
+        this.pipelineRepo.setArtifact(verify.id, { status: 'ok', endedAt: this.services.clock.iso() });
+      } else {
+        this.pipelineRepo.setArtifact(verify.id, { status: 'skipped', endedAt: this.services.clock.iso() });
       }
-      if (integrity === 'verified') this.services.recordings.update(recording.id, { integrity: 'verified' });
-      this.pipelineRepo.setArtifact(verify.id, { status: 'ok', endedAt: this.services.clock.iso() });
 
       // ② sidecar：写入元数据（真实时长/片段数/清晰度/大小）。
       const sidecar = this.pipelineRepo.createArtifact({ runId: run.id, step: 'sidecar' });
@@ -135,15 +140,19 @@ export class PipelineManager {
       this.services.recordings.update(recording.id, { metadata });
       this.pipelineRepo.setArtifact(sidecar.id, { status: 'ok', path: recording.filePath, sizeBytes: st.size, endedAt: this.services.clock.iso() });
 
-      // ③ cover：封面帧（可选，失败不阻断）。
-      const coverDir = path.join(path.dirname(recording.filePath), '.covers');
-      await mkdir(coverDir, { recursive: true });
-      const cover = await extractCoverFrame(recording.filePath, coverDir, path.basename(recording.filePath).replace(/\.[^.]+$/, ''));
-      if (cover) {
-        this.services.recordings.update(recording.id, { coverPath: cover.coverPath });
-      }
+      // ③ cover：封面帧（可选，失败不阻断；exportCover 默认开，关=本步 skipped 不执行——task #71，run 快照语义同 exportAudio）。
       const coverArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'cover' });
-      this.pipelineRepo.setArtifact(coverArt.id, cover ? { status: 'ok', path: cover.coverPath, sizeBytes: cover.sizeBytes, endedAt: this.services.clock.iso() } : { status: 'skipped', endedAt: this.services.clock.iso() });
+      if (config.exportCover) {
+        const coverDir = path.join(path.dirname(recording.filePath), '.covers');
+        await mkdir(coverDir, { recursive: true });
+        const cover = await extractCoverFrame(recording.filePath, coverDir, path.basename(recording.filePath).replace(/\.[^.]+$/, ''));
+        if (cover) {
+          this.services.recordings.update(recording.id, { coverPath: cover.coverPath });
+        }
+        this.pipelineRepo.setArtifact(coverArt.id, cover ? { status: 'ok', path: cover.coverPath, sizeBytes: cover.sizeBytes, endedAt: this.services.clock.iso() } : { status: 'skipped', endedAt: this.services.clock.iso() });
+      } else {
+        this.pipelineRepo.setArtifact(coverArt.id, { status: 'skipped', endedAt: this.services.clock.iso() });
+      }
 
       // ④ segment：切片（segmentSeconds>0 时）。
       if (config.segmentSeconds > 0) {
@@ -160,6 +169,28 @@ export class PipelineManager {
         }
       }
 
+      // ④b audio：导出音频（pipeline.exportAudio，默认关——评估稿 c0e54a5f）。
+      // 吃源文件：此时 recording.filePath 尚未被 compress 更新，避免 crf 压缩的音频二次世代损失；失败隔离同 compress 口径。
+      if (config.exportAudio) {
+        const audioArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'audio' });
+        this.pipelineRepo.setArtifact(audioArt.id, { status: 'running', startedAt: this.services.clock.iso() });
+        const audio = await exportAudioToMp3(recording.filePath);
+        if (audio.ok) {
+          this.pipelineRepo.setArtifact(audioArt.id, { status: 'ok', path: audio.outPath!, sizeBytes: audio.sizeBytes!, endedAt: this.services.clock.iso() });
+        } else {
+          const reason = audio.reason === 'no_audio' ? '源文件无音轨，无法导出音频' : '音频转码失败，保留源文件';
+          this.pipelineRepo.setArtifact(audioArt.id, { status: 'failed', error: reason, endedAt: this.services.clock.iso() });
+          finalStatus = 'partial';
+          // 失败不静默（同 compress 口径）：仅本步 partial，视频产物/其余步骤/上传不受影响。
+          this.services.alerts.create({
+            level: 'warning',
+            source: 'pipeline',
+            message: `音频导出失败（${reason}），视频产物与上传不受影响（${recording.id}）`,
+            occurredAt: this.services.clock.iso(),
+          });
+        }
+      }
+
       // ⑤ compress：压缩/remux（crf=null 仅 remux copy）。mp4 输入且 crf=null 时无需处理 → skipped，不改 finalStatus。
       {
         const compArt = this.pipelineRepo.createArtifact({ runId: run.id, step: 'compress' });
@@ -171,8 +202,13 @@ export class PipelineManager {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
           const comp = await compressOrRemux(recording.filePath, config.crf);
           if (comp) {
-            // 成功产物不删除源文件；更新 filePath 指向新产物（源仍在）。
+            const sourcePath = recording.filePath;
+            // 成功：先落库 filePath 指向新产物（⑥归档/上传/历史拿 MP4），再删源（PrePan 拍板 A，task #63）。
+            // 删除位于 compressOrRemux 内 finalizeMp4 校验通过之后；先更新后删——中途崩溃只会多留源文件，绝不丢数据；
+            // 删除失败不回滚（宁可两份），同内联 remux 语义；失败/skipped 路径不进此分支，源保留。
             this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
+            recording.filePath = comp.outPath;
+            await unlink(sourcePath).catch(() => undefined);
             this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
           } else {
             this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩/转封装失败，保留源文件', endedAt: this.services.clock.iso() });

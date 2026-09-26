@@ -142,7 +142,7 @@ export function exportPredictionArchive(services: Services): PredictionArchive {
   const recordedStarts = services.db
     .prepare('SELECT room_id AS roomId, started_at AS startedAt, stream_session_id AS streamSessionId FROM recordings WHERE started_at >= ? ORDER BY started_at')
     .all(from60) as Array<{ roomId: string; startedAt: string; streamSessionId: string | null }>;
-  for (const session of [...recordedStarts, ...services.predictionCalibration.allRecordingSessions()]) {
+  for (const session of [...recordedStarts, ...services.predictionCalibration.allRecordingSessions(from60)]) {
     addSession(session.roomId, session.startedAt, session.streamSessionId);
   }
   return {

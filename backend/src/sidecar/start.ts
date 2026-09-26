@@ -1,7 +1,8 @@
+import { installFfmpegExitReap, reapTrackedFfmpegs } from '../recorder/ffmpeg-registry.js';
 import path from 'node:path';
 import { buildApp } from '../api/server.js';
 import { buildServices, defaultDataDir } from '../core/services.js';
-import { recoverStaleRecordings } from '../core/recovery.js';
+import { recoverStaleRecordings, recoverOrphanPipelineRuns } from '../core/recovery.js';
 import { DEFAULT_HOST, APP_VERSION, API_VERSION } from './types.js';
 import type { AppInstance } from './types.js';
 import { InstanceLock } from './instance-lock.js';
@@ -36,6 +37,7 @@ export interface SidecarResult {
 export async function startSidecar(
   opts: SidecarOptions,
 ): Promise<SidecarResult> {
+  installFfmpegExitReap();
   const host = opts.host ?? DEFAULT_HOST;
   const stateDir = opts.stateDir ?? path.join(defaultDataDir(), 'state');
   const instanceId = opts.instanceId ?? `inst_${ulid()}`;
@@ -82,12 +84,23 @@ export async function startSidecar(
           console.log(`recovered ${count} stale recording session(s)`);
       })
       .catch((error) => console.error('recording recovery failed', error));
+    // task #59：孤儿管线 run（执行中被杀）恢复——failed+复位 recording+放开 retry+清 .part 半截。
+    void recoverOrphanPipelineRuns(services)
+      .then((count) => {
+        if (count > 0)
+          console.log(`recovered ${count} orphaned pipeline run(s)`);
+      })
+      .catch((error) => console.error('pipeline recovery failed', error));
     // #220：重启时遗留的「待确认保留」录制按默认保留恢复管线/上传。
     services.manager.resumePendingConfirmations();
     // 恢复重启前排队中的上传任务（#195：上传队列为内存态，DB 中 queued/running 需启动续传）。
     const resumedUploads = services.uploader.resumePending();
     if (resumedUploads > 0)
       console.log(`resumed ${resumedUploads} pending upload job(s)`);
+    // 导出任务恢复：内存队列随进程消失且目标目录未落库——遗留 queued/running 置失败引导重新导出。
+    const recoveredExports = services.exporter.recoverInterrupted();
+    if (recoveredExports > 0)
+      console.log(`recovered ${recoveredExports} interrupted export job(s)`);
 
     const extraOrigins = opts.extraOrigins ?? [
       'http://localhost:5173',
@@ -128,6 +141,12 @@ export async function startSidecar(
         try {
           await app.close();
         } finally {
+          try {
+            // 收割仍在跑的 ffmpeg：不收割则后端一退即成孤儿进程（macOS 实测不随父进程带走）。
+            await reapTrackedFfmpegs(3_000);
+          } catch {
+            // best-effort：收割故障不影响收束流程。
+          }
           try {
             if (await lock.held()) await removeReadyFile(readyFile);
           } finally {

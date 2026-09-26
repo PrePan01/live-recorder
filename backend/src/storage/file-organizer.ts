@@ -1,8 +1,20 @@
 import path from 'node:path';
 import type { Platform, RecordingFormat } from '../types/index.js';
 
+/** 按 UTF-8 字节截断（不切断多字节字符）：文件名单段上限 255B，扣除模板后缀余量后取 160B。 */
+function truncateBytes(input: string, maxBytes: number): string {
+  const buf = Buffer.from(input, 'utf8');
+  if (buf.length <= maxBytes) return input;
+  let end = maxBytes;
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return buf.subarray(0, end).toString('utf8');
+}
+
 function sanitize(name: string): string {
-  return name.trim().replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
+  const cleaned = name.trim().replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!cleaned) return 'unknown';
+  // 超长房间名不再原样入路径：截到 160 字节（255B 段上限内的安全余量），防建文件时 ENAMETOOLONG 被误报成「保存目录无效」。
+  return truncateBytes(cleaned, 160).replace(/_+$/g, '') || 'unknown';
 }
 
 function pad2(n: number): string {

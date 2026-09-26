@@ -1,4 +1,4 @@
-import { access, mkdtemp, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -321,4 +321,38 @@ describe('#220 录制完成「询问是否保留」', () => {
 
     expect(services.recordings.get(rec.id)).toBeNull();
   });
+
+  it('精彩时刻改名遇同名文件：跳过文件名仅改标题，绝不覆盖另一条录像（双平台统一）', async () => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-rename-clash-'));
+    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/103', displayName: '撞名' });
+    services.rooms.setLiveStatus(room.id, 'live');
+    const buffer = {
+      availableSeconds: () => 30,
+      exportTo: async (output: string) => {
+        // 真实 HighlightBuffer 会自建目录；假实现镜像该行为（否则 planned filePath 目录不存在）。
+        await (await import('node:fs/promises')).mkdir((await import('node:path')).dirname(output), { recursive: true });
+        await writeFile(output, 'FLV-BODY');
+        return { bytes: 8, actualSeconds: 8 };
+      },
+    };
+    (services.manager as unknown as { highlightBuffers: Map<string, unknown> }).highlightBuffers.set(room.id, buffer);
+
+    const { recordingId } = await services.manager.exportHighlight(room.id, 10);
+    // 决策必须在 exportTo 完成前同步挂上（任何 await 都会让微任务跑完整个成功路径、pending 被清）。
+    expect(services.manager.deferHighlightConfirmation(recordingId, true, 'taken')).toBe(true);
+    const original = services.recordings.get(recordingId)!.filePath!;
+    await mkdir(path.dirname(original), { recursive: true });
+    const taken = path.join(path.dirname(original), 'taken.flv');
+    await writeFile(taken, 'OTHER-RECORDING');
+    await sleep(30);
+
+    const rec = services.recordings.get(recordingId)!;
+    // 另一条录像的文件内容未被顶掉、本记录 filePath 未变（仅标题更新）——POSIX 下旧实现会静默覆盖。
+    expect(await readFile(taken, 'utf8')).toBe('OTHER-RECORDING');
+    expect(rec.filePath).toBe(original);
+    expect(rec.streamTitle).toBe('taken');
+  });
+
 });

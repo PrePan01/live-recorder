@@ -70,6 +70,29 @@ describe("DouyinAdapter", () => {
     ]);
   });
 
+  it("uses the enter API's 1080px avatar_large URL without a second page request", async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() =>
+        livePayload({
+          user: {
+            nickname: "抖音主播",
+            avatar_thumb: {
+              url_list: ["https://p3.douyinpic.com/img/a~c5_100x100.jpeg"],
+            },
+            avatar_large: {
+              url_list: ["https://p9.douyinpic.com/img/a~c5_1080x1080.jpeg"],
+            },
+          },
+        }),
+      ),
+    );
+    await expect(
+      a.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x"),
+    ).resolves.toMatchObject({
+      avatarUrl: "https://p9.douyinpic.com/img/a~c5_1080x1080.jpeg",
+    });
+  });
+
   it("昵称解析不到时用房间号占位，绝不用直播间标题冒充主播昵称（添加房间显示名回归）", async () => {
     // enter 缺 user.nickname 且页面解析不到昵称：以前 displayName 会用 title 兜底，
     // 添加房间后「显示名」就变成了当场的直播标题。昵称只能来自昵称源，取不到就用占位。
@@ -442,6 +465,40 @@ describe("DouyinAdapter", () => {
     ).toBe("DOUYIN_COOKIE_EXPIRED");
   });
 
+  it("4003034「不在主播可见范围」判为内容不可用并给真话，不报接口变动（诊断包实测同房 20+ 连发）", async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() => ({
+        status_code: 4003034,
+        data: { message: "你不在主播设置的可见范围内，无法进入TA的直播间" },
+      })),
+    );
+    const result = await a.checkLiveStatus(
+      "https://live.douyin.com/19849559464",
+      "sessionid=x",
+    );
+    expect(result.status).toBe("error");
+    expect(result.error?.code).toBe("ROOM_CONTENT_UNAVAILABLE");
+    expect(result.error?.message).toContain("可见范围");
+    expect(result.error?.message).not.toContain("接口有变动");
+  });
+
+  it("10001 Service Unavailable 判为暂时繁忙可重试，不报接口变动（诊断包实测）", async () => {
+    const a = new DouyinAdapter(
+      mockFetcher(() => ({
+        status_code: 10001,
+        data: { message: "Service Unavailable" },
+      })),
+    );
+    const result = await a.checkLiveStatus(
+      "https://live.douyin.com/150603357176",
+      "sessionid=x",
+    );
+    expect(result.status).toBe("error");
+    expect(result.error?.message).toContain("繁忙");
+    expect(result.error?.message).not.toContain("接口有变动");
+    expect(result.error?.retryable).toBe(true);
+  });
+
   it("maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure", async () => {
     // 444 会在有效登录态下偶发出现；不能让设置页显示“已登录”而监控页要求重新授权。
     const a = new DouyinAdapter(statusFetcher(444));
@@ -650,5 +707,72 @@ describe("DouyinAdapter", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("头像与昵称同次页面抓取解析并 TTL 缓存（检测周期 0 额外请求），非 http 脏值拒绝", async () => {
+    let pageHits = 0;
+    const fetcher = (async (url: unknown) => {
+      const u = String(url);
+      if (u.includes("/webcast/room/web/enter")) {
+        return new Response(JSON.stringify(livePayload({ user: {} })), {
+          status: 200,
+        });
+      }
+      pageHits += 1;
+      return new Response(
+        `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;青泠&quot;,&quot;avatar&quot;:&quot;https://p3.douyinpic.com/a.jpg&quot;}">x</div></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    }) as typeof fetch;
+    const a = new DouyinAdapter(fetcher);
+    const live = await a.checkLiveStatus(
+      "https://live.douyin.com/667788",
+      "sessionid=x",
+    );
+    expect(live.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
+    expect(pageHits).toBe(1);
+    // TTL 缓存内第二次检测不再拉页面 = 0 额外请求实证
+    const again = await a.checkLiveStatus(
+      "https://live.douyin.com/667788",
+      "sessionid=x",
+    );
+    expect(pageHits).toBe(1);
+    expect(again.avatarUrl).toBe("https://p3.douyinpic.com/a.jpg");
+
+    // 非 http 脏值（沿用验收 #2a 夹具 avatar:"x"）→ 拒绝为 null
+    const dirty = await new DouyinAdapter(
+      (async () =>
+        new Response(
+          `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;乙&quot;,&quot;avatar&quot;:&quot;x&quot;}">y</div></html>`,
+          { status: 200, headers: { "content-type": "text/html" } },
+        )) as typeof fetch,
+    ).fetchAnchorProfile("991122");
+    expect(dirty.avatar).toBeNull();
+  });
+
+  it("nicknameHint（enter 接口昵称）时不拉页面：头像降级 null，绝不为头像多发请求", async () => {
+    let pageHits = 0;
+    const fetcher = (async () => {
+      pageHits += 1;
+      return new Response("<html></html>", { status: 200 });
+    }) as typeof fetch;
+    const a = new DouyinAdapter(fetcher);
+    const p = await a.fetchAnchorProfile("13579", undefined, "有昵称");
+    expect(p).toEqual({ name: "有昵称", avatar: null });
+    expect(pageHits).toBe(0);
+  });
+
+  it("优先保存 SSR avatar_larger.url_list 的高清头像", async () => {
+    const a = new DouyinAdapter(
+      (async () =>
+        new Response(
+          `<html><div data-anchor-info="{&quot;nickname&quot;:&quot;主播&quot;,&quot;avatar&quot;:&quot;https://p3.douyinpic.com/img/tos/a~c5_100x100.jpeg&quot;}"></div><script>{"avatar_larger":{"url_list":["https://p9.douyinpic.com/img/tos/a~c5_1080x1080.jpeg"]}}</script></html>`,
+          { status: 200, headers: { "content-type": "text/html" } },
+        )) as typeof fetch,
+    );
+    await expect(a.fetchAnchorProfile("24680")).resolves.toEqual({
+      name: "主播",
+      avatar: "https://p9.douyinpic.com/img/tos/a~c5_1080x1080.jpeg",
+    });
   });
 });

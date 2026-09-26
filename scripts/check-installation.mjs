@@ -31,6 +31,7 @@ function run(command, args, timeout = 60000) {
 function findResources(directory) {
   if (
     existsSync(path.join(directory, 'node.exe')) &&
+    existsSync(path.join(directory, 'WebView2Loader.dll')) &&
     existsSync(path.join(directory, 'backend/package.json'))
   )
     return directory;

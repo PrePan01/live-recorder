@@ -1,3 +1,4 @@
+import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
 import { AppError } from '../types/error.js';
 import type { ErrorObject, Quality } from '../types/index.js';
 import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapter.js';
@@ -55,7 +56,7 @@ interface BiliPlayResponse {
 /** getRoomPlayInfo 已不再返回 room_info/anchor_info，改用以下两个免 Cookie 端点补充名称信息。 */
 interface BiliAnchorResponse {
   code?: number;
-  data?: { info?: { uname?: string } };
+  data?: { info?: { uname?: string; face?: string } };
 }
 
 interface BiliRoomInfoResponse {
@@ -69,12 +70,12 @@ function isNetworkError(err: unknown): boolean {
 
 /**
  * 平台 HTTP 状态 → 用户看得懂的分类。
- * 5xx/限流是平台侧暂时不可用（可重试）；只有明确的接口不存在（404/405/410/501）才算"接口有变动"。
+ * 5xx/限流是平台侧暂时不可用（可重试）；只有明确的接口不存在（404/405）才算"接口有变动"（410/501 按规格入其余桶）。
  * 过去任何非 2xx 都走"接口有变动、等待适配更新"，把一次平台抖动报成了需要等更新的故障，
  * 而且不重试。状态码只留在 details 里，不进给用户看的文案。
  */
 function biliHttpError(status: number): AppError {
-  if (status === 404 || status === 405 || status === 410 || status === 501) {
+  if (status === 404 || status === 405) {
     return new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', { details: { httpStatus: status } });
   }
   return new AppError('NETWORK_UNAVAILABLE', 'B站接口暂时不可用，请稍后重试', { retryable: true, details: { httpStatus: status } });
@@ -180,7 +181,7 @@ export class BilibiliAdapter implements PlatformAdapter {
   }
 
   /** getRoomPlayInfo 响应已不含主播名/标题；用 get_anchor_in_room 取昵称、get_info 取标题，均免 Cookie 且无风控。 */
-  private async fetchRoomMeta(roomId: number): Promise<{ uname?: string; title?: string }> {
+  private async fetchRoomMeta(roomId: number): Promise<{ uname?: string; title?: string; face?: string }> {
     const headers = {
       'User-Agent': UA,
       Referer: `${this.roomBase}/${roomId}`,
@@ -196,8 +197,9 @@ export class BilibiliAdapter implements PlatformAdapter {
       }).then(async (r) => (r.ok ? ((await r.json()) as BiliRoomInfoResponse) : null)).catch(() => null),
     ]);
     const uname = anchor?.code === 0 ? anchor.data?.info?.uname : undefined;
+    const face = anchor?.code === 0 ? anchor.data?.info?.face : undefined;
     const title = info?.code === 0 ? info.data?.title : undefined;
-    return { ...(uname ? { uname } : {}), ...(title ? { title } : {}) };
+    return { ...(uname ? { uname } : {}), ...(title ? { title } : {}), ...(face ? { face } : {}) };
   }
 
   /** 取流：优先 http_stream/flv + avc；在全部 codec 中选择最接近目标档位的流。
@@ -270,18 +272,24 @@ export class BilibiliAdapter implements PlatformAdapter {
       return { status: 'error', error: (isNetworkError(err) ? new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true }) : new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {})).toObject() };
     }
     if (data.code !== 0 || !data.data) {
-      return { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {}).toObject() };
+      const biliHint = (data as { msg?: string; message?: string }).msg ?? (data as { message?: string }).message;
+      // 第二层语义族（文本优先）→ 第一层中性兜底：body 业务码未知时先归族、归不了说真话。
+      const family = familyBySemantics({ code: data.code, hint: biliHint, scope: 'bilibili-room' });
+      return { status: 'error', error: (family ?? unknownStatusFallback({ code: data.code, hint: biliHint, scope: 'bilibili-room' })).toObject() };
     }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);
     const title = data.data.room_info?.title ?? meta.title ?? '';
     const uname = data.data.anchor_info?.base_info?.uname ?? meta.uname;
+    // 头像取自已在调的 get_anchor_in_room（0 额外请求）；缺失降级不置空。
+    const face = meta.face?.trim() || undefined;
+    const avatarUrl = face && /^https?:\/\//.test(face) ? face : undefined;
     if (data.data.live_status !== 1) {
-      return { status: 'offline', ...(uname ? { displayName: uname } : {}) };
+      return { status: 'offline', ...(uname ? { displayName: uname } : {}), ...(avatarUrl ? { avatarUrl } : {}) };
     }
     const hasStream = Boolean(data.data.playurl_info?.playurl?.stream?.length);
     if (!hasStream) {
-      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查B站授权', { retryable: false }).toObject() };
+      return { status: 'restricted', ...(uname ? { displayName: uname } : {}), ...(avatarUrl ? { avatarUrl } : {}), streamTitle: title, error: new AppError('PLATFORM_ACCESS_RESTRICTED', '平台访问受限，请检查B站授权', { retryable: false }).toObject() };
     }
     // B站每次开播的 live_time 不同，用它标识本场直播，避免把同一房间的多次开播误判为同一场。
     const liveTime = data.data.live_time;
@@ -293,6 +301,7 @@ export class BilibiliAdapter implements PlatformAdapter {
       ...(startedAt ? { platformStartedAt: startedAt } : {}),
       streamTitle: title,
       ...(uname ? { displayName: uname } : {}),
+      ...(avatarUrl ? { avatarUrl } : {}),
       availableQualities: [...new Set(this.availableQns(data).map(qnToQuality))],
     };
   }

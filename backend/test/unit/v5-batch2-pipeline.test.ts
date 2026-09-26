@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
+import { recoverOrphanPipelineRuns } from '../../src/core/recovery.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
 import { OPENLIST_2FA_REQUIRED, OPENLIST_AUTH_FAILED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
 
@@ -122,6 +123,383 @@ describe('V5 Batch2 pipeline: repo + config', () => {
     const compress = run?.artifacts.find((a) => a.step === 'compress');
     expect(compress?.status).toBe('skipped');
     await app.close();
+  });
+});
+
+// 管线导出音频（task #57）：ffmpeg/libmp3lame 能力探测，缺失时跳过相应正向用例（评估稿首日验证项）。
+const FFMPEG_OK = spawnSync('ffmpeg', ['-version'], { timeout: 10_000 }).status === 0;
+const LAME_OK = FFMPEG_OK && Boolean(spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { timeout: 10_000 }).stdout?.toString().includes('libmp3lame'));
+
+describe('管线导出音频 exportAudio（task #57，评估稿 c0e54a5f）', () => {
+  function enablePipelineAudio(services: Services, exportAudio: boolean): void {
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio } });
+  }
+
+  async function seedRecording(mediaFile: string): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/audio-${Math.random().toString(36).slice(2, 8)}`, displayName: 'a' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-a', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-audio-'));
+    const file = path.join(dir, mediaFile);
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { services, rec, file };
+  }
+
+  async function runPipeline(services: Services, recId: string): Promise<void> {
+    // 直接入队（与 retry 端点同路径），不建 app——buildApp 的 close 会关掉共享 DB。
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it.runIf(FFMPEG_OK)('exportAudio 默认关：不产 audio 步、不产 mp3', async () => {
+    const { services, rec, file } = await seedRecording('x.mp4');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-pix_fmt', 'yuv420p', '-shortest', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    enablePipelineAudio(services, false);
+    await runPipeline(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id);
+    expect(run?.artifacts.find((a) => a.step === 'audio')).toBeUndefined();
+    await expect(access(file.replace(/\.mp4$/, '.mp3'))).rejects.toThrow();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('无音轨源：audio 步 failed（明确文案不静默）+ run partial + 视频产物不受影响 + 告警', async () => {
+    const { services, rec, file } = await seedRecording('silent.mp4');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    enablePipelineAudio(services, true);
+    await runPipeline(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id);
+    const audio = run?.artifacts.find((a) => a.step === 'audio');
+    expect(audio?.status).toBe('failed');
+    expect(audio?.error).toBeTruthy();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('partial');
+    // 视频产物不受影响（filePath 未变）
+    expect(services.recordings.get(rec.id)!.filePath).toBe(file);
+    await expect(access(file.replace(/\.mp4$/, '.mp3'))).rejects.toThrow();
+    // 失败不静默：产生 pipeline 来源的音频导出失败告警
+    const alert = services.alerts.list({ limit: 20 }).find((a) => a.message.includes('音频导出失败'));
+    expect(alert).toBeTruthy();
+  });
+
+  it.runIf(LAME_OK)('有音轨 + 开关开：产同名 mp3、audio 步 ok、run ok；同名旧产物被覆盖', async () => {
+    const { services, rec, file } = await seedRecording('av.mp4');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-pix_fmt', 'yuv420p', '-shortest', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const mp3 = file.replace(/\.mp4$/, '.mp3');
+    await writeFile(mp3, 'stale-mp3'); // 预置同名旧产物，验证覆盖语义
+    enablePipelineAudio(services, true);
+    await runPipeline(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id);
+    const audio = run?.artifacts.find((a) => a.step === 'audio');
+    expect(audio?.status).toBe('ok');
+    expect(audio?.path).toBe(mp3);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+    const { stat } = await import('node:fs/promises');
+    const st = await stat(mp3);
+    expect(st.size).toBeGreaterThan(0);
+    expect(st.size).not.toBe('stale-mp3'.length); // 已被真实 mp3 覆盖（真实编码产物远大于 9 字节）
+    // 源文件不删
+    await expect(access(file)).resolves.toBeUndefined();
+  });
+
+  it('管线配置 exportAudio：默认关、可写入、非法类型 422', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/pipeline' })).json();
+    expect(def.pipeline.exportAudio).toBe(false);
+    const set = (await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportAudio: true } })).json();
+    expect(set.pipeline.exportAudio).toBe(true);
+    const bad = await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportAudio: 'yes' } });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('PIPELINE_CONFIG_INVALID');
+    await app.close();
+  });
+});
+
+describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
+  async function seed(file: string): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/c63${Math.random().toString(36).slice(2, 8)}`, displayName: 'c' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-c63', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-c63-'));
+    const filePath = path.join(dir, file);
+    services.recordings.update(rec.id, { state: 'completed', filePath });
+    return { services, rec, file: filePath };
+  }
+
+  async function enableAndRun(services: Services, recId: string, opts: { archiveDirectory?: string; exportAudio?: boolean }): Promise<void> {
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({
+      ...base,
+      pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: opts.archiveDirectory ?? '', maxConcurrency: 2, exportAudio: opts.exportAudio ?? false },
+    });
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it.runIf(FFMPEG_OK)('成功：源 flv 删、_remux.mp4 就位、filePath 指新产物、归档含 mp4、audio 先出 mp3', async () => {
+    const { services, rec, file } = await seed('av.flv');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const archiveDir = await mkdtemp(path.join(tmpdir(), 'lr-c63-arch-'));
+    const mp4 = file.replace(/\.flv$/i, '_remux.mp4');
+    const mp3 = file.replace(/\.flv$/i, '.mp3');
+
+    await enableAndRun(services, rec.id, { archiveDirectory: archiveDir, exportAudio: true });
+
+    // 源已删、产物就位、filePath 指新产物（历史/上传口径）
+    await expect(access(file)).rejects.toThrow();
+    const { stat } = await import('node:fs/promises');
+    expect((await stat(mp4)).size).toBeGreaterThan(0);
+    expect(services.recordings.get(rec.id)!.filePath).toBe(mp4);
+    // 归档拿新 MP4（非源 FLV）——同步修正 run 内快照后⑥archive 的输入
+    await expect(access(path.join(archiveDir, path.basename(mp4)))).resolves.toBeUndefined();
+    await expect(access(path.join(archiveDir, path.basename(file)))).rejects.toThrow();
+    // audio 在 compress 前吃源：mp3 已产出（不因删源受影响）
+    expect((await stat(mp3)).size).toBeGreaterThan(0);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('失败（源可播但无法转封装）：源保留、无半截产物、filePath 不变、partial', async () => {
+    const { services, rec, file } = await seed('legacy.flv');
+    // flv1(Sorenson)+mp3：ffprobe 可播（verify/cov 照常过），但 flv1→mp4 转封装不支持 → compress 必失败（真实失败面，非人为构造）。
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+
+    await enableAndRun(services, rec.id, {});
+
+    await expect(access(file)).resolves.toBeUndefined(); // 源保留
+    await expect(access(file.replace(/\.flv$/i, '_remux.mp4'))).rejects.toThrow(); // 无半截
+    await expect(access(`${file.replace(/\.flv$/i, '_remux.mp4')}.part`)).rejects.toThrow(); // 临时零残留（含 #63 修的失败分支清理）
+    expect(services.recordings.get(rec.id)!.filePath).toBe(file); // filePath 不变
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('partial');
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'compress')?.error).toContain('保留源文件');
+  });
+
+  it.runIf(FFMPEG_OK)('skipped（输入已是 mp4 且不压缩）：无转换不删，文件原名保留', async () => {
+    const { services, rec, file } = await seed('plain.mp4');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+
+    await enableAndRun(services, rec.id, {});
+
+    await expect(access(file)).resolves.toBeUndefined(); // 不误删（关键负例）
+    expect(services.recordings.get(rec.id)!.filePath).toBe(file);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'compress')?.status).toBe('skipped');
+  });
+});
+
+describe('管线封面可选步骤 exportCover（task #71）', () => {
+  async function seedMp4(): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/cov${Math.random().toString(36).slice(2, 8)}`, displayName: 'c' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-cov', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cov-'));
+    const file = path.join(dir, 'x.mp4');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { services, rec, file };
+  }
+
+  async function runTo(services: Services, recId: string): Promise<void> {
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it('配置：默认开、PUT 关闭往返、非布尔 422（载荷只加不改）', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const def = (await inj({ method: 'GET', url: '/api/v1/settings/pipeline' })).json();
+    expect(def.pipeline.exportCover).toBe(true);
+    const off = (await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: false } })).json();
+    expect(off.pipeline.exportCover).toBe(false);
+    expect(off.pipeline.exportAudio).toBe(false); // 既有键不受影响
+    const on = (await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: true } })).json();
+    expect(on.pipeline.exportCover).toBe(true);
+    const bad = await inj({ method: 'PUT', url: '/api/v1/settings/pipeline', payload: { exportCover: 'yes' } });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('PIPELINE_CONFIG_INVALID');
+    await app.close();
+  });
+
+  it.runIf(FFMPEG_OK)('关：cover 步 skipped、不产出 .covers/封面、run ok（现状行为唯一变化=可关）', async () => {
+    const { services, rec, file } = await seedMp4();
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: false } });
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'cover')?.status).toBe('skipped');
+    await expect(access(path.join(path.dirname(file), '.covers'))).rejects.toThrow(); // 未执行不建目录
+    expect(services.recordings.get(rec.id)!.coverPath).toBeFalsy();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('默认开（旧配置无键经内联默认回填）：cover 执行出封面，现状不回退', async () => {
+    const { services, rec, file } = await seedMp4();
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    // 直接 save 不带 exportCover —— 模拟升级前旧配置对象
+    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false } as never });
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    const cover = run.artifacts.find((a) => a.step === 'cover');
+    expect(cover?.status).toBe('ok');
+    expect(services.recordings.get(rec.id)!.coverPath).toBeTruthy();
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+});
+
+describe('管线 verify 开关门控（task #73，修说谎开关）', () => {
+  async function seedJunk(): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/vf${Math.random().toString(36).slice(2, 8)}`, displayName: 'v' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-vf', streamTitle: 't' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-vf-'));
+    const file = path.join(dir, 'broken.mp4');
+    await writeFile(file, 'not-a-real-video');
+    services.recordings.update(rec.id, { state: 'completed', filePath: file });
+    return { services, rec, file };
+  }
+
+  function enableVerify(services: Services, verify: boolean): void {
+    const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
+    services.settings.save({ ...base, pipeline: { enabled: true, verify, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true } });
+  }
+
+  async function runTo(services: Services, recId: string): Promise<void> {
+    services.pipeline.enqueue(recId);
+    await waitFor(() => {
+      const r = services.recordings.get(recId)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued' && r.pipelineStatus !== 'not_required';
+    });
+  }
+
+  it.runIf(FFMPEG_OK)('verify:false → 本步 skipped、损坏源不中断 run、integrity 不置 failed（开关生效）', async () => {
+    const { services, rec, file } = await seedJunk();
+    enableVerify(services, false);
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'verify')?.status).toBe('skipped');
+    // 损坏源在关校验时不再拦截（旧行为：此处 run=failed）
+    expect(services.recordings.get(rec.id)!.integrity).not.toBe('failed');
+    expect(services.recordings.get(rec.id)!.pipelineStatus).not.toBe('failed');
+    await expect(access(file)).resolves.toBeUndefined(); // 源不动
+  });
+
+  it.runIf(FFMPEG_OK)('默认开（真 ffprobe）：损坏源照旧 verify failed + run failed + integrity=failed（现状不回退）', async () => {
+    const { services, rec, file } = await seedJunk();
+    enableVerify(services, true);
+    await runTo(services, rec.id);
+
+    const run = services.pipeline.repo.runForRecording(rec.id)!;
+    expect(run.artifacts.find((a) => a.step === 'verify')?.status).toBe('failed');
+    expect(services.recordings.get(rec.id)!.integrity).toBe('failed');
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('failed');
+    await expect(access(file)).resolves.toBeUndefined(); // 失败保留源
+  });
+});
+
+describe('孤儿管线 run 启动恢复（task #59 / QA C4）', () => {
+  async function seedOrphan(opts: { file: string | null; runStatus: 'queued' | 'running' }) {
+    const services = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: `https://live.bilibili.com/o${Math.random().toString(36).slice(2, 8)}`, displayName: 'o' });
+    const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's-o', streamTitle: 't' });
+    let file: string | null = null;
+    if (opts.file !== null) {
+      const dir = await mkdtemp(path.join(tmpdir(), 'lr-orphan-'));
+      file = path.join(dir, 'qa_kill.mp4');
+      await writeFile(file, opts.file);
+      services.recordings.update(rec.id, { state: 'processing', filePath: file, pipelineStatus: 'running' });
+    } else {
+      services.recordings.update(rec.id, { state: 'processing', pipelineStatus: 'running' });
+    }
+    const run = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { attempt: 0 } });
+    services.pipeline.repo.setRunStatus(run.id, opts.runStatus);
+    const art = services.pipeline.repo.createArtifact({ runId: run.id, step: 'audio' });
+    services.pipeline.repo.setArtifact(art.id, { status: 'running', startedAt: services.clock.iso() });
+    return { services, rec, run, art, file };
+  }
+
+  it('孤儿 run/artifact → failed、recording 复位、.part 清理、源与既有产物不动、retry 放行', async () => {
+    const { services, rec, run, art, file } = await seedOrphan({ file: 'source-bytes', runStatus: 'running' });
+    // 模拟杀进程后的半截产物与同目录既有产物
+    const dir = path.dirname(file!);
+    const part = path.join(dir, 'qa_kill.mp3.part');
+    const sibling = path.join(dir, 'keep.mp3');
+    await writeFile(part, 'half-written');
+    await writeFile(sibling, 'existing-mp3');
+
+    expect(await recoverOrphanPipelineRuns(services)).toBe(1);
+
+    const runAfter = services.pipeline.repo.getRun(run.id)!;
+    expect(runAfter.status).toBe('failed');
+    expect(runAfter.endedAt).toBeTruthy();
+    const artAfter = services.pipeline.repo.artifact(art.id)!;
+    expect(artAfter.status).toBe('failed');
+    expect(artAfter.error).toContain('服务重启中断');
+    const recAfter = services.recordings.get(rec.id)!;
+    expect(recAfter.state).toBe('completed');
+    expect(recAfter.pipelineStatus).toBe('failed');
+    // .part 半截被清；源与同目录既有 mp3 不动
+    await expect(access(part)).rejects.toThrow();
+    await expect(access(sibling)).resolves.toBeUndefined();
+    await expect(access(file!)).resolves.toBeUndefined();
+
+    // 恢复后 retry 放行（原守卫 500 → 现 200）
+    enablePipeline(services);
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const retry = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/pipeline/retry` });
+    expect(retry.statusCode).toBe(200);
+    await waitFor(() => {
+      const r = services.recordings.get(rec.id)!;
+      return r.pipelineStatus !== 'running' && r.pipelineStatus !== 'queued';
+    });
+    await app.close();
+  });
+
+  it('守卫：孤儿 run 未恢复（queued）时 retry → 409 RECORDING_NOT_AVAILABLE（原 500）', async () => {
+    const { services, rec } = await seedOrphan({ file: 'src', runStatus: 'queued' });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/pipeline/retry` });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('RECORDING_NOT_AVAILABLE');
+    await app.close();
+  });
+
+  it('无文件的 processing 孤儿：recording → failed（服务重启中断，可重试原因）', async () => {
+    const { services, rec, run } = await seedOrphan({ file: null, runStatus: 'running' });
+    expect(await recoverOrphanPipelineRuns(services)).toBe(1);
+    const recAfter = services.recordings.get(rec.id)!;
+    expect(recAfter.state).toBe('failed');
+    expect(recAfter.pipelineStatus).toBe('failed');
+    expect(recAfter.failureReason?.message).toContain('服务重启中断');
+    expect(services.pipeline.repo.getRun(run.id)!.status).toBe('failed');
   });
 });
 

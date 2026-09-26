@@ -33,6 +33,19 @@ export class ExportManager {
     return job;
   }
 
+  /**
+   * 启动恢复：进程中断遗留的 queued/running 导出任务置失败。
+   * 目标目录参数只存在于创建时的内存里（未落库），无法原地续跑——
+   * 置失败并注明原因，用户重新点导出即可（task #66 修复面，与管线/上传孤儿恢复同型）。
+   */
+  recoverInterrupted(): number {
+    const stuck = this.repo.list({ limit: 1000 }).filter((job) => job.status === 'queued' || job.status === 'running');
+    for (const job of stuck) {
+      this.repo.update(job.id, { status: 'failed', error: '服务重启中断，导出未完成，请重新导出' });
+    }
+    return stuck.length;
+  }
+
   cancel(jobId: string): ExportJob | null {
     const job = this.repo.get(jobId);
     if (!job) return null;

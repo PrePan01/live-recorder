@@ -1,4 +1,5 @@
-export type PipelineStep = 'verify' | 'sidecar' | 'cover' | 'segment' | 'compress' | 'archive';
+// task #57/#58：新增 audio 步（管线自动导出音频，segment 后 compress 前，吃源文件）
+export type PipelineStep = 'verify' | 'sidecar' | 'cover' | 'segment' | 'audio' | 'compress' | 'archive';
 
 export type PipelineRunStatus = 'queued' | 'running' | 'ok' | 'partial' | 'failed';
 
@@ -39,4 +40,7 @@ export interface PipelineConfig {
   crf: number | null;
   archiveDirectory: string;
   maxConcurrency: number;
+  /** 导出音频文件开关（task #57/#58）：默认关，只影响之后触发的 run（启动时快照） */
+  exportAudio: boolean;
+  exportCover: boolean;
 }
