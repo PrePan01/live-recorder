@@ -61,6 +61,8 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     liveNotificationEnabled: row.live_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     liveStartedAt: row.live_started_at,
+    autoRecordStoppedSession:
+      (row as { auto_record_stopped_session?: string | null }).auto_record_stopped_session ?? null,
     currentStreamTitle: row.current_stream_title,
     availableQualities: parseQualities(row.available_qualities),
     uploadEnabled: row.upload_enabled === null ? null : row.upload_enabled === 1,
@@ -249,9 +251,17 @@ export class RoomRepository {
               WHEN ? = 'live' THEN COALESCE(live_started_at, ?)
               ELSE live_started_at
             END,
+            auto_record_stopped_session = CASE WHEN ? = 'offline' THEN NULL ELSE auto_record_stopped_session END,
             updated_at = ?
         WHERE id = ?`)
-      .run(status, status, status, liveStartedAt ?? null, nowIso(), id);
+      .run(status, status, status, liveStartedAt ?? null, status, nowIso(), id);
+  }
+
+  /** 记录「本开播周期内已被用户手动停止」：调度器自动录制在本场内跳过（下播由 setLiveStatus 清空）。 */
+  setAutoRecordStopped(id: string, sessionTs: string): void {
+    this.db
+      .prepare('UPDATE rooms SET auto_record_stopped_session = ?, updated_at = ? WHERE id = ?')
+      .run(sessionTs, nowIso(), id);
   }
 
   /** 保存本次检测到的可录清晰度；空数组表示未知（未开播/平台未给出），不展示过期的「最高可录」。 */

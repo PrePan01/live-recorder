@@ -36,6 +36,8 @@ export interface Room {
   lastLiveStatus: LiveStatus | null;
   /** 当前已确认开播周期的本地起点；下播后清空。自动录制去重只在此周期内生效。 */
   liveStartedAt: string | null;
+  /** 本开播周期内已被用户手动停止：自动录制在本场内跳过，下播（offline 清 liveStartedAt 同时清本标记）后下一场恢复。 */
+  autoRecordStoppedSession?: string | null;
   /** 最近一次检测到的当前直播间标题；仅在开播时保留。 */
   currentStreamTitle: string | null;
   /**

@@ -529,6 +529,43 @@ describe('Scheduler', () => {
     await settle(clock, 200);
   });
 
+  it('同场内平台更换 streamSessionId 也不得自动重开（手动停标记与 session id 解耦），下播清标记后恢复', async () => {
+    const { services, clock } = newServices();
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-sess-churn-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/77', displayName: 'churn' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-a' },
+      // 手动停止后：平台侧断点重推导致 session id 变化——仍属同一场，禁止自动重开。
+      { status: 'live', streamSessionId: 'id-b' },
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-c' },
+    ]);
+    await services.scheduler.checkRoom(room);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]?.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+    // 标记已落库且同场 live 检测不重启（session id 换了也不重启）。
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession).toBeTruthy();
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    // 下播：liveStartedAt 与标记一并清空。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.rooms.get(room.id)!.liveStartedAt).toBeNull();
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession ?? null).toBeNull();
+    // 新的未开播→开播沿：自动录制恢复。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
+    await services.manager.stopRecording(room.id);
+    await settle(clock, 200);
+  });
+
   it('room autoRecord=false blocks even manual /check from auto-starting (PrePan)', async () => {
     const { services, clock } = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-roomoff-'));
