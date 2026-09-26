@@ -11,6 +11,7 @@ interface AlertRow {
   resolved: number;
   room_id: string | null;
   error_code: string | null;
+  retryable: number | null;
 }
 
 function rowToAlert(row: AlertRow): Alert {
@@ -23,17 +24,18 @@ function rowToAlert(row: AlertRow): Alert {
     resolved: row.resolved === 1,
     roomId: row.room_id ?? null,
     errorCode: row.error_code ?? null,
+    retryable: row.retryable == null ? null : row.retryable === 1,
   };
 }
 
 export class AlertRepository {
   constructor(private db: DB) {}
 
-  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
+  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null; retryable?: boolean | null }): Alert {
     const id = newId('alr');
     this.db
-      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved, room_id, error_code) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
-      .run(id, input.level, input.source, input.message, input.occurredAt, input.roomId ?? null, input.errorCode ?? null);
+      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved, room_id, error_code, retryable) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)')
+      .run(id, input.level, input.source, input.message, input.occurredAt, input.roomId ?? null, input.errorCode ?? null, input.retryable == null ? null : input.retryable ? 1 : 0);
     return this.get(id)!;
   }
 
@@ -41,7 +43,7 @@ export class AlertRepository {
    * 同一未读故障持续存在时只保留一条告警，并刷新发生时间。轮询失败不应
    * 以房间数 × 检测轮次无限堆叠；一旦标记已读，后续再次失败会新建告警。
    */
-  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
+  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null; retryable?: boolean | null }): Alert {
     const existing = this.db
       .prepare(`SELECT * FROM alerts
         WHERE resolved = 0 AND source = ? AND message = ?
@@ -49,7 +51,7 @@ export class AlertRepository {
         ORDER BY occurred_at DESC LIMIT 1`)
       .get(input.source, input.message, input.roomId ?? null, input.errorCode ?? null) as AlertRow | undefined;
     if (!existing) return this.create(input);
-    this.db.prepare('UPDATE alerts SET occurred_at = ? WHERE id = ?').run(input.occurredAt, existing.id);
+    this.db.prepare('UPDATE alerts SET occurred_at = ?, retryable = COALESCE(?, retryable) WHERE id = ?').run(input.occurredAt, input.retryable == null ? null : input.retryable ? 1 : 0, existing.id);
     return this.get(existing.id)!;
   }
 

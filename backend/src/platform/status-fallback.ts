@@ -7,6 +7,15 @@ import { AppError, type ErrorCode } from '../types/error.js';
  * 「未识别状态码 X，已按可重试处理」——任何情况下不得凭空断言接口变动（QA 断言 A5 负例总闸）。
  * 原码与平台提示恒透传 details，供告警/诊断回溯（第三层学习闭环的输入）。
  */
+/** 层三·学习闭环：未知码按 scope|码 聚合计数（进程内），供诊断包导出、高频码定期固化。 */
+const unknownCounter = new Map<string, { count: number; lastSeen: string; hint: string | null }>();
+export function unknownStatusSnapshot(): Array<{ key: string; count: number; lastSeen: string; hint: string | null }> {
+  return [...unknownCounter.entries()].map(([key, v]) => ({ key, count: v.count, lastSeen: v.lastSeen, hint: v.hint }));
+}
+export function resetUnknownStatusCounter(): void {
+  unknownCounter.clear();
+}
+
 export function unknownStatusFallback(opts: {
   httpStatus?: number | undefined;
   code?: number | undefined;
@@ -14,6 +23,9 @@ export function unknownStatusFallback(opts: {
   scope: string;
 }): AppError {
   const { httpStatus, code, hint } = opts;
+  const ckey = `${opts.scope}|${code ?? httpStatus ?? "unknown"}`;
+  const prev = unknownCounter.get(ckey);
+  unknownCounter.set(ckey, { count: (prev?.count ?? 0) + 1, lastSeen: new Date().toISOString(), hint: (hint ?? prev?.hint ?? null)?.slice(0, 160) ?? null });
   const details: Record<string, unknown> = { scope: opts.scope };
   if (httpStatus !== undefined) details.httpStatus = httpStatus;
   if (code !== undefined) details.code = code;

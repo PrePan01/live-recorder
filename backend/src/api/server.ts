@@ -120,7 +120,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
       });
     }
     // 同文案未读告警只刷新时间不新建：持续崩溃的接口不应把告警中心刷成流水（与 scheduler 同款去重）。
-    const alert = services.alerts.createOrRefresh({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso() });
+    const alert = services.alerts.createOrRefresh({ level: 'error', source: 'service', message: `内部错误: ${validation.message ?? 'unknown'}`, occurredAt: services.clock.iso(), retryable: true });
     services.events.emit({ type: 'alert:created', data: alert });
     return reply.status(500).send({
       error: { code: 'SERVICE_UNAVAILABLE', message: '服务内部错误', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: true },

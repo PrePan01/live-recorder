@@ -239,6 +239,7 @@ export class Scheduler {
       message: "抖音授权已失效，请到设置页重新授权",
       occurredAt: now,
       errorCode: "DOUYIN_COOKIE_EXPIRED",
+      retryable: false,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }
@@ -297,6 +298,7 @@ export class Scheduler {
       occurredAt: this.services.clock.iso(),
       ...(platformWide ? {} : { roomId: room.id }),
       errorCode: error.code,
+      retryable: error.retryable ?? null,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }
@@ -505,6 +507,7 @@ export class Scheduler {
           occurredAt: this.services.clock.iso(),
           roomId: room.id,
           errorCode: appErr.code,
+          retryable: appErr.retryable,
         });
         this.services.events.emit({ type: "alert:created", data: alert });
       }

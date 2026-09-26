@@ -2664,6 +2664,7 @@ export class RecorderManager {
       occurredAt: this.services.clock.iso(),
       roomId: err.roomId,
       errorCode: err.code,
+      retryable: err.retryable,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }

@@ -66,7 +66,7 @@ export class Notifier {
       ]);
       this.lastSent.set(emailKey, this.clock.now());
     } catch {
-      this.alerts.create({ level: 'warning', source: 'smtp', message: `SMTP 通知发送失败（${event}）`, occurredAt: this.clock.iso() });
+      this.alerts.create({ level: 'warning', source: 'smtp', message: `SMTP 通知发送失败（${event}）`, occurredAt: this.clock.iso(), retryable: true });
     } finally {
       if (timeoutHandle !== undefined) this.clock.clearTimeout(timeoutHandle);
       this.pending -= 1;

@@ -869,6 +869,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       if (!has) db.exec(`ALTER TABLE rooms ADD COLUMN avatar_url TEXT;`);
     },
   },
+  {
+    version: 39,
+    sql: `
+  ALTER TABLE alerts ADD COLUMN retryable INTEGER;
+`,
+  },
+
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

@@ -18,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(38);
+    expect(runMigrations(db)).toBe(39);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(38);
+    expect(currentSchemaVersion(db)).toBe(39);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -48,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(36);
+    expect(runMigrations(db)).toBe(37);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(38);
+    expect(currentSchemaVersion(db)).toBe(39);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +82,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16 及之后未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(23);
+    expect(runMigrations(db)).toBe(24);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -96,7 +96,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(38);
+    expect(currentSchemaVersion(db)).toBe(39);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -118,7 +118,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(20);
+    expect(runMigrations(db)).toBe(21);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -130,7 +130,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(38);
+    expect(currentSchemaVersion(db)).toBe(39);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -219,7 +219,8 @@ describe('migrations', () => {
 
   it('v32 strips legacy error-code prefixes from stored alert messages', () => {
     const db = openDatabase(':memory:');
-    for (const migration of MIGRATIONS.filter((item) => item.version <= 31)) {
+    // 39=alerts.retryable：repo INSERT 依赖此列，子集建库需一并应用。
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 31 || item.version === 39)) {
       if (migration.up) migration.up(db);
       else if (migration.sql) db.exec(migration.sql);
     }
