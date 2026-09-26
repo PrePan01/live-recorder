@@ -39,10 +39,10 @@ import {
   exportDiagnosticsToFile,
 } from "../../api/diagnostics";
 import { fetchSelfCheck, type SelfCheckItem } from "../../api/service";
-import PipelineConfigCard from "../../components/PipelineConfigCard";
-import NamingRuleCard from "../../components/NamingRuleCard";
-import OpenListConfigCard from "../../components/OpenListConfigCard";
-import ResetSettingsCard from "../../components/ResetSettingsCard";
+import PipelineConfigCard from "./components/PipelineConfigCard";
+import NamingRuleCard from "./components/NamingRuleCard";
+import OpenListConfigCard from "./components/OpenListConfigCard";
+import ResetSettingsCard from "./components/ResetSettingsCard";
 import ServiceSettingsCard from "./components/ServiceSettingsCard";
 import NotificationSettingsCard from "./components/NotificationSettingsCard";
 import SelfDiagnosticsCard from "./components/SelfDiagnosticsCard";

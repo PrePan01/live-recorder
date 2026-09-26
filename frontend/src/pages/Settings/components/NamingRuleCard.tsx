@@ -6,9 +6,9 @@ import {
   previewNamingRule,
   NAMING_PRESETS,
   NAMING_VARS,
-} from "../api/naming";
-import { describeError } from "../utils/errorMap";
-import { ApiError } from "../types/error";
+} from "../../../api/naming";
+import { describeError } from "../../../utils/errorMap";
+import { ApiError } from "../../../types/error";
 
 export default function NamingRuleCard() {
   const { message } = App.useApp();

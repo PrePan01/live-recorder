@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
-import dayjs from 'dayjs';
-import StatCard from './StatCard';
-import { useDisplayClock, useElementVisible } from '../hooks/useDisplayClock';
+import { useEffect, useState } from "react";
+import dayjs from "dayjs";
+import StatCard from "./StatCard";
+import {
+  useDisplayClock,
+  useElementVisible,
+} from "../../../hooks/useDisplayClock";
 
 function agoValue(iso: string | null, now: number): string {
-  if (!iso) return '—';
-  const diff = Math.max(dayjs(now).diff(dayjs(iso), 'second'), 0);
+  if (!iso) return "—";
+  const diff = Math.max(dayjs(now).diff(dayjs(iso), "second"), 0);
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
@@ -13,8 +16,8 @@ function agoValue(iso: string | null, now: number): string {
 }
 
 function durationValue(startedAt: string | null, now: number): string {
-  if (!startedAt) return '—';
-  const sec = Math.max(dayjs(now).diff(dayjs(startedAt), 'second'), 0);
+  if (!startedAt) return "—";
+  const sec = Math.max(dayjs(now).diff(dayjs(startedAt), "second"), 0);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
@@ -22,7 +25,10 @@ function durationValue(startedAt: string | null, now: number): string {
 }
 
 function RollingDigit({ value }: { value: string }) {
-  const [rolling, setRolling] = useState<{ current: string; previous: string | null }>({
+  const [rolling, setRolling] = useState<{
+    current: string;
+    previous: string | null;
+  }>({
     current: value,
     previous: null,
   });
@@ -41,8 +47,14 @@ function RollingDigit({ value }: { value: string }) {
 
   return (
     <span className="lr-stat__rolling-digit">
-      {rolling.previous ? <span className="lr-stat__value--rolling-old">{rolling.previous}</span> : null}
-      <span className={rolling.previous ? "lr-stat__value--rolling-new" : undefined}>{rolling.current}</span>
+      {rolling.previous ? (
+        <span className="lr-stat__value--rolling-old">{rolling.previous}</span>
+      ) : null}
+      <span
+        className={rolling.previous ? "lr-stat__value--rolling-new" : undefined}
+      >
+        {rolling.current}
+      </span>
     </span>
   );
 }
@@ -79,13 +91,27 @@ export default function RoomStats({
 }: {
   lastCheckedAt: string | null;
   startedAt: string | null;
-  state: 'recording' | 'reconnecting' | 'checking' | 'failed' | 'idle' | 'completed' | 'disabled';
+  state:
+    | "recording"
+    | "reconnecting"
+    | "checking"
+    | "failed"
+    | "idle"
+    | "completed"
+    | "disabled";
 }) {
   const [ref, visible] = useElementVisible<HTMLDivElement>();
   const now = useDisplayClock(visible);
 
-  const recording = state === 'recording' || state === 'reconnecting';
-  const tone = state === 'failed' ? 'failed' : recording ? 'recording' : state === 'checking' ? 'checking' : 'default';
+  const recording = state === "recording" || state === "reconnecting";
+  const tone =
+    state === "failed"
+      ? "failed"
+      : recording
+        ? "recording"
+        : state === "checking"
+          ? "checking"
+          : "default";
   const duration = durationValue(startedAt, now);
   const [lastDuration, setLastDuration] = useState(duration);
 
@@ -95,15 +121,21 @@ export default function RoomStats({
   }
 
   return (
-    <div ref={ref} style={{ display: 'flex', gap: 8, width: '100%' }}>
-      <StatCard label="最近检测" value={agoValue(lastCheckedAt, now)} tone={tone} />
+    <div ref={ref} style={{ display: "flex", gap: 8, width: "100%" }}>
+      <StatCard
+        label="最近检测"
+        value={agoValue(lastCheckedAt, now)}
+        tone={tone}
+      />
       <div
-        className={`lr-stat lr-stat--duration${recording ? ' lr-stat--duration-visible' : ''}`}
+        className={`lr-stat lr-stat--duration${recording ? " lr-stat--duration-visible" : ""}`}
         aria-hidden={!recording}
       >
         <div className="lr-stat__label lr-stat__recording-label">
-          {recording ? <span className="lr-stat__recording-dot" aria-hidden="true" /> : null}
-          {recording ? '正在录制' : '已录制'}
+          {recording ? (
+            <span className="lr-stat__recording-dot" aria-hidden="true" />
+          ) : null}
+          {recording ? "正在录制" : "已录制"}
         </div>
         <RollingDuration value={recording ? duration : lastDuration} />
       </div>

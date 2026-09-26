@@ -21,11 +21,11 @@ import {
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
-import RoomAvatar from "../../../components/RoomAvatar";
-import RoomStats from "../../../components/RoomStats";
-import RoomHealth from "../../../components/RoomHealth";
+import RoomAvatar from "./RoomAvatar";
+import RoomStats from "./RoomStats";
+import RoomHealth from "./RoomHealth";
 import LiveStatusTag from "../../../components/LiveStatusTag";
-import LivePredictionBadge from "../../../components/LivePredictionBadge";
+import LivePredictionBadge from "./LivePredictionBadge";
 import { useRoomSortableItem } from "../../../components/RoomSortable";
 import type { RoomInsight } from "../../../api/rooms";
 import type { Room } from "../../../types/room";

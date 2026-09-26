@@ -16,11 +16,14 @@ import {
   Switch,
   Tooltip,
 } from "antd";
-import { fetchPipelineConfig, updatePipelineConfig } from "../api/pipeline";
-import { validateDirectory } from "../api/settings";
-import { describeError } from "../utils/errorMap";
-import { ApiError } from "../types/error";
-import DirectoryPicker from "./DirectoryPicker";
+import {
+  fetchPipelineConfig,
+  updatePipelineConfig,
+} from "../../../api/pipeline";
+import { validateDirectory } from "../../../api/settings";
+import { describeError } from "../../../utils/errorMap";
+import { ApiError } from "../../../types/error";
+import DirectoryPicker from "../../../components/DirectoryPicker";
 import {
   FIRST_ENABLE_CRF,
   FIRST_ENABLE_SEGMENT_SECONDS,

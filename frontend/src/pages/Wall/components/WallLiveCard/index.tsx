@@ -7,13 +7,13 @@ import {
   MutedOutlined,
   CloseOutlined,
 } from "@ant-design/icons";
-import { PlatformLogoTag } from "../PlatformLogo.tsx";
-import LiveStatusTag from "../LiveStatusTag.tsx";
-import type { Room } from "../../types/room.ts";
+import { PlatformLogoTag } from "../../../../components/PlatformLogo";
+import LiveStatusTag from "../../../../components/LiveStatusTag";
+import type { Room } from "../../../../types/room";
 import styles from "./index.module.css";
-import VideoMirror from "./VideoMirror.tsx";
+import VideoMirror from "./VideoMirror";
 
-const VideoPlayer = lazy(() => import("../VideoPlayer.tsx"));
+const VideoPlayer = lazy(() => import("../../../../components/VideoPlayer"));
 
 export interface WallLiveCardProps {
   room: Room;

@@ -16,10 +16,10 @@ import {
   fetchEmailPresets,
   updateEmail,
   testEmail,
-} from "../api/email";
-import { describeError } from "../utils/errorMap";
-import { ApiError } from "../types/error";
-import type { SmtpPreset } from "../api/email";
+} from "../../../api/email";
+import { describeError } from "../../../utils/errorMap";
+import { ApiError } from "../../../types/error";
+import type { SmtpPreset } from "../../../api/email";
 
 export default function EmailConfigCard() {
   const { message } = App.useApp();

@@ -1,5 +1,5 @@
 import { Modal } from "antd";
-import FilePlayer from "../../../components/FilePlayer";
+import FilePlayer from "./FilePlayer";
 import { recordingFileUrl } from "../../../api/client";
 import type { Recording } from "../../../types/recording";
 

@@ -18,11 +18,11 @@ import {
   deleteSchedule,
   fetchSchedules,
   updateSchedule,
-} from "../api/schedule";
-import { describeError } from "../utils/errorMap";
-import { ApiError } from "../types/error";
-import { formatTime } from "../utils/format";
-import type { RecordingSchedule, ScheduleInput } from "../types/schedule";
+} from "../../../api/schedule";
+import { describeError } from "../../../utils/errorMap";
+import { ApiError } from "../../../types/error";
+import { formatTime } from "../../../utils/format";
+import type { RecordingSchedule, ScheduleInput } from "../../../types/schedule";
 
 const DAYS = [
   { value: 0, label: "周日" },
@@ -153,7 +153,11 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
       dataIndex: "enabled",
       width: 70,
       render: (v: boolean, s) => (
-        <Switch aria-label="启用该排程" checked={v} onChange={(c) => void toggle(s, c)} />
+        <Switch
+          aria-label="启用该排程"
+          checked={v}
+          onChange={(c) => void toggle(s, c)}
+        />
       ),
     },
     {

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Popover, Tag, Typography } from "antd";
-import type { RoomInsight } from "../api/rooms";
+import type { RoomInsight } from "../../../api/rooms";
 
 import {
   clockMinutes,
@@ -12,7 +12,7 @@ import {
   predictionDisplayLevel,
   predictionOpeningDetail,
   timelineBands,
-} from "../utils/livePrediction";
+} from "../../../utils/livePrediction";
 
 const CONF_META = {
   high: { text: "高" },
@@ -174,7 +174,9 @@ export default function LivePredictionBadge({
     return (
       <PredictionHint content="检测到更多开播记录后形成开播预测">
         <Tag className="lr-live-prediction-tag lr-live-prediction-tag--observation">
-          {value.lastRecordedQuality === "platform" ? "上次开播" : "上次检测到开播"}{" "}
+          {value.lastRecordedQuality === "platform"
+            ? "上次开播"
+            : "上次检测到开播"}{" "}
           {value.lastRecordedAt}
         </Tag>
       </PredictionHint>
@@ -186,7 +188,10 @@ export default function LivePredictionBadge({
     value.likelihood ?? value.confidence,
   );
   // 颜色与详情那句「预测准确性」同源，避免颜色说高、点开却写低。
-  const level = predictionDisplayLevel(value, value.likelihood ?? value.confidence);
+  const level = predictionDisplayLevel(
+    value,
+    value.likelihood ?? value.confidence,
+  );
   const text = predictionTitle(value);
   return (
     <PredictionPopover prediction={value} likelihood={likelihood}>

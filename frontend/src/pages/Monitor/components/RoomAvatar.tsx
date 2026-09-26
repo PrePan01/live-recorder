@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import type { Platform } from "../types/room";
+import type { Platform } from "../../../types/room";
 
 function thumbSrc(url: string, platform: Platform, size: number): string {
   if (platform === "bilibili" && !url.includes("@")) {

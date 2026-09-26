@@ -1,6 +1,6 @@
 import { Drawer, Space, Typography } from "antd";
-import PipelineTimeline from "../../../components/PipelineTimeline";
-import UploadStatus from "../../../components/UploadStatus";
+import PipelineTimeline from "./PipelineTimeline";
+import UploadStatus from "./UploadStatus";
 import type { Recording } from "../../../types/recording";
 
 export default function PipelineDrawer({

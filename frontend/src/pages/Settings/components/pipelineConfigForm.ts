@@ -1,4 +1,4 @@
-import type { PipelineConfig } from "../types/pipeline";
+import type { PipelineConfig } from "../../../types/pipeline";
 
 /**
  * 设置页「后处理管线」步骤化表单的纯映射层（task #65）。
@@ -34,9 +34,7 @@ type FormValues = Record<string, unknown>;
  * 保存：剥掉三个 UI 开关字段，按开关状态派生旧语义三字段，
  * 其余字段原样透传——输出键集与取值与改造前 onValuesChange 直发的载荷一致。
  */
-export function buildPipelinePayload(
-  all: FormValues,
-): Partial<PipelineConfig> {
+export function buildPipelinePayload(all: FormValues): Partial<PipelineConfig> {
   const { segmentEnabled, crfEnabled, archiveEnabled, ...rest } = all;
   const has = (k: string) =>
     Object.prototype.hasOwnProperty.call(rest, k) && rest[k] !== undefined;

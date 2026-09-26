@@ -10,7 +10,7 @@ import {
   Typography,
 } from "antd";
 import { DownloadOutlined, ReloadOutlined } from "@ant-design/icons";
-import { resetApplication } from "../api/settings";
+import { resetApplication } from "../../../api/settings";
 
 interface ResetSettingsCardProps {
   onExport: () => Promise<void>;

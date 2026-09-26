@@ -1,31 +1,54 @@
-import { useEffect, useState } from 'react';
-import { App, Button, Popconfirm, Progress, Space, Tag, Typography } from 'antd';
-import { fetchUploads, retryUpload, cancelUpload, uploadRecording } from '../api/openlist';
-import type { UploadJob } from '../api/openlist';
-import { describeError } from '../utils/errorMap';
-import { ApiError } from '../types/error';
-import { formatRelative } from '../utils/format';
-import { useShallow } from 'zustand/react/shallow';
-import { useUploadStore } from '../stores/uploadStore';
-import { describeUploadError, classifyUploadError } from '../utils/uploadError';
-import { uploadPhaseLabel, uploadPhaseText } from '../utils/uploadProgress';
-import { bridge } from '../stores/bootStore';
+import { useEffect, useState } from "react";
+import {
+  App,
+  Button,
+  Popconfirm,
+  Progress,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  fetchUploads,
+  retryUpload,
+  cancelUpload,
+  uploadRecording,
+} from "../../../api/openlist";
+import type { UploadJob } from "../../../api/openlist";
+import { describeError } from "../../../utils/errorMap";
+import { ApiError } from "../../../types/error";
+import { formatRelative } from "../../../utils/format";
+import { useShallow } from "zustand/react/shallow";
+import { useUploadStore } from "../../../stores/uploadStore";
+import {
+  describeUploadError,
+  classifyUploadError,
+} from "../../../utils/uploadError";
+import {
+  uploadPhaseLabel,
+  uploadPhaseText,
+} from "../../../utils/uploadProgress";
+import { bridge } from "../../../stores/bootStore";
 
 const STATUS_COLOR: Record<string, string> = {
-  queued: 'default',
-  running: 'processing',
-  ok: 'green',
-  failed: 'red',
-  cancelled: 'default',
+  queued: "default",
+  running: "processing",
+  ok: "green",
+  failed: "red",
+  cancelled: "default",
 };
 
 export default function UploadStatus({ recordingId }: { recordingId: string }) {
   const { message } = App.useApp();
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [loading, setLoading] = useState(false);
-  const liveJobs = useUploadStore(useShallow((s) => s.jobs.filter((j) => j.recordingId === recordingId)));
+  const liveJobs = useUploadStore(
+    useShallow((s) => s.jobs.filter((j) => j.recordingId === recordingId)),
+  );
   const upsertUpload = useUploadStore((s) => s.upsert);
-  const requestTwoFactorPrompt = useUploadStore((s) => s.requestTwoFactorPrompt);
+  const requestTwoFactorPrompt = useUploadStore(
+    (s) => s.requestTwoFactorPrompt,
+  );
 
   const load = async () => {
     setLoading(true);
@@ -35,7 +58,11 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
       setJobs(mine);
       useUploadStore.getState().setJobs(mine);
     } catch (e) {
-      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '上传列表加载失败');
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "上传列表加载失败",
+      );
     } finally {
       setLoading(false);
     }
@@ -72,10 +99,16 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
           onClick={() =>
             uploadRecording(recordingId)
               .then(() => {
-                message.success('已触发上传');
+                message.success("已触发上传");
                 void load();
               })
-              .catch((e) => message.error(e instanceof ApiError ? describeError(e.code, e.message) : '上传失败'))
+              .catch((e) =>
+                message.error(
+                  e instanceof ApiError
+                    ? describeError(e.code, e.message)
+                    : "上传失败",
+                ),
+              )
           }
         >
           手动上传
@@ -85,18 +118,25 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   }
 
   return (
-    <Space orientation="vertical" style={{ width: '100%' }} size={10}>
+    <Space orientation="vertical" style={{ width: "100%" }} size={10}>
       {jobs.map((j) => (
         <div key={j.id}>
           <Space size={8} wrap>
             <Tag color={STATUS_COLOR[j.status]}>{j.status}</Tag>
-            {j.status === 'running' ? <Progress percent={j.progress} size="small" style={{ width: 140 }} /> : null}
-            {j.status === 'running' ? (
+            {j.status === "running" ? (
+              <Progress
+                percent={j.progress}
+                size="small"
+                style={{ width: 140 }}
+              />
+            ) : null}
+            {j.status === "running" ? (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {uploadPhaseLabel(phaseOf(j.progress), j.progress)} · {uploadPhaseText(phaseOf(j.progress), j.progress, j.updatedAt)}
+                {uploadPhaseLabel(phaseOf(j.progress), j.progress)} ·{" "}
+                {uploadPhaseText(phaseOf(j.progress), j.progress, j.updatedAt)}
               </Typography.Text>
             ) : null}
-            {j.status === 'ok' && j.remotePath ? (
+            {j.status === "ok" && j.remotePath ? (
               <Typography.Link
                 href={j.remotePath}
                 target="_blank"
@@ -108,7 +148,7 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
                   const url = j.remotePath;
                   if (!url) return;
                   void bridge.openPath(url).catch(() => {
-                    window.open(url, '_blank', 'noopener,noreferrer');
+                    window.open(url, "_blank", "noopener,noreferrer");
                   });
                 }}
               >
@@ -118,16 +158,39 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {formatRelative(j.updatedAt)}
             </Typography.Text>
-            {j.status === 'failed' ? (
+            {j.status === "failed" ? (
               <Space size={4}>
-                <Button size="small" onClick={() => void retryUpload(j.id).then((updated) => {
-                  upsertUpload(updated);
-                  if ((updated.error ?? '').includes('OpenList 需要 2FA 验证')) requestTwoFactorPrompt();
-                  return load();
-                }).catch((e) => message.error(describeError(e.code, e.message)))}>
+                <Button
+                  size="small"
+                  onClick={() =>
+                    void retryUpload(j.id)
+                      .then((updated) => {
+                        upsertUpload(updated);
+                        if (
+                          (updated.error ?? "").includes(
+                            "OpenList 需要 2FA 验证",
+                          )
+                        )
+                          requestTwoFactorPrompt();
+                        return load();
+                      })
+                      .catch((e) =>
+                        message.error(describeError(e.code, e.message)),
+                      )
+                  }
+                >
                   重试
                 </Button>
-                <Popconfirm title="取消上传？本地文件不受影响" onConfirm={() => void cancelUpload(j.id).then(() => void load()).catch((e) => message.error(describeError(e.code, e.message)))}>
+                <Popconfirm
+                  title="取消上传？本地文件不受影响"
+                  onConfirm={() =>
+                    void cancelUpload(j.id)
+                      .then(() => void load())
+                      .catch((e) =>
+                        message.error(describeError(e.code, e.message)),
+                      )
+                  }
+                >
                   <Button size="small" danger>
                     取消
                   </Button>
@@ -143,7 +206,10 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
                   {describeUploadError(j.error) ?? j.error}
                 </Typography.Text>
               </Space>
-              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11 }}>
+              <Typography.Text
+                type="secondary"
+                style={{ display: "block", fontSize: 11 }}
+              >
                 {j.error}
               </Typography.Text>
             </div>
@@ -154,8 +220,8 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   );
 }
 
-function phaseOf(progress: number): 'sending' | 'cloud' | 'verifying' {
-  if (progress >= 99) return 'verifying';
-  if (progress < 50) return 'sending';
-  return 'cloud';
+function phaseOf(progress: number): "sending" | "cloud" | "verifying" {
+  if (progress >= 99) return "verifying";
+  if (progress < 50) return "sending";
+  return "cloud";
 }

@@ -14,7 +14,7 @@ import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/errorMap";
 import { formatRelative } from "../../../utils/format";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
-import RoomAvatar from "../../../components/RoomAvatar";
+import RoomAvatar from "./RoomAvatar";
 import { MonitorStateTag } from "../../../components/StatusTags";
 import LiveStatusTag from "../../../components/LiveStatusTag";
 import type { Room } from "../../../types/room";

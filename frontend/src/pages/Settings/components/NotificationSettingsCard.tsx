@@ -14,7 +14,7 @@ import { bridge } from "../../../stores/bootStore";
 import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/errorMap";
 import type { NotificationEventPreference } from "../../../types/notification";
-import EmailConfigCard from "../../../components/EmailConfigCard";
+import EmailConfigCard from "./EmailConfigCard";
 
 const NOTIFICATION_EVENTS: Array<{
   key: keyof NotificationEventPreference;

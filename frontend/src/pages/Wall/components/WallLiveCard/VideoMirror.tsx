@@ -172,7 +172,11 @@ export default function VideoMirror({
 
   return (
     <div ref={frameRef} className={styles.mirrorFrame}>
-      <canvas ref={canvasRef} className={styles.mirror} aria-label="直播画面镜像" />
+      <canvas
+        ref={canvasRef}
+        className={styles.mirror}
+        aria-label="直播画面镜像"
+      />
     </div>
   );
 }

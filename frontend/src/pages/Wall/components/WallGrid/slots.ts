@@ -5,7 +5,9 @@
  * 复用错节点（画面串格、拖拽拖动错卡片）。因此按出现次序给第 2 个及以后的同 id 加后缀：
  * 出现次序按槽位顺序编号，交换两个不同房间时编号不变，DOM 顺序与动画仍保持稳定。
  */
-export function stableSlotEntries<T extends { id: string }>(slots: (T | undefined)[]) {
+export function stableSlotEntries<T extends { id: string }>(
+  slots: (T | undefined)[],
+) {
   const occurrences = new Map<string, number>();
   return slots
     .map((room, index) => {
@@ -15,8 +17,11 @@ export function stableSlotEntries<T extends { id: string }>(slots: (T | undefine
       return {
         room,
         index,
-        key: occurrence === 0 ? `room-${room.id}` : `room-${room.id}#${occurrence}`,
+        key:
+          occurrence === 0
+            ? `room-${room.id}`
+            : `room-${room.id}#${occurrence}`,
       };
     })
-    .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }

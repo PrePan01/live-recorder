@@ -13,13 +13,13 @@ import {
   fetchOpenListConfig,
   updateOpenListConfig,
   testOpenList,
-} from "../api/openlist";
-import { describeError } from "../utils/errorMap";
+} from "../../../api/openlist";
+import { describeError } from "../../../utils/errorMap";
 import {
   affectsConnection,
   saveAndVerifyAutoUpload,
-} from "../utils/openListAutoUpload";
-import { ApiError } from "../types/error";
+} from "../../../utils/openListAutoUpload";
+import { ApiError } from "../../../types/error";
 
 /** 复检防抖：地址/令牌是逐字符保存的，等输入停下再探测一次。 */
 const RECHECK_DEBOUNCE_MS = 800;
@@ -194,7 +194,7 @@ export default function OpenListConfigCard() {
       <Form.Item label="上传成功后删除本地文件">
         {deleteSourceAfterUpload ? (
           <Switch
-          aria-label="上传成功后删除本地文件"
+            aria-label="上传成功后删除本地文件"
             checked
             onChange={(enabled) => {
               if (!enabled) saveDeleteSourceAfterUpload(false);

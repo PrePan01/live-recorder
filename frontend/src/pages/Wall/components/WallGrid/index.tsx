@@ -7,13 +7,13 @@ import {
   type DragEvent,
 } from "react";
 import { SwapOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
-import type { Room } from "../../types/room";
+import type { Room } from "../../../../types/room";
 import {
   getWallCapacity,
   getWallLayout,
   useWallStore,
   type WallGrid as GridLayout,
-} from "../../stores/wallStore";
+} from "../../../../stores/wallStore";
 import WallLiveCard from "../WallLiveCard";
 import styles from "./index.module.css";
 import { stableSlotEntries } from "./slots";
@@ -71,7 +71,9 @@ export default function WallGrid({
   const setMasterVideo = useCallback(
     (roomId: string, element: HTMLVideoElement | null) => {
       setMasterVideos((current) =>
-        current[roomId] === element ? current : { ...current, [roomId]: element },
+        current[roomId] === element
+          ? current
+          : { ...current, [roomId]: element },
       );
     },
     [],
@@ -123,7 +125,11 @@ export default function WallGrid({
     setTargetSlot(null);
   };
 
-  const startDrag = (event: DragEvent<HTMLDivElement>, room: Room, slot: number) => {
+  const startDrag = (
+    event: DragEvent<HTMLDivElement>,
+    room: Room,
+    slot: number,
+  ) => {
     if (
       (event.target as HTMLElement).closest(
         "button, a, input, select, textarea",
@@ -170,7 +176,7 @@ export default function WallGrid({
           <div
             style={{
               gridRow: Math.floor(index / columns) + 1,
-              gridColumn: index % columns + 1,
+              gridColumn: (index % columns) + 1,
               borderTopWidth: index < columns ? 1 : 0,
               borderLeftWidth: index % columns === 0 ? 1 : 0,
             }}
@@ -224,9 +230,13 @@ export default function WallGrid({
             }}
             onDragLeave={(event) => {
               if (
-                !event.currentTarget.contains(event.relatedTarget as Node | null)
+                !event.currentTarget.contains(
+                  event.relatedTarget as Node | null,
+                )
               ) {
-                setTargetSlot((current) => (current === index ? null : current));
+                setTargetSlot((current) =>
+                  current === index ? null : current,
+                );
               }
             }}
             onDrop={(event) => {
@@ -236,40 +246,44 @@ export default function WallGrid({
               resetDrag();
             }}
           >
-          {room ? (
-            <WallLiveCard
-              room={room}
-              fill={layout.fill}
-              onFullscreen={onFullscreen}
-              onRemove={onRemove}
-              slot={index}
-              isMirror={isMirror}
-              mirrorSource={isMirror ? (masterVideos[room.id] ?? null) : undefined}
-              wallFullscreen={wallFullscreen}
-              onVideoElementChange={
-                isMaster ? getMasterVideoCallback(room.id) : undefined
-              }
-            />
-          ) : (
-            <div
-              className={`${styles.placeholder} ${layout.fill ? styles.placeholderFill : ""}`}
-            >
-              <VideoCameraAddOutlined className={styles.emptyIcon} />
-            </div>
-          )}
-          {targetSlot === index && (
-            <div className={styles.dropHint}>
-              <SwapOutlined />{" "}
-              {room
-                ? `松开与「${room.displayName}」交换位置`
-                : "松开放置到此空位"}
-            </div>
-          )}
+            {room ? (
+              <WallLiveCard
+                room={room}
+                fill={layout.fill}
+                onFullscreen={onFullscreen}
+                onRemove={onRemove}
+                slot={index}
+                isMirror={isMirror}
+                mirrorSource={
+                  isMirror ? (masterVideos[room.id] ?? null) : undefined
+                }
+                wallFullscreen={wallFullscreen}
+                onVideoElementChange={
+                  isMaster ? getMasterVideoCallback(room.id) : undefined
+                }
+              />
+            ) : (
+              <div
+                className={`${styles.placeholder} ${layout.fill ? styles.placeholderFill : ""}`}
+              >
+                <VideoCameraAddOutlined className={styles.emptyIcon} />
+              </div>
+            )}
+            {targetSlot === index && (
+              <div className={styles.dropHint}>
+                <SwapOutlined />{" "}
+                {room
+                  ? `松开与「${room.displayName}」交换位置`
+                  : "松开放置到此空位"}
+              </div>
+            )}
           </div>
         );
       })}
       <span className={styles.srOnly} role="status">
-        {sourceSlot !== null ? "正在拖动直播卡片，请拖到目标卡片后松开；按 Esc 取消" : ""}
+        {sourceSlot !== null
+          ? "正在拖动直播卡片，请拖到目标卡片后松开；按 Esc 取消"
+          : ""}
       </span>
     </div>
   );
