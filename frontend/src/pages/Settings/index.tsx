@@ -1223,7 +1223,7 @@ export default function SettingsPage() {
                     a.resolved
                       ? [<Tag key="done">已读</Tag>]
                       : [
-                          a.roomId && a.errorCode ? (
+                          a.roomId && a.errorCode && a.retryable !== false ? (
                             <Button
                               key="retry"
                               size="small"
@@ -1255,6 +1255,9 @@ export default function SettingsPage() {
                             >
                               查看
                             </Button>
+                          ) : null,
+                          a.retryable === false ? (
+                            <Tag key="manual">需人工处理</Tag>
                           ) : null,
                           <Button
                             key="read"
