@@ -15,16 +15,42 @@ const root = path.join(dirname(fileURLToPath(import.meta.url)), '..');
 const isWin = process.platform === 'win32';
 const bundle = path.join(root, 'frontend', 'src-tauri', 'target', 'release', 'bundle');
 const release = path.join(root, 'release');
+const products = [];
+let exitCode = 0;
 
+class StepError extends Error {
+  constructor(message, exitCode = 1) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
+
+// 失败改抛错（P1-1）：原先 process.exit 会跳过后续步骤，npm ci 恢复永远不执行，
+// 本机 node_modules 停在裁剪态（缺 typescript/vitest），下次 dev/test 莫名其妙地炸。
 const run = (cmd, args, cwd) => {
   const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: isWin });
-  if (r.status !== 0) {
-    console.error(`[package] 命令失败: ${cmd} ${args.join(' ')}`);
-    process.exit(r.status ?? 1);
+  if (r.status !== 0 || r.error) {
+    throw new StepError(
+      `命令失败: ${cmd} ${args.join(' ')} (${r.error ? r.error.message : `exit ${r.status}`})`,
+      (r.status ?? 1) || 1,
+    );
   }
 };
 
+const backendDir = path.join(root, 'backend');
+
+// 恢复完整依赖（含 dev 依赖）：成功失败都执行；自身的失败只告警、不吞主流程退出码。
+function restoreBackendDeps() {
+  if (process.env.LR_SKIP_BACKEND_RESTORE === '1') return;
+  console.log('[package] 恢复后端完整依赖（npm ci）…');
+  const r = spawnSync('npm', ['ci', '--include=dev'], { cwd: backendDir, stdio: 'inherit', shell: isWin });
+  if (r.error || r.status !== 0) {
+    console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
+  }
+}
+
 // 1) 后端构建
+try {
 console.log('[package] 1/4 构建后端 dist…');
 if (process.env.LR_SKIP_BACKEND_BUILD === '1') {
   if (!existsSync(path.join(root, 'backend', 'dist', 'index.js'))) {
@@ -37,7 +63,6 @@ if (process.env.LR_SKIP_BACKEND_BUILD === '1') {
 
 // 1.5) 打包前把后端 node_modules 精简为仅生产依赖（dev 依赖 typescript/vitest 等占 ~90MB，运行不需要）
 //      打包完成后再恢复完整依赖，避免影响开发环境。
-const backendDir = path.join(root, 'backend');
 console.log('[package] 精简后端 node_modules 为生产依赖…');
 run('npm', ['prune', '--omit=dev'], backendDir);
 
@@ -81,8 +106,7 @@ if (!isWin) {
     await new Promise((r) => setTimeout(r, 300));
   }
   if (produced.length === 0) {
-    console.error(`[package] bundle-dmg 未产出 .dmg（${dmgDir} 为空）——请检查 hdiutil/codesign 输出`);
-    process.exit(1);
+    throw new Error(`bundle-dmg 未产出 .dmg（${dmgDir} 为空）——请检查 hdiutil/codesign 输出`);
   }
   console.log(`[package] 已生成 dmg: ${produced.join(', ')}`);
 }
@@ -95,7 +119,6 @@ for (const f of readdirSync(release)) {
     rmSync(path.join(release, f), { recursive: true, force: true });
   }
 }
-const products = [];
 if (!isWin) {
   const macosDir = path.join(bundle, 'macos');
   if (existsSync(macosDir)) {
@@ -119,8 +142,7 @@ if (!isWin) {
   // #232 防护：macOS 产物须含 .app 与 .dmg；任一缺失即报错（拷贝段失效不再静默）。
   const missing = ['app', 'dmg'].filter((kind) => !products.some((p) => (kind === 'app' ? p.endsWith('.app') : p.endsWith('.dmg'))));
   if (missing.length > 0) {
-    console.error(`[package] macOS 产物缺失: ${missing.join('/')}（release/ 现含: ${products.join(', ') || '无'}）`);
-    process.exit(1);
+    throw new Error(`macOS 产物缺失: ${missing.join('/')}（release/ 现含: ${products.join(', ') || '无'}）`);
   }
 } else {
   for (const sub of ['nsis']) {
@@ -133,20 +155,37 @@ if (!isWin) {
       }
     }
   }
+  // 与 macOS #232 对等的 Windows 守卫：产物缺失即失败，不再静默输出空 release/。
+  const setups = products.filter((f) => f.endsWith('-setup.exe'));
+  if (setups.length === 0) {
+    throw new Error(`Windows 产物缺失: *-setup.exe（release/ 现含: ${products.join(', ') || '无'}）`);
+  }
+  if (!products.some((f) => f.endsWith('.sig'))) {
+    console.warn('[package] 警告: 未见 .sig 更新签名（发布用包需配置 TAURI_SIGNING_PRIVATE_KEY）');
+  }
 }
 
 // 5) 清理 tauri target bundle 中间产物（只保留 release/）
 rmSync(bundle, { recursive: true, force: true });
-
-// 6) 恢复后端完整依赖（含 dev 依赖），避免影响开发/测试环境。
-if (process.env.LR_SKIP_BACKEND_RESTORE !== '1') {
-  console.log('[package] 恢复后端完整依赖（npm ci）…');
-  try {
-    // --include=dev：外部环境若带 NODE_ENV=production，npm ci 只装生产依赖，开发环境会缺 tsc/vitest。
-    run('npm', ['ci', '--include=dev'], backendDir);
-  } catch {
-    console.warn('[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci');
-  }
+} catch (error) {
+  console.error(`[package] 打包失败: ${error && error.message ? error.message : error}`);
+  if (!(error instanceof StepError) && error && error.stack) console.error(error.stack);
+  exitCode = error instanceof StepError ? error.exitCode : 1;
+} finally {
+  // P1-1：无论成败都恢复完整依赖（原实现失败即 process.exit，恢复步骤永不执行，留下残缺开发环境）。
+  restoreBackendDeps();
 }
 
-console.log(`[package] 完成 ✅ 产物已输出到 release/: ${products.join(', ')}`);
+if (exitCode === 0) {
+  console.log(`[package] 完成 ✅ 产物已输出到 release/: ${products.join(', ')}`);
+  // 双平台一致体验：同一条命令内完成装机校验（mac 校 .app 资源/运行时/启动冒烟；Windows 实际静默安装后校验）。
+  console.log('[package] 装机校验…');
+  const verify = spawnSync(process.execPath, ['scripts/check-installation.mjs'], { cwd: root, stdio: 'inherit', shell: isWin });
+  if (verify.error || verify.status !== 0) {
+    console.error(`[package] 装机校验失败: ${verify.error ? verify.error.message : `exit ${verify.status}`}`);
+    exitCode = (verify.status ?? 1) || 1;
+  } else {
+    console.log('[package] 装机校验通过 ✅');
+  }
+}
+process.exit(exitCode);

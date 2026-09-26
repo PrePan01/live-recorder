@@ -13,8 +13,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build && node scripts/bundle-dmg.mjs && bash scripts/sync-release.sh",
-    "package:release": "bash scripts/package-release.sh",
+    "tauri:build": "npm --prefix .. run package",
+    "package:release": "npm --prefix .. run package",
     "bundle:resources": "node scripts/bundle-resources.mjs",
     "bundle:dmg": "node scripts/bundle-dmg.mjs"
   },
