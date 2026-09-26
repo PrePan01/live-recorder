@@ -2,7 +2,8 @@
   "bundle": {
     "createUpdaterArtifacts": true,
     "resources": {
-      ".bundle/node.exe": "node.exe"
+      ".bundle/node.exe": "node.exe",
+      ".bundle/WebView2Loader.dll": "WebView2Loader.dll"
     }
   }
 }
