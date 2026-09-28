@@ -883,6 +883,13 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
 `,
   },
 
+  {
+    version: 41,
+    sql: `
+  ALTER TABLE alerts ADD COLUMN read INTEGER NOT NULL DEFAULT 0;
+`,
+  },
+
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

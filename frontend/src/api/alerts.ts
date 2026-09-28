@@ -1,19 +1,21 @@
-import { http } from './client';
-import type { Alert } from '../types/alert';
+import { http } from "./client";
+import type { Alert } from "../types/alert";
 
 export async function fetchAlerts(): Promise<Alert[]> {
-  const { data } = await http.get<{ alerts: Alert[] }>('/alerts');
+  const { data } = await http.get<{ alerts: Alert[] }>(
+    "/alerts?unresolvedOnly=true",
+  );
   return data.alerts;
 }
 
 export async function markAlertRead(id: string): Promise<void> {
-  await http.patch(`/alerts/${id}`, { resolved: true });
+  await http.patch(`/alerts/${id}`, { read: true });
 }
 
 export async function markAllAlertsRead(): Promise<void> {
-  await http.post('/alerts/read-all');
+  await http.post("/alerts/read-all");
 }
 
 export async function clearAllAlerts(): Promise<void> {
-  await http.delete('/alerts');
+  await http.delete("/alerts");
 }

@@ -9,7 +9,7 @@ import {
   Typography,
 } from "antd";
 import { useNavigate } from "react-router-dom";
-import { useAlertStore } from "../../../stores/alertStore";
+import { useAlertStore, isAlertRead } from "../../../stores/alertStore";
 import { useRoomStore } from "../../../stores/roomStore";
 import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/errorMap";
@@ -62,7 +62,7 @@ export default function AlertsCard() {
           renderItem={(a) => (
             <List.Item
               actions={
-                a.resolved
+                isAlertRead(a)
                   ? [<Tag key="done">已读</Tag>]
                   : [
                       a.roomId && a.errorCode && a.retryable !== false ? (

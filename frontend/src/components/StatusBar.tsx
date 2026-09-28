@@ -13,7 +13,7 @@ import { CloudServerOutlined, WarningOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useServiceStore } from "../stores/serviceStore";
 import { useAppearanceStore } from "../stores/appearanceStore";
-import { useAlertStore, selectUnreadCount } from "../stores/alertStore";
+import { useAlertStore, isAlertRead, selectUnreadCount } from "../stores/alertStore";
 import { useRoomStore } from "../stores/roomStore";
 import { formatBytes, formatRelative } from "../utils/format";
 import { diskDisplay } from "../utils/diskDisplay";
@@ -148,7 +148,7 @@ export default function StatusBar() {
               renderItem={(a) => (
                 <List.Item
                   actions={
-                    a.resolved
+                    isAlertRead(a)
                       ? []
                       : [
                           a.roomId && a.errorCode ? (
