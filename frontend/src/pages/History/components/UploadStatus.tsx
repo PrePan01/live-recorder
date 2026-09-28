@@ -38,6 +38,14 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: "default",
 };
 
+const STATUS_TEXT: Record<UploadJob["status"], string> = {
+  queued: "等待上传",
+  running: "上传中",
+  ok: "已上传",
+  failed: "上传失败",
+  cancelled: "已取消",
+};
+
 export default function UploadStatus({ recordingId }: { recordingId: string }) {
   const { message } = App.useApp();
   const [jobs, setJobs] = useState<UploadJob[]>([]);
@@ -56,7 +64,9 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
       const all = await fetchUploads(50);
       const mine = all.filter((u) => u.recordingId === recordingId);
       setJobs(mine);
-      useUploadStore.getState().setJobs(mine);
+      // 逐条合并进全局，不再整表覆写：覆写会让同屏其他行的任务瞬间丢失
+      const store = useUploadStore.getState();
+      mine.forEach((j) => store.upsert(j));
     } catch (e) {
       message.error(
         e instanceof ApiError
@@ -73,7 +83,15 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   }, [recordingId]);
 
   useEffect(() => {
-    if (liveJobs.length > 0) setJobs(liveJobs);
+    if (liveJobs.length > 0) {
+      // 内容一致时返回旧引用，不触发重渲染，避免同步回写引发更新循环
+      setJobs((prev) =>
+        prev.length === liveJobs.length &&
+        prev.every((p, i) => p === liveJobs[i])
+          ? prev
+          : liveJobs,
+      );
+    }
   }, [liveJobs]);
 
   // 99%（云端收尾）阶段实时刷新等待时长，避免进度停在 99 看起来卡死（PrePan：上传卡 99 无状态）。
@@ -90,12 +108,14 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
 
   if (!loading && jobs.length === 0) {
     return (
-      <Space orientation="vertical" size={8}>
+      <Space orientation="vertical" size={8} className="pipeline-upload-empty">
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
           该录制暂无上传任务。
         </Typography.Paragraph>
         <Button
           size="small"
+          type="primary"
+          className="pipeline-upload-action"
           onClick={() =>
             uploadRecording(recordingId)
               .then(() => {
@@ -118,11 +138,11 @@ export default function UploadStatus({ recordingId }: { recordingId: string }) {
   }
 
   return (
-    <Space orientation="vertical" style={{ width: "100%" }} size={10}>
+    <Space orientation="vertical" className="pipeline-upload-list" size={10}>
       {jobs.map((j) => (
-        <div key={j.id}>
-          <Space size={8} wrap>
-            <Tag color={STATUS_COLOR[j.status]}>{j.status}</Tag>
+        <div key={j.id} className={`pipeline-upload-job pipeline-upload-${j.status}`}>
+          <Space size={8} wrap className="pipeline-upload-topline">
+            <Tag color={STATUS_COLOR[j.status]}>{STATUS_TEXT[j.status]}</Tag>
             {j.status === "running" ? (
               <Progress
                 percent={j.progress}

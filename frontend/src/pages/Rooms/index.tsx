@@ -29,6 +29,7 @@ import { useTagStore } from "../../stores/tagStore";
 import { useResizableColumns } from "../../hooks/useResizableColumns";
 import TagSelect from "./components/TagSelect";
 import SchedulePanel from "./components/SchedulePanel";
+import TagFilterSelect from "../../components/TagFilterSelect";
 import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
@@ -79,7 +80,7 @@ export default function Rooms() {
   const [platform, setPlatform] = useState<string>();
   const [state, setState] = useState<string>();
   const [favOnly, setFavOnly] = useState<boolean>(false);
-  const [tagId, setTagId] = useState<string>();
+  const [filterTagIds, setFilterTagIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
@@ -114,9 +115,12 @@ export default function Rooms() {
       if (platform && r.platform !== platform) return false;
       if (state && r.monitorState !== state) return false;
       if (favOnly && !r.favorited) return false;
-      return !(tagId && !r.tags.some((t) => t.id === tagId));
+      return !(
+        filterTagIds.length > 0 &&
+        !filterTagIds.some((tagId) => r.tags.some((tag) => tag.id === tagId))
+      );
     });
-  }, [rooms, keyword, platform, state, favOnly, tagId]);
+  }, [rooms, keyword, platform, state, favOnly, filterTagIds]);
 
   const paginated = useMemo(
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
@@ -379,6 +383,9 @@ export default function Rooms() {
         message.success("直播间已更新");
       } else {
         const room = await addRoom({ ...values, platform });
+        if (tagIds.length > 0) {
+          await updateRoomTags(room.id, tagIds);
+        }
         message.success("直播间已添加");
         // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
         void checkRoomNow(room.id).catch(() => undefined);
@@ -521,16 +528,15 @@ export default function Rooms() {
             { value: "disabled", label: "已停用" },
           ]}
         />
-        <Select
-          allowClear
-          placeholder="标签"
-          style={{ width: 120 }}
-          value={tagId}
-          onChange={(v) => {
-            setTagId(v);
+        <TagFilterSelect
+          tags={tags}
+          value={filterTagIds}
+          onChange={(nextTagIds) => {
+            setFilterTagIds(nextTagIds);
             resetPage();
           }}
-          options={tags.map((t) => ({ value: t.id, label: t.name }))}
+          placeholder="标签"
+          style={{ width: 120 }}
         />
         <Button
           type={favOnly ? "primary" : "default"}
@@ -642,11 +648,9 @@ export default function Rooms() {
           >
             <Switch aria-label="开播提醒" />
           </Form.Item>
-          {editing ? (
-            <Form.Item label="标签">
-              <TagSelect value={tagIds} onChange={setTagIds} />
-            </Form.Item>
-          ) : null}
+          <Form.Item label="标签">
+            <TagSelect value={tagIds} onChange={setTagIds} />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal

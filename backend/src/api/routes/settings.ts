@@ -373,6 +373,9 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
   if (config.exportCover !== undefined && typeof config.exportCover !== 'boolean') {
     return new AppError('PIPELINE_CONFIG_INVALID', 'exportCover 必须为布尔值');
   }
+  if (config.outputFormat !== undefined && config.outputFormat !== 'source' && config.outputFormat !== 'mp4') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'outputFormat 必须为 source 或 mp4');
+  }
   return null;
 }
 

@@ -1,20 +1,32 @@
-import type { Platform } from './room';
-import type { ApiErrorEnvelope } from './error';
+import type { Platform } from "./room";
+import type { ApiErrorEnvelope } from "./error";
 
+export type RecordingState =
+  | "pending"
+  | "recording"
+  | "reconnecting"
+  | "awaiting_confirmation"
+  | "processing"
+  | "completed"
+  | "failed";
 
-export type RecordingState = 'pending' | 'recording' | 'reconnecting' | 'awaiting_confirmation' | 'processing' | 'completed' | 'failed';
+export type RecordingIntegrity = "verified" | "failed" | "pending";
 
-export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
+export type RecordingIntegrityState =
+  "pending" | "queued" | "verifying" | "ok" | "failed" | "unverifiable";
 
 /**
  * 录制结束原因：natural=直播结束自然收尾、stopped=手动停止、
  * interrupted=中断（网络/写盘）停止、service_restart=服务重启中断。
  */
-export type RecordingEndReason = 'natural' | 'stopped' | 'interrupted' | 'service_restart';
+export type RecordingEndReason =
+  "natural" | "stopped" | "interrupted" | "service_restart";
 
-export type PipelineStatus = 'not_required' | 'queued' | 'running' | 'ok' | 'partial' | 'failed';
+export type PipelineStatus =
+  "not_required" | "queued" | "running" | "ok" | "partial" | "failed";
 
-export type UploadSnapshotStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
+export type UploadSnapshotStatus =
+  "queued" | "running" | "ok" | "failed" | "cancelled";
 
 export interface UploadSnapshot {
   status: UploadSnapshotStatus;
@@ -32,6 +44,16 @@ export interface PipelineMetadata {
   size: number;
 }
 
+export interface RecordingGap {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  missingMs: number;
+  /** 归因分类：服务重启/控制重连/流断档/写盘异常等，取值由服务端判定。 */
+  kind: string;
+  evidence: string | null;
+}
+
 export interface Recording {
   id: string;
   roomId: string;
@@ -43,6 +65,14 @@ export interface Recording {
   /** 录制发起时的期望画质快照，历史页据此判断画质回退（不依赖当前设置）。 */
   expectedQuality: string | null;
   integrity: RecordingIntegrity | null;
+  /** 校验细分态：缺省=旧数据，展示层回退旧三态。 */
+  integrityState?: RecordingIntegrityState;
+  integrityAttempts?: number;
+  integrityLastAttempt?: string;
+  integrityError?: string | null;
+  verifyQueuePosition?: number | null;
+  /** 中断次数（与 missingMs 同口径聚合；缺省=旧数据只显秒数）。 */
+  gapCount?: number;
   state: RecordingState;
   pipelineStatus: PipelineStatus | null;
   upload: UploadSnapshot | null;

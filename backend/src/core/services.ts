@@ -1,4 +1,5 @@
 import type { PlatformAdapter, Quality } from '../platform/adapter.js';
+import { VerificationQueue } from './verification-queue.js';
 import type { RecordingEngine } from '../recorder/engine.js';
 import type { DiskGuard } from '../storage/disk-guard.js';
 import type { Mailer } from '../mail/mailer.js';
@@ -53,6 +54,7 @@ export interface Services {
   predictionCalibration: PredictionCalibrationRepository;
   settings: SettingsRepository;
   alerts: AlertRepository;
+  verificationQueue: import('./verification-queue.js').VerificationQueue;
   tags: TagRepository;
   diagnostics: DiagnosticRepository;
   schedules: ScheduleRepository;
@@ -141,6 +143,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     predictionCalibration: new PredictionCalibrationRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
+    verificationQueue: undefined as unknown as import('./verification-queue.js').VerificationQueue,
     diagnostics: new DiagnosticRepository(db),
     schedules: new ScheduleRepository(db),
     statsCache: undefined,
@@ -179,6 +182,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);
   services.exporter = new ExportManager(services);
+  services.verificationQueue = new VerificationQueue(services);
   return services;
 }
 

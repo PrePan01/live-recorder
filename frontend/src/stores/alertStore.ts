@@ -29,11 +29,11 @@ export const useAlertStore = create<AlertState>((set) => ({
   },
   async markRead(id) {
     await markAlertRead(id);
-    set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, resolved: true } : a)) }));
+    set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, read: true } : a)) }));
   },
   async markAllRead() {
     await markAllAlertsRead();
-    set((s) => ({ alerts: s.alerts.map((a) => ({ ...a, resolved: true })) }));
+    set((s) => ({ alerts: s.alerts.map((a) => ({ ...a, read: true })) }));
   },
   async clearAll() {
     await clearAllAlerts();
@@ -59,4 +59,6 @@ export const useAlertStore = create<AlertState>((set) => ({
   },
 }));
 
-export const selectUnreadCount = (s: AlertState) => s.alerts.filter((a) => !a.resolved).length;
+export const isAlertRead = (a: Alert) => a.read ?? a.resolved;
+
+export const selectUnreadCount = (s: AlertState) => s.alerts.filter((a) => !isAlertRead(a)).length;

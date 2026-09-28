@@ -2,7 +2,7 @@ import { mkdir, stat, copyFile, rm, rename } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
-import { discardTemp, finalizeMp4, runFfmpegTracked } from './ffmpeg-run.js';
+import { discardTemp, finalizeMp4, runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
 import { checkFileIntegrity } from './integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
 
@@ -17,8 +17,8 @@ interface FfmpegResult {
 }
 
 /** 按进度判定卡死，慢盘上的大文件不会被固定超时打断。 */
-export async function runFfmpeg(args: string[]): Promise<FfmpegResult> {
-  const res = await runFfmpegTracked(args);
+export async function runFfmpeg(args: string[], options: FfmpegRunOptions = {}): Promise<FfmpegResult> {
+  const res = await runFfmpegTracked(args, options);
   return { ok: res.ok, code: res.code, stderr: res.stderr };
 }
 
@@ -134,20 +134,48 @@ export interface CompressResult {
   sizeBytes: number;
 }
 
-/** 压缩转封装：crf 为 null 时仅 remux（copy）；否则重编码 H.264。产物校验通过才落地，失败不留半成品。 */
-export async function compressOrRemux(inputPath: string, crf: number | null): Promise<CompressResult | null> {
-  // mp4 且无需压缩：已是目标格式，无需处理（调用方标 skipped，不影响管线 finalStatus）。
-  if (/\.mp4$/i.test(inputPath) && crf === null) return null;
-  const outPath = inputPath.replace(/\.(flv|ts|mp4)$/i, crf === null ? '_remux.mp4' : '_c.mp4');
-  if (outPath === inputPath) return null;
+/** 绝不覆盖已有产物；遇同名文件时生成递增安全名称。 */
+async function unusedPath(preferred: string): Promise<string> {
+  const ext = path.extname(preferred);
+  const stem = preferred.slice(0, -ext.length);
+  for (let index = 0; ; index += 1) {
+    const candidate = index === 0 ? preferred : `${stem}_${index}${ext}`;
+    if (!(await stat(candidate).catch(() => null))) return candidate;
+  }
+}
+
+/** 独立格式转换：安全地输出 MP4，源文件绝不删除或覆盖。 */
+export async function convertToMp4(inputPath: string, options: FfmpegRunOptions = {}): Promise<CompressResult | null> {
+  if (/\.mp4$/i.test(inputPath)) return null;
+  const preferredPath = inputPath.replace(/\.(flv|ts)$/i, '_converted.mp4');
+  if (preferredPath === inputPath) return null;
+  const outPath = await unusedPath(preferredPath);
   const tempPath = `${outPath}.part`;
   await discardTemp(tempPath);
-  const args = crf === null
-    ? ['-y', '-i', inputPath, '-c', 'copy', '-f', 'mp4', tempPath]
-    : ['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath];
-  const res = await runFfmpeg(args);
+  const res = await runFfmpeg(['-y', '-i', inputPath, '-c', 'copy', '-f', 'mp4', tempPath], options);
   if (!res.ok) {
-    // ffmpeg 失败：清理半截 .part（否则失败路径永久残留，task #63 用例「临时零残留」断言）。
+    await discardTemp(tempPath);
+    return null;
+  }
+  if (!(await finalizeMp4(tempPath, outPath))) return null;
+  const st = await stat(outPath).catch(() => null);
+  return st ? { outPath, sizeBytes: st.size } : null;
+}
+
+/** 视频压缩：只做重编码，格式转换由 convertToMp4 独立负责。 */
+export async function compressOrRemux(
+  inputPath: string,
+  crf: number | null,
+  options: FfmpegRunOptions = {},
+): Promise<CompressResult | null> {
+  if (crf === null) return null;
+  const preferredPath = inputPath.replace(/\.(flv|ts|mp4)$/i, '_c.mp4');
+  if (preferredPath === inputPath) return null;
+  const outPath = await unusedPath(preferredPath);
+  const tempPath = `${outPath}.part`;
+  await discardTemp(tempPath);
+  const res = await runFfmpeg(['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath], options);
+  if (!res.ok) {
     await discardTemp(tempPath);
     return null;
   }

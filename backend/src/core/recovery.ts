@@ -77,6 +77,23 @@ export async function recoverOrphanPipelineRuns(services: Services): Promise<num
   const REASON = "服务重启中断，可重试";
   let recovered = 0;
   for (const run of orphans) {
+    // 断点续跑：已有产物有效的步骤跳过、缺损步骤重跑；仅在文件不可用时退回标失败。
+    const rec0 = services.recordings.get(run.recordingId);
+    const st0 = rec0?.filePath ? await stat(rec0.filePath).catch(() => null) : null;
+    if (rec0 && st0 && st0.size > 0) {
+      // 续跑前同样清理孤儿 .part 半截产物（与标失败路径的清理口径一致）。
+      const dir0 = path.dirname(rec0.filePath!);
+      const fs0 = await import("node:fs/promises");
+      const entries0 = await fs0.readdir(dir0).catch(() => [] as string[]);
+      await Promise.all(
+        entries0
+          .filter((f) => f.endsWith(".part"))
+          .map((f) => fs0.unlink(path.join(dir0, f)).catch(() => undefined)),
+      );
+      void services.pipeline.resumeRunById(run.id).catch(() => undefined);
+      recovered += 1;
+      continue;
+    }
     services.pipeline.repo.setRunStatus(run.id, "failed", now);
     for (const art of run.artifacts) {
       if (art.status === "queued" || art.status === "running") {

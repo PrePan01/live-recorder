@@ -1,9 +1,10 @@
-import type { Alert, Diagnostic, ExportJob, Recording, RecordingSchedule, Room, SettingsView, UploadJob } from '../types/index.js';
+import type { Alert, Diagnostic, ExportJob, PipelineArtifact, PipelineRun, Recording, RecordingSchedule, Room, SettingsView, UploadJob } from '../types/index.js';
 
 export type AppEvent =
   | { type: 'room:updated'; data: Room }
   | { type: 'desktop:notification'; data: { title: string; body: string } }
   | { type: 'recording:updated'; data: Recording }
+  | { type: 'pipeline:updated'; data: { run: PipelineRun; artifacts: PipelineArtifact[] } }
   | { type: 'recording:deleted'; data: { id: string } }
   | { type: 'alert:created'; data: Alert }
   | { type: 'alert:updated'; data: Alert }

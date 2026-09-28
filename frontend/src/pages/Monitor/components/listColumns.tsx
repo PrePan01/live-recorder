@@ -7,7 +7,6 @@ import {
   ReloadOutlined,
   StarFilled,
   StarOutlined,
-  StopOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { ApiError } from "../../../types/error";
@@ -17,6 +16,7 @@ import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import RoomAvatar from "./RoomAvatar";
 import { MonitorStateTag } from "../../../components/StatusTags";
 import LiveStatusTag from "../../../components/LiveStatusTag";
+import RecordingStopIcon from "../../../components/RecordingStopIcon";
 import type { Room } from "../../../types/room";
 
 type MessageApi = ReturnType<typeof App.useApp>["message"];
@@ -182,7 +182,8 @@ export function buildMonitorListColumns(
                   size="small"
                   type="link"
                   danger
-                  icon={<StopOutlined />}
+                  className="lr-record-stop-button"
+                  icon={<RecordingStopIcon />}
                   loading={acting && actingAction === "stop"}
                 >
                   停止

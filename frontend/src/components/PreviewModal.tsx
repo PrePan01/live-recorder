@@ -16,9 +16,9 @@ import {
   CloseOutlined,
   ClockCircleOutlined,
   CompressOutlined,
-  StopOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
+import RecordingStopIcon from "./RecordingStopIcon";
 import type { Room } from "../types/room";
 import { useRoomStore } from "../stores/roomStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -578,7 +578,8 @@ export default function PreviewModal({
                 <Button
                   size="small"
                   danger
-                  icon={<StopOutlined />}
+                  className="lr-record-stop-button"
+                  icon={<RecordingStopIcon />}
                   loading={busy && actingAction === "stop"}
                 >
                   停止录制（

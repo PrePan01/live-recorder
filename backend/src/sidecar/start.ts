@@ -101,6 +101,9 @@ export async function startSidecar(
     const recoveredExports = services.exporter.recoverInterrupted();
     if (recoveredExports > 0)
       console.log(`recovered ${recoveredExports} interrupted export job(s)`);
+    // 校验队列恢复：被打断/从未校验过的记录全部重新入队（新录优先，队列自行限流）。
+    const requeued = services.verificationQueue.requeuePending();
+    if (requeued > 0) console.log(`requeued ${requeued} pending verification(s)`);
 
     const extraOrigins = opts.extraOrigins ?? [
       'http://localhost:5173',

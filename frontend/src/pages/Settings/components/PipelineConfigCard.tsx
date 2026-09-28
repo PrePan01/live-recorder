@@ -195,6 +195,7 @@ export default function PipelineConfigCard() {
   const segOn = Form.useWatch("segmentEnabled", form) === true;
   const crfOn = Form.useWatch("crfEnabled", form) === true;
   const archiveOn = Form.useWatch("archiveEnabled", form) === true;
+  const outputFormat = Form.useWatch("outputFormat", form) ?? "source";
   const verifyOn = Form.useWatch("verify", form) === true;
   const audioOn = Form.useWatch("exportAudio", form) === true;
   const coverOn = Form.useWatch("exportCover", form) === true;
@@ -254,7 +255,7 @@ export default function PipelineConfigCard() {
       observer.disconnect();
       reducedMotion.removeEventListener("change", updateMotion);
     };
-  }, [enabled, verifyOn, coverOn, segOn, audioOn, crfOn, archiveOn]);
+  }, [enabled, verifyOn, coverOn, segOn, audioOn, outputFormat, crfOn, archiveOn]);
 
   return (
     <Form
@@ -341,8 +342,31 @@ export default function PipelineConfigCard() {
             />
             <StepCard
               num="5"
+              label="格式转换"
+              tip="录制完成后可无损转为 MP4；始终保留源文件"
+              desc={
+                outputFormat === "mp4"
+                  ? "无损转换为 MP4，保留源文件"
+                  : "保留原格式"
+              }
+              on={outputFormat === "mp4"}
+              switchNode={
+                <Form.Item name="outputFormat" noStyle>
+                  <Select
+                    aria-label="输出格式"
+                    style={{ width: 132 }}
+                    options={[
+                      { value: "source", label: "保留原格式" },
+                      { value: "mp4", label: "转为 MP4" },
+                    ]}
+                  />
+                </Form.Item>
+              }
+            />
+            <StepCard
+              num="6"
               label="压缩"
-              tip="转封装/压缩为 MP4；压缩档位越低质量越高"
+              tip="视频文件压缩；压缩档位越低质量越高"
               desc={
                 crfOn && crfVal != null
                   ? `压缩档位 ${crfVal}，越低质量越高（0-51）`
@@ -362,7 +386,7 @@ export default function PipelineConfigCard() {
               ) : null}
             </StepCard>
             <StepCard
-              num="6"
+              num="7"
               label="归档"
               tip="复制视频到归档目录；未填路径时运行中跳过该步"
               desc="复制视频至归档目录，保留原文件；未填目录时跳过"

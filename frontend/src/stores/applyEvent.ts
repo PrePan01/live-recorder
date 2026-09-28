@@ -7,6 +7,7 @@ import { useServiceStore } from './serviceStore';
 import { useDiagnosticStore } from './diagnosticStore';
 import { useNotificationStore } from './notificationStore';
 import { useUploadStore } from './uploadStore';
+import { usePipelineStore } from './pipelineStore';
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -26,6 +27,9 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case 'recording:updated':
       useRecordingStore.getState().upsertRecordingFromEvent(e.recording);
+      break;
+    case 'pipeline:updated':
+      usePipelineStore.getState().upsert(e.pipeline);
       break;
     case 'recording:deleted':
       useRecordingStore.getState().removeRecordingFromEvent(e.recordingId);
