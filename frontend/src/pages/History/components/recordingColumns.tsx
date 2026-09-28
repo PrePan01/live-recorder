@@ -139,9 +139,7 @@ export function buildRecordingColumns(
         <Space size={4}>
           <IntegrityTag integrity={v} />
           {v === "failed" && r.failureReason ? (
-            <Tooltip
-              title={`${r.failureReason.message}（${r.failureReason.retryable ? "可重试" : "需人工处理"}）`}
-            >
+            <Tooltip title={`${r.failureReason.message}`}>
               <WarningOutlined style={{ color: "#ff4d4f" }} />
             </Tooltip>
           ) : null}
@@ -320,12 +318,7 @@ export function buildRecordingColumns(
         return (
           <Space direction="vertical" size={0}>
             {f ? (
-              <Typography.Text type="danger">
-                {f.message}
-                <Typography.Text type="secondary">
-                  （{f.retryable ? "可重试" : "需人工处理"}）
-                </Typography.Text>
-              </Typography.Text>
+              <Typography.Text type="danger">{f.message}</Typography.Text>
             ) : null}
             {missingSeconds > 0 ? (
               <Typography.Text type="warning">

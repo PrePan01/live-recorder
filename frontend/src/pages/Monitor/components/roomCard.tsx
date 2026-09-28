@@ -346,9 +346,6 @@ export const RoomCard = memo(function RoomCard({
             ) : (
               room.lastError.message
             )}
-            <Typography.Text type="secondary">
-              {room.lastError.retryable ? "（可重试）" : "（需人工处理）"}
-            </Typography.Text>
           </Typography.Paragraph>
         ) : null}
         <div
