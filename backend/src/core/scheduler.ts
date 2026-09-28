@@ -145,10 +145,6 @@ export class Scheduler {
     );
   }
 
-  /**
-   * 提交全量开播检测，不等待队列清空。监控页只需快速恢复可交互状态，检测
-   * 结果会通过 SSE 推送；若同步等待，房间较多时很容易超过前端请求超时。
-   */
   queueEnabledRoomChecks(): { queued: number; alreadyRunning: boolean } {
     if (this.enabledRoomChecks) return { queued: 0, alreadyRunning: true };
     const rooms = this.services.rooms
@@ -173,12 +169,10 @@ export class Scheduler {
     return { queued: rooms.length, alreadyRunning: false };
   }
 
-  /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */
   resetDouyinCookieFailure(): void {
     this.douyinCookieExpired = false;
   }
 
-  /** 等待已在途的检测完成，供凭证更新后避免复用仍携带旧 Cookie 的请求。 */
   async waitForRoomCheck(roomId: string): Promise<void> {
     await this.checking.get(roomId);
   }
@@ -281,6 +275,40 @@ export class Scheduler {
       type: "room:updated",
       data: this.manager.enrichRoom(room),
     });
+  }
+
+  /** 在大于等于三分钟的检测时报出三次相同的错误，就发送告警通知 */
+  private checkErrorVotes = new Map<
+    string,
+    { count: number; lastCountedAt: number }
+  >();
+
+  private checkErrorGate(roomId: string, errorCode: string): boolean {
+    const now = this.services.clock.now();
+    const key = `${roomId}|${errorCode}`;
+    // 连续语义：出现别的错误码=该房旧票断连作废（各算各账、重新计数）。
+    for (const existing of [...this.checkErrorVotes.keys()]) {
+      if (existing !== key && existing.startsWith(`${roomId}|`)) {
+        this.checkErrorVotes.delete(existing);
+      }
+    }
+    const current = this.checkErrorVotes.get(key);
+    if (!current) {
+      this.checkErrorVotes.set(key, { count: 1, lastCountedAt: now });
+      return false;
+    }
+    // 相邻两票至少间隔 60 秒：检测间隔比 60s 快时，不足的轮次不计票也不清票。
+    if (now - current.lastCountedAt >= 60_000) {
+      current.count += 1;
+      current.lastCountedAt = now;
+    }
+    return current.count >= 3;
+  }
+
+  private clearErrorVotes(roomId: string): void {
+    for (const key of [...this.checkErrorVotes.keys()]) {
+      if (key.startsWith(`${roomId}|`)) this.checkErrorVotes.delete(key);
+    }
   }
 
   /** 平台整体暂不可用时收敛为一个平台级事件，避免一个轮询批次按房间数刷屏。 */
@@ -412,6 +440,8 @@ export class Scheduler {
       );
     }
     if (status.status === "live" || status.status === "offline") {
+      // 恢复清理：成功检测=该房计数清零，告警列表该条由 resolveRoomAlerts 隐藏留档。
+      this.clearErrorVotes(room.id);
       this.resolveRoomAlerts(room.id);
       this.recordCoverage(room.id);
       if (status.status === "offline") this.recordTodayForecast(room.id);
@@ -447,7 +477,6 @@ export class Scheduler {
         room.lastLiveStatus === "offline" &&
         checkedRoom.enabled &&
         checkedRoom.liveNotificationEnabled;
-      // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
@@ -536,12 +565,25 @@ export class Scheduler {
       this.markDouyinCookieExpired();
       return;
     }
-    this.setCheckFailure(room.id, err);
-    this.createCheckAlert(
-      room,
-      err,
-      status.status === "restricted" ? "warning" : "error",
-    );
+    if (this.checkErrorGate(room.id, err.code)) {
+      // 满 3 票（同房同码、票距≥60s）：恢复原有行为——卡片标红 + 进告警中心（不发桌面通知）。
+      this.setCheckFailure(room.id, err);
+      this.createCheckAlert(
+        room,
+        err,
+        status.status === "restricted" ? "warning" : "error",
+      );
+      return;
+    }
+    // 前 2 票：完全静默——不标红、不进告警（[douyin-enter] 等诊断日志即留痕）。
+    // 房间状态从 checking 收回 idle（不留转圈、不留错误），录制中的会话不动其状态。
+    if (!this.manager.isRoomActive(room.id)) {
+      this.services.rooms.setState(room.id, "idle", {
+        lastCheckedAt: this.services.clock.iso(),
+        lastError: null,
+      });
+      this.emitRoom(room.id);
+    }
   }
 
   private recordCoverage(roomId: string): void {

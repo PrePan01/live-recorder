@@ -125,12 +125,23 @@ describe('B-E7 error code catalog (v1.2, 19 codes)', () => {
     });
     expect(put.statusCode).toBe(200);
 
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'restricted' }, { status: 'restricted' }]);
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'restricted' },
+      { status: 'restricted' },
+      { status: 'restricted' },
+    ]);
     const created = await app.inject({
       method: 'POST', url: '/api/v1/rooms', headers: HOST,
       payload: { platform: 'bilibili', url: 'https://live.bilibili.com/7002', displayName: 'R' },
     });
     const roomId = created.json().room.id;
+    // 三票门：同房同码、票距≥60s，满 3 票才上屏+告警。
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
+    clock.advance(60_001);
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
+    clock.advance(60_001);
     await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
 
     const room = services.rooms.get(roomId)!;
