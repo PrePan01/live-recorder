@@ -250,7 +250,11 @@ export class HighlightBuffer {
     const stream = createWriteStream(file);
     // The pump observes write errors too; this listener prevents an async
     // filesystem failure from becoming an unhandled EventEmitter error.
-    stream.on('error', () => { this.disabledReason ??= 'write_error'; });
+    const hookOnce = (stream as unknown as { lrErrHooked?: boolean });
+    if (!hookOnce.lrErrHooked) {
+      hookOnce.lrErrHooked = true;
+      stream.on('error', () => { this.disabledReason ??= 'write_error'; });
+    }
     const segment: Segment = { path: file, startedAt: at, endedAt: at, bytes: 0, entries: [], stream, closing: null };
     this.segments.push(segment); this.current = segment;
   }

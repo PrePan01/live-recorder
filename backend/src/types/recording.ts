@@ -58,6 +58,14 @@ export interface Recording {
   /** 录制发起时设置的期望画质（settings.quality 快照），用于历史页判断是否发生画质回退——不依赖当前设置（PrePan：当前设置不应影响已录制记录）。 */
   expectedQuality?: Quality;
   integrity?: RecordingIntegrity;
+  /** 校验细分态：pending=尚未校验、queued/verifying=队列中、ok/failed/unverifiable 与 integrity 对应（失败细分环境/损坏）。 */
+  integrityState?: 'pending' | 'queued' | 'verifying' | 'ok' | 'failed' | 'unverifiable';
+  integrityAttempts?: number;
+  integrityLastAttempt?: string;
+  integrityError?: string | null;
+  verifyQueuePosition?: number | null;
+  /** 本场中断次数（与缺失时长同口径：主表聚合「N 次中断·共 X 秒」；空=旧数据只显秒数）。 */
+  gapCount?: number;
   /** V5 后处理管线状态（未参与管线时缺省）。 */
   pipelineStatus?: PipelineStatus;
   /** V5 后处理 sidecar 元数据（真实时长/片段数/清晰度/大小）。 */

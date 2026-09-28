@@ -41,6 +41,7 @@ import {
   classifyUploadError,
 } from "../../../utils/uploadError";
 import type { Recording } from "../../../types/recording";
+import GapDetail from "./GapDetail";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
 
 type MessageApi = ReturnType<typeof import("antd").App.useApp>["message"];
@@ -137,7 +138,12 @@ export function buildRecordingColumns(
       width: 70,
       render: (v: Recording["integrity"], r) => (
         <Space size={4}>
-          <IntegrityTag integrity={v} />
+          <IntegrityTag
+            integrity={v}
+            integrityState={r.integrityState}
+            verifyQueuePosition={r.verifyQueuePosition}
+            integrityError={r.integrityError}
+          />
           {v === "failed" && r.failureReason ? (
             <Tooltip title={`${r.failureReason.message}`}>
               <WarningOutlined style={{ color: "#ff4d4f" }} />
@@ -321,9 +327,11 @@ export function buildRecordingColumns(
               <Typography.Text type="danger">{f.message}</Typography.Text>
             ) : null}
             {missingSeconds > 0 ? (
-              <Typography.Text type="warning">
-                中途缺失 {missingSeconds} 秒
-              </Typography.Text>
+              <GapDetail
+                recordingId={r.id}
+                missingSeconds={missingSeconds}
+                gapCount={r.gapCount}
+              />
             ) : null}
           </Space>
         );
@@ -349,11 +357,18 @@ export function buildRecordingColumns(
             type="link"
             icon={<ExperimentOutlined />}
             disabled={
-              r.pipelineStatus == null || r.pipelineStatus === "not_required"
+              !r.filePath || r.state === "recording" || r.state === "reconnecting"
             }
             onClick={() => setPipelineRec(r)}
           >
-            管线
+            {r.pipelineStatus === "failed"
+              ? "继续处理"
+              : (r.pipelineStatus == null ||
+                    r.pipelineStatus === "not_required") &&
+                  (r.endReason === "interrupted" ||
+                    r.endReason === "service_restart")
+                ? "处理已录部分"
+                : "管线"}
           </Button>
           <Button
             size="small"

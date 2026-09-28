@@ -38,10 +38,18 @@ export async function remuxFlvToMp4(flvPath: string, options: RemuxOptions = {})
   // 不加 -movflags +faststart：大文件上 ffmpeg 要重写整个文件把 moov 挪到头部，这一段没有任何进度输出，
   // 既让转换耗时翻倍，也无法与「卡死」区分。moov 在尾部不影响播放（应用按 HTTP Range 提供录制文件）。
   // -f mp4：临时文件后缀无法让 ffmpeg 推断封装格式，必须显式指定。
-  const res = await runFfmpegTracked(
+  let res = await runFfmpegTracked(
     ['-y', '-i', flvPath, '-c', 'copy', '-f', 'mp4', tempPath],
     { ...options, stallMs: options.stallMs ?? remuxStallMsForSize(sourceSizeBytes) },
   );
+  if (!res.ok) {
+    // 尾部截断容忍重试：忽略坏帧/坏时间戳再转一次；两次都失败才认失败（源文件始终保留）。
+    await discardTemp(tempPath);
+    res = await runFfmpegTracked(
+      ['-y', '-err_detect', 'ignore_err', '-fflags', '+discardcorrupt', '-i', flvPath, '-c', 'copy', '-f', 'mp4', tempPath],
+      { ...options, stallMs: options.stallMs ?? remuxStallMsForSize(sourceSizeBytes) },
+    );
+  }
   if (!res.ok) {
     await discardTemp(tempPath);
     await removeInvalidMp4(mp4Path);

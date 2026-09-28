@@ -890,6 +890,41 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
 `,
   },
 
+  {
+    version: 42,
+    up(db) {
+      db.exec(`
+  ALTER TABLE recordings ADD COLUMN integrity_state TEXT;
+  ALTER TABLE recordings ADD COLUMN integrity_attempts INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE recordings ADD COLUMN integrity_last_attempt TEXT;
+  ALTER TABLE recordings ADD COLUMN integrity_error TEXT;
+  ALTER TABLE recordings ADD COLUMN gap_count INTEGER;
+  CREATE TABLE IF NOT EXISTS recording_gaps (
+    id TEXT PRIMARY KEY,
+    recording_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    missing_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    evidence TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_recording_gaps_rec ON recording_gaps(recording_id);
+`);
+      // 存量模拟库可能缺 pipeline_runs（历史迁移被跳过）：表存在才补进度列，保证老库可迁移。
+      const hasRuns = db.prepare(
+        "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'",
+      ).get();
+      if (hasRuns) {
+        db.exec(`
+  ALTER TABLE pipeline_runs ADD COLUMN progress_step TEXT;
+  ALTER TABLE pipeline_runs ADD COLUMN progress_pct INTEGER;
+  ALTER TABLE pipeline_runs ADD COLUMN heartbeat_at TEXT;
+  ALTER TABLE pipeline_runs ADD COLUMN eta_seconds INTEGER;
+`);
+      }
+    },
+  },
+
 ];
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */

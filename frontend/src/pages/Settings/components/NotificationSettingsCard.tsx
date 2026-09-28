@@ -26,6 +26,8 @@ const NOTIFICATION_EVENTS: Array<{
   { key: "recordingFailed", label: "录制失败" },
   { key: "diskSpaceLow", label: "磁盘空间不足" },
   { key: "uploadFailed", label: "上传失败" },
+  { key: "pipelineCompleted", label: "管线完成" },
+  { key: "pipelineFailed", label: "管线失败" },
 ];
 /** 通知设置卡：原 Settings/index 内联通知矩阵整块迁移（store 直连，去重时间/开关语义原样）。 */
 export default function NotificationSettingsCard() {

@@ -19,6 +19,10 @@ const STATES: RecordingState[] = [
   "failed",
 ];
 
+function canVerifyRecording(state: RecordingState): boolean {
+  return state !== "recording" && state !== "reconnecting" && state !== "processing";
+}
+
 function parseSingleRange(
   header: string | undefined,
   size: number,
@@ -121,7 +125,7 @@ export function registerRecordingRoutes(
         });
       }
     }
-    const result = services.recordings.list({
+    const rawResult = services.recordings.list({
       page,
       pageSize,
       roomId: q.roomId,
@@ -131,7 +135,49 @@ export function registerRecordingRoutes(
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
     });
+    const result = {
+      ...rawResult,
+      items: rawResult.items.map((item) => ({
+        ...item,
+        verifyQueuePosition: services.verificationQueue.positionOf(item.id),
+      })),
+    };
     return reply.send(result);
+  });
+
+  app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    return reply.send({ gaps: services.recordings.listGaps(id) });
+  });
+
+  app.post("/api/v1/recordings/:id/verify", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    if (!canVerifyRecording(rec.state)) {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录制仍在写入或处理中，结束后才能校验", { recordingId: id, retryable: true });
+    }
+    const accepted = services.verificationQueue.enqueue(rec);
+    return reply.send({ accepted });
+  });
+
+  app.post("/api/v1/recordings/verify-batch", async (req, reply) => {
+    const body = (req.body ?? {}) as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+    let accepted = 0;
+    let skippedActive = 0;
+    for (const id of ids) {
+      const rec = services.recordings.get(id);
+      if (!rec) continue;
+      if (!canVerifyRecording(rec.state)) {
+        skippedActive += 1;
+        continue;
+      }
+      if (services.verificationQueue.enqueue(rec)) accepted += 1;
+    }
+    return reply.send({ accepted, requested: ids.length, skippedActive });
   });
 
   app.post("/api/v1/recordings/:id/open", async (req, reply) => {
@@ -152,6 +198,37 @@ export function registerRecordingRoutes(
             ? "explorer"
             : "xdg-open";
       const child = spawn(command, [dir], { detached: true, stdio: "ignore" });
+      child.unref();
+    }
+    return reply.send({ ok: true });
+  });
+
+  // 管线产物仅允许按 recording + artifact id 打开，避免接口接受任意本地路径。
+  app.post("/api/v1/recordings/:id/pipeline/artifacts/:artifactId/open", async (req, reply) => {
+    const { id, artifactId } = req.params as { id: string; artifactId: string };
+    const { target } = (req.body ?? {}) as { target?: "file" | "directory" };
+    const run = services.pipeline.repo.runForRecording(id);
+    const artifact = run?.artifacts.find((item) => item.id === artifactId);
+    if (!artifact?.path) {
+      throw new AppError("RESOURCE_NOT_FOUND", "管线产物不存在或文件路径不可用", {
+        recordingId: id,
+      });
+    }
+    if (target !== "file" && target !== "directory") {
+      throw new AppError("CONFIG_INVALID", "打开目标无效", { recordingId: id });
+    }
+    const targetPath = target === "directory" ? dirname(artifact.path) : artifact.path;
+    await stat(targetPath).catch(() => {
+      throw new AppError("RESOURCE_NOT_FOUND", "目标文件或目录不存在", { recordingId: id });
+    });
+    if (process.env.VITEST !== "true") {
+      const command =
+        process.platform === "darwin"
+          ? "open"
+          : process.platform === "win32"
+            ? "explorer"
+            : "xdg-open";
+      const child = spawn(command, [targetPath], { detached: true, stdio: "ignore" });
       child.unref();
     }
     return reply.send({ ok: true });

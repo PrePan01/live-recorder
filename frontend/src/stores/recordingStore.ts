@@ -19,6 +19,13 @@ function normalizeRecording(rec: Recording): Recording {
 
 const TERMINAL_STATES = new Set<Recording["state"]>(["completed", "failed"]);
 
+/**
+ * SSE 是增量流，历史页列表不会包含所有录制。单独记录经 SSE 观察到的状态，
+ * 才能区分「本次运行中由未完成变为完成」和「启动后首次收到的历史记录更新」
+ * （例如完整性校验重跑）。
+ */
+const eventStateByRecordingId = new Map<string, Recording["state"]>();
+
 /** 列表请求代际：后发先至，旧响应不再覆盖新筛选/翻页的结果。 */
 let historyEpoch = 0;
 
@@ -124,6 +131,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   upsertRecordingFromEvent(rec) {
     set((s) => {
       const previous = s.items.find((item) => item.id === rec.id);
+      const previousEventState = eventStateByRecordingId.get(rec.id);
+      eventStateByRecordingId.set(rec.id, rec.state);
       // SSE may reconnect after a slow client was dropped. A delayed progress
       // frame must never turn a terminal recording back into recording/pending.
       if (
@@ -146,10 +155,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
             );
       // 中断收尾的录制同样是 completed，但它不是"正常录完"：由失败告警说明，
       // 这里不再弹"录制完成"，避免同一次录制同时收到"完成"和"失败"两条互相打架的提示。
+      // 服务重启后的恢复也会把有内容的遗留录制标为 completed；恢复收尾会在
+      // 前端重新连上 SSE 后批量发出更新，不能误报为本次刚完成的录制。
       const justCompleted =
         rec.state === "completed" &&
-        previous?.state !== "completed" &&
-        rec.endReason !== "interrupted";
+        previousEventState !== undefined &&
+        previousEventState !== "completed" &&
+        rec.endReason !== "interrupted" &&
+        rec.endReason !== "service_restart";
       // #220/#221：进入「待确认保留」态时提示用户（挂起管线/上传，等用户决策保留/删除）。
       const justAwaiting =
         rec.state === "awaiting_confirmation" &&
@@ -171,6 +184,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     });
   },
   removeRecordingFromEvent(recordingId) {
+    eventStateByRecordingId.delete(recordingId);
     set((s) => ({
       items: s.items.filter((item) => item.id !== recordingId),
       total: Math.max(0, s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0)),

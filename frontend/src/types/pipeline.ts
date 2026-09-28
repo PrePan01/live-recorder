@@ -1,9 +1,12 @@
 // task #57/#58：新增 audio 步（管线自动导出音频，segment 后 compress 前，吃源文件）
-export type PipelineStep = 'verify' | 'sidecar' | 'cover' | 'segment' | 'audio' | 'compress' | 'archive';
+export type PipelineStep =
+  "verify" | "sidecar" | "cover" | "segment" | "audio" | "convert" | "compress" | "archive";
 
-export type PipelineRunStatus = 'queued' | 'running' | 'ok' | 'partial' | 'failed';
+export type PipelineRunStatus =
+  "queued" | "running" | "ok" | "partial" | "failed";
 
-export type PipelineArtifactStatus = 'queued' | 'running' | 'ok' | 'failed' | 'skipped';
+export type PipelineArtifactStatus =
+  "queued" | "running" | "ok" | "failed" | "skipped";
 
 export interface PipelineArtifact {
   id: string;
@@ -21,6 +24,11 @@ export interface PipelineRun {
   id: string;
   recordingId: string;
   status: PipelineRunStatus;
+  /** 运行中进度快照：服务端按步骤心跳持久化。 */
+  progressStep?: string | null;
+  progressPct?: number | null;
+  heartbeatAt?: string | null;
+  etaSeconds?: number | null;
   configSnapshot: Record<string, unknown>;
   startedAt: string | null;
   endedAt: string | null;
@@ -29,7 +37,7 @@ export interface PipelineRun {
 }
 
 export interface PipelineRunDetail {
-  run: Omit<PipelineRun, 'artifacts'> | null;
+  run: Omit<PipelineRun, "artifacts"> | null;
   artifacts: PipelineArtifact[];
 }
 
@@ -43,4 +51,5 @@ export interface PipelineConfig {
   /** 导出音频文件开关（task #57/#58）：默认关，只影响之后触发的 run（启动时快照） */
   exportAudio: boolean;
   exportCover: boolean;
+  outputFormat: "source" | "mp4";
 }

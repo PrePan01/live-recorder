@@ -7,7 +7,6 @@ import {
   Card,
   Col,
   Form,
-  Modal,
   Popover,
   Popconfirm,
   Row,
@@ -96,7 +95,6 @@ export default function SettingsPage() {
   const status = useServiceStore((s) => s.status);
   const fetchStatus = useServiceStore((s) => s.fetchStatus);
   const [form] = Form.useForm();
-  const recordingFormat = Form.useWatch("recordingFormat", form);
   const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(
     null,
   );
@@ -108,19 +106,6 @@ export default function SettingsPage() {
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const ffmpegPromptedRef = useRef(false);
-  const ffmpegCheck = checks?.find((c) => c.key === "ffmpeg");
-  const showFfmpegWarning =
-    recordingFormat === "mp4_after" &&
-    !!ffmpegCheck &&
-    ffmpegCheck.status !== "ok";
-  const windowWindows =
-    typeof navigator !== "undefined" &&
-    (navigator.platform.toLowerCase().includes("win") ||
-      /Windows/i.test(navigator.userAgent));
-  const ffmpegInstallCmd = windowWindows
-    ? "winget install Gyan.FFmpeg"
-    : "brew install ffmpeg";
 
   useEffect(() => {
     void load();
@@ -148,6 +133,8 @@ export default function SettingsPage() {
         ? "douyin-cookie"
         : hash === "#bilibili-cookie"
           ? "bilibili-cookie"
+          : hash === "#pipeline"
+            ? "pipeline"
           : null;
     if (!target) return;
     const frame = requestAnimationFrame(() => {
@@ -166,7 +153,6 @@ export default function SettingsPage() {
         maxConcurrentRecordings: settings.maxConcurrentRecordings,
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
-        recordingFormat: settings.recordingFormat ?? "source_flv",
         autoRecord: settings.autoRecord ?? false,
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
@@ -213,41 +199,6 @@ export default function SettingsPage() {
     }
   };
 
-  // 选择「完成后转 MP4」时自动检测 ffmpeg：缺失则自动切回「源 FLV 直写」并提示（PrePan 反馈）。
-  useEffect(() => {
-    if (recordingFormat !== "mp4_after") {
-      ffmpegPromptedRef.current = false;
-      return;
-    }
-    if (!checks) {
-      void runSelfCheck();
-      return;
-    }
-    if (
-      ffmpegCheck &&
-      ffmpegCheck.status !== "ok" &&
-      !ffmpegPromptedRef.current
-    ) {
-      ffmpegPromptedRef.current = true;
-      Modal.warning({
-        title: "需要安装 ffmpeg",
-        content: (
-          <Space direction="vertical">
-            <Typography.Text>
-              “完成后转 MP4”依赖 ffmpeg。当前未检测到 ffmpeg，已自动切回“源 FLV
-              直写”。
-            </Typography.Text>
-            <Typography.Text>
-              安装完成后重启 Live Recorder，再点击“一键自检”。
-            </Typography.Text>
-            <Typography.Text code>{ffmpegInstallCmd}</Typography.Text>
-          </Space>
-        ),
-        okText: "知道了",
-      });
-      form.setFieldValue("recordingFormat", "source_flv");
-    }
-  }, [recordingFormat, checks, ffmpegCheck]);
 
   const persist = async (
     values: SettingsInput,
@@ -459,9 +410,6 @@ export default function SettingsPage() {
             setPickerOpen={setPickerOpen}
             load={load}
             persist={persist}
-            showFfmpegWarning={showFfmpegWarning}
-            ffmpegInstallCmd={ffmpegInstallCmd}
-            windowWindows={windowWindows}
             fileRef={fileRef}
             onImportFile={onImportFile}
             setPreference={setPreference}
@@ -471,7 +419,7 @@ export default function SettingsPage() {
           <Card className="lr-settings-card" title="录制文件命名规则">
             <NamingRuleCard />
           </Card>
-          <Card className="lr-settings-card" title="后处理管线">
+          <Card id="pipeline" className="lr-settings-card" title="后处理管线">
             <PipelineConfigCard />
           </Card>
           <Card className="lr-settings-card" title="自动上传">

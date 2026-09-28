@@ -1,5 +1,6 @@
 import type { DB } from '../connection.js';
 import type { AppSettings, MailConfig } from '../../types/index.js';
+import { DEFAULT_PIPELINE_CONFIG } from '../../types/settings.js';
 
 export class SettingsRepository {
   constructor(private db: DB) {}
@@ -28,6 +29,23 @@ export class SettingsRepository {
       // v4 之前已保存的设置没有 autoRecord 字段，历史行为是自动录制默认开启。
       // 新的首次使用默认关闭只适用于完全没有 settings 记录的用户，不能倒改旧用户。
       if (parsed.autoRecord === undefined) parsed.autoRecord = true;
+      // 旧“录制完成后转 MP4”无感迁入管线：只打开格式转换，其他后处理步骤保持关闭，
+      // 以复刻旧行为而不在升级后意外导出封面/音频或归档。
+      if (parsed.recordingFormat === 'mp4_after' && parsed.pipeline?.outputFormat === undefined) {
+        parsed.pipeline = {
+          ...DEFAULT_PIPELINE_CONFIG,
+          ...parsed.pipeline,
+          enabled: true,
+          verify: false,
+          exportCover: false,
+          exportAudio: false,
+          outputFormat: 'mp4',
+        };
+        this.setRaw('settings', JSON.stringify(parsed));
+      } else if (parsed.pipeline && parsed.pipeline.outputFormat === undefined) {
+        parsed.pipeline = { ...DEFAULT_PIPELINE_CONFIG, ...parsed.pipeline, outputFormat: 'source' };
+        this.setRaw('settings', JSON.stringify(parsed));
+      }
       return parsed;
     } catch {
       return null;

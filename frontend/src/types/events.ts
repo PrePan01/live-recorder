@@ -5,11 +5,13 @@ import type { Settings } from './settings';
 import type { DiskSpace, ServiceStatus } from './service';
 import type { Diagnostic } from './diagnostic';
 import type { UploadJob } from '../api/openlist';
+import type { PipelineArtifact, PipelineRun } from './pipeline';
 
 export type ServerEvent =
   | { type: 'room:updated'; room: Room }
   | { type: 'desktop:notification'; notification: { title: string; body: string } }
   | { type: 'recording:updated'; recording: Recording }
+  | { type: 'pipeline:updated'; pipeline: { run: PipelineRun; artifacts: PipelineArtifact[] } }
   | { type: 'recording:deleted'; recordingId: string }
   | { type: 'alert:created'; alert: Alert }
   | { type: 'alert:updated'; alert: Alert }
@@ -23,6 +25,7 @@ export const SSE_EVENT_NAMES = [
   'room:updated',
   'desktop:notification',
   'recording:updated',
+  'pipeline:updated',
   'recording:deleted',
   'alert:created',
   'alert:updated',

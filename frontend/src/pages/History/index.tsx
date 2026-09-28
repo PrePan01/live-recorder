@@ -29,6 +29,7 @@ import { createExport, cancelExport, fetchExports } from "../../api/export";
 import { fetchUploads, retryUpload, uploadRecording } from "../../api/openlist";
 import { classifyUploadError } from "../../utils/uploadError";
 import { useUploadStore } from "../../stores/uploadStore";
+import { verifyRecordings } from "../../api/recordings";
 import type { ExportJob } from "../../types/export";
 import type { Recording } from "../../types/recording";
 
@@ -57,8 +58,7 @@ export default function History() {
   // 支持 /history?roomId= 深链（设置页告警「查看」入口落点，仅初始化读取一次）。
   const [roomId, setRoomId] = useState<string | undefined>(
     () =>
-      new URLSearchParams(window.location.search).get("roomId") ??
-      undefined,
+      new URLSearchParams(window.location.search).get("roomId") ?? undefined,
   );
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
     null,
@@ -229,6 +229,22 @@ export default function History() {
   );
 
   // #18②：手动上传未自动上传的录制（无上传任务时 History 提供「上传」按钮）。
+  const handleBatchVerify = useCallback(async () => {
+    const ids = selectedKeys.map(String);
+    if (ids.length === 0) return;
+    try {
+      const { accepted } = await verifyRecordings(ids);
+      message.success(`已加入校验队列 ${accepted} 条`);
+      setSelectedKeys([]);
+      await fetchHistory();
+    } catch (e) {
+      message.error(
+        e instanceof ApiError
+          ? describeError(e.code, e.message)
+          : "批量入队失败",
+      );
+    }
+  }, [selectedKeys, message, fetchHistory]);
   const handleManualUpload = useCallback(
     async (recordingId: string) => {
       try {
@@ -341,7 +357,11 @@ export default function History() {
         </Typography.Title>
         <Space>
           <Typography.Text type="secondary">按场次分组</Typography.Text>
-          <Switch aria-label="按场次分组" checked={grouped} onChange={setGrouped} />
+          <Switch
+            aria-label="按场次分组"
+            checked={grouped}
+            onChange={setGrouped}
+          />
         </Space>
       </Space>
       <Space className="lr-filter-bar" wrap>
@@ -356,6 +376,7 @@ export default function History() {
         />
         <DatePicker.RangePicker
           aria-label="录制日期范围"
+          style={{ width: 220 }}
           value={dateRange}
           onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
         />
@@ -368,6 +389,12 @@ export default function History() {
           onClick={() => setExportModalOpen(true)}
         >
           备份导出{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
+        </Button>
+        <Button
+          disabled={batchBusy || selectedKeys.length === 0}
+          onClick={() => void handleBatchVerify()}
+        >
+          批量重新校验
         </Button>
         <Popconfirm
           title={`确定删除所选 ${selectedKeys.length} 条录制？将连带删除文件且不可恢复。`}
@@ -431,8 +458,8 @@ export default function History() {
             total,
             showSizeChanger: true,
             onChange: (p, ps) =>
-              void fetchHistory({ page: p, pageSize: ps, roomId }).catch(
-                () => message.error("历史列表加载失败，请稍后重试"),
+              void fetchHistory({ page: p, pageSize: ps, roomId }).catch(() =>
+                message.error("历史列表加载失败，请稍后重试"),
               ),
           }}
         />
