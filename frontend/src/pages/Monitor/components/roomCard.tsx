@@ -17,10 +17,10 @@ import {
   ReloadOutlined,
   StarFilled,
   StarOutlined,
-  StopOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
+import RecordingStopIcon from "../../../components/RecordingStopIcon";
 import RoomAvatar from "./RoomAvatar";
 import RoomStats from "./RoomStats";
 import RoomHealth from "./RoomHealth";
@@ -346,14 +346,13 @@ export const RoomCard = memo(function RoomCard({
             ) : (
               room.lastError.message
             )}
-            {/* retryable 语义呈现（同类问题扫描：API 一直带该字段但展示层从未消费） */}
             <Typography.Text type="secondary">
               {room.lastError.retryable ? "（可重试）" : "（需人工处理）"}
             </Typography.Text>
           </Typography.Paragraph>
         ) : null}
         <div
-          className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""}`}
+          className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""} ${(onAir || recording) && layout === "card" ? "lr-room-card__actions--live" : ""}`}
         >
           <Tooltip
             title={compact ? "检测" : undefined}
@@ -392,7 +391,7 @@ export const RoomCard = memo(function RoomCard({
             >
               <Button
                 size="middle"
-                type={recording ? "primary" : "default"}
+                type="default"
                 aria-label="观看"
                 icon={<EyeOutlined />}
                 onClick={() => onWatch(room)}
@@ -414,9 +413,10 @@ export const RoomCard = memo(function RoomCard({
                 <Button
                   size="middle"
                   danger
+                  className="lr-record-stop-button"
                   aria-label="停止录制"
                   loading={acting && actingAction === "stop"}
-                  icon={<StopOutlined />}
+                  icon={<RecordingStopIcon />}
                 >
                   <span className="lr-room-card__action-label">停止</span>
                 </Button>
