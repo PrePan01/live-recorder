@@ -383,6 +383,9 @@ export default function Rooms() {
         message.success("直播间已更新");
       } else {
         const room = await addRoom({ ...values, platform });
+        if (tagIds.length > 0) {
+          await updateRoomTags(room.id, tagIds);
+        }
         message.success("直播间已添加");
         // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
         void checkRoomNow(room.id).catch(() => undefined);
@@ -645,11 +648,9 @@ export default function Rooms() {
           >
             <Switch aria-label="开播提醒" />
           </Form.Item>
-          {editing ? (
-            <Form.Item label="标签">
-              <TagSelect value={tagIds} onChange={setTagIds} />
-            </Form.Item>
-          ) : null}
+          <Form.Item label="标签">
+            <TagSelect value={tagIds} onChange={setTagIds} />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal
