@@ -5,6 +5,8 @@ export interface NotificationEventPreference {
   recordingFailed: boolean;
   diskSpaceLow: boolean;
   uploadFailed: boolean;
+  pipelineCompleted: boolean;
+  pipelineFailed: boolean;
 }
 
 export interface NotificationPreference {
@@ -19,12 +21,12 @@ export interface NotificationPreferenceInput {
   dedupeWindowMinutes?: number;
 }
 
-export type LivePredictionConfidence = 'high' | 'medium' | 'low';
+export type LivePredictionConfidence = "high" | "medium" | "low";
 
 export interface LivePrediction {
   roomId: string;
-  kind: 'unavailable' | 'observation' | 'typical' | 'next';
-  basis: 'daily' | 'weekday' | 'day_type' | 'interval' | 'all' | null;
+  kind: "unavailable" | "observation" | "typical" | "next";
+  basis: "daily" | "weekday" | "day_type" | "interval" | "all" | null;
   intervalDays?: number | null;
   intervalDaysMax?: number | null;
   nextDate: string | null;
@@ -33,22 +35,30 @@ export interface LivePrediction {
   windowEndTimestamp?: string | null;
   rawLikelihood?: "high" | "medium" | "low" | null;
   probabilityKnown?: boolean;
-  accuracy?: 'high' | 'fairly_high' | 'medium' | 'fairly_low' | 'low' | null;
+  accuracy?: "high" | "fairly_high" | "medium" | "fairly_low" | "low" | null;
   coverageDays?: number;
-  timeSource?: 'platform' | 'detected' | 'recording' | 'mixed' | null;
+  timeSource?: "platform" | "detected" | "recording" | "mixed" | null;
   sampleCount: number;
-  timeGranularity: 'exact' | 'quarter_hour' | 'approximate' | 'period' | null;
+  timeGranularity: "exact" | "quarter_hour" | "approximate" | "period" | null;
   windowStart: string | null;
   windowEnd: string | null;
-  slots: Array<{ startAt: string; endAt: string; likelihood: LivePredictionConfidence; probabilityKnown?: boolean }>;
+  slots: Array<{
+    startAt: string;
+    endAt: string;
+    likelihood: LivePredictionConfidence;
+    probabilityKnown?: boolean;
+  }>;
   todayProbability: LivePredictionConfidence | null;
   likelihood: LivePredictionConfidence | null;
   lastRecordedAt: string | null;
-    lastRecordedTimestamp?: string | null;
-    lastRecordedQuality?: "platform" | "transition" | "initial_live" | "legacy";
-    nextDateEnd?: string | null;
-    typicalDayType?: string | null;
-  recentObservations: Array<{ time: string; quality: "platform" | "transition" | "initial_live" | "legacy" }>;
+  lastRecordedTimestamp?: string | null;
+  lastRecordedQuality?: "platform" | "transition" | "initial_live" | "legacy";
+  nextDateEnd?: string | null;
+  typicalDayType?: string | null;
+  recentObservations: Array<{
+    time: string;
+    quality: "platform" | "transition" | "initial_live" | "legacy";
+  }>;
   startAt: string | null;
   endAt: string | null;
   confidence: LivePredictionConfidence | null;

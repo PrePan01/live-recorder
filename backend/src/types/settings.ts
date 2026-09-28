@@ -125,6 +125,8 @@ export interface PipelineConfig {
   exportAudio: boolean;
   /** 封面导出（管线可选步骤，默认开保持现状行为，关=skipped 不执行，task #71）。 */
   exportCover: boolean;
+  /** 输出格式：source=保留录制源格式；mp4=在独立格式转换步骤无损转为 MP4。 */
+  outputFormat: 'source' | 'mp4';
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -136,6 +138,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   maxConcurrency: 2,
   exportAudio: false,
   exportCover: true,
+  outputFormat: 'source',
 };
 
 export interface SettingsView {

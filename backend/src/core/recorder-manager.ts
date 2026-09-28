@@ -19,7 +19,6 @@ import {
 } from "./recording-failure.js";
 import { recordingFilePath } from "../storage/file-organizer.js";
 import { checkFileIntegrity } from "../recorder/integrity.js";
-import { mp4PathFor, remuxFlvToMp4 } from "../recorder/remux.js";
 import type { RecordingEvent } from "../recorder/engine.js";
 import { FlvTimestampNormalizer } from "../recorder/stream-recorder.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
@@ -131,6 +130,8 @@ interface PreviewSession {
   startupTrace?: PerformanceTrace;
 }
 
+const writerErrorHooks = new WeakSet<object>();
+
 export interface SharedPreviewRecording {
   session: ActiveSession;
   writer: WriteStream;
@@ -211,7 +212,6 @@ export class RecorderManager {
   /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
   private confirmTimers = new Map<string, unknown>();
   /** 正在转 MP4 的录制；分段收尾与录制完成可能各触发一次，必须避免两个 ffmpeg 抢同一份产物。 */
-  private remuxJobs = new Set<string>();
   /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
   private highlightBuffers = new Map<string, HighlightBuffer>();
   /**
@@ -1160,8 +1160,12 @@ export class RecorderManager {
     while (recording.writePump) await recording.writePump;
     if (recording.writeError) throw recording.writeError;
     await new Promise<void>((resolve, reject) => {
-      recording.writer.once("error", reject);
-      recording.writer.end(() => resolve());
+      const onError = (error: Error) => reject(error);
+      recording.writer.once("error", onError);
+      recording.writer.end(() => {
+        recording.writer.removeListener("error", onError);
+        resolve();
+      });
     });
   }
 
@@ -1238,9 +1242,12 @@ export class RecorderManager {
     // A volume can disappear after the successful file creation. Keep an error
     // listener for the whole writer lifetime so that a late EIO is surfaced to
     // the recording flow instead of becoming an unhandled EventEmitter error.
-    writer.on("error", (error) => {
-      sharedRecording.writeError ??= error;
-    });
+    if (!writerErrorHooks.has(writer)) {
+      writerErrorHooks.add(writer);
+      writer.on("error", (error) => {
+        sharedRecording.writeError ??= error;
+      });
+    }
 
     try {
       this.appendSharedPreviewRecording(sharedRecording, bootstrap);
@@ -1730,7 +1737,17 @@ export class RecorderManager {
             const now = this.services.clock.now();
             // 恢复后拿到第一份数据：把中断期间的缺失时长结算到本次录制上。
             if (session.gapStartAt !== null) {
-              session.missingMs += Math.max(0, now - session.gapStartAt);
+              const gapMs = Math.max(0, now - session.gapStartAt);
+              session.missingMs += gapMs;
+              // 中断事件存证：先存证据再定归因（kind 为当前可判的粗归因，数据层留给后续细分）。
+              this.services.recordings.insertGap({
+                recordingId: session.recordingId,
+                startedAt: new Date(session.gapStartAt).toISOString(),
+                endedAt: new Date(now).toISOString(),
+                missingMs: gapMs,
+                kind: this.shuttingDown ? 'service_restart' : 'stream_disconnect',
+                evidence: JSON.stringify({ gapStartAt: session.gapStartAt, size: session.size }),
+              });
               session.gapStartAt = null;
             }
             session.lastDataAt = now;
@@ -2499,111 +2516,16 @@ export class RecorderManager {
   }
 
   /**
-   * 分段级收尾（分段完成/录制完成共用）：异步完整性校验 + 管线入队（未启用时触发上传）+ mp4_after 转封装。
-   * 断流续录的中间分段也必须走这里，否则中间分段永远停在 .flv、也不会上传（PrePan：完成后转 MP4 不可用）。
+   * 分段级收尾（分段完成/录制完成共用）：异步完整性校验 + 管线入队。
    */
   private finishSegmentProcessing(recordingId: string): void {
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
-    if (rec.filePath) this.verifyIntegrity(rec);
-    if (
-      this.settings().recordingFormat === "mp4_after" &&
-      rec.filePath &&
-      !this.services.pipeline.pipelineConfig().enabled
-    ) {
-      this.backgroundTasks += 1;
-      void (async () => {
-        const updated = await this.remuxToMp4(rec);
-        this.services.events.emit({
-          type: "recording:updated",
-          data: updated ?? this.services.recordings.get(recordingId)!,
-        });
-        this.services.pipeline.enqueue(recordingId);
-      })().finally(() => {
-        this.backgroundTasks -= 1;
-      });
-      return;
-    }
-    // 后处理管线（V5 Batch2 #114）：enabled 时入队（verify/sidecar/cover/segment/compress/archive）；未启用时触发上传。
+    if (rec.filePath) this.services.verificationQueue.enqueue(rec);
+    // 格式转换已是管线独立步骤；未启用管线时仍触发上传。
     this.services.pipeline.enqueue(recordingId);
   }
 
-  /** mp4_after 格式：录制完成后 ffmpeg remux FLV→MP4，更新 filePath；失败保留 FLV 不阻断。返回更新后的记录。
-   *  #225：中断/失败自动重试 2 次，仍失败则告警，让用户知道上传的将是 FLV，不静默。 */
-  private async remuxToMp4(
-    rec: import("../types/index.js").Recording,
-  ): Promise<import("../types/index.js").Recording | null> {
-    // 同一录制会被分段收尾与录制完成各触发一次：转封装进行中或已转好都跳过，避免重复告警和两个 ffmpeg 抢同一份产物。
-    if (this.remuxJobs.has(rec.id) || !mp4PathFor(rec.filePath ?? ""))
-      return null;
-    this.remuxJobs.add(rec.id);
-    try {
-      const MAX_REMUX_RETRIES = 2;
-      for (let attempt = 0; attempt <= MAX_REMUX_RETRIES; attempt += 1) {
-        try {
-          const mp4 = await remuxFlvToMp4(rec.filePath!);
-          if (mp4)
-            return this.services.recordings.update(rec.id, { filePath: mp4 });
-        } catch {
-          // 尝试下一次
-        }
-        if (attempt < MAX_REMUX_RETRIES) {
-          await new Promise<void>((resolve) =>
-            this.services.clock.setTimeout(resolve, 1_000),
-          );
-        }
-      }
-      // 重试用尽：告警 + 记录标记，用户能知道上传的是 FLV（不静默）。
-      this.raiseAlert(
-        "warning",
-        "recorder",
-        new AppError(
-          "RECORDING_REMUX_FAILED",
-          "转 MP4 失败（已重试），将保留并上传源 FLV",
-          { recordingId: rec.id, roomId: rec.roomId, retryable: false },
-        ),
-      );
-      // 转封装失败并不等于录制失败，过去它只显示在告警中心，用户很容易错过。
-      // 复用“录制失败”通知偏好，避免额外增加一项默认关闭的通知开关。
-      const room = this.services.rooms.get(rec.roomId);
-      if (room) {
-        await this.notifier.notify("recording_remux_failed", room.id, {
-          title: room.displayName,
-        });
-      }
-      return null;
-    } finally {
-      this.remuxJobs.delete(rec.id);
-    }
-  }
-
-  /** ffprobe 异步校验录制文件：verified/failed/pending（缺 ffprobe 或超时），failed 发告警。 */
-  private verifyIntegrity(rec: import("../types/index.js").Recording): void {
-    this.backgroundTasks += 1;
-    void (async () => {
-      try {
-        const integrity = await checkFileIntegrity(rec.filePath!);
-        // 服务可能已关闭（DB 关闭），吞掉该场景错误避免未处理拒绝。
-        const updated = this.services.recordings.update(rec.id, { integrity });
-        this.services.events.emit({ type: "recording:updated", data: updated });
-        if (integrity === "failed") {
-          this.raiseAlert(
-            "warning",
-            "recorder",
-            new AppError(
-              "RECORDING_FILE_CORRUPTED",
-              "录制文件校验失败，可能损坏或截断",
-              { recordingId: rec.id, roomId: rec.roomId, retryable: false },
-            ),
-          );
-        }
-      } catch {
-        // 应用关闭/校验中途异常：忽略（完整性校验非关键路径）。
-      }
-    })().finally(() => {
-      this.backgroundTasks -= 1;
-    });
-  }
 
   private async failRecording(
     room: Room,

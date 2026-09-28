@@ -89,7 +89,7 @@
 }
 .lr-setup-first-room__copy {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: flex-start;
 }
 .lr-setup-first-room__copy > .anticon {
@@ -384,17 +384,127 @@
 .lr-stats-range-picker-popup .ant-picker-footer {
   display: none !important;
 }
-.lr-stats-tag-filter.ant-select-multiple {
-  height: 36px;
-  min-height: 36px;
-  overflow: hidden;
+.lr-tag-filter.ant-select-focused,
+.lr-tag-filter:focus-visible,
+.lr-tag-filter:has(.ant-select-input:focus-visible) {
+  outline: 0 !important;
+  outline-offset: 0;
 }
-.lr-stats-tag-filter .ant-select-selection-overflow {
+.lr-tag-filter .ant-select-input:focus-visible,
+.lr-tag-filter .ant-select-selection-search-input:focus-visible {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+.lr-tag-filter .ant-select-content {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.lr-stats-tag-filter .ant-select-selection-item {
-  max-width: 84px;
+.lr-tag-filter .ant-select-content-item:not(.ant-select-content-item-suffix) {
+  padding-inline-end: 2px;
+}
+.lr-tag-filter .ant-select-selection-item {
+  min-width: 0;
+  max-width: 100%;
+}
+.lr-tag-filter__option,
+.lr-tag-filter__tag,
+.lr-room-tag {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+.lr-tag-filter__option > span,
+.lr-tag-filter__tag > span,
+.lr-room-tag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-tag-filter__tag > span {
+  flex: 1 1 auto;
+}
+.lr-tag-filter__tag .ant-tag-close-icon {
+  flex: 0 0 auto;
+}
+.lr-room-tags,
+.lr-room-tags .ant-space-item {
+  max-width: 100%;
+}
+/* Monitor: primary status filters stay visible; secondary filters share a popover. */
+.lr-monitor-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.lr-monitor-header .ant-typography {
+  white-space: nowrap;
+}
+.lr-monitor-header__state-filter {
+  width: max-content;
+  min-width: 0;
+  justify-self: end;
+}
+.lr-monitor-header__tools {
+  gap: 8px !important;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.lr-monitor-header__search {
+  width: clamp(130px, 15vw, 180px);
+}
+.lr-monitor-filter-trigger {
+  white-space: nowrap;
+}
+.lr-monitor-advanced-filters {
+  display: grid;
+  min-width: 248px;
+  gap: 14px;
+}
+.lr-monitor-advanced-filters__section {
+  display: grid;
+  gap: 7px;
+}
+.lr-monitor-advanced-filters__label {
+  color: var(--lr-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.lr-monitor-advanced-filters .lr-tag-filter {
+  min-height: 36px;
+}
+.lr-monitor-advanced-filters__clear {
+  justify-self: start;
+  padding-inline: 0;
+}
+@media (max-width: 900px) {
+  .lr-monitor-header {
+    grid-template-columns: auto 1fr;
+  }
+  .lr-monitor-header__state-filter {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .lr-monitor-header__tools {
+    grid-column: 2;
+  }
+}
+@media (max-width: 520px) {
+  .lr-monitor-header__tools {
+    gap: 8px !important;
+  }
+  .lr-monitor-header__search {
+    width: 118px;
+  }
+  .lr-monitor-header__state-filter {
+    justify-self: start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .lr-monitor-header__state-filter .ant-radio-group {
+    width: max-content;
+  }
 }
 .lr-stats-metric-toggle {
   box-sizing: border-box;
@@ -833,7 +943,7 @@
 }
 .lr-room-card__actions {
   display: flex;
-  gap: 2px;
+  gap: 8px;
   flex-wrap: nowrap;
 }
 .lr-room-card__actions > * {
@@ -844,6 +954,25 @@
   min-width: 0;
   width: 100%;
   white-space: nowrap;
+}
+.lr-room-card__actions--live {
+  display: grid;
+  grid-template-columns: 36px 36px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.lr-room-card__actions--live > * {
+  min-width: 0;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .ant-btn {
+  width: 36px;
+  padding-inline: 0;
+  overflow: hidden;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .lr-room-card__action-label {
+  display: none;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .ant-btn .anticon {
+  margin-inline-end: 0;
 }
 .lr-room-card__actions--compact .ant-btn {
   padding-inline: 8px;
@@ -860,6 +989,46 @@
 .lr-room-card__actions .ant-btn-primary,
 .lr-room-card__actions .ant-btn-dangerous {
   border: 2px solid var(--lr-ink) !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled),
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #fff !important;
+  border-color: var(--lr-ink) !important;
+  background-color: var(--lr-error) !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled)::before,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled)::before {
+  position: absolute;
+  z-index: 0;
+  top: -50%;
+  right: -50%;
+  bottom: -50%;
+  left: -50%;
+  content: "";
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.48) 0 3px,
+    transparent 3px 10px
+  );
+  animation: lr-record-stop-warning-stripes 4000ms linear infinite !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled) > *,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) > * {
+  position: relative;
+  z-index: 1;
+  color: inherit !important;
+}
+@keyframes lr-record-stop-warning-stripes {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-56px);
+  }
 }
 .lr-statusbar {
   display: inline-flex;

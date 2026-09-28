@@ -27,6 +27,7 @@ import { formatBytes } from "../../utils/format";
 import type { RecordingsStats, StatsByDay } from "../../types/stats";
 import { EChartCard } from "./EChartCard";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
+import TagFilterSelect from "../../components/TagFilterSelect";
 import {
   METRIC_OPTIONS,
   PIE_PALETTE_12,
@@ -581,16 +582,11 @@ export default function Stats() {
               { value: "douyin", label: "抖音" },
             ]}
           />
-          <Select
-            mode="multiple"
-            allowClear
-            className="lr-stats-tag-filter"
-            aria-label="标签筛选"
-            placeholder="标签"
-            style={{ width: 140 }}
+          <TagFilterSelect
+            tags={tags}
             value={tagIds}
-            onChange={(v) => setTagIds(v as string[])}
-            options={tags.map((t) => ({ value: t.id, label: t.name }))}
+            onChange={setTagIds}
+            placeholder="标签"
           />
           <Select
             allowClear

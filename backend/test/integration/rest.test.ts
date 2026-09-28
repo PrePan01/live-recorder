@@ -1195,12 +1195,24 @@ describe("REST contract v1.1 (fake stack)", () => {
       headers: { host: "127.0.0.1:43120" },
     });
     expect(alerts.json().alerts).toHaveLength(1);
+    // 「已读」= read 标志，不等于恢复：未解决列表照旧可见（错误可能还持续）。
     const read = await app.inject({
       method: "PATCH",
       url: `/api/v1/alerts/${alert.id}`,
       headers: { host: "127.0.0.1:43120" },
+      payload: { read: true },
     });
-    expect(read.json().alert.resolved).toBe(true);
+    expect(read.json().alert.read).toBe(true);
+    expect(read.json().alert.resolved).toBe(false);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/api/v1/alerts?unresolvedOnly=1",
+          headers: { host: "127.0.0.1:43120" },
+        })
+      ).json().alerts,
+    ).toHaveLength(1);
     services.alerts.create({
       level: "info",
       source: "recorder",
@@ -1213,6 +1225,18 @@ describe("REST contract v1.1 (fake stack)", () => {
       headers: { host: "127.0.0.1:43120" },
     });
     expect(readAll.json().ok).toBe(true);
+    // 全部已读只置 read，不代替恢复（恢复语义归 resolve/成功检测）。
+    const allList = (
+      await app.inject({
+        method: "GET",
+        url: "/api/v1/alerts",
+        headers: { host: "127.0.0.1:43120" },
+      })
+    ).json().alerts;
+    expect(allList).toHaveLength(2);
+    expect(allList.every((a: { read: boolean }) => a.read === true)).toBe(true);
+    // 恢复一条后未解决列表剩 1 条（读与恢复互不串）。
+    services.alerts.markResolved(allList[0].id);
     expect(
       (
         await app.inject({
@@ -1221,7 +1245,7 @@ describe("REST contract v1.1 (fake stack)", () => {
           headers: { host: "127.0.0.1:43120" },
         })
       ).json().alerts,
-    ).toHaveLength(0);
+    ).toHaveLength(1);
     const clearAll = await app.inject({
       method: "DELETE",
       url: "/api/v1/alerts",

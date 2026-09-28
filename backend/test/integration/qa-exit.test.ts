@@ -140,9 +140,11 @@ describe('QA stage-B exit: security', () => {
     const services = newServices();
     const { app } = buildApp(services);
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-cookie-rest-'));
-    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
-      { status: 'restricted', error: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查抖音授权', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false } },
-    ]);
+    const restrictedOnce = () =>
+      (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
+        { status: 'restricted', error: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查抖音授权', roomId: null, recordingId: null, occurredAt: services.clock.iso(), retryable: false } },
+      ]);
+    restrictedOnce();
     await app.inject({
       method: 'PUT', url: '/api/v1/settings', headers: HOST,
       payload: {
@@ -161,6 +163,15 @@ describe('QA stage-B exit: security', () => {
     });
     const roomId = created.json().room.id;
 
+    // 三票门：同房同码、票距≥60s，满 3 票才上屏+告警。
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
+    restrictedOnce();
+    (services.clock as FakeClock).advance(60_001);
+    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
+    restrictedOnce();
+    (services.clock as FakeClock).advance(60_001);
     await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
     const room = services.rooms.get(roomId)!;
     expect(room.monitorState).toBe('failed');

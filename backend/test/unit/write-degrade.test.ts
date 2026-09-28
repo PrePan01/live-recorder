@@ -16,6 +16,7 @@ function fakeRecording(opts: { pending?: number; degradedAgo?: number; parts?: B
       write: () => true,
       end: (cb?: () => void) => { cb?.(); },
       once: () => undefined,
+      removeListener: () => undefined,
     },
     normalizer: {
       push: () => parts,

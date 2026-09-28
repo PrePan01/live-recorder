@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Alert, App, Button, Empty, Row, Table } from "antd";
 import { bridge } from "../../stores/bootStore";
 import { useRoomStore } from "../../stores/roomStore";
+import { useTagStore } from "../../stores/tagStore";
 import { usePreviewStore } from "../../stores/previewStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useServiceStore } from "../../stores/serviceStore";
@@ -28,6 +29,46 @@ import {
   RoomSortableProvider,
   SortableRoomTableRow,
 } from "../../components/RoomSortable";
+
+type SavedMonitorFilters = {
+  filter?: "全部" | "开播中" | "录制中" | "收藏";
+  platformFilter?: "全部" | Platform;
+  tagIds?: string[];
+};
+
+/** 上次筛选的读取与形状校验；损坏或非法值一律回退默认。 */
+function readSavedMonitorFilters(): SavedMonitorFilters {
+  try {
+    const raw = localStorage.getItem("lr-monitor-filters");
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: SavedMonitorFilters = {};
+    if (
+      parsed.filter === "全部" ||
+      parsed.filter === "开播中" ||
+      parsed.filter === "录制中" ||
+      parsed.filter === "收藏"
+    ) {
+      out.filter = parsed.filter;
+    }
+    if (
+      parsed.platformFilter === "全部" ||
+      parsed.platformFilter === "bilibili" ||
+      parsed.platformFilter === "douyin"
+    ) {
+      out.platformFilter = parsed.platformFilter;
+    }
+    if (
+      Array.isArray(parsed.tagIds) &&
+      parsed.tagIds.every((t) => typeof t === "string")
+    ) {
+      out.tagIds = parsed.tagIds as string[];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export default function Monitor() {
   const { message } = App.useApp();
@@ -59,12 +100,41 @@ export default function Monitor() {
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
   const [filter, setFilter] = useState<"全部" | "开播中" | "录制中" | "收藏">(
-    "全部",
+    () => readSavedMonitorFilters().filter ?? "全部",
   );
   const [platformFilter, setPlatformFilter] = useState<"全部" | Platform>(
-    "全部",
+    () => readSavedMonitorFilters().platformFilter ?? "全部",
+  );
+  const [tagIds, setTagIds] = useState<string[]>(
+    () => readSavedMonitorFilters().tagIds ?? [],
   );
   const [keyword, setKeyword] = useState("");
+  const tags = useTagStore((st) => st.tags);
+  const loadTags = useTagStore((st) => st.load);
+  useEffect(() => {
+    void loadTags().catch(() => undefined);
+  }, [loadTags]);
+  const restoredTagsRef = useRef(false);
+  useEffect(() => {
+    if (restoredTagsRef.current || tags.length === 0) return;
+    restoredTagsRef.current = true;
+    setTagIds((prev) => {
+      if (prev.length === 0) return prev;
+      const known = prev.filter((id) => tags.some((t) => t.id === id));
+      return known.length === prev.length ? prev : known;
+    });
+  }, [tags]);
+  // 状态/平台/标签跨刷新记忆；关键词不记
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "lr-monitor-filters",
+        JSON.stringify({ filter, platformFilter, tagIds }),
+      );
+    } catch {
+      /* 存储不可用时筛选仍可用，仅不跨刷新记忆 */
+    }
+  }, [filter, platformFilter, tagIds]);
   const [refreshing, setRefreshing] = useState(false);
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
   const [insights, setInsights] = useState<Record<string, RoomInsight>>({});
@@ -183,6 +253,16 @@ export default function Monitor() {
       settings?.bilibiliCookie.hasCookie ?? false,
     ) === "authorized";
 
+  const keywordMatches = (r: Room) => {
+    const kw = keyword.trim().toLowerCase();
+    return (
+      !kw ||
+      r.displayName.toLowerCase().includes(kw) ||
+      r.url.toLowerCase().includes(kw)
+    );
+  };
+  const tagsMatch = (r: Room) =>
+    tagIds.length === 0 || r.tags.some((t) => tagIds.includes(t.id));
   const monitorRooms = rooms
     .filter((r) => r.enabled)
     .filter((r) => platformFilter === "全部" || r.platform === platformFilter)
@@ -195,14 +275,8 @@ export default function Monitor() {
       if (filter === "收藏") return r.favorited;
       return true;
     })
-    .filter((r) => {
-      const kw = keyword.trim().toLowerCase();
-      return (
-        !kw ||
-        r.displayName.toLowerCase().includes(kw) ||
-        r.url.toLowerCase().includes(kw)
-      );
-    });
+    .filter(keywordMatches)
+    .filter(tagsMatch);
 
   const commitRoomOrder = useCallback(
     async (roomIds: string[]) => {
@@ -234,10 +308,14 @@ export default function Monitor() {
     };
   }, [shown, monitorRooms.length, view]);
 
-  const platformRooms = rooms.filter(
-    (r) =>
-      r.enabled && (platformFilter === "全部" || r.platform === platformFilter),
-  );
+  const platformRooms = rooms
+    .filter(
+      (r) =>
+        r.enabled &&
+        (platformFilter === "全部" || r.platform === platformFilter),
+    )
+    .filter(keywordMatches)
+    .filter(tagsMatch);
   const liveCount = platformRooms.filter(
     (r) => r.lastLiveStatus === "live",
   ).length;
@@ -361,6 +439,9 @@ export default function Monitor() {
         view={view}
         setView={setView}
         keyword={keyword}
+        tagIds={tagIds}
+        setTagIds={setTagIds}
+        tags={tags}
         setKeyword={setKeyword}
         liveCount={liveCount}
         recordingCount={recordingCount}
@@ -382,7 +463,22 @@ export default function Monitor() {
         />
       ) : null}
       {monitorRooms.length === 0 && !loading ? (
-        <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
+        monitorRooms.length === 0 && rooms.some((r) => r.enabled) ? (
+          <Empty description="当前筛选无匹配">
+            <Button
+              onClick={() => {
+                setFilter("全部");
+                setPlatformFilter("全部");
+                setTagIds([]);
+                setKeyword("");
+              }}
+            >
+              清除筛选
+            </Button>
+          </Empty>
+        ) : (
+          <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
+        )
       ) : view === "列表" ? (
         <RoomSortableProvider
           allRooms={rooms}

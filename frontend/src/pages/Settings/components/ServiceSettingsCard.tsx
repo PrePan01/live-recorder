@@ -1,5 +1,4 @@
 import {
-  Alert,
   App,
   Button,
   Card,
@@ -121,9 +120,6 @@ export interface ServiceSettingsCardProps {
     values: SettingsInput,
     clearCookies?: { douyin?: boolean; bilibili?: boolean },
   ) => Promise<boolean>;
-  showFfmpegWarning: boolean;
-  ffmpegInstallCmd: string;
-  windowWindows: boolean;
   fileRef: React.RefObject<HTMLInputElement | null>;
   setPreference: (theme: ThemePreference) => void;
   debounceRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
@@ -145,9 +141,6 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
     setPickerOpen,
     load,
     persist,
-    showFfmpegWarning,
-    ffmpegInstallCmd,
-    windowWindows,
     fileRef,
     onImportFile,
     setPreference,
@@ -262,41 +255,7 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} md={8}>
-              <Form.Item
-                label="录制格式"
-                name="recordingFormat"
-                extra="FLV：无损最快；MP4：录制完成后自动转换，依赖FFmpeg"
-              >
-                <Select
-                  aria-label="录制格式"
-                  options={[
-                    { value: "source_flv", label: "FLV" },
-                    { value: "mp4_after", label: "MP4" },
-                  ]}
-                />
-              </Form.Item>
-            </Col>
           </Row>
-          {showFfmpegWarning ? (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="未检测到 ffmpeg，录制完成后转 MP4 不可用"
-              description={
-                <Typography.Text>
-                  请安装视频工具 ffmpeg 后重试（
-                  {windowWindows
-                    ? "Windows 在 PowerShell 执行"
-                    : "macOS 在终端执行"}
-                  ）：{" "}
-                  <Typography.Text code>{ffmpegInstallCmd}</Typography.Text>
-                  ，安装完成后点击「一键自检」重新检测。
-                </Typography.Text>
-              }
-            />
-          ) : null}
           <div className="lr-settings-section">
             <Typography.Title className="lr-settings-section__title" level={4}>
               自动录制

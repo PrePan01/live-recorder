@@ -191,10 +191,16 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
         ts.length === 0 ? (
           <Typography.Text type="secondary">-</Typography.Text>
         ) : (
-          <Space size={[4, 4]} wrap>
+          <Space className="lr-room-tags" size={[4, 4]} wrap>
             {ts.map((t) => (
-              <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-                {t.name}
+              <Tag
+                key={t.id}
+                className="lr-room-tag"
+                color={t.color}
+                title={t.name}
+                style={{ marginInlineEnd: 0 }}
+              >
+                <span>{t.name}</span>
               </Tag>
             ))}
           </Space>

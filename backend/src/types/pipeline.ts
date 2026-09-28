@@ -4,6 +4,7 @@ export type PipelineStep =
   | 'cover'
   | 'segment'
   | 'audio'
+  | 'convert'
   | 'compress'
   | 'archive';
 
@@ -27,6 +28,10 @@ export interface PipelineRun {
   id: string;
   recordingId: string;
   status: PipelineRunStatus;
+  progressStep?: string | null;
+  progressPct?: number | null;
+  heartbeatAt?: string | null;
+  etaSeconds?: number | null;
   configSnapshot: Record<string, unknown>;
   startedAt: string | null;
   endedAt: string | null;
