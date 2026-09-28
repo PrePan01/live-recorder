@@ -123,3 +123,6 @@ npm run tauri:build
 ![直播墙](http://qn.bspartner.top/images/PixPin_2026-09-10_17-16-22.png)
 
 ![设置](http://qn.bspartner.top/images/PixPin_2026-09-10_17-15-42-2026-09-10-qU7QjIci.png)
+
+## 隐私
+Live Recorder 不会收集、上传任何用户数据，所有数据仅存在本地。

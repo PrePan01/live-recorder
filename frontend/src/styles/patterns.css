@@ -396,6 +396,24 @@
 .lr-stats-tag-filter .ant-select-selection-item {
   max-width: 84px;
 }
+.lr-tag-filter.ant-select-focused,
+.lr-tag-filter:focus-visible,
+.lr-tag-filter:has(.ant-select-input:focus-visible) {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+.lr-tag-filter .ant-select-input:focus-visible,
+.lr-tag-filter .ant-select-selection-search-input:focus-visible {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+.lr-tag-filter .ant-select-content {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.lr-tag-filter .ant-select-content-item:not(.ant-select-content-item-suffix) {
+  padding-inline-end: 2px;
+}
 .lr-stats-metric-toggle {
   box-sizing: border-box;
   height: 32px !important;
