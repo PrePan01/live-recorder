@@ -19,6 +19,10 @@ const STATES: RecordingState[] = [
   "failed",
 ];
 
+function canVerifyRecording(state: RecordingState): boolean {
+  return state !== "recording" && state !== "reconnecting" && state !== "processing";
+}
+
 function parseSingleRange(
   header: string | undefined,
   size: number,
@@ -121,7 +125,7 @@ export function registerRecordingRoutes(
         });
       }
     }
-    const result = services.recordings.list({
+    const rawResult = services.recordings.list({
       page,
       pageSize,
       roomId: q.roomId,
@@ -131,7 +135,49 @@ export function registerRecordingRoutes(
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
     });
+    const result = {
+      ...rawResult,
+      items: rawResult.items.map((item) => ({
+        ...item,
+        verifyQueuePosition: services.verificationQueue.positionOf(item.id),
+      })),
+    };
     return reply.send(result);
+  });
+
+  app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    return reply.send({ gaps: services.recordings.listGaps(id) });
+  });
+
+  app.post("/api/v1/recordings/:id/verify", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    if (!canVerifyRecording(rec.state)) {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录制仍在写入或处理中，结束后才能校验", { recordingId: id, retryable: true });
+    }
+    const accepted = services.verificationQueue.enqueue(rec);
+    return reply.send({ accepted });
+  });
+
+  app.post("/api/v1/recordings/verify-batch", async (req, reply) => {
+    const body = (req.body ?? {}) as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+    let accepted = 0;
+    let skippedActive = 0;
+    for (const id of ids) {
+      const rec = services.recordings.get(id);
+      if (!rec) continue;
+      if (!canVerifyRecording(rec.state)) {
+        skippedActive += 1;
+        continue;
+      }
+      if (services.verificationQueue.enqueue(rec)) accepted += 1;
+    }
+    return reply.send({ accepted, requested: ids.length, skippedActive });
   });
 
   app.post("/api/v1/recordings/:id/open", async (req, reply) => {
@@ -152,6 +198,37 @@ export function registerRecordingRoutes(
             ? "explorer"
             : "xdg-open";
       const child = spawn(command, [dir], { detached: true, stdio: "ignore" });
+      child.unref();
+    }
+    return reply.send({ ok: true });
+  });
+
+  // 管线产物仅允许按 recording + artifact id 打开，避免接口接受任意本地路径。
+  app.post("/api/v1/recordings/:id/pipeline/artifacts/:artifactId/open", async (req, reply) => {
+    const { id, artifactId } = req.params as { id: string; artifactId: string };
+    const { target } = (req.body ?? {}) as { target?: "file" | "directory" };
+    const run = services.pipeline.repo.runForRecording(id);
+    const artifact = run?.artifacts.find((item) => item.id === artifactId);
+    if (!artifact?.path) {
+      throw new AppError("RESOURCE_NOT_FOUND", "管线产物不存在或文件路径不可用", {
+        recordingId: id,
+      });
+    }
+    if (target !== "file" && target !== "directory") {
+      throw new AppError("CONFIG_INVALID", "打开目标无效", { recordingId: id });
+    }
+    const targetPath = target === "directory" ? dirname(artifact.path) : artifact.path;
+    await stat(targetPath).catch(() => {
+      throw new AppError("RESOURCE_NOT_FOUND", "目标文件或目录不存在", { recordingId: id });
+    });
+    if (process.env.VITEST !== "true") {
+      const command =
+        process.platform === "darwin"
+          ? "open"
+          : process.platform === "win32"
+            ? "explorer"
+            : "xdg-open";
+      const child = spawn(command, [targetPath], { detached: true, stdio: "ignore" });
       child.unref();
     }
     return reply.send({ ok: true });
@@ -425,7 +502,6 @@ export function registerRecordingRoutes(
     if (csvWorkers) {
       try {
         lease = await csvWorkers.acquire(filters);
-        await lease.start();
       } catch (error) {
         if ((error as Error).message === "CSV_QUEUE_FULL") {
           throw new AppError(
@@ -437,6 +513,22 @@ export function registerRecordingRoutes(
         throw new AppError(
           "SERVICE_UNAVAILABLE",
           "CSV 导出工作线程不可用，请稍后重试",
+          { retryable: true },
+        );
+      }
+      // 租约到手立即挂释放：close 监听必须先于 start 与一切后续失败点，
+      // 否则 start 失败时 active 永不归还，连续两次后 CSV 导出永久报队列繁忙（只能重启恢复）。
+      // release 幂等：正常完成/中途断开/异常路径由它统一收口（原监听点在下方，重复挂不生效重复释放）。
+      reply.raw.once("close", () => {
+        void lease?.release();
+      });
+      try {
+        await lease.start();
+      } catch (error) {
+        await lease.release();
+        throw new AppError(
+          "SERVICE_UNAVAILABLE",
+          "CSV 导出工作线程启动失败，请稍后重试",
           { retryable: true },
         );
       }
@@ -459,13 +551,7 @@ export function registerRecordingRoutes(
       "Content-Disposition",
       'attachment; filename="recordings.csv"',
     );
-    // Fastify's async generator finalizer handles normal completion; this
-    // additionally releases a long-lived read transaction as soon as a client
-    // cancels a download before consuming the first/next batch.
-    if (lease)
-      reply.raw.once("close", () => {
-        void lease?.release();
-      });
+    // （释放监听已在租约到手时提前挂载，见上方 close 监听——先于 start 与一切失败点。）
     async function* rows(): AsyncGenerator<string> {
       let cursor:
         | import("../../db/repositories/recording.repo.js").RecordingExportCursor

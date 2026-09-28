@@ -57,7 +57,7 @@ it('coalesces duplicate boot and restart requests during startup', async () => {
   expect(useBootStore.getState().state).toBe('ready');
   expect(EndpointResolver.base).toBe('http://127.0.0.1:43121/api/v1');
 });
-it('keeps observing a slow startup and accepts its eventual success without spawning again', async () => {
+it('observes a slow startup, degrades after the timeout, and recovers on late native success without respawning', async () => {
   let resolve!: (event: BootEvent) => void;
   mock.startService.mockReturnValue(
     new Promise<BootEvent>((r) => {
@@ -65,16 +65,24 @@ it('keeps observing a slow startup and accepts its eventual success without spaw
     }),
   );
   const pending = useBootStore.getState().boot();
-  await vi.advanceTimersByTimeAsync(60_000);
+  // 15s：慢启动提示仍照常出现。
+  await vi.advanceTimersByTimeAsync(15_000);
   expect(useBootStore.getState().state).toBe('booting');
   expect(useBootStore.getState().loading).toBe(true);
   expect(useBootStore.getState().slow).toBe(true);
-  await useBootStore.getState().restart();
+  // 30s 超时上限：降级到可重试错误页，而不是永久停在「加载中」。
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(useBootStore.getState().state).toBe('degraded');
+  expect(useBootStore.getState().loading).toBe(false);
+  expect(mock.startService).toHaveBeenCalledTimes(1);
   expect(mock.restartService).not.toHaveBeenCalled();
+  // 原生迟到成功：无人重试时静默补成功，最终无需用户干预。
   resolve(ready);
-  await pending;
+  await vi.advanceTimersByTimeAsync(0);
   expect(useBootStore.getState().state).toBe('ready');
+  expect(EndpointResolver.base).toBe('http://127.0.0.1:43121/api/v1');
   expect(useBootStore.getState().slow).toBe(false);
+  await pending;
 });
 it('preserves detailed backend errors when opening diagnostics', async () => {
   const diagnostics = [

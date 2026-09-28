@@ -19,6 +19,11 @@ interface RecordingRow {
   quality: string | null;
   expected_quality: string | null;
   integrity: string | null;
+  integrity_state: string | null;
+  integrity_attempts: number;
+  integrity_last_attempt: string | null;
+  integrity_error: string | null;
+  gap_count: number | null;
   pipeline_status: string | null;
   metadata: string | null;
   cover_path: string | null;
@@ -71,6 +76,11 @@ export function rowToRecording(row: RecordingRow): Recording {
   if (row.quality) rec.quality = row.quality as Quality;
   if (row.expected_quality) rec.expectedQuality = row.expected_quality as Quality;
   if (row.integrity) rec.integrity = row.integrity as RecordingIntegrity;
+  if (row.integrity_state) rec.integrityState = row.integrity_state as NonNullable<Recording['integrityState']>;
+  if (row.integrity_attempts) rec.integrityAttempts = row.integrity_attempts;
+  if (row.integrity_last_attempt) rec.integrityLastAttempt = row.integrity_last_attempt;
+  if (row.integrity_error) rec.integrityError = row.integrity_error;
+  if (row.gap_count != null) rec.gapCount = row.gap_count;
   if (row.pipeline_status) rec.pipelineStatus = row.pipeline_status as PipelineStatus;
   const metadata = parseMetadata(row.metadata);
   if (metadata) rec.metadata = metadata;
@@ -277,7 +287,25 @@ export class RecordingRepository {
     return row.c;
   }
 
-  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null; highlightExportPending: boolean; highlightConfirmationDecision: boolean | null; highlightConfirmationFileName: string | null }>): Recording {
+  /** 中断事件存证（缺失降噪的数据层）：一次中断一行，主表聚合展示。 */
+  insertGap(input: { recordingId: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence?: string | null }): void {
+    this.db
+      .prepare('INSERT INTO recording_gaps (id, recording_id, started_at, ended_at, missing_ms, kind, evidence) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(newId('gap'), input.recordingId, input.startedAt, input.endedAt, input.missingMs, input.kind, input.evidence ?? null);
+    this.db
+      .prepare('UPDATE recordings SET gap_count = COALESCE(gap_count, 0) + 1 WHERE id = ?')
+      .run(input.recordingId);
+  }
+
+  listGaps(recordingId: string): Array<{ id: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence: string | null }> {
+    const rows = this.db
+      .prepare('SELECT id, started_at AS startedAt, ended_at AS endedAt, missing_ms AS missingMs, kind, evidence FROM recording_gaps WHERE recording_id = ? ORDER BY started_at')
+      .all(recordingId) as Array<{ id: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence: string | null }>;
+    return rows;
+  }
+
+  update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; integrityState: string | null; integrityAttempts: number; integrityLastAttempt: string; integrityError: string | null; gapCount: number;
+ pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null; highlightExportPending: boolean; highlightConfirmationDecision: boolean | null; highlightConfirmationFileName: string | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.endReason !== undefined) {

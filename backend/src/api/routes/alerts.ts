@@ -14,14 +14,17 @@ export function registerAlertRoutes(app: FastifyInstance, services: Services): v
 
   app.patch('/api/v1/alerts/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const alert = services.alerts.markResolved(id);
+    const body = (req.body ?? {}) as { read?: boolean; resolved?: boolean };
+    // 前端「已读」传 read；resolved 保留为「恢复/解决」语义（兼容旧调用）。
+    const alert = body.read === true ? services.alerts.markRead(id) : services.alerts.markResolved(id);
     if (!alert) throw new AppError('RESOURCE_NOT_FOUND', '告警不存在', { details: { resource: 'alert' } });
     services.events.emit({ type: 'alert:updated', data: alert });
     return reply.send({ alert });
   });
 
   app.post('/api/v1/alerts/read-all', async (_req, reply) => {
-    services.alerts.markAllResolved();
+    // 「全部已读」只置已读，不再借道 resolved（resolved 专属恢复语义）。
+    services.alerts.markAllRead();
     return reply.send({ ok: true });
   });
 

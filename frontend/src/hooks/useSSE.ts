@@ -9,6 +9,7 @@ import type { Settings } from '../types/settings';
 import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
 import type { UploadJob } from '../api/openlist';
+import type { PipelineArtifact, PipelineRun } from '../types/pipeline';
 import { applyServerEvent } from '../stores/applyEvent';
 import { bridge, useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
@@ -29,6 +30,14 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, notification: payload as { title: string; body: string } };
     case 'recording:updated':
       return { type, recording: payload as unknown as Recording };
+    case 'pipeline:updated':
+      return {
+        type,
+        pipeline: payload as unknown as {
+          run: PipelineRun;
+          artifacts: PipelineArtifact[];
+        },
+      };
     case 'recording:deleted':
       return { type, recordingId: (payload as { id: string }).id };
     case 'alert:created':

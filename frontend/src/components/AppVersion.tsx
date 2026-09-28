@@ -64,7 +64,9 @@ export default function AppVersion() {
             .getState()
             .install()
             .catch((error) => {
-              void message.error(String(error));
+              void message.error(
+                `安装更新失败：${error instanceof Error ? error.message : String(error)}。可重新检查更新后再试`,
+              );
             }),
       });
     },
@@ -112,7 +114,10 @@ export default function AppVersion() {
           .getState()
           .download()
           .catch((error) => {
-            void message.error(String(error));
+            // 失败给出可执行指引（重试=再点版本号重新触发下载）。
+            void message.error(
+              `下载更新失败：${error instanceof Error ? error.message : String(error)}。可稍后重新点击版本号重试`,
+            );
           });
       },
     });

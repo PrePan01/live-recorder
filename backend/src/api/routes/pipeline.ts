@@ -21,10 +21,30 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法重试管线', { recordingId: id });
-    const result = services.pipeline.retry(id);
+    const result = services.pipeline.retry(id, true);
     if (!result.ok) {
-      throw new AppError('CONFIG_LOAD_FAILED', '管线正在排队或运行中，无法重试', { recordingId: id });
+      // 409 而非 500：排队/运行中属冲突态（task #59，原 CONFIG_LOAD_FAILED→500 错误类）。
+      throw new AppError('RECORDING_NOT_AVAILABLE', '管线正在排队或运行中，无法重试', { recordingId: id });
     }
+    return reply.send({ ok: true, run: result.run });
+  });
+
+  // 启动/继续管线：中断或未跑过的录制只要有可用文件即可进入（与 retry 同语义，命名给「处理已录部分/继续处理」）。
+  app.post('/api/v1/recordings/:id/pipeline/start', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
+    if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法进入管线', { recordingId: id });
+    const quick = await services.pipeline.quickMediaCheck(rec.filePath);
+    if (!quick.ok) throw new AppError('CONFIG_LOAD_FAILED', `文件不可用，无法进入管线：${quick.reason ?? '未知原因'}`, { recordingId: id });
+    // 三态语义：未跑过/failed=全新启动（retry 建新 run）；中断残留 queued/running=处理已录部分（断点续跑，异步推进立即返回）。
+    const existing = services.pipeline.repo.runForRecording(id);
+    if (existing && (existing.status === 'queued' || existing.status === 'running')) {
+      void services.pipeline.resumeRunById(existing.id).catch(() => undefined);
+      return reply.send({ ok: true, run: services.pipeline.repo.getRun(existing.id) });
+    }
+    const result = services.pipeline.retry(id, true);
+    if (!result.ok) throw new AppError('RECORDING_NOT_AVAILABLE', '管线正在排队或运行中', { recordingId: id });
     return reply.send({ ok: true, run: result.run });
   });
 

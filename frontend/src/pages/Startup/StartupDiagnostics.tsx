@@ -11,7 +11,10 @@ export default function StartupDiagnostics() {
   useEffect(() => {
     void refreshDiagnostics();
     if (!loading) return;
-    const timer = setInterval(() => void refreshDiagnostics(), 1000);
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshDiagnostics();
+    }, 1000);
     return () => clearInterval(timer);
   }, [refreshDiagnostics, loading]);
 

@@ -87,11 +87,15 @@ export default function DirectoryPicker({ open, initialPath, onClose, onPick }: 
     try {
       const dir = await pickDirectory();
       if (dir) {
+        setValidating(true);
+        await validateDirectory(dir);
         onPick(dir);
         onClose();
       }
     } catch (e) {
-      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '选择失败');
+      message.error(e instanceof ApiError ? describeError(e.code, e.message) : '目录不可用');
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -102,7 +106,7 @@ export default function DirectoryPicker({ open, initialPath, onClose, onPick }: 
       onCancel={onClose}
       width={520}
       footer={[
-        <Button key="native" icon={<FolderOpenOutlined />} onClick={() => void pickNative()}>
+        <Button key="native" icon={<FolderOpenOutlined />} loading={validating} disabled={validating} onClick={() => void pickNative()}>
           系统选择器
         </Button>,
         <Button key="cancel" onClick={onClose}>

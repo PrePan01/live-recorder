@@ -61,4 +61,16 @@ describe('Notifier', () => {
     const alerts = services.alerts.list();
     expect(alerts.some((a) => a.source === 'smtp' && a.message.includes('SMTP 通知发送失败'))).toBe(true);
   });
+
+  it('邮件发送 30 秒硬顶：SMTP 挂起不再拖住录制收尾关键链（M-1）', async () => {
+    const { services, clock } = newServices();
+    const hanging = { send: () => new Promise<never>(() => {}) } as unknown as typeof services.mailer;
+    const notifier = new Notifier(hanging, clock, services.alerts, () => MAIL, () => DEFAULT_NOTIFICATION_PREFERENCE, services.events);
+    const pending = notifier.notify('recording_failed', 'room1', { title: '主播A' });
+    clock.advance(30_000);
+    // 超时后 notify 必须落定（告警不抛），收尾链不被黑洞 SMTP 拖住。
+    await pending;
+    const listed = services.alerts.list({ limit: 50 });
+    expect(listed.some((a) => a.message.includes('SMTP'))).toBe(true);
+  });
 });

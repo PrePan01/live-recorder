@@ -7,6 +7,10 @@ interface PipelineRunRow {
   recording_id: string;
   status: string;
   config_snapshot: string;
+  progress_step: string | null;
+  progress_pct: number | null;
+  heartbeat_at: string | null;
+  eta_seconds: number | null;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
@@ -56,6 +60,10 @@ export class PipelineRepository {
       recordingId: row.recording_id,
       status: row.status as PipelineRunStatus,
       configSnapshot: parseSnapshot(row.config_snapshot),
+    progressStep: row.progress_step ?? null,
+    progressPct: row.progress_pct ?? null,
+    heartbeatAt: row.heartbeat_at ?? null,
+    etaSeconds: row.eta_seconds ?? null,
       startedAt: row.started_at,
       endedAt: row.ended_at,
       createdAt: row.created_at,
@@ -69,6 +77,28 @@ export class PipelineRepository {
       .get(recordingId) as PipelineRunRow | undefined;
     if (!row) return null;
     return this.getRun(row.id);
+  }
+
+  /** 按状态集取 run（含 artifacts）——启动恢复扫描孤儿 run（task #59）。 */
+  listRunsByStatuses(statuses: PipelineRunStatus[]): PipelineRun[] {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT id FROM pipeline_runs WHERE status IN (${placeholders}) ORDER BY created_at ASC`)
+      .all(...statuses) as Array<{ id: string }>;
+    return rows.map((r) => this.getRun(r.id)).filter((r): r is PipelineRun => r !== null);
+  }
+
+  setRunProgress(id: string, patch: { progressStep?: string | null; progressPct?: number | null; heartbeatAt?: string | null; etaSeconds?: number | null }): void {
+    this.db
+      .prepare('UPDATE pipeline_runs SET progress_step = COALESCE(?, progress_step), progress_pct = COALESCE(?, progress_pct), heartbeat_at = COALESCE(?, heartbeat_at), eta_seconds = COALESCE(?, eta_seconds) WHERE id = ?')
+      .run(patch.progressStep ?? null, patch.progressPct ?? null, patch.heartbeatAt ?? null, patch.etaSeconds ?? null, id);
+  }
+
+  listArtifacts(runId: string): PipelineArtifact[] {
+    return this.db
+      .prepare('SELECT * FROM pipeline_artifacts WHERE run_id = ? ORDER BY rowid')
+      .all(runId) as PipelineArtifact[];
   }
 
   setRunStatus(id: string, status: PipelineRunStatus, endedAt: string | null = null): void {

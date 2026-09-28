@@ -321,11 +321,104 @@ describe('Scheduler', () => {
     services.scheduler.stop();
   });
 
-  it('triggerImmediateCheck marks restricted rooms failed with an alert', async () => {
-    const { services } = newServices();
-    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4', displayName: 'R' });
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'restricted' }]);
+  it('三票门·60s 独立计数：检测节奏快于 60s 时前两票仍各满 1 分钟', async () => {
+    const { services, clock } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/88', displayName: 'fast' });
+    const err = () =>
+      (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+        { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试').toObject() },
+      ]);
+    // 35 秒一测的节奏连测 3 次：t0=票1、+35s 不计、+70s=票2 → 仍不足 3 票。
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(35_001);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(35_001);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.monitorState).not.toBe('failed');
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+    // 再满一个 60s 票距 → 票3 触发。
+    clock.advance(60_001);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.monitorState).toBe('failed');
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(1);
+  });
 
+  it('三票门·换码重计：连续语义被不同错误打断，各码从零各算各账', async () => {
+    const { services, clock } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/89', displayName: 'churncode' });
+    const err = (code: string) =>
+      (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+        { status: 'error', error: new AppError(code, `错误 ${code}`).toObject() },
+      ]);
+    // A×2（票距达标）→ B 打断（A 断连作废）→ B 攒满 3 票只报 B。
+    err('PLATFORM_CHANGED');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_001);
+    err('PLATFORM_CHANGED');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_001);
+    err('CHECK_FAILED');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_001);
+    err('CHECK_FAILED');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    // 此时 CHECK_FAILED 才 2 票（B 起点重计），不得上屏。
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+    clock.advance(60_001);
+    err('CHECK_FAILED');
+    await services.scheduler.triggerImmediateCheck(room.id);
+    const alerts = services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.errorCode).toBe('CHECK_FAILED');
+  });
+
+  it('三票门·恢复清计数：成功检测后计数清零，之后同错从第 1 票重新数', async () => {
+    const { services, clock } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/90', displayName: 'reset' });
+    const err = () =>
+      (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+        { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试').toObject() },
+      ]);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    clock.advance(60_001);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    // 成功一轮（offline）→ 清票。
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    // 若票没清，此处再错 1 次就会凑满 3 票；清了则仍静默。
+    clock.advance(60_001);
+    err();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.monitorState).not.toBe('failed');
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+  });
+
+  it('triggerImmediateCheck marks restricted rooms failed with an alert only after 3 spaced votes（三票门）', async () => {
+    const { services, clock } = newServices();
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4', displayName: 'R' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'restricted' },
+      { status: 'restricted' },
+      { status: 'restricted' },
+    ]);
+
+    // 第 1 票：完全静默（不标红、不进告警）。
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.monitorState).not.toBe('failed');
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(0);
+    // 第 2 票（票距≥60s）仍静默。
+    clock.advance(60_001);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.monitorState).not.toBe('failed');
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(0);
+    // 第 3 票触发：卡片标红 + 进告警中心。
+    clock.advance(60_001);
     await services.scheduler.triggerImmediateCheck(room.id);
     const after = services.rooms.get(room.id)!;
     expect(after.monitorState).toBe('failed');
@@ -422,12 +515,22 @@ describe('Scheduler', () => {
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'live', streamSessionId: 's1', streamTitle: 'T1' },
       { status: 'restricted' },
+      { status: 'restricted' },
+      { status: 'restricted' },
     ]);
 
     await services.scheduler.triggerImmediateCheck(room.id);
     await waitFor(() => services.manager.isRoomActive(room.id));
     await settle(clock, 500);
 
+    // 前 2 票静默：录制中的会话不挂错误（卡片完全不显示）。
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.lastError ?? null).toBeNull();
+    clock.advance(60_001);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.lastError ?? null).toBeNull();
+    // 第 3 票：按既有语义挂 lastError、状态保持 recording。
+    clock.advance(60_001);
     await services.scheduler.triggerImmediateCheck(room.id);
 
     expect(services.manager.isRoomActive(room.id)).toBe(true);
@@ -525,6 +628,43 @@ describe('Scheduler', () => {
     await services.scheduler.checkRoom(services.rooms.get(room.id)!);
     await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
     expect(services.manager.isRoomActive(room.id)).toBe(true);
+    await services.manager.stopRecording(room.id);
+    await settle(clock, 200);
+  });
+
+  it('同场内平台更换 streamSessionId 也不得自动重开（手动停标记与 session id 解耦），下播清标记后恢复', async () => {
+    const { services, clock } = newServices();
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-sess-churn-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/77', displayName: 'churn' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    adapter.setScript([
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-a' },
+      // 手动停止后：平台侧断点重推导致 session id 变化——仍属同一场，禁止自动重开。
+      { status: 'live', streamSessionId: 'id-b' },
+      { status: 'offline' },
+      { status: 'live', streamSessionId: 'id-c' },
+    ]);
+    await services.scheduler.checkRoom(room);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.manager.isRoomActive(room.id));
+    await settle(clock, 500);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items[0]?.state === 'recording');
+    await services.manager.stopRecording(room.id);
+    await waitFor(() => !services.manager.isRoomActive(room.id));
+    // 标记已落库且同场 live 检测不重启（session id 换了也不重启）。
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession).toBeTruthy();
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    // 下播：liveStartedAt 与标记一并清空。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    expect(services.rooms.get(room.id)!.liveStartedAt).toBeNull();
+    expect(services.rooms.get(room.id)!.autoRecordStoppedSession ?? null).toBeNull();
+    // 新的未开播→开播沿：自动录制恢复。
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    await waitFor(() => services.recordings.list({ roomId: room.id }).items.length === 2);
     await services.manager.stopRecording(room.id);
     await settle(clock, 200);
   });
@@ -734,9 +874,21 @@ describe('Scheduler', () => {
       if (event.type === 'alert:updated') updates.push(event.data.id);
     });
 
-    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
-      { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试').toObject() },
-    ]);
+    const failOnce = () =>
+      (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
+        { status: 'error', error: new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试').toObject() },
+      ]);
+    const { clock } = { clock: (services as never as { clock: { advance(ms: number): void } }).clock };
+    // 攒满 3 票（票距≥60s）才出告警。
+    failOnce();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+    clock.advance(60_001);
+    failOnce();
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id)).toHaveLength(0);
+    clock.advance(60_001);
+    failOnce();
     await services.scheduler.triggerImmediateCheck(room.id);
     const unresolved = services.alerts.list({ unresolvedOnly: true }).filter((a) => a.roomId === room.id);
     expect(unresolved).toHaveLength(1);
@@ -749,4 +901,30 @@ describe('Scheduler', () => {
     // 前端靠 alert:updated 更新已读状态，收敛时必须推送。
     expect(updates).toContain(unresolved[0]!.id);
   });
+
+  it("检测顺带持久化主播头像：有值写入、结果缺失不清空（兼容历史），名称填补不回归", async () => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/701', displayName: '' });
+    // 迁移 v38 列就位：新房间头像默认 null（历史房间=同一形态，UI 按 null 兜底）
+    expect(services.rooms.get(room.id)!.avatarUrl).toBeNull();
+
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '自动识别名', avatarUrl: 'https://i0.hdslb.com/bfs/face/x.jpg' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    let r = services.rooms.get(room.id)!;
+    expect(r.displayName).toBe('自动识别名');
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+
+    // 结果不带头像 → 不清空已有值；非空名称不被覆盖
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'offline', displayName: '另一个名字' },
+    ]);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+    r = services.rooms.get(room.id)!;
+    expect(r.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/x.jpg');
+    expect(r.displayName).toBe('自动识别名');
+  });
+
 });

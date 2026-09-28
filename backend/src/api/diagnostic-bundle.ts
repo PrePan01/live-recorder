@@ -1,3 +1,4 @@
+import { unknownStatusSnapshot } from '../platform/status-fallback.js';
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -279,5 +280,10 @@ export async function createDiagnosticBundle(
       name: "rooms.json",
       content: `${JSON.stringify(roomDiagnosticSnapshots(services), null, 2)}\n`,
     });
+  // 层三·学习闭环：未知状态码聚合计数随包导出——从「等用户报障」变「看包即见」。
+  entries.push({
+    name: "unknown-status-codes.json",
+    content: JSON.stringify(unknownStatusSnapshot(), null, 2),
+  });
   return zipBuffer(entries);
 }

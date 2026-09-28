@@ -42,4 +42,11 @@ export default defineConfig({
       '/ws': { target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, ws: true, changeOrigin: true },
     },
   },
+  // 构建产物本地验收（vite preview）与 dev 同源代理：分块/字体等改动需在真实产物上冒烟。
+  preview: {
+    proxy: {
+      '/api': { target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, changeOrigin: true },
+      '/ws': { target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, ws: true, changeOrigin: true },
+    },
+  },
 })

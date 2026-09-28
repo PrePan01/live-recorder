@@ -18,9 +18,9 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(37);
+    expect(runMigrations(db)).toBe(42);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(37);
+    expect(currentSchemaVersion(db)).toBe(42);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
@@ -48,11 +48,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(35);
+    expect(runMigrations(db)).toBe(40);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(37);
+    expect(currentSchemaVersion(db)).toBe(42);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +82,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16 及之后未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(22);
+    expect(runMigrations(db)).toBe(27);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -96,7 +96,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(37);
+    expect(currentSchemaVersion(db)).toBe(42);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -118,7 +118,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(19);
+    expect(runMigrations(db)).toBe(24);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -130,7 +130,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(37);
+    expect(currentSchemaVersion(db)).toBe(42);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -168,6 +168,8 @@ describe('migrations', () => {
     }
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('room-old', 'bilibili', 'https://live.bilibili.com/99')`).run();
     MIGRATIONS.find((item) => item.version === 23)!.up!(db);
+    // 当前仓库写路径含 v38 的 avatar_url 列：补跑后再用仓库（与本测试断言的 v23 标志无关）。
+    MIGRATIONS.find((item) => item.version === 38)!.up!(db);
     const rooms = new RoomRepository(db);
     expect(rooms.get('room-old')!.liveNotificationEnabled).toBe(false);
     expect(rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/100', displayName: '新房间' }).liveNotificationEnabled).toBe(false);
@@ -217,7 +219,8 @@ describe('migrations', () => {
 
   it('v32 strips legacy error-code prefixes from stored alert messages', () => {
     const db = openDatabase(':memory:');
-    for (const migration of MIGRATIONS.filter((item) => item.version <= 31)) {
+    // 39=alerts.retryable：repo INSERT 依赖此列，子集建库需一并应用。
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 31 || item.version === 39)) {
       if (migration.up) migration.up(db);
       else if (migration.sql) db.exec(migration.sql);
     }
@@ -242,8 +245,30 @@ describe('AlertRepository', () => {
     expect(refreshed.id).toBe(first.id);
     expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
     expect(alerts.get(first.id)!.occurredAt).toBe('2026-09-20T00:02:00.000Z');
+    // 已读但错误持续：同一行只刷新载荷与时间，不新建、不复活（恢复前只报一次的核心）。
+    alerts.markRead(first.id);
+    const afterRead = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:03:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+    expect(afterRead.id).toBe(first.id);
+    expect(afterRead.read).toBe(true);
+    expect(afterRead.resolved).toBe(false);
+    // 已恢复后复发：同一行复活为未读（不再新增行）。
     alerts.markResolved(first.id);
-    expect(alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:03:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' }).id).not.toBe(first.id);
+    expect(alerts.get(first.id)!.resolved).toBe(true);
+    const revived = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '抖音：抖音接口暂时不可用，请稍后重试', occurredAt: '2026-09-20T00:04:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+    expect(revived.id).toBe(first.id);
+    expect(revived.resolved).toBe(false);
+    expect(revived.read).toBe(false);
+    expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
+    // 同身份换文案：仍是同一行，文案就地更新（身份不掺载荷）。
+    const drifted = alerts.createOrRefresh({ level: 'error', source: 'platform', message: '换个说法的繁忙', occurredAt: '2026-09-20T00:05:00.000Z', errorCode: 'NETWORK_UNAVAILABLE' });
+    expect(drifted.id).toBe(first.id);
+    expect(drifted.message).toBe('换个说法的繁忙');
+    // 错误码为空时退化用文案认身份：同文案同行、异文案各一行（内部错误不互相覆盖）。
+    const inner1 = alerts.createOrRefresh({ level: 'error', source: 'service', message: '内部错误 A', occurredAt: '2026-09-20T00:06:00.000Z' });
+    const inner1Again = alerts.createOrRefresh({ level: 'error', source: 'service', message: '内部错误 A', occurredAt: '2026-09-20T00:07:00.000Z' });
+    const inner2 = alerts.createOrRefresh({ level: 'error', source: 'service', message: '内部错误 B', occurredAt: '2026-09-20T00:07:00.000Z' });
+    expect(inner1Again.id).toBe(inner1.id);
+    expect(inner2.id).not.toBe(inner1.id);
     db.close();
   });
 });
@@ -400,10 +425,15 @@ describe('SettingsRepository', () => {
 });
 
 describe('AlertRepository', () => {
-  it('creates, lists unresolved and marks read', () => {
+  it('creates, lists unresolved and marks read（已读与恢复是两回事）', () => {
     const alerts = new AlertRepository(freshDb());
     const alr = alerts.create({ level: 'warning', source: 'disk', message: '磁盘空间不足', occurredAt: new Date().toISOString() });
     expect(alr.id.startsWith('alr_')).toBe(true);
+    expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
+    // 已读只置 read，不隐藏（错误可能还持续）；恢复才从未解决列表消失。
+    alerts.markRead(alr.id);
+    expect(alerts.get(alr.id)!.read).toBe(true);
+    expect(alerts.get(alr.id)!.resolved).toBe(false);
     expect(alerts.list({ unresolvedOnly: true })).toHaveLength(1);
     alerts.markResolved(alr.id);
     expect(alerts.list({ unresolvedOnly: true })).toHaveLength(0);
@@ -429,4 +459,19 @@ describe('AlertRepository', () => {
     expect(alerts.get(platformWide.id)!.resolved).toBe(false);
     expect(alerts.resolveForRoom('room_a', 'platform')).toHaveLength(0);
   });
+
+  it('uses WAL + synchronous NORMAL pairing（常驻写入型进程的 fsync 减负）', async () => {
+    // :memory: 不支持 WAL（journal_mode 返回 memory），必须用临时文件库验证生产路径
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const path = await import('node:path');
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-prag-'));
+    const db = openDatabase(path.join(dir, 'x.db'));
+    expect(String(db.pragma('journal_mode', { simple: true }))).toBe('wal');
+    // 1=NORMAL（未设置时默认 2=FULL；WAL 标准配对为 NORMAL，掉电安全边界仍由 WAL 保证）
+    expect(db.pragma('synchronous', { simple: true })).toBe(1);
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
 });

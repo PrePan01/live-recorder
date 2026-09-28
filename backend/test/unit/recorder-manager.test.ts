@@ -1561,4 +1561,61 @@ describe("RecorderManager", () => {
     await services.manager.disableHighlightBuffer(room.id);
   });
 
+
+  it('断流重连时补发 room:updated（且仅状态变化时发一次，退避循环不重复广播）', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-reconnect-emit-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    services.engineFor = () => ({
+      async *start(): AsyncGenerator<never, void> {
+        await new Promise(() => {});
+      },
+      stop: async () => {},
+    });
+    // 首次开播 live；此后探测一律 restricted（非 offline 不收尾、非 live 不接力）→ 同一断流周期内多轮退避，
+    // 正是「循环每轮重复 setState」的场景：守卫生效时 room:updated 只发一次。
+    // maybeStartRecording 的开播状态由参数传入（不消耗脚本）：脚本全部供断流重连探测消费——
+    // 一律 restricted（非 offline 不收尾、非 live 不接力）→ 同一断流周期内多轮退避，守卫生效时只发一次。
+    (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([
+      { status: "restricted" },
+      { status: "restricted" },
+      { status: "restricted" },
+      { status: "restricted" },
+    ]);
+    const room = services.rooms.create({
+      platform: "bilibili",
+      url: "https://live.bilibili.com/150",
+      displayName: "R",
+    });
+    const reconnectingUpdates: string[] = [];
+    services.events.on((event) => {
+      if (event.type === "room:updated" && event.data.monitorState === "reconnecting") {
+        reconnectingUpdates.push(event.data.id);
+      }
+    });
+
+    await services.manager.maybeStartRecording(room, { streamSessionId: "r1" });
+    await waitFor(() => services.rooms.get(room.id)!.monitorState === "recording");
+
+    // 30 秒无数据 → 进入重连：前端靠 room:updated 才能把卡片从「录制中」切到「重连中」。
+    await waitForWithClock(
+      clock,
+      () => services.recordings.list({ roomId: room.id }).items[0]!.state === "reconnecting",
+      80,
+    );
+    expect(reconnectingUpdates).toContain(room.id);
+
+    // 退避循环多轮重试：状态已是 reconnecting，不应每轮重复广播。
+    await waitForWithClock(
+      clock,
+      () => services.recordings.list({ roomId: room.id }).items[0]!.state === "failed",
+      500,
+    );
+    const firstIdx = reconnectingUpdates.indexOf(room.id);
+    expect(reconnectingUpdates.indexOf(room.id, firstIdx + 1)).toBe(-1);
+  });
+
 });

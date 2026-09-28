@@ -29,7 +29,10 @@ export default function Startup() {
   useEffect(() => {
     if (!loading) return;
     void refreshDiagnostics();
-    const timer = setInterval(() => void refreshDiagnostics(), 1000);
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshDiagnostics();
+    }, 1000);
     return () => clearInterval(timer);
   }, [loading, refreshDiagnostics]);
 

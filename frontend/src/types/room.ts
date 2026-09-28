@@ -40,6 +40,8 @@ export interface Room {
   titleUpdatedAt: string | null;
   titleFallbackUsed: boolean;
   sortOrder: number;
+  /** 主播头像地址（历史/未抓到时缺省，前端降级首字展示；BE 检测周期顺带刷新）。 */
+  avatarUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }

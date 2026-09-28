@@ -14,4 +14,8 @@ export interface Alert {
   roomId: string | null;
   /** 结构化错误码（如 RECORDING_START_FAILED），无则 null。 */
   errorCode: string | null;
+  /** 是否已读（与 resolved=是否恢复 分离：已读但错误持续不重闹，恢复后复发再复活）。 */
+  read: boolean;
+  /** 是否可自动重试：true=可重试、false=需人工处理、null=未知（FE 告警行语义用）。 */
+  retryable: boolean | null;
 }

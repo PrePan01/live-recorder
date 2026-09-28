@@ -89,7 +89,7 @@
 }
 .lr-setup-first-room__copy {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: flex-start;
 }
 .lr-setup-first-room__copy > .anticon {
@@ -144,6 +144,106 @@
 .lr-settings-section__title.ant-typography {
   font-family: var(--lr-display);
   font-weight: 900;
+}
+
+.lr-settings-card .ant-card-head .ant-card-head-title {
+  font-size: 16px;
+}
+.lr-settings-grid .lr-settings-section__title.ant-typography {
+  font-size: 14px;
+  font-weight: 800;
+}
+.lr-settings-grid .ant-form-item .ant-form-item-label {
+  padding-bottom: 4px;
+}
+.lr-settings-grid .ant-form-item-label > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.lr-settings-grid
+  .ant-col
+  .ant-form-item:not(.lr-pipeline-step .ant-form-item) {
+  margin-bottom: 16px;
+}
+.lr-settings-grid .ant-form-item-extra {
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--lr-muted);
+}
+.lr-settings-card > .ant-card-body {
+  padding: 16px !important;
+}
+.lr-settings-grid .lr-settings-section {
+  padding-top: 16px;
+}
+.lr-floating-recorder-size {
+  max-width: 460px;
+}
+.lr-floating-recorder-size__control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+.lr-floating-recorder-size__control .ant-slider {
+  margin: 0;
+  padding-block: 8px;
+}
+.lr-floating-recorder-size__control .ant-slider-rail,
+.lr-floating-recorder-size__control .ant-slider-track {
+  height: 8px !important;
+  border-radius: 0 !important;
+}
+.lr-floating-recorder-size__control .ant-slider-rail {
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-surface-alt) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-track {
+  background: var(--lr-primary) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-handle {
+  /* The thicker custom rail needs the handle offset from Ant Design's 4px
+     rail calculation so their visual centers stay aligned. */
+  translate: 0 4px;
+}
+.lr-floating-recorder-size__control .ant-slider-handle::after {
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-primary) !important;
+}
+.lr-floating-recorder-size__control .ant-slider-handle:focus-visible::after {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 3px;
+}
+.lr-floating-recorder-size__value {
+  display: grid;
+  min-width: 68px;
+  height: 36px;
+  padding: 0 8px;
+  place-items: center;
+  background: var(--lr-surface);
+  box-shadow: 3px 3px 0 var(--lr-primary);
+  color: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+.lr-floating-recorder-size__bounds {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+@media (max-width: 480px) {
+  .lr-floating-recorder-size__control {
+    gap: 10px;
+  }
+  .lr-floating-recorder-size__value {
+    min-width: 60px;
+    padding: 0 6px;
+  }
 }
 .lr-notification-matrix {
   display: grid;
@@ -284,17 +384,127 @@
 .lr-stats-range-picker-popup .ant-picker-footer {
   display: none !important;
 }
-.lr-stats-tag-filter.ant-select-multiple {
-  height: 36px;
-  min-height: 36px;
-  overflow: hidden;
+.lr-tag-filter.ant-select-focused,
+.lr-tag-filter:focus-visible,
+.lr-tag-filter:has(.ant-select-input:focus-visible) {
+  outline: 0 !important;
+  outline-offset: 0;
 }
-.lr-stats-tag-filter .ant-select-selection-overflow {
+.lr-tag-filter .ant-select-input:focus-visible,
+.lr-tag-filter .ant-select-selection-search-input:focus-visible {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+.lr-tag-filter .ant-select-content {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.lr-stats-tag-filter .ant-select-selection-item {
-  max-width: 84px;
+.lr-tag-filter .ant-select-content-item:not(.ant-select-content-item-suffix) {
+  padding-inline-end: 2px;
+}
+.lr-tag-filter .ant-select-selection-item {
+  min-width: 0;
+  max-width: 100%;
+}
+.lr-tag-filter__option,
+.lr-tag-filter__tag,
+.lr-room-tag {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+.lr-tag-filter__option > span,
+.lr-tag-filter__tag > span,
+.lr-room-tag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-tag-filter__tag > span {
+  flex: 1 1 auto;
+}
+.lr-tag-filter__tag .ant-tag-close-icon {
+  flex: 0 0 auto;
+}
+.lr-room-tags,
+.lr-room-tags .ant-space-item {
+  max-width: 100%;
+}
+/* Monitor: primary status filters stay visible; secondary filters share a popover. */
+.lr-monitor-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.lr-monitor-header .ant-typography {
+  white-space: nowrap;
+}
+.lr-monitor-header__state-filter {
+  width: max-content;
+  min-width: 0;
+  justify-self: end;
+}
+.lr-monitor-header__tools {
+  gap: 8px !important;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.lr-monitor-header__search {
+  width: clamp(130px, 15vw, 180px);
+}
+.lr-monitor-filter-trigger {
+  white-space: nowrap;
+}
+.lr-monitor-advanced-filters {
+  display: grid;
+  min-width: 248px;
+  gap: 14px;
+}
+.lr-monitor-advanced-filters__section {
+  display: grid;
+  gap: 7px;
+}
+.lr-monitor-advanced-filters__label {
+  color: var(--lr-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.lr-monitor-advanced-filters .lr-tag-filter {
+  min-height: 36px;
+}
+.lr-monitor-advanced-filters__clear {
+  justify-self: start;
+  padding-inline: 0;
+}
+@media (max-width: 900px) {
+  .lr-monitor-header {
+    grid-template-columns: auto 1fr;
+  }
+  .lr-monitor-header__state-filter {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .lr-monitor-header__tools {
+    grid-column: 2;
+  }
+}
+@media (max-width: 520px) {
+  .lr-monitor-header__tools {
+    gap: 8px !important;
+  }
+  .lr-monitor-header__search {
+    width: 118px;
+  }
+  .lr-monitor-header__state-filter {
+    justify-self: start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .lr-monitor-header__state-filter .ant-radio-group {
+    width: max-content;
+  }
 }
 .lr-stats-metric-toggle {
   box-sizing: border-box;
@@ -344,7 +554,6 @@
 .lr-stat--duration {
   opacity: 0;
   visibility: hidden;
-  transform: translateX(4px);
   transition:
     opacity 240ms ease,
     transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -412,7 +621,7 @@
   color: var(--lr-error);
 }
 .lr-room-card {
-  border-top-width: 5px !important;
+  border-top-width: 3px !important;
   transition: transform 260ms var(--lr-bounce) !important;
 }
 .lr-room-card,
@@ -473,6 +682,7 @@
   overflow: hidden;
   font-size: 16px;
   line-height: 1.2;
+  padding-left: 14px;
 }
 
 .lr-floating-recorder-toggle.ant-btn {
@@ -733,7 +943,7 @@
 }
 .lr-room-card__actions {
   display: flex;
-  gap: 2px;
+  gap: 8px;
   flex-wrap: nowrap;
 }
 .lr-room-card__actions > * {
@@ -744,6 +954,25 @@
   min-width: 0;
   width: 100%;
   white-space: nowrap;
+}
+.lr-room-card__actions--live {
+  display: grid;
+  grid-template-columns: 36px 36px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.lr-room-card__actions--live > * {
+  min-width: 0;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .ant-btn {
+  width: 36px;
+  padding-inline: 0;
+  overflow: hidden;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .lr-room-card__action-label {
+  display: none;
+}
+.lr-room-card__actions--live > :nth-child(-n + 2) .ant-btn .anticon {
+  margin-inline-end: 0;
 }
 .lr-room-card__actions--compact .ant-btn {
   padding-inline: 8px;
@@ -760,6 +989,46 @@
 .lr-room-card__actions .ant-btn-primary,
 .lr-room-card__actions .ant-btn-dangerous {
   border: 2px solid var(--lr-ink) !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled),
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #fff !important;
+  border-color: var(--lr-ink) !important;
+  background-color: var(--lr-error) !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled)::before,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled)::before {
+  position: absolute;
+  z-index: 0;
+  top: -50%;
+  right: -50%;
+  bottom: -50%;
+  left: -50%;
+  content: "";
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.48) 0 3px,
+    transparent 3px 10px
+  );
+  animation: lr-record-stop-warning-stripes 4000ms linear infinite !important;
+}
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled) > *,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) > * {
+  position: relative;
+  z-index: 1;
+  color: inherit !important;
+}
+@keyframes lr-record-stop-warning-stripes {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-56px);
+  }
 }
 .lr-statusbar {
   display: inline-flex;
@@ -870,4 +1139,384 @@
   background: var(--lr-yellow);
   color: #000;
   font-weight: 900;
+}
+
+/* 设置页 · 后处理管线：连续总线、显式接口与可切换旁路。 */
+.lr-pipeline-flow {
+  margin: 8px 0 24px;
+  --pipe-color: var(--lr-teal);
+  --pipeline-left-shift: 15px;
+}
+.lr-pipeline-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-surface-alt);
+}
+.lr-pipeline-summary strong {
+  font-size: 15px;
+}
+.lr-pipeline-summary p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--lr-muted);
+}
+.lr-pipeline-summary > span {
+  padding: 5px 10px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-yellow);
+  color: #000;
+  font-size: 22px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.lr-pipeline-summary small {
+  font-size: 11px;
+  font-weight: 600;
+}
+.lr-pipeline-terminal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  min-height: 36px;
+  padding-left: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+.lr-pipeline-terminal i {
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 2px solid var(--lr-ink);
+  border-radius: 50%;
+  background: var(--lr-yellow);
+}
+.lr-pipeline-terminal::after {
+  content: "";
+  position: absolute;
+  left: calc(20px - var(--pipeline-left-shift));
+  top: 50%;
+  bottom: 0;
+  width: 8px;
+  border-inline: 2px solid var(--lr-ink);
+  background: var(--pipe-color);
+}
+.lr-pipeline-terminal--end::after {
+  top: 0;
+  bottom: 50%;
+}
+.lr-pipeline-terminal--end i {
+  background: var(--lr-pink);
+  border-radius: 0;
+}
+.lr-pipeline-terminal > span {
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.lr-pipeline-row {
+  position: relative;
+  isolation: isolate;
+  margin-left: calc(-1 * var(--pipeline-left-shift));
+  padding: 20px 0;
+}
+.lr-pipeline-route {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+}
+.lr-pipeline-route--out {
+  top: auto;
+  bottom: 0;
+}
+.lr-pipeline-route path,
+.lr-pipeline-bypass line {
+  fill: none;
+  stroke-linejoin: round;
+}
+.lr-pipeline-route__wall {
+  stroke: var(--lr-ink);
+  stroke-width: 8;
+}
+.lr-pipeline-route__core {
+  stroke: var(--pipe-color);
+  stroke-width: 4;
+}
+.lr-pipeline-route__flow {
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 2 16;
+  /* 相位由整条管线按累计弧长统一驱动。 */
+}
+.lr-pipeline-bypass {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 100%;
+  z-index: 0;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: visible;
+}
+/* 接通只改变管芯颜色，白点独立绘制在最上层并持续循环。 */
+.lr-pipeline-row.is-on .lr-pipeline-route__core,
+.lr-pipeline-row.is-bypass .lr-pipeline-bypass .lr-pipeline-route__core {
+  animation: lr-pipeline-connect 400ms ease-out;
+}
+.lr-pipeline-row.is-bypass .lr-pipeline-bypass {
+  visibility: visible;
+}
+.lr-pipeline-step {
+  position: relative;
+  z-index: 1;
+  margin-left: 48px;
+  padding: 14px 16px 12px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-surface);
+  transition:
+    background 300ms ease,
+    border-color 300ms ease;
+}
+.lr-pipeline-step__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lr-pipeline-step__num {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-yellow);
+  color: #000;
+  font-size: 12px;
+  font-weight: 900;
+  transform: rotate(-5deg);
+  transition:
+    background 300ms ease,
+    transform 400ms var(--lr-bounce);
+}
+.lr-pipeline-row:nth-of-type(3n) .lr-pipeline-step__num {
+  background: var(--lr-pink);
+  transform: rotate(4deg);
+}
+.lr-pipeline-row:nth-of-type(3n + 1) .lr-pipeline-step__num {
+  background: var(--lr-teal);
+}
+.lr-pipeline-step__name {
+  font-size: 14px;
+  font-weight: 800;
+  cursor: help;
+}
+.lr-pipeline-step__spacer {
+  flex: 1;
+}
+.lr-pipeline-step__desc {
+  margin-top: 6px;
+  color: var(--lr-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.lr-pipeline-step__ctrl {
+  margin-top: 8px;
+}
+.lr-pipeline-step .ant-form-item {
+  margin-bottom: 0;
+}
+/* 接口与弯管共用 SVG 坐标，避免卡片边框和内边距引入定位偏差。 */
+.lr-pipeline-port {
+  fill: var(--pipe-color);
+  stroke: var(--lr-ink);
+  stroke-width: 2;
+}
+.lr-pipeline-port-label {
+  position: absolute;
+  left: 86px;
+  padding: 0 6px;
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  font-size: 10px;
+  line-height: 16px;
+  z-index: 3;
+  pointer-events: none;
+}
+.lr-pipeline-port-label--in {
+  top: 32px;
+}
+.lr-pipeline-port-label--out {
+  bottom: 32px;
+}
+.lr-pipeline-row.is-bypass .lr-pipeline-route,
+.lr-pipeline-row.is-bypass .lr-pipeline-port,
+.lr-pipeline-row.is-bypass .lr-pipeline-port-label {
+  visibility: hidden;
+}
+.lr-pipeline-row.is-bypass .lr-pipeline-step {
+  border-style: dashed;
+  border-color: var(--lr-muted);
+  background: #fff;
+}
+.lr-pipeline-row.is-bypass .lr-pipeline-step__num {
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  transform: rotate(0);
+}
+.lr-pipeline-note {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--lr-yellow);
+  color: var(--lr-muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+@keyframes lr-pipeline-connect {
+  from {
+    stroke: var(--lr-surface-alt);
+  }
+  to {
+    stroke: var(--pipe-color);
+  }
+}
+@media (max-width: 480px) {
+  .lr-pipeline-step {
+    padding: 12px 10px 10px;
+  }
+  .lr-pipeline-step__head {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .lr-pipeline-step__name {
+    font-size: 12px;
+  }
+  .lr-pipeline-step__num {
+    width: 25px;
+    height: 25px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-pipeline-flow *,
+  .lr-pipeline-flow *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.lr-room-avatar {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  width: var(--lr-avatar-size, 32px);
+  height: var(--lr-avatar-size, 32px);
+  overflow: hidden;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--lr-surface-alt);
+  color: #000;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+}
+.lr-room-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.lr-room-avatar--fallback {
+  font-size: calc(var(--lr-avatar-size, 32px) * 0.44);
+}
+.lr-room-avatar--bilibili {
+  background: var(--lr-teal);
+}
+.lr-room-avatar--douyin {
+  background: var(--lr-pink);
+}
+.lr-room-avatar--live {
+  outline: 3px solid var(--lr-pink);
+  outline-offset: 1px;
+}
+
+.lr-room-card__container {
+  position: relative;
+}
+.lr-room-card__container .lr-room-card {
+  position: relative;
+}
+.lr-room-card .ant-card-head {
+  position: relative;
+}
+.lr-room-card__corner {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 50%;
+  width: 60px;
+  height: 50px;
+  overflow: hidden;
+  transform: translateY(-50%);
+  pointer-events: auto;
+}
+.lr-room-card__corner-rot {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  width: 50px;
+  height: 50px;
+}
+.lr-room-card__avatar-trigger {
+  position: absolute;
+  display: inline-flex;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: zoom-in;
+}
+.lr-room-card__avatar-preview {
+  width: 120px;
+  height: 120px;
+}
+.lr-room-card__avatar-preview .lr-room-avatar {
+  width: 120px;
+  height: 120px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+}
+.lr-room-card__corner-logo {
+  position: absolute;
+  z-index: 1;
+  right: 8px;
+  bottom: 0;
+  transform-origin: right bottom;
+}
+.lr-room-card__corner-logo .lr-platform-logo-tag {
+  display: inline-flex;
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  min-height: 12px;
+  align-items: center;
+  margin: 0;
+  padding: 0 !important;
+  opacity: 0.8;
+}
+.lr-room-card__corner-logo .lr-platform-icon {
+  width: 10px;
+  height: 10px;
+}
+.lr-room-card .lr-room-card__title-row {
+  padding-left: 30px;
 }

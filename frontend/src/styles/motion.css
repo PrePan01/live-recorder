@@ -98,7 +98,7 @@
   }
 }
 @media (max-width: 720px) {
-  .lr-app-content {
+  .lr-app-content__inner {
     padding: 12px !important;
   }
   .lr-page-header {

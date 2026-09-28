@@ -19,10 +19,20 @@
   overflow: visible;
   border-top-width: 5px !important;
 }
+.ant-statistic-title {
+  color: var(--lr-muted) !important;
+}
+
+/* 可访问性：占位符文本对比度达标（默认 #bfbfbf 仅 1.83:1，孟菲斯条款要求 4.5:1）。 */
+.ant-select-placeholder,
+.ant-select-selection-placeholder {
+  color: var(--lr-muted) !important;
+}
+
 .ant-card-head {
   min-height: 45px !important;
   padding: 0 14px !important;
-  border-bottom: 1px solid var(--lr-ink) !important;
+  border-bottom: 1px dashed var(--lr-ink) !important;
   background: transparent !important;
 }
 .ant-card-head-title {
@@ -501,6 +511,8 @@ textarea.ant-input,
 .ant-tag-red,
 .ant-tag-error {
   background: var(--lr-pink);
+  /* 孟菲斯粉底禁白字/暗红字：黑字在粉底两主题下均 ≥4.5:1（axe 实测错误态红标超阈）。 */
+  color: #000 !important;
 }
 .lr-platform-logo-tag {
   display: inline-grid !important;

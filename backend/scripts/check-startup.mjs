@@ -76,10 +76,18 @@ async function start(port, mode = 'fake') {
         (await response.json()).serviceStatus.instanceId === instance.instanceId
       ) {
         for (let i = 0; i < 25; i++) {
-          const status = await fetch(
-            `${instance.baseUrl}/api/v1/service/status`,
-            { signal: AbortSignal.timeout(1500) },
-          );
+          // 打包刚结束时系统负载高，单次探测可能超时——原实现未捕获直接未捕获崩溃（exit 1）。
+          // 改为：单次 3s + 同一探测最多 3 次重试；重试后仍拿不到响应才断言失败（不掩盖真故障）。
+          let status = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            status = await fetch(
+              `${instance.baseUrl}/api/v1/service/status`,
+              { signal: AbortSignal.timeout(3000) },
+            ).catch(() => null);
+            if (status) break;
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+          assert.ok(status, `service/status 第 ${i + 1} 次探测超时（3 次重试后仍失败）`);
           assert.equal(status.status, 200);
         }
         console.log(

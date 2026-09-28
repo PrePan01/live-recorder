@@ -21,7 +21,7 @@ import {
   useWallStore,
   type WallGrid as GridLayout,
 } from "../../stores/wallStore";
-import WallGrid from "../../components/WallGrid";
+import WallGrid from "./components/WallGrid";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import { PlatformIcon } from "../../components/PlatformLogo";
 import LiveStatusTag from "../../components/LiveStatusTag";

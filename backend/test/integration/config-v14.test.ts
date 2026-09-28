@@ -6,6 +6,7 @@ import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { exportConfigToPath } from '../../src/api/routes/config.js';
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 
 const HOST = { host: '127.0.0.1:43120' };
 
@@ -105,6 +106,47 @@ describe('v1.4 config export/import', () => {
     expect(services.settings.load()?.recordingDirectory).toBe(dir);
     expect(services.rooms.list().some((r) => r.url === 'https://live.douyin.com/9')).toBe(true);
     await app.close();
+  });
+
+  it('restores completed recording metadata so dashboard statistics survive export/import', async () => {
+    const source = newServices();
+    const { app: sourceApp } = buildApp(source);
+    source.settings.save({ ...structuredClone(DEFAULT_SETTINGS), recordingDirectory: await mkdtemp(path.join(tmpdir(), 'lr-stats-backup-')) });
+    const room = source.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/88', displayName: '统计房间' });
+    const recording = source.recordings.create({
+      roomId: room.id,
+      roomName: room.displayName,
+      platform: room.platform,
+      streamSessionId: 'session-88',
+      streamTitle: '历史直播',
+    });
+    source.recordings.update(recording.id, {
+      state: 'completed',
+      endedAt: '2026-09-12T10:30:00.000Z',
+      fileSizeBytes: 4096,
+    });
+    source.db.prepare('UPDATE recordings SET started_at = ?, created_at = ? WHERE id = ?')
+      .run('2026-09-12T10:00:00.000Z', '2026-09-12T10:00:00.000Z', recording.id);
+
+    const config = (await sourceApp.inject({ method: 'GET', url: '/api/v1/config/export', headers: HOST })).json().config;
+    expect(config.recordings.rooms[0].recordings).toHaveLength(1);
+
+    const target = newServices();
+    const { app: targetApp } = buildApp(target);
+    const imported = await targetApp.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST, payload: { config } });
+    expect(imported.statusCode).toBe(200);
+    expect(imported.json().recordings).toEqual({ matchedRooms: 1, skippedRooms: 0, recordings: 1 });
+
+    const stats = await targetApp.inject({
+      method: 'GET',
+      url: '/api/v1/stats/recordings?from=2026-09-12T00:00:00.000Z&to=2026-09-12T23:59:59.999Z',
+      headers: HOST,
+    });
+    expect(stats.statusCode).toBe(200);
+    expect(stats.json().totals).toMatchObject({ recordings: 1, completed: 1, bytes: 4096, durationMs: 1_800_000 });
+
+    await sourceApp.close();
+    await targetApp.close();
   });
 
   it('export-file keeps the native save dialog out of tests', async () => {

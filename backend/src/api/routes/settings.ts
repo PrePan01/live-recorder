@@ -367,6 +367,15 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
   if (typeof config.maxConcurrency !== 'number' || config.maxConcurrency < 1 || config.maxConcurrency > 2) {
     return new AppError('PIPELINE_CONFIG_INVALID', 'maxConcurrency 需为 1-2（V5 定 N=2）');
   }
+  if (config.exportAudio !== undefined && typeof config.exportAudio !== 'boolean') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'exportAudio 必须为布尔值');
+  }
+  if (config.exportCover !== undefined && typeof config.exportCover !== 'boolean') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'exportCover 必须为布尔值');
+  }
+  if (config.outputFormat !== undefined && config.outputFormat !== 'source' && config.outputFormat !== 'mp4') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'outputFormat 必须为 source 或 mp4');
+  }
   return null;
 }
 

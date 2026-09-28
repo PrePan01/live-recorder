@@ -145,10 +145,6 @@ export class Scheduler {
     );
   }
 
-  /**
-   * 提交全量开播检测，不等待队列清空。监控页只需快速恢复可交互状态，检测
-   * 结果会通过 SSE 推送；若同步等待，房间较多时很容易超过前端请求超时。
-   */
   queueEnabledRoomChecks(): { queued: number; alreadyRunning: boolean } {
     if (this.enabledRoomChecks) return { queued: 0, alreadyRunning: true };
     const rooms = this.services.rooms
@@ -173,12 +169,10 @@ export class Scheduler {
     return { queued: rooms.length, alreadyRunning: false };
   }
 
-  /** 新 Cookie 已落盘，允许后续抖音检测重新发起请求。 */
   resetDouyinCookieFailure(): void {
     this.douyinCookieExpired = false;
   }
 
-  /** 等待已在途的检测完成，供凭证更新后避免复用仍携带旧 Cookie 的请求。 */
   async waitForRoomCheck(roomId: string): Promise<void> {
     await this.checking.get(roomId);
   }
@@ -239,6 +233,7 @@ export class Scheduler {
       message: "抖音授权已失效，请到设置页重新授权",
       occurredAt: now,
       errorCode: "DOUYIN_COOKIE_EXPIRED",
+      retryable: false,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }
@@ -282,6 +277,40 @@ export class Scheduler {
     });
   }
 
+  /** 在大于等于三分钟的检测时报出三次相同的错误，就发送告警通知 */
+  private checkErrorVotes = new Map<
+    string,
+    { count: number; lastCountedAt: number }
+  >();
+
+  private checkErrorGate(roomId: string, errorCode: string): boolean {
+    const now = this.services.clock.now();
+    const key = `${roomId}|${errorCode}`;
+    // 连续语义：出现别的错误码=该房旧票断连作废（各算各账、重新计数）。
+    for (const existing of [...this.checkErrorVotes.keys()]) {
+      if (existing !== key && existing.startsWith(`${roomId}|`)) {
+        this.checkErrorVotes.delete(existing);
+      }
+    }
+    const current = this.checkErrorVotes.get(key);
+    if (!current) {
+      this.checkErrorVotes.set(key, { count: 1, lastCountedAt: now });
+      return false;
+    }
+    // 相邻两票至少间隔 60 秒：检测间隔比 60s 快时，不足的轮次不计票也不清票。
+    if (now - current.lastCountedAt >= 60_000) {
+      current.count += 1;
+      current.lastCountedAt = now;
+    }
+    return current.count >= 3;
+  }
+
+  private clearErrorVotes(roomId: string): void {
+    for (const key of [...this.checkErrorVotes.keys()]) {
+      if (key.startsWith(`${roomId}|`)) this.checkErrorVotes.delete(key);
+    }
+  }
+
   /** 平台整体暂不可用时收敛为一个平台级事件，避免一个轮询批次按房间数刷屏。 */
   private createCheckAlert(
     room: Room,
@@ -297,6 +326,7 @@ export class Scheduler {
       occurredAt: this.services.clock.iso(),
       ...(platformWide ? {} : { roomId: room.id }),
       errorCode: error.code,
+      retryable: error.retryable ?? null,
     });
     this.services.events.emit({ type: "alert:created", data: alert });
   }
@@ -364,13 +394,19 @@ export class Scheduler {
     // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
     // 不让这个已在途请求的结果覆盖全局失效标记。
     if (room.platform === "douyin" && this.douyinCookieExpired) return;
-    // 适配器已从平台响应提取主播昵称；检测成功后持久化并通过 SSE 推送，
-    // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名。
+    // 适配器已从平台响应提取主播昵称/头像；检测成功后持久化并通过 SSE 推送，
+    // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名与头像。
     const detectedName = status.displayName?.trim();
-    // 仅填补空名称，保留用户手动设置的自定义名称。
+    const detectedAvatar = status.avatarUrl?.trim() || null;
+    // 名称仅填补空（保留用户自定义）；头像仅平台给出新值时更新，缺失/失败不清空已有值（兼容历史+静默降级）。
+    const patch: Partial<Pick<Room, "displayName" | "avatarUrl">> = {};
+    if (detectedName && !room.displayName.trim())
+      patch.displayName = detectedName;
+    if (detectedAvatar && detectedAvatar !== room.avatarUrl)
+      patch.avatarUrl = detectedAvatar;
     const checkedRoom =
-      detectedName && !room.displayName.trim()
-        ? this.services.rooms.update(room.id, { displayName: detectedName })
+      Object.keys(patch).length > 0
+        ? this.services.rooms.update(room.id, patch)
         : room;
     if (checkedRoom !== room) this.emitRoom(room.id);
     // #128 抖音标题回退加固：记录标题来源/回退标记，SSE 供前端展示回退/占位状态。
@@ -398,21 +434,19 @@ export class Scheduler {
         room.id,
         status.status === "live" ? (status.streamTitle ?? null) : null,
       );
-      // 未登录 B站 时平台只给低清晰度。提前把「这个房间现在能录到什么」存下来，
-      // 让监控卡片在按下录制之前就能说明，而不是录完翻历史才发现画质不符。
       this.services.rooms.setAvailableQualities(
         room.id,
         status.status === "live" ? (status.availableQualities ?? []) : [],
       );
     }
     if (status.status === "live" || status.status === "offline") {
+      // 恢复清理：成功检测=该房计数清零，告警列表该条由 resolveRoomAlerts 隐藏留档。
+      this.clearErrorVotes(room.id);
       this.resolveRoomAlerts(room.id);
       this.recordCoverage(room.id);
       if (status.status === "offline") this.recordTodayForecast(room.id);
     }
     if (status.status === "live") {
-      // 录制中的房间仍需继续检测（例如确认下播后自动收口），但开播结果不能
-      // 覆盖已有会话的 recording 状态；也无需再次进入自动录制决策。
       if (this.manager.isRoomActive(room.id)) {
         this.services.rooms.setState(room.id, "recording", {
           lastCheckedAt: this.services.clock.iso(),
@@ -421,9 +455,6 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      // A confirmed offline→live transition has a narrow polling interval. First
-      // discovery while already live is still useful, but is stored as a lower-
-      // confidence interval instead of claiming the check time is the start time.
       if (room.lastLiveStatus !== "live" && status.platformStartedAt) {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
           source: "platform",
@@ -446,7 +477,6 @@ export class Scheduler {
         room.lastLiveStatus === "offline" &&
         checkedRoom.enabled &&
         checkedRoom.liveNotificationEnabled;
-      // #162 添加房间仅解析显示名（nameOnly）：识别名称后置 idle，不触发录制（录制仍由正常调度周期按 autoRecord 决定）。
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
@@ -455,12 +485,12 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      // 统一语义（#75/#76/#77，QA 定口径）：有效 autoRecord = room.autoRecord ?? settings.autoRecord（默认 false），
-      // 统一决定调度器与手动 /check——false 时任何检测（含手动）都不自动开始录制（仅检测更新状态）；
-      // true 时检测即自动开始。
       const globalAuto = this.services.settings.load()?.autoRecord ?? false;
       const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
-      if (!effectiveAuto) {
+      const autoStoppedThisSession = Boolean(
+        checkedRoom.autoRecordStoppedSession,
+      );
+      if (!effectiveAuto || autoStoppedThisSession) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
           lastError: null,
@@ -503,15 +533,13 @@ export class Scheduler {
           occurredAt: this.services.clock.iso(),
           roomId: room.id,
           errorCode: appErr.code,
+          retryable: appErr.retryable,
         });
         this.services.events.emit({ type: "alert:created", data: alert });
       }
       return;
     }
     if (status.status === "offline") {
-      // 正在录制的房间不在这里停录：交回录制器自己的存活判定——流真的断了会走续录或收尾，
-      // 并落上真正的结束原因。否则「打开应用时的一次检测」就可能把正在进行的录制掐掉，
-      // 而且这种系统停录会被记成用户手动停止，事后完全分不出来。
       if (this.manager.isRoomActive(room.id)) return;
       this.services.rooms.setState(room.id, "idle", {
         lastCheckedAt: this.services.clock.iso(),
@@ -537,12 +565,25 @@ export class Scheduler {
       this.markDouyinCookieExpired();
       return;
     }
-    this.setCheckFailure(room.id, err);
-    this.createCheckAlert(
-      room,
-      err,
-      status.status === "restricted" ? "warning" : "error",
-    );
+    if (this.checkErrorGate(room.id, err.code)) {
+      // 满 3 票（同房同码、票距≥60s）：恢复原有行为——卡片标红 + 进告警中心（不发桌面通知）。
+      this.setCheckFailure(room.id, err);
+      this.createCheckAlert(
+        room,
+        err,
+        status.status === "restricted" ? "warning" : "error",
+      );
+      return;
+    }
+    // 前 2 票：完全静默——不标红、不进告警（[douyin-enter] 等诊断日志即留痕）。
+    // 房间状态从 checking 收回 idle（不留转圈、不留错误），录制中的会话不动其状态。
+    if (!this.manager.isRoomActive(room.id)) {
+      this.services.rooms.setState(room.id, "idle", {
+        lastCheckedAt: this.services.clock.iso(),
+        lastError: null,
+      });
+      this.emitRoom(room.id);
+    }
   }
 
   private recordCoverage(roomId: string): void {
@@ -621,8 +662,6 @@ export class Scheduler {
       windowEndAt: prediction.windowEndTimestamp,
       generatedAt: this.services.clock.iso(),
     });
-    // INSERT OR IGNORE can mean another run already persisted this room/day/window.
-    // Either way a concrete forecast exists before the in-memory key is set.
     this.forecastRecordedFor.add(key);
   }
 
@@ -636,8 +675,6 @@ export class Scheduler {
     from: string,
     now: number,
   ): PredictionCoverageInterval[] {
-    // 直接查而不是走 recordings.list：后者有 100 条上限，录制分段多的房间会被截断，
-    // 覆盖不完整又会把命中率带偏。
     const recordings = this.services.db
       .prepare(
         "SELECT started_at AS startedAt, ended_at AS endedAt FROM recordings WHERE room_id = ? AND started_at >= ? ORDER BY started_at",

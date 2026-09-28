@@ -337,4 +337,24 @@ describe('BilibiliAdapter', () => {
     expect(sentCookie).toBe('SESSDATA=xxx;buvid3=yyy');
     expect(hasTimeoutSignal).toBe(true);
   });
+
+  it("提取头像：get_anchor_in_room 的 face → avatarUrl（该接口本就在调，0 额外请求）；缺失不置字段", async () => {
+    let anchorHits = 0;
+    const inner = routeFetcher(livePayload({ live_status: 0 }), { code: 0, data: { info: { uname: '测试主播', face: 'https://i0.hdslb.com/bfs/face/new.jpg' } } }, { code: 0, data: { title: '标题' } });
+    const counting = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).includes('get_anchor_in_room')) anchorHits += 1;
+      return inner(url, init);
+    }) as unknown as typeof fetch;
+    const a = new BilibiliAdapter(counting);
+    const off = await a.checkLiveStatus('https://live.bilibili.com/888');
+    expect(off.status).toBe('offline');
+    expect(off.displayName).toBe('测试主播');
+    expect(off.avatarUrl).toBe('https://i0.hdslb.com/bfs/face/new.jpg');
+    expect(anchorHits).toBe(1);
+
+    const noFace = new BilibiliAdapter(routeFetcher(livePayload({ live_status: 0 }), { code: 0, data: { info: { uname: '无脸' } } }, { code: 0, data: { title: '标题' } }));
+    const r2 = await noFace.checkLiveStatus('https://live.bilibili.com/888');
+    expect(r2.avatarUrl).toBeUndefined();
+  });
+
 });

@@ -11,6 +11,8 @@ interface AlertRow {
   resolved: number;
   room_id: string | null;
   error_code: string | null;
+  retryable: number | null;
+  read: number;
 }
 
 function rowToAlert(row: AlertRow): Alert {
@@ -23,33 +25,53 @@ function rowToAlert(row: AlertRow): Alert {
     resolved: row.resolved === 1,
     roomId: row.room_id ?? null,
     errorCode: row.error_code ?? null,
+    retryable: row.retryable == null ? null : row.retryable === 1,
+    read: row.read === 1,
   };
 }
 
 export class AlertRepository {
   constructor(private db: DB) {}
 
-  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
+  create(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null; retryable?: boolean | null }): Alert {
     const id = newId('alr');
     this.db
-      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved, room_id, error_code) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
-      .run(id, input.level, input.source, input.message, input.occurredAt, input.roomId ?? null, input.errorCode ?? null);
+      .prepare('INSERT INTO alerts (id, level, source, message, occurred_at, resolved, room_id, error_code, retryable) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)')
+      .run(id, input.level, input.source, input.message, input.occurredAt, input.roomId ?? null, input.errorCode ?? null, input.retryable == null ? null : input.retryable ? 1 : 0);
     return this.get(id)!;
   }
 
   /**
-   * 同一未读故障持续存在时只保留一条告警，并刷新发生时间。轮询失败不应
-   * 以房间数 × 检测轮次无限堆叠；一旦标记已读，后续再次失败会新建告警。
+   * 告警身份 = 来源 + 房间 + 错误码（码为空时退化用文案，避免内部错误互相覆盖）；
+   * 文案/级别/发生时间/可重试都是可刷新载荷。生命周期一个闭环：
+   * 已读但错误持续 → 只刷载荷与时间（不复活不重闹）；已恢复 → 复活为未读（复发再报）；
+   * 未读持续 → 刷新（原有语义）。恢复由 resolveForRoom 单独标记。
    */
-  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null }): Alert {
-    const existing = this.db
-      .prepare(`SELECT * FROM alerts
-        WHERE resolved = 0 AND source = ? AND message = ?
-          AND room_id IS ? AND error_code IS ?
-        ORDER BY occurred_at DESC LIMIT 1`)
-      .get(input.source, input.message, input.roomId ?? null, input.errorCode ?? null) as AlertRow | undefined;
+  createOrRefresh(input: { level: AlertLevel; source: string; message: string; occurredAt: string; roomId?: string | null; errorCode?: string | null; retryable?: boolean | null }): Alert {
+    const roomId = input.roomId ?? null;
+    const errorCode = input.errorCode ?? null;
+    const existing = (
+      errorCode != null
+        ? this.db
+            .prepare('SELECT * FROM alerts WHERE source = ? AND room_id IS ? AND error_code IS ? ORDER BY occurred_at DESC LIMIT 1')
+            .get(input.source, roomId, errorCode)
+        : this.db
+            .prepare('SELECT * FROM alerts WHERE source = ? AND room_id IS ? AND error_code IS NULL AND message = ? ORDER BY occurred_at DESC LIMIT 1')
+            .get(input.source, roomId, input.message)
+    ) as AlertRow | undefined;
     if (!existing) return this.create(input);
-    this.db.prepare('UPDATE alerts SET occurred_at = ? WHERE id = ?').run(input.occurredAt, existing.id);
+    const wasResolved = existing.resolved === 1;
+    this.db
+      .prepare('UPDATE alerts SET message = ?, level = ?, occurred_at = ?, retryable = COALESCE(?, retryable), resolved = CASE WHEN ? = 1 THEN 0 ELSE resolved END, read = CASE WHEN ? = 1 THEN 0 ELSE read END WHERE id = ?')
+      .run(
+        input.message,
+        input.level,
+        input.occurredAt,
+        input.retryable == null ? null : input.retryable ? 1 : 0,
+        wasResolved ? 1 : 0,
+        wasResolved ? 1 : 0,
+        existing.id,
+      );
     return this.get(existing.id)!;
   }
 
@@ -63,6 +85,16 @@ export class AlertRepository {
     const limit = opts.limit ?? 100;
     const rows = this.db.prepare(`SELECT * FROM alerts ${where} ORDER BY occurred_at DESC LIMIT ?`).all(limit) as AlertRow[];
     return rows.map(rowToAlert);
+  }
+
+  /** 标记已读（与恢复分离）：已读但错误持续时，后续同错只刷新不重闹。 */
+  markRead(id: string): Alert | null {
+    this.db.prepare('UPDATE alerts SET read = 1 WHERE id = ?').run(id);
+    return this.get(id);
+  }
+
+  markAllRead(): number {
+    return this.db.prepare('UPDATE alerts SET read = 1 WHERE read = 0').run().changes;
   }
 
   markResolved(id: string): Alert | null {
