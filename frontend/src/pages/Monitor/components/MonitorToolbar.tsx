@@ -1,19 +1,20 @@
 import {
   Button,
   Input,
-  Select,
+  Popover,
   Space,
-  Tag as AntTag,
   Tooltip,
   Typography,
 } from "antd";
 import {
   AppstoreOutlined,
+  FilterOutlined,
   ReloadOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
 import MemphisRadioGroup from "../../../components/MemphisRadioGroup";
 import { PlatformIcon } from "../../../components/PlatformLogo";
+import TagFilterSelect from "../../../components/TagFilterSelect";
 import type { Platform } from "../../../types/room";
 import type { Tag } from "../../../types/tag";
 
@@ -54,24 +55,13 @@ export function MonitorToolbar({
   refreshing,
   handleRefresh,
 }: MonitorToolbarProps) {
-  return (
-    <Space className="lr-page-header" wrap>
-      <Typography.Title level={4} style={{ margin: 0 }}>
-        监控总览
-      </Typography.Title>
-      <Space className="lr-page-actions" wrap>
-        <MemphisRadioGroup
-          options={[
-            { label: "全部", value: "全部" },
-            { label: `开播中 ${liveCount}`, value: "开播中" },
-            { label: `录制中 ${recordingCount}`, value: "录制中" },
-            { label: "收藏", value: "收藏" },
-          ]}
-          value={filter}
-          onChange={(e) =>
-            setFilter(e.target.value as "全部" | "开播中" | "录制中" | "收藏")
-          }
-        />
+  const activeAdvancedFilterCount =
+    (platformFilter === "全部" ? 0 : 1) + tagIds.length;
+
+  const advancedFilters = (
+    <div className="lr-monitor-advanced-filters">
+      <div className="lr-monitor-advanced-filters__section">
+        <span className="lr-monitor-advanced-filters__label">平台</span>
         <MemphisRadioGroup
           className="lr-platform-filter"
           aria-label="平台筛选"
@@ -95,56 +85,67 @@ export function MonitorToolbar({
             },
           ]}
           value={platformFilter}
-          onChange={(e) =>
-            setPlatformFilter(e.target.value as "全部" | Platform)
-          }
+          onChange={(e) => setPlatformFilter(e.target.value as "全部" | Platform)}
         />
-        <Select
-          mode="multiple"
-          allowClear
-          aria-label="标签筛选"
-          placeholder="标签"
-          className="lr-tag-filter"
-          style={{ width: 140, height: 36 }}
-          styles={{
-            root: { alignItems: "center" },
-            content: { alignItems: "center" },
-            placeholder: { top: "50%", transform: "translateY(-50%)" },
-          }}
-          maxTagCount="responsive"
+      </div>
+      <div className="lr-monitor-advanced-filters__section">
+        <span className="lr-monitor-advanced-filters__label">标签</span>
+        <TagFilterSelect
+          tags={tags}
           value={tagIds}
-          onChange={(v) => setTagIds(v as string[])}
-          optionRender={(option) => {
-            const tag = tags.find((item) => item.id === option.value);
-            return (
-              <AntTag color={tag?.color} style={{ marginInlineEnd: 0 }}>
-                {option.label}
-              </AntTag>
-            );
-          }}
-          tagRender={({ label, value, closable, onClose }) => {
-            const tag = tags.find((item) => item.id === value);
-            return (
-              <AntTag
-                className="lr-tag-filter__tag"
-                color={tag?.color}
-                closable={closable}
-                style={{ marginInlineEnd: 0 }}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClose={onClose}
-              >
-                {label}
-              </AntTag>
-            );
-          }}
-          options={tags.map((t) => ({
-            value: t.id,
-            label: t.name,
-          }))}
+          onChange={setTagIds}
+          placeholder="选择标签"
         />
+      </div>
+      {activeAdvancedFilterCount > 0 && (
+        <Button
+          type="link"
+          size="small"
+          className="lr-monitor-advanced-filters__clear"
+          onClick={() => {
+            setPlatformFilter("全部");
+            setTagIds([]);
+          }}
+        >
+          清除筛选
+        </Button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="lr-page-header lr-monitor-header">
+      <Typography.Title level={4} style={{ margin: 0 }}>
+        监控总览
+      </Typography.Title>
+      <MemphisRadioGroup
+        className="lr-monitor-header__state-filter"
+        options={[
+          { label: "全部", value: "全部" },
+          { label: `开播中 ${liveCount}`, value: "开播中" },
+          { label: `录制中 ${recordingCount}`, value: "录制中" },
+          { label: "收藏", value: "收藏" },
+        ]}
+        value={filter}
+        onChange={(e) =>
+          setFilter(e.target.value as "全部" | "开播中" | "录制中" | "收藏")
+        }
+      />
+      <Space className="lr-page-actions lr-monitor-header__tools">
+        <Popover
+          content={advancedFilters}
+          trigger={["hover", "click"]}
+          placement="bottomRight"
+          overlayClassName="lr-monitor-filter-popover"
+        >
+          <Button
+            aria-label="更多筛选"
+            icon={<FilterOutlined />}
+            className="lr-monitor-filter-trigger"
+          >
+            筛选{activeAdvancedFilterCount > 0 ? ` ${activeAdvancedFilterCount}` : ""}
+          </Button>
+        </Popover>
         <MemphisRadioGroup
           className="lr-monitor-view-toggle"
           aria-label="显示方式"
@@ -174,9 +175,9 @@ export function MonitorToolbar({
           }}
         />
         <Input.Search
+          className="lr-monitor-header__search"
           allowClear
           placeholder="搜索房间"
-          style={{ width: 180 }}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
@@ -189,6 +190,6 @@ export function MonitorToolbar({
           }}
         ></Button>
       </Space>
-    </Space>
+    </div>
   );
 }
