@@ -52,4 +52,5 @@ export interface PipelineConfig {
   exportAudio: boolean;
   exportCover: boolean;
   outputFormat: "source" | "mp4";
+  deleteSourceAfterConvert: boolean;
 }

@@ -376,6 +376,9 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
   if (config.outputFormat !== undefined && config.outputFormat !== 'source' && config.outputFormat !== 'mp4') {
     return new AppError('PIPELINE_CONFIG_INVALID', 'outputFormat 必须为 source 或 mp4');
   }
+  if (config.deleteSourceAfterConvert !== undefined && typeof config.deleteSourceAfterConvert !== 'boolean') {
+    return new AppError('PIPELINE_CONFIG_INVALID', 'deleteSourceAfterConvert 必须为布尔值');
+  }
   return null;
 }
 

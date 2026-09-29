@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -38,7 +38,7 @@ export class PipelineManager {
   pipelineConfig(): PipelineConfig {
     const settings = this.services.settings.load();
     const stored = settings?.pipeline;
-    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, outputFormat: 'source', ...(stored ?? {}) };
+    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, outputFormat: 'source', deleteSourceAfterConvert: false, ...(stored ?? {}) };
   }
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
@@ -165,6 +165,7 @@ export class PipelineManager {
       exportAudio: false,
       exportCover: true,
       outputFormat: 'source',
+      deleteSourceAfterConvert: false,
       ...(run.configSnapshot as Partial<PipelineConfig>),
     };
   }
@@ -301,9 +302,23 @@ export class PipelineManager {
                 },
                 });
           if (converted) {
+            const sourcePath = recording.filePath;
             this.services.recordings.update(recording.id, { filePath: converted.outPath, fileSizeBytes: converted.sizeBytes });
             recording.filePath = converted.outPath;
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'ok', path: converted.outPath, sizeBytes: converted.sizeBytes, endedAt: this.services.clock.iso() });
+            if (config.deleteSourceAfterConvert) {
+              try {
+                await unlink(sourcePath);
+              } catch {
+                finalStatus = 'partial';
+                this.services.alerts.create({
+                  level: 'warning',
+                  source: 'pipeline',
+                  message: `已转为 MP4，但删除源文件失败（${recording.id}）`,
+                  occurredAt: this.services.clock.iso(),
+                });
+              }
+            }
           } else {
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'failed', error: '格式转换失败，已保留并使用源文件', endedAt: this.services.clock.iso() });
             finalStatus = 'partial';
