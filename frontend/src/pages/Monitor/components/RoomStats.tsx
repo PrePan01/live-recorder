@@ -115,10 +115,12 @@ export default function RoomStats({
   const duration = durationValue(startedAt, now);
   const [lastDuration, setLastDuration] = useState(duration);
 
-  // Keep the final time visible during fade-out when activeRecording is cleared.
-  if (recording && lastDuration !== duration) {
-    setLastDuration(duration);
-  }
+  useEffect(() => {
+    if (!recording) return;
+    setLastDuration((previous) =>
+      previous === duration ? previous : duration,
+    );
+  }, [recording, duration]);
 
   return (
     <div ref={ref} style={{ display: "flex", gap: 8, width: "100%" }}>
