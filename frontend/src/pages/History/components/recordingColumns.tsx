@@ -21,6 +21,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../../../types/error";
+import { failurePrimaryText } from "../../../utils/failureReason";
 import { describeError } from "../../../utils/errorMap";
 import { formatBytes, formatDuration, formatTime } from "../../../utils/format";
 import {
@@ -135,7 +136,7 @@ export function buildRecordingColumns(
     {
       title: "完整性",
       dataIndex: "integrity",
-      width: 70,
+      width: 80,
       render: (v: Recording["integrity"], r) => (
         <Space size={4}>
           <IntegrityTag
@@ -324,7 +325,9 @@ export function buildRecordingColumns(
         return (
           <Space direction="vertical" size={0}>
             {f ? (
-              <Typography.Text type="danger">{f.message}</Typography.Text>
+              <Typography.Text type="danger">
+                {failurePrimaryText(f)}
+              </Typography.Text>
             ) : null}
             {missingSeconds > 0 ? (
               <GapDetail
@@ -357,7 +360,9 @@ export function buildRecordingColumns(
             type="link"
             icon={<ExperimentOutlined />}
             disabled={
-              !r.filePath || r.state === "recording" || r.state === "reconnecting"
+              !r.filePath ||
+              r.state === "recording" ||
+              r.state === "reconnecting"
             }
             onClick={() => setPipelineRec(r)}
           >

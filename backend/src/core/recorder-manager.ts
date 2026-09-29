@@ -14,8 +14,11 @@ import {
   causeLabel,
   failureText,
   humanizeFailure,
+  isWriteFailure,
   reconnectExhausted,
+  withReasonCategory,
   writeFailure,
+  writeRestartExhausted,
 } from "./recording-failure.js";
 import { recordingFilePath } from "../storage/file-organizer.js";
 import { checkFileIntegrity } from "../recorder/integrity.js";
@@ -52,11 +55,13 @@ export const HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const HIGHLIGHT_EXPORT_WATCHDOG_REFRESH_MS = 1_000;
 /** 录像待写上限大小 */
 const MAX_SHARED_RECORDING_PENDING_BYTES = 32 * 1024 * 1024;
-/** 写积压触顶后、判定「真死」前的持续等待宽限（PrePan：繁忙=等待，录制不中断）。
- * 标定依据：录制目录可为 USB 盘（PrePan 有意配置），USB 休眠/重协商瞬断达秒级至十秒级；
- * 32MB 积压在常见码率下已覆盖约 20-40 秒缓冲，叠加 180 秒宽限足以扛 USB 级波动；
- * 持续三分钟完全排不出（设备真死）才停录。 */
+/** 写积压触顶后、判定「真死」前的持续等待宽限 */
 const SHARED_WRITER_SLOW_GRACE_MS = 180_000;
+
+/**
+ * 失败自动恢复录制尝试次数
+ */
+const WRITE_RESTART_ATTEMPTS = 3;
 /** 开录后多久还没写出文件即视为拿不到数据 */
 const START_TIMEOUT_MS = 30_000;
 /** Preview has no recording-level start watchdog; recycle a source that never yields its first byte. */
@@ -103,6 +108,14 @@ interface ActiveSession {
   gapStartAt: number | null;
   /** 累计缺失时长（毫秒）。 */
   missingMs: number;
+  /** 写盘失败自动恢复已用次数（PrePan 钦定共 3 次；稳定录满 STABLE_RESET_MS 归还）。 */
+  writeRestartCount: number;
+  /** 写盘自动恢复尝试进行中：手动开录（PrePan 钦定边界）据此让位。 */
+  writeRestartPending: boolean;
+  /** 用户手动介入后置位：恢复循环逐次检查，立即停止自动重启。 */
+  writeRestartCancelled: boolean;
+  /** 自动恢复流程收口信号：手动开录等它结束再接管，避免两路抢同一房间。 */
+  writeRestartDone?: Promise<void> | undefined;
   /** 最近一次恢复录制的时刻；用于重连额度按轮重置。 */
   lastRecoveryAt: number;
   /** 拉流会话代次：被取代的旧会话据此停止处理事件，避免两路拉流同时写同一个文件。 */
@@ -277,6 +290,9 @@ export class RecorderManager {
       lastDataAt: now,
       gapStartAt: null,
       missingMs: 0,
+      writeRestartCount: 0,
+      writeRestartPending: false,
+      writeRestartCancelled: false,
       lastRecoveryAt: now,
       generation: 0,
       pullDone: null,
@@ -925,16 +941,19 @@ export class RecorderManager {
                 } catch (error) {
                   session.recording = null;
                   sharedRecording.writer.destroy();
-                  await this.failRecording(
+                  // 写盘失败不停死录制（PrePan 需求①）：转交写盘恢复策略（退避限次
+                  // 自动重启新段、每场封顶、终停带明确原因）。预览帧循环不能被退避
+                  // 等待阻塞，这里不等待恢复完成；后续帧已因 session.recording=null 不再写盘。
+                  void this.handleDisconnect(
                     room,
                     sharedRecording.session.recordingId,
                     writeFailure(error, {
                       roomId,
                       recordingId: sharedRecording.session.recordingId,
                     }).toObject(),
-                    "recorder",
-                    true,
-                  );
+                    0,
+                    sharedRecording.session.timestampOffsetMs,
+                  ).catch(() => undefined);
                 }
               }
               if (this.settings().highlightEnabled !== false) {
@@ -998,15 +1017,17 @@ export class RecorderManager {
             } catch (error) {
               flushed = false;
               sharedRecording.writer.destroy();
-              await this.failRecording(
+              // 收尾冲刷写盘失败：同样交写盘恢复策略（重拉续录新段，耗尽才终停）。
+              // 此处预览上游流已结束，不会阻塞帧循环，可等待恢复流程启动。
+              await this.handleDisconnect(
                 room,
                 sharedRecording.session.recordingId,
                 writeFailure(error, {
                   roomId,
                   recordingId: sharedRecording.session.recordingId,
                 }).toObject(),
-                "recorder",
-                true,
+                0,
+                sharedRecording.session.timestampOffsetMs,
               );
             }
             if (flushed && !this.shuttingDown) {
@@ -1445,6 +1466,13 @@ export class RecorderManager {
       startupTrace.finish("skipped");
       return false;
     }
+    // PrePan 钦定边界（2026-09-29）：写盘自动恢复尝试期间用户手动点录制 →
+    // 自动重启立即让位，旧场收口（内容保留）后由手动录制接管，绝不两路冲突。
+    const recovering = this.active.get(room.id);
+    if (opts.manual && recovering?.writeRestartPending) {
+      recovering.writeRestartCancelled = true;
+      await recovering.writeRestartDone?.catch(() => undefined);
+    }
     if (this.active.has(room.id) || this.starting.has(room.id)) {
       startupTrace.finish("skipped");
       return false;
@@ -1745,8 +1773,13 @@ export class RecorderManager {
                 startedAt: new Date(session.gapStartAt).toISOString(),
                 endedAt: new Date(now).toISOString(),
                 missingMs: gapMs,
-                kind: this.shuttingDown ? 'service_restart' : 'stream_disconnect',
-                evidence: JSON.stringify({ gapStartAt: session.gapStartAt, size: session.size }),
+                kind: this.shuttingDown
+                  ? "service_restart"
+                  : "stream_disconnect",
+                evidence: JSON.stringify({
+                  gapStartAt: session.gapStartAt,
+                  size: session.size,
+                }),
               });
               session.gapStartAt = null;
             }
@@ -1876,9 +1909,15 @@ export class RecorderManager {
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
 
-    // 写盘类失败与网络无关，重试没有意义：直接收尾，不让用户空等一轮退避。
+    // 写盘类失败与网络无关，网络重试没有意义；但磁盘瞬时故障（USB 抖动/休眠唤醒）值得
+    // 自动恢复（PrePan 需求①）：退避限次重启新段续录、每场累计封顶，每次尝试落日志与
+    // 失败原因，重启也失败/封顶耗尽才终停（终停必带明确原因）。其他非可重试错误维持直接收尾。
     if (error.retryable === false) {
-      await this.finishInterrupted(room, recordingId, humanizeFailure(error));
+      if (isWriteFailure(error)) {
+        await this.restartAfterWriteFailure(room, recordingId, session, error);
+      } else {
+        await this.finishInterrupted(room, recordingId, humanizeFailure(error));
+      }
       return;
     }
 
@@ -1999,6 +2038,148 @@ export class RecorderManager {
   }
 
   /**
+   * 写盘失败自动恢复录制（PrePan 钦定 2026-09-29）：磁盘出错不停死录制，
+   * **失败后立即重启、不间隔、共 3 次**；每次尝试落 [record] 日志与失败原因；
+   * 3 次都失败才终停（历史必带明确原因）；用户手动介入（点停止/点录制）立即让位。
+   */
+  private async restartAfterWriteFailure(
+    room: Room,
+    recordingId: string,
+    session: ActiveSession,
+    error: ErrorObject,
+  ): Promise<void> {
+    session.writeRestartPending = true;
+    let resolveDone!: () => void;
+    session.writeRestartDone = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    try {
+      // 稳定录满一段后归还额度（与重连额度同口径）：旧故障不拖累现在这一次。
+      if (
+        this.services.clock.now() - session.lastRecoveryAt >=
+        STABLE_RESET_MS
+      ) {
+        session.writeRestartCount = 0;
+      }
+      const settings = this.settings();
+      let cause = error;
+      while (session.writeRestartCount < WRITE_RESTART_ATTEMPTS) {
+        // 用户手动介入（点停止/点录制接管）：立即让位，绝不再自动重启（PrePan 钦定边界）。
+        if (session.stopRequested || session.writeRestartCancelled) {
+          await this.completeRecording(
+            room,
+            recordingId,
+            session.size,
+            "ended",
+            {
+              endReason: "stopped",
+            },
+          );
+          return;
+        }
+        session.writeRestartCount += 1;
+        const nth = session.writeRestartCount;
+        // 每次尝试落日志与失败原因（诊断盲区教训：失败原因必须进 backend.log）。
+        console.log(
+          `[record] 写盘失败自动重启 ${recordingId}（第 ${nth}/${WRITE_RESTART_ATTEMPTS} 次）：${cause.message}`,
+        );
+        const prevState = this.services.rooms.get(room.id)?.monitorState;
+        const recording = this.services.recordings.update(recordingId, {
+          state: "reconnecting",
+          retryCount: nth,
+          failureReason: cause,
+        });
+        this.services.rooms.setState(room.id, "reconnecting");
+        // 与重连循环同款：状态真变才广播 room:updated，避免冗余推送。
+        if (prevState !== "reconnecting") {
+          const fresh = this.services.rooms.get(room.id);
+          if (fresh) {
+            this.services.events.emit({
+              type: "room:updated",
+              data: this.enrichRoom(fresh),
+            });
+          }
+        }
+        this.services.events.emit({
+          type: "recording:updated",
+          data: recording,
+        });
+        try {
+          const cookie = await this.services.platformCookie(room.platform);
+          // 与重连同款双探：只有明确未开播才正常收尾，探测无结论不据此收尾。
+          const live = await this.services
+            .adapterFor(room.platform)
+            .checkLiveStatus(room.url, cookie);
+          if (live.status === "offline") {
+            if (await this.confirmOffline(room, cookie)) {
+              await this.completeRecording(
+                room,
+                recordingId,
+                session.size,
+                "ended",
+              );
+              return;
+            }
+            cause = new AppError(
+              "NETWORK_UNAVAILABLE",
+              "暂时无法确认直播状态",
+              {
+                roomId: room.id,
+                recordingId,
+                retryable: true,
+              },
+            ).toObject();
+            continue;
+          }
+          if (live.status !== "live") {
+            cause =
+              live.error ??
+              new AppError("NETWORK_UNAVAILABLE", "暂时无法确认直播状态", {
+                roomId: room.id,
+                recordingId,
+                retryable: true,
+              }).toObject();
+            continue;
+          }
+          const stream = await this.services
+            .adapterFor(room.platform)
+            .getStreamUrl(room.url, settings.quality, cookie);
+          // 取流回来再查一次手动介入：手动开录/停止必须立即让位（并发判定收窄）。
+          if (session.stopRequested || session.writeRestartCancelled) {
+            await this.completeRecording(
+              room,
+              recordingId,
+              session.size,
+              "ended",
+              {
+                endReason: "stopped",
+              },
+            );
+            return;
+          }
+          const cur = this.active.get(room.id);
+          if (!cur) return;
+          await this.resumeSession(room, recordingId, cur, stream, nth);
+          // 恢复成功：清掉尝试期的失败原因，历史页只在真正失败/中断时显示原因。
+          this.services.recordings.update(recordingId, { failureReason: null });
+          return;
+        } catch (err) {
+          cause = err instanceof AppError ? err.toObject() : cause;
+        }
+      }
+      await this.finishInterrupted(
+        room,
+        recordingId,
+        writeRestartExhausted(cause, session.writeRestartCount),
+      );
+    } finally {
+      session.writeRestartPending = false;
+      session.writeRestartDone = undefined;
+      resolveDone();
+    }
+  }
+
+  /**
    * 判定"主播是否真的下播"：单次探测到 offline 可能只是平台的瞬时响应（抖音下播前后遇到过
    * 空响应），所以紧接再探一次，只有连续两次都说未开播才认定下播——避免一次瞬时空响应
    * 把正在进行的录制提前收掉。第二次探测失败一律按"没确认"处理（继续重试，不据此收尾）。
@@ -2092,11 +2273,16 @@ export class RecorderManager {
   ): Promise<void> {
     const session = this.active.get(room.id);
     const size = session?.size ?? 0;
+    // 失败原因落库统一富化（reasonCategory）+落日志（[record] 同 [verify] 款，诊断盲区教训）。
+    const failure = withReasonCategory(err.toObject());
     if (size > 0) {
+      console.log(
+        `[record] 录制中断收尾 ${recordingId}：已录内容保留（${failure.code}）${failure.message}`,
+      );
       await this.completeRecording(room, recordingId, size, "stream_lost", {
         preservePreview,
         endReason: "interrupted",
-        failure: err.toObject(),
+        failure,
       });
       this.raiseAlert("error", "recorder", err);
       this.services.events.emit({
@@ -2111,7 +2297,7 @@ export class RecorderManager {
     await this.failRecording(
       room,
       recordingId,
-      err.toObject(),
+      failure,
       "recorder",
       preservePreview,
     );
@@ -2526,7 +2712,6 @@ export class RecorderManager {
     this.services.pipeline.enqueue(recordingId);
   }
 
-
   private async failRecording(
     room: Room,
     recordingId: string,
@@ -2546,6 +2731,10 @@ export class RecorderManager {
       endedAt: this.services.clock.iso(),
       failureReason: failure.toObject(),
     });
+    // 失败原因必须落 backend.log（本次事故盲区教训：翻日志查不到为什么停）。
+    console.log(
+      `[record] 录制失败 ${recordingId}（${failure.code}）：${failure.message}`,
+    );
     if (!preservePreview) this.preview?.closeRoom(room.id, 4004, "stream_lost");
     this.active.delete(room.id);
     this.emitServiceStatus();

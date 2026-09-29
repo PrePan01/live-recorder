@@ -4,7 +4,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
 import { access, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { DEFAULT_PIPELINE_CONFIG } from '../../src/types/settings.js';

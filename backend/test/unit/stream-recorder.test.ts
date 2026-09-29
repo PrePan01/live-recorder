@@ -1,9 +1,13 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { StreamRecordingEngine, parseM3u8, hlsPollIntervalMs } from '../../src/recorder/stream-recorder.js';
-import { buildMinimalFlv } from '../../src/platform/fake-adapter.js';
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from 'node:path';
+import { describe, expect, it } from "vitest";
+import {
+  StreamRecordingEngine,
+  parseM3u8,
+  hlsPollIntervalMs,
+} from "../../src/recorder/stream-recorder.js";
+import { buildMinimalFlv } from "../../src/platform/fake-adapter.js";
 
 function chunksBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -25,16 +29,22 @@ function endlessBody(): ReadableStream<Uint8Array> {
   });
 }
 
-function mockFetch(status: number, body: () => ReadableStream<Uint8Array>): typeof fetch {
+function mockFetch(
+  status: number,
+  body: () => ReadableStream<Uint8Array>,
+): typeof fetch {
   return async () => new Response(body(), { status }) as unknown as Response;
 }
 
-describe('StreamRecordingEngine (HTTP)', () => {
-  it('writes the stream to disk and yields data/completed', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'a.flv');
+describe("StreamRecordingEngine (HTTP)", () => {
+  it("writes the stream to disk and yields data/completed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "a.flv");
     // 合法 FLV：头 + onMetaData + 一个视频 tag（#181：截断/非法尾部不再写入）。
-    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const header = Buffer.concat([
+      Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]),
+      Buffer.alloc(4),
+    ]);
     const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
       const head = Buffer.alloc(11);
       head[0] = type;
@@ -50,53 +60,86 @@ describe('StreamRecordingEngine (HTTP)', () => {
       b.writeUInt32BE(t.length);
       return b;
     };
-    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
-    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-    const full = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1)]);
+    const meta = makeTag(
+      0x12,
+      0,
+      Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from("onMetaData")]),
+    );
+    const v1 = makeTag(
+      0x09,
+      40,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    );
+    const full = Buffer.concat([
+      header,
+      meta,
+      prevSize(meta),
+      v1,
+      prevSize(v1),
+    ]);
     // 拆块喂入，模拟网络分片。
     const chunks: Buffer[] = [];
-    for (let i = 0; i < full.length; i += 5) chunks.push(full.subarray(i, i + 5));
-    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(chunks)));
+    for (let i = 0; i < full.length; i += 5)
+      chunks.push(full.subarray(i, i + 5));
+    const engine = new StreamRecordingEngine(
+      mockFetch(200, () => chunksBody(chunks)),
+    );
     const events: string[] = [];
     let bytes = 0;
     let fileSize = 0;
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv', headers: { Referer: 'https://x.com' } }, out)) {
+    for await (const ev of engine.start(
+      {
+        url: "https://x.com/live.flv",
+        format: "flv",
+        headers: { Referer: "https://x.com" },
+      },
+      out,
+    )) {
       events.push(ev.type);
-      if (ev.type === 'data') bytes += ev.chunk.length;
-      if (ev.type === 'completed') fileSize = ev.fileSize;
+      if (ev.type === "data") bytes += ev.chunk.length;
+      if (ev.type === "completed") fileSize = ev.fileSize;
     }
     // 归一化按完整标签分批输出；完整 FLV 全部落盘。
-    expect(events[0]).toBe('file_created');
-    expect(events[events.length - 1]).toBe('completed');
-    expect(events.filter((e) => e === 'data').length).toBeGreaterThan(0);
+    expect(events[0]).toBe("file_created");
+    expect(events[events.length - 1]).toBe("completed");
+    expect(events.filter((e) => e === "data").length).toBeGreaterThan(0);
     expect(bytes).toBe(full.length);
     expect(fileSize).toBe(bytes);
     const onDisk = await readFile(out);
-    expect(onDisk.subarray(0, 3).toString()).toBe('FLV');
+    expect(onDisk.subarray(0, 3).toString()).toBe("FLV");
     expect(onDisk.length).toBe(bytes);
   });
 
-  it('yields NETWORK_UNAVAILABLE for a failed fetch', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'b.flv');
-    const engine = new StreamRecordingEngine(mockFetch(404, () => new ReadableStream()));
+  it("yields NETWORK_UNAVAILABLE for a failed fetch", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "b.flv");
+    const engine = new StreamRecordingEngine(
+      mockFetch(404, () => new ReadableStream()),
+    );
     const events: string[] = [];
-    for await (const ev of engine.start({ url: 'https://x.com/404.flv', format: 'flv' }, out)) {
+    for await (const ev of engine.start(
+      { url: "https://x.com/404.flv", format: "flv" },
+      out,
+    )) {
       events.push(ev.type);
-      if (ev.type === 'error') expect(ev.error.code).toBe('NETWORK_UNAVAILABLE');
+      if (ev.type === "error")
+        expect(ev.error.code).toBe("NETWORK_UNAVAILABLE");
     }
-    expect(events).toEqual(['error']);
+    expect(events).toEqual(["error"]);
   });
 
-  it('honors stop() mid-stream and keeps the file', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'c.flv');
+  it("honors stop() mid-stream and keeps the file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "c.flv");
     const engine = new StreamRecordingEngine(mockFetch(200, endlessBody));
     let received = 0;
     let stopRequested = false;
     const run = async () => {
-      for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
-        if (ev.type === 'data') received += 1;
+      for await (const ev of engine.start(
+        { url: "https://x.com/live.flv", format: "flv" },
+        out,
+      )) {
+        if (ev.type === "data") received += 1;
         if (received === 2) {
           stopRequested = true;
           await engine.stop();
@@ -105,7 +148,12 @@ describe('StreamRecordingEngine (HTTP)', () => {
     };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([run(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), 5000); })]);
+      await Promise.race([
+        run(),
+        new Promise((_, rej) => {
+          timer = setTimeout(() => rej(new Error("timeout")), 5000);
+        }),
+      ]);
     } finally {
       clearTimeout(timer);
       await engine.stop();
@@ -115,49 +163,68 @@ describe('StreamRecordingEngine (HTTP)', () => {
     expect(info.size).toBeGreaterThan(0);
   });
 
-  it('aborts and reports a retryable interruption when the stream stalls after the first bytes', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'stall.flv');
+  it("aborts and reports a retryable interruption when the stream stalls after the first bytes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "stall.flv");
     const flv = buildMinimalFlv();
     // 前两次喂入数据，之后既不关闭也不吐字节：模拟 CDN 挂住连接（以前会永远卡在这里）。
     let served = 0;
     const stalling = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (served < 2) controller.enqueue(served++ === 0 ? flv : flv.subarray(13));
+        if (served < 2)
+          controller.enqueue(served++ === 0 ? flv : flv.subarray(13));
       },
     });
-    const engine = new StreamRecordingEngine(mockFetch(200, () => stalling), 40);
+    const engine = new StreamRecordingEngine(
+      mockFetch(200, () => stalling),
+      40,
+    );
     const events: string[] = [];
-    let code = '';
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+    let code = "";
+    for await (const ev of engine.start(
+      { url: "https://x.com/live.flv", format: "flv" },
+      out,
+    )) {
       events.push(ev.type);
-      if (ev.type === 'error') code = ev.error.code;
+      if (ev.type === "error") code = ev.error.code;
     }
-    expect(events).toContain('data');
-    expect(events[events.length - 1]).toBe('error');
+    expect(events).toContain("data");
+    expect(events[events.length - 1]).toBe("error");
     // 必须是可重试的网络中断，上层才会进入续录而不是判死。
-    expect(code).toBe('NETWORK_UNAVAILABLE');
+    expect(code).toBe("NETWORK_UNAVAILABLE");
     expect((await stat(out)).size).toBeGreaterThan(0);
   });
 
-  it('passes request headers through', async () => {
+  it("passes request headers through", async () => {
     let seenHeaders: Record<string, string> | undefined;
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'd.flv');
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "d.flv");
     const stub: typeof fetch = async (input, init) => {
       seenHeaders = init?.headers as Record<string, string>;
-      return new Response(new Uint8Array([1, 2, 3]), { status: 200 }) as unknown as Response;
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+      }) as unknown as Response;
     };
     const engine = new StreamRecordingEngine(stub);
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv', headers: { Cookie: 'a=b', 'User-Agent': 'ua' } }, out)) {
+    for await (const ev of engine.start(
+      {
+        url: "https://x.com/live.flv",
+        format: "flv",
+        headers: { Cookie: "a=b", "User-Agent": "ua" },
+      },
+      out,
+    )) {
       void ev;
     }
-    expect(seenHeaders).toEqual({ Cookie: 'a=b', 'User-Agent': 'ua' });
+    expect(seenHeaders).toEqual({ Cookie: "a=b", "User-Agent": "ua" });
   });
 
-  it('rewrites absolute PTS to relative so duration is correct (抖音: 序列头 ts≈0 + 媒体绝对 PTS)', async () => {
+  it("rewrites absolute PTS to relative so duration is correct (抖音: 序列头 ts≈0 + 媒体绝对 PTS)", async () => {
     // 抖音真实结构：AVC/AAC 序列头 ts≈0，媒体帧为绝对 PTS（2822850 起）。
-    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const header = Buffer.concat([
+      Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]),
+      Buffer.alloc(4),
+    ]);
     const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
       const head = Buffer.alloc(11);
       head[0] = type;
@@ -173,28 +240,64 @@ describe('StreamRecordingEngine (HTTP)', () => {
       b.writeUInt32BE(t.length);
       return b;
     };
-    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
+    const meta = makeTag(
+      0x12,
+      0,
+      Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from("onMetaData")]),
+    );
     const aSeq = makeTag(0x08, 0, Buffer.from([0xaf, 0x00, 0x01])); // AAC 序列头 ts=0
     const vSeq = makeTag(0x09, 0, Buffer.from([0x17, 0x00, 0x01, 0x02])); // AVC 序列头 ts=0
-    const a1 = makeTag(0x08, 2_822_850, Buffer.from([0xaf, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AAC 媒体
-    const v1 = makeTag(0x09, 2_822_866, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AVC 关键帧媒体
-    const v2 = makeTag(0x09, 2_822_900, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])); // AVC 媒体
-    const stream = Buffer.concat([header, meta, prevSize(meta), aSeq, prevSize(aSeq), vSeq, prevSize(vSeq), a1, prevSize(a1), v1, prevSize(v1), v2, prevSize(v2)]);
+    const a1 = makeTag(
+      0x08,
+      2_822_850,
+      Buffer.from([0xaf, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    ); // AAC 媒体
+    const v1 = makeTag(
+      0x09,
+      2_822_866,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    ); // AVC 关键帧媒体
+    const v2 = makeTag(
+      0x09,
+      2_822_900,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    ); // AVC 媒体
+    const stream = Buffer.concat([
+      header,
+      meta,
+      prevSize(meta),
+      aSeq,
+      prevSize(aSeq),
+      vSeq,
+      prevSize(vSeq),
+      a1,
+      prevSize(a1),
+      v1,
+      prevSize(v1),
+      v2,
+      prevSize(v2),
+    ]);
 
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'norm.flv');
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "norm.flv");
     // 逐 3 字节喂入，强制标签跨 chunk 边界，验证流式归一化稳健。
     const tiny: Uint8Array[] = [];
-    for (let i = 0; i < stream.length; i += 3) tiny.push(stream.subarray(i, i + 3));
-    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(tiny)));
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+    for (let i = 0; i < stream.length; i += 3)
+      tiny.push(stream.subarray(i, i + 3));
+    const engine = new StreamRecordingEngine(
+      mockFetch(200, () => chunksBody(tiny)),
+    );
+    for await (const ev of engine.start(
+      { url: "https://x.com/live.flv", format: "flv" },
+      out,
+    )) {
       void ev;
     }
     const outBuf = await readFile(out);
     expect(outBuf.length).toBe(stream.length);
 
     // 解析输出：序列头不参与 base；音频/视频各自以首个媒体标签归零 → 时长=真实跨度（音频 0、视频 0→34）。
-    const tsByType: Record<string, number[]> = { '8': [], '9': [] };
+    const tsByType: Record<string, number[]> = { "8": [], "9": [] };
     let off = 13;
     while (off + 11 <= outBuf.length) {
       const type = outBuf[off]!;
@@ -202,18 +305,26 @@ describe('StreamRecordingEngine (HTTP)', () => {
       const len = 11 + ds + 4;
       if (off + len > outBuf.length) break;
       if (type === 8 || type === 9) {
-        tsByType[String(type)]!.push((outBuf[off + 4]! << 16) | (outBuf[off + 5]! << 8) | outBuf[off + 6]! | ((outBuf[off + 7]! & 0xff) << 24));
+        tsByType[String(type)]!.push(
+          (outBuf[off + 4]! << 16) |
+            (outBuf[off + 5]! << 8) |
+            outBuf[off + 6]! |
+            ((outBuf[off + 7]! & 0xff) << 24),
+        );
       }
       off += len;
     }
     // 音频：序列头 0（保留）+ 首个媒体归零 → [0, 0]
-    expect(tsByType['8']).toEqual([0, 0]);
+    expect(tsByType["8"]).toEqual([0, 0]);
     // 视频：序列头 0（保留）+ 关键帧 0 + 34 → [0, 0, 34]
-    expect(tsByType['9']).toEqual([0, 0, 34]);
+    expect(tsByType["9"]).toEqual([0, 0, 34]);
   });
 
-  it('keeps normal (near-zero) FLV timestamps untouched (bilibili 首帧≈0 透传)', async () => {
-    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+  it("keeps normal (near-zero) FLV timestamps untouched (bilibili 首帧≈0 透传)", async () => {
+    const header = Buffer.concat([
+      Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]),
+      Buffer.alloc(4),
+    ]);
     const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
       const head = Buffer.alloc(11);
       head[0] = type;
@@ -229,17 +340,43 @@ describe('StreamRecordingEngine (HTTP)', () => {
       b.writeUInt32BE(t.length);
       return b;
     };
-    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
-    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-    const v2 = makeTag(0x09, 80, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-    const stream = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1), v2, prevSize(v2)]);
+    const meta = makeTag(
+      0x12,
+      0,
+      Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from("onMetaData")]),
+    );
+    const v1 = makeTag(
+      0x09,
+      40,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    );
+    const v2 = makeTag(
+      0x09,
+      80,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    );
+    const stream = Buffer.concat([
+      header,
+      meta,
+      prevSize(meta),
+      v1,
+      prevSize(v1),
+      v2,
+      prevSize(v2),
+    ]);
 
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'keep.flv');
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "keep.flv");
     const tiny: Uint8Array[] = [];
-    for (let i = 0; i < stream.length; i += 3) tiny.push(stream.subarray(i, i + 3));
-    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(tiny)));
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+    for (let i = 0; i < stream.length; i += 3)
+      tiny.push(stream.subarray(i, i + 3));
+    const engine = new StreamRecordingEngine(
+      mockFetch(200, () => chunksBody(tiny)),
+    );
+    for await (const ev of engine.start(
+      { url: "https://x.com/live.flv", format: "flv" },
+      out,
+    )) {
       void ev;
     }
     const outBuf = await readFile(out);
@@ -250,16 +387,25 @@ describe('StreamRecordingEngine (HTTP)', () => {
       const ds = outBuf.readUIntBE(off + 1, 3);
       const len = 11 + ds + 4;
       if (off + len > outBuf.length) break;
-      if (type === 9) vts.push((outBuf[off + 4]! << 16) | (outBuf[off + 5]! << 8) | outBuf[off + 6]! | ((outBuf[off + 7]! & 0xff) << 24));
+      if (type === 9)
+        vts.push(
+          (outBuf[off + 4]! << 16) |
+            (outBuf[off + 5]! << 8) |
+            outBuf[off + 6]! |
+            ((outBuf[off + 7]! & 0xff) << 24),
+        );
       off += len;
     }
     // 首媒体时间戳 40ms ≤ 60s：不扣减，原样保留。
     expect(vts).toEqual([40, 80]);
   });
 
-  it('drops the truncated tail tag so the file ends cleanly (偶现损坏 #181 根因)', async () => {
+  it("drops the truncated tail tag so the file ends cleanly (偶现损坏 #181 根因)", async () => {
     // 构造合法 FLV + 一个完整视频 tag + 一个被截断的尾部视频 tag（录制中途停止的典型形态）。
-    const header = Buffer.concat([Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]), Buffer.alloc(4)]);
+    const header = Buffer.concat([
+      Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]),
+      Buffer.alloc(4),
+    ]);
     const makeTag = (type: number, ts: number, data: Buffer): Buffer => {
       const head = Buffer.alloc(11);
       head[0] = type;
@@ -275,8 +421,16 @@ describe('StreamRecordingEngine (HTTP)', () => {
       b.writeUInt32BE(t.length);
       return b;
     };
-    const meta = makeTag(0x12, 0, Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]));
-    const v1 = makeTag(0x09, 40, Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    const meta = makeTag(
+      0x12,
+      0,
+      Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from("onMetaData")]),
+    );
+    const v1 = makeTag(
+      0x09,
+      40,
+      Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    );
     // 截断尾部：声明 size=100 但只给 30 字节 body（不完整）。
     const v2Head = Buffer.alloc(11);
     v2Head[0] = 0x09;
@@ -285,13 +439,25 @@ describe('StreamRecordingEngine (HTTP)', () => {
     v2Head[5] = (80 >> 8) & 0xff;
     v2Head[6] = 80 & 0xff;
     const v2Partial = Buffer.concat([v2Head, Buffer.alloc(30)]);
-    const stream = Buffer.concat([header, meta, prevSize(meta), v1, prevSize(v1), v2Partial]);
+    const stream = Buffer.concat([
+      header,
+      meta,
+      prevSize(meta),
+      v1,
+      prevSize(v1),
+      v2Partial,
+    ]);
 
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-engine-'));
-    const out = path.join(dir, 'tail.flv');
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
+    const out = path.join(dir, "tail.flv");
     // 一次性喂入（不拆小块，让引擎在收尾时才遇到截断尾）。
-    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody([stream])));
-    for await (const ev of engine.start({ url: 'https://x.com/live.flv', format: 'flv' }, out)) {
+    const engine = new StreamRecordingEngine(
+      mockFetch(200, () => chunksBody([stream])),
+    );
+    for await (const ev of engine.start(
+      { url: "https://x.com/live.flv", format: "flv" },
+      out,
+    )) {
       void ev;
     }
     const outBuf = await readFile(out);
@@ -308,27 +474,70 @@ describe('StreamRecordingEngine (HTTP)', () => {
     expect(tags).toBe(2); // meta + v1（截断的 v2 被丢弃）
     expect(off).toBe(outBuf.length); // 文件在完整标签边界结束，无残余
   });
+
+  it("EIO 兑底：写盘失败转为流程内抛错（真实原因），绝不裸抛 unhandled error 崩进程", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-eio-"));
+    const blocker = path.join(dir, "blocker");
+    await writeFile(blocker, "x");
+    const out = path.join(blocker, "a.flv"); // 父级是普通文件：打开必失败（模拟磁盘不可用/EIO）
+    const flv = buildMinimalFlv();
+    let count = 0;
+    const slowBody = (): ReadableStream<Uint8Array> =>
+      new ReadableStream({
+        async pull(controller) {
+          await new Promise((r) => setTimeout(r, 5));
+          controller.enqueue(count++ === 0 ? flv : flv.subarray(13));
+          if (count > 30) controller.close();
+        },
+      });
+    const engine = new StreamRecordingEngine(mockFetch(200, slowBody));
+    const events: Array<{
+      type: string;
+      error?: { code: string; message?: string; retryable?: boolean };
+    }> = [];
+    for await (const ev of engine.start(
+      { url: "https://x.com/live.flv", format: "flv" },
+      out,
+    )) {
+      events.push(ev);
+    }
+    // 修复前：写盘错误裸抛成 unhandled 'error' 事件把进程打崩（09-29 事故）。
+    // 修复后：错误沿写路径抛回流程并归因成 error 事件（上层停该场、保文件、原因上屏）。
+    const errEvent = events.find((e) => e.type === "error");
+    expect(errEvent).toBeTruthy();
+    expect(errEvent!.error!.code).toBe("RECORDING_WRITE_FAILED");
+    expect(errEvent!.error!.retryable).toBe(false);
+    expect(String(errEvent!.error!.message)).toMatch(
+      /ENOTDIR|ENOENT|EISDIR|not a directory|no such file/i,
+    );
+  });
 });
 
-describe('StreamRecordingEngine (HLS)', () => {
-  it('downloads playlist segments and concatenates them', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lr-hls-'));
-    const out = path.join(dir, 'e.ts');
+describe("StreamRecordingEngine (HLS)", () => {
+  it("downloads playlist segments and concatenates them", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-hls-"));
+    const out = path.join(dir, "e.ts");
     const segs: Record<string, Uint8Array> = {
-      'https://x.com/seg0.ts': new Uint8Array([0x47, 0x01, 0x02]),
-      'https://x.com/seg1.ts': new Uint8Array([0x47, 0x03, 0x04]),
+      "https://x.com/seg0.ts": new Uint8Array([0x47, 0x01, 0x02]),
+      "https://x.com/seg1.ts": new Uint8Array([0x47, 0x03, 0x04]),
     };
     const stub: typeof fetch = async (input) => {
       const url = String(input);
-      if (url.includes('playlist')) {
-        return new Response('#EXTM3U\n#EXT-X-ENDLIST\n#EXTINF:4,\nhttps://x.com/seg0.ts\n#EXTINF:4,\nhttps://x.com/seg1.ts\n', { status: 200 }) as unknown as Response;
+      if (url.includes("playlist")) {
+        return new Response(
+          "#EXTM3U\n#EXT-X-ENDLIST\n#EXTINF:4,\nhttps://x.com/seg0.ts\n#EXTINF:4,\nhttps://x.com/seg1.ts\n",
+          { status: 200 },
+        ) as unknown as Response;
       }
       return new Response(segs[url]!, { status: 200 }) as unknown as Response;
     };
     const engine = new StreamRecordingEngine(stub);
     let bytes = 0;
-    for await (const ev of engine.start({ url: 'https://x.com/playlist.m3u8', format: 'hls' }, out)) {
-      if (ev.type === 'data') bytes += ev.chunk.length;
+    for await (const ev of engine.start(
+      { url: "https://x.com/playlist.m3u8", format: "hls" },
+      out,
+    )) {
+      if (ev.type === "data") bytes += ev.chunk.length;
     }
     expect(bytes).toBe(6);
     const onDisk = await readFile(out);
@@ -336,16 +545,17 @@ describe('StreamRecordingEngine (HLS)', () => {
     expect(onDisk.subarray(0, 1)[0]).toBe(0x47);
   });
 });
-describe('#226 HLS 轮询间隔自适应', () => {
-  it('parseM3u8 解析目标分片时长', () => {
-    const m3u = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nhttps://x/seg1.ts\n#EXT-X-ENDLIST\n';
-    const parsed = parseM3u8(m3u, 'https://x/');
+describe("#226 HLS 轮询间隔自适应", () => {
+  it("parseM3u8 解析目标分片时长", () => {
+    const m3u =
+      "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nhttps://x/seg1.ts\n#EXT-X-ENDLIST\n";
+    const parsed = parseM3u8(m3u, "https://x/");
     expect(parsed.targetDuration).toBe(2);
     expect(parsed.ended).toBe(true);
-    expect(parsed.segments).toEqual(['https://x/seg1.ts']);
+    expect(parsed.segments).toEqual(["https://x/seg1.ts"]);
   });
 
-  it('hlsPollIntervalMs 按目标时长自适应（2s→1.6s，4s→3s，未知→3s）', () => {
+  it("hlsPollIntervalMs 按目标时长自适应（2s→1.6s，4s→3s，未知→3s）", () => {
     expect(hlsPollIntervalMs(2)).toBe(1600);
     expect(hlsPollIntervalMs(1)).toBe(1000);
     expect(hlsPollIntervalMs(4)).toBe(3000);

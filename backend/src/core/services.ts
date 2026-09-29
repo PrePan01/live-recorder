@@ -19,7 +19,7 @@ import { FakeDiskGuard } from '../storage/disk-guard.js';
 import { FakeMailer } from '../mail/mailer.js';
 import { SmtpMailer } from '../mail/smtp-mailer.js';
 import { openDatabase, type DB } from '../db/connection.js';
-import { runMigrations } from '../db/migrations/index.js';
+import { ensureCriticalColumns, runMigrations } from '../db/migrations/index.js';
 import { RoomRepository } from '../db/repositories/room.repo.js';
 import { RecordingRepository } from '../db/repositories/recording.repo.js';
 import { SettingsRepository } from '../db/repositories/settings.repo.js';
@@ -117,7 +117,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const mode: AdapterMode = opts.mode ?? (process.env.RECORDING_ADAPTER === 'real' ? 'real' : 'fake');
   const dbPath = opts.dbPath ?? process.env.LIVE_RECORDER_DB ?? path.join(defaultDataDir(), 'live-recorder.db');
   const db = openDatabase(dbPath);
-  try { runMigrations(db); } catch (error) { db.close(); throw error; }
+  try { runMigrations(db); ensureCriticalColumns(db); } catch (error) { db.close(); throw error; }
   const clock = opts.clock ?? new SystemClock();
   const fakeEngine = new FakeRecordingEngine(clock);
 
