@@ -263,7 +263,7 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
     expect(gen.status).toBe(0);
     const archiveDir = await mkdtemp(path.join(tmpdir(), 'lr-c63-arch-'));
-    const mp4 = file.replace(/\.flv$/i, '_converted.mp4');
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
     const mp3 = file.replace(/\.flv$/i, '.mp3');
 
     await enableAndRun(services, rec.id, { archiveDirectory: archiveDir, exportAudio: true, outputFormat: 'mp4' });
@@ -285,13 +285,31 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     const { services, rec, file } = await seed('delete-source.flv');
     const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
     expect(gen.status).toBe(0);
-    const mp4 = file.replace(/\.flv$/i, '_converted.mp4');
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
 
     await enableAndRun(services, rec.id, { outputFormat: 'mp4', deleteSourceAfterConvert: true });
 
     await expect(access(file)).rejects.toThrow();
     await expect(access(mp4)).resolves.toBeUndefined();
     expect(services.recordings.get(rec.id)!.filePath).toBe(mp4);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('转换产物与源同基名（不带 _converted）；撞名自动「(n)」序号、绝不覆盖既有文件', async () => {
+    const { services, rec, file } = await seed('dupe.flv');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
+    // 预置同基名产物（历史转换/用户文件）：转换绝不覆盖它，按命名安全自动加序号。
+    await writeFile(mp4, 'PREFILLED');
+
+    await enableAndRun(services, rec.id, { outputFormat: 'mp4' });
+
+    const bumped = file.replace(/\.flv$/i, ' (1).mp4');
+    await expect(access(bumped)).resolves.toBeUndefined();
+    const { readFile } = await import('node:fs/promises');
+    expect((await readFile(mp4)).toString()).toBe('PREFILLED');
+    expect(services.recordings.get(rec.id)!.filePath).toBe(bumped);
     expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
   });
 
@@ -304,8 +322,8 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     await enableAndRun(services, rec.id, { outputFormat: 'mp4' });
 
     await expect(access(file)).resolves.toBeUndefined(); // 源保留
-    await expect(access(file.replace(/\.flv$/i, '_converted.mp4'))).rejects.toThrow(); // 无半截
-    await expect(access(`${file.replace(/\.flv$/i, '_converted.mp4')}.part`)).rejects.toThrow(); // 临时零残留
+    await expect(access(file.replace(/\.flv$/i, '.mp4'))).rejects.toThrow(); // 无半截
+    await expect(access(`${file.replace(/\.flv$/i, '.mp4')}.part`)).rejects.toThrow(); // 临时零残留
     expect(services.recordings.get(rec.id)!.filePath).toBe(file); // filePath 不变
     expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('partial');
     const run = services.pipeline.repo.runForRecording(rec.id)!;

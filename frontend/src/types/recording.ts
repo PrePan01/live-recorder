@@ -20,7 +20,7 @@ export type RecordingIntegrityState =
  * interrupted=中断（网络/写盘）停止、service_restart=服务重启中断。
  */
 export type RecordingEndReason =
-  "natural" | "stopped" | "interrupted" | "service_restart";
+  "natural" | "stopped" | "interrupted" | "service_restart" | "clip_export";
 
 export type PipelineStatus =
   "not_required" | "queued" | "running" | "ok" | "partial" | "failed";
@@ -54,8 +54,18 @@ export interface RecordingGap {
   evidence: string | null;
 }
 
+export interface RecordingMarker {
+  id: string;
+  recordingId: string;
+  positionSeconds: number;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Recording {
   id: string;
+  origin?: "manual" | "automatic" | "floating" | "highlight" | "clip";
   roomId: string;
   roomName: string;
   platform: Platform;
@@ -84,6 +94,12 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ApiErrorEnvelope | null;
   retryCount: number;
+  /** 片段导出进行中的进度百分比（0-100）；无后台导出或终态时为空。 */
+  progressPercent?: number | null;
+  /** 跳播定位索引状态：ready=可跳播、building=建立中（入口显式禁用）、missing=未建（兕底回扫）。 */
+  seekIndexState?: "ready" | "building" | "missing";
+  /** 索引建立进度（0-100，可选展示用）。 */
+  seekIndexProgress?: number;
   /** 结束原因（进行中的录制缺省）。 */
   endReason?: RecordingEndReason | null;
   /** 录制中途累计缺失时长（毫秒）：中断恢复后未录到的时间总和。 */

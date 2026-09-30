@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { once } from "node:events";
 import { AppError } from "../types/error.js";
 import type { ErrorObject } from "../types/index.js";
+import { SeekIndexWriter, endSeekWriter } from "../storage/seek-index.js";
 import type {
   RecordingEngine,
   RecordingEvent,
@@ -61,6 +62,18 @@ function safeWriter(ws: ReturnType<typeof createWriteStream>): {
   };
 }
 
+/** 标签信息：跳播定位索引在写盘链顺手记录（关键帧/序列头 → 文件字节偏移）。 */
+export interface FlvTagInfo {
+  tagType: 8 | 9;
+  /** 写入文件的时间戳（归一化后）。 */
+  ts: number;
+  seqHeader: boolean;
+  keyframe: boolean;
+  /** 标签在落盘文件中的起始字节偏移。 */
+  fileOffset: number;
+  byteLen: number;
+}
+
 /** 续录选项：文件里已有 FLV 头 + 本段时间戳偏移。 */
 export interface FlvNormalizerOptions {
   /** 序列头 ts≈0 而媒体为绝对 PTS（抖音）时，以首个媒体标签为基准。 */
@@ -69,6 +82,10 @@ export interface FlvNormalizerOptions {
   skipHeader?: boolean;
   /** 续录：本段所有时间戳统一加上的偏移（上一段结尾时间戳），保证拼接处播放连续。 */
   offsetMs?: number;
+  /** 文件已有的字节长度（续录追加时的偏移基准），供索引计算落盘偏移。 */
+  appendBaseBytes?: number;
+  /** 关键帧/序列头回调（跳播定位索引）。 */
+  onTag?: (info: FlvTagInfo) => void;
 }
 
 /**
@@ -89,6 +106,8 @@ export class FlvTimestampNormalizer {
   private headerEmitted = false;
   /** 本段写出的最大时间戳；上层据此计算下一段续录的时间偏移。 */
   private maxTs = 0;
+  /** 本段已产出的字节数（含 FLV 头），配合 appendBaseBytes 得到标签落盘偏移。 */
+  private emittedBytes = 0;
 
   constructor(private readonly options: FlvNormalizerOptions = {}) {}
 
@@ -136,10 +155,11 @@ export class FlvTimestampNormalizer {
     return false;
   }
 
-  private mediaTag(tagType: number, offset: number): void {
-    // 序列头不参与 base 选择：避免把 ts≈0 的编码器配置当基准，导致绝对 PTS 媒体帧未被扣减（时长虚高）。
-    if (this.isSequenceHeader(tagType, offset)) return;
+  /** 返回标签写入文件的时间戳（序列头=原样，媒体帧=归一化后）。 */
+  private mediaTag(tagType: number, offset: number): number {
     const rawTs = FlvTimestampNormalizer.readTs(this.buffer, offset);
+    // 序列头不参与 base 选择：避免把 ts≈0 的编码器配置当基准，导致绝对 PTS 媒体帧未被扣减（时长虚高）。
+    if (this.isSequenceHeader(tagType, offset)) return rawTs;
     const key: "baseA" | "baseV" = tagType === 8 ? "baseA" : "baseV";
     let base = this[key];
     if (base === null) {
@@ -151,6 +171,26 @@ export class FlvTimestampNormalizer {
     if (base > 0 || shift !== 0)
       FlvTimestampNormalizer.writeTs(this.buffer, offset, ts);
     if (ts > this.maxTs) this.maxTs = ts;
+    return ts;
+  }
+
+  /** 只把关键帧与序列头交给索引；偏移=已产出字节 + 续录基准。 */
+  private notifyTag(tagType: number, offset: number, tagLen: number, ts: number): void {
+    const onTag = this.options.onTag;
+    if (!onTag) return;
+    const d0 = this.buffer[offset + 11]!;
+    const d1 = this.buffer[offset + 12]!;
+    const seq = this.isSequenceHeader(tagType, offset);
+    const keyframe = !seq && tagType === 9 && d0 >> 4 === 1;
+    if (!seq && !keyframe) return;
+    onTag({
+      tagType: tagType === 8 ? 8 : 9,
+      ts,
+      seqHeader: seq,
+      keyframe,
+      fileOffset: (this.options.appendBaseBytes ?? 0) + this.emittedBytes,
+      byteLen: tagLen,
+    });
   }
 
   push(chunk: Buffer): Buffer[] {
@@ -160,7 +200,10 @@ export class FlvTimestampNormalizer {
     // FLV 头（9）+ PreviousTagSize0（4）= 13 字节，之后才是标签流。
     // 续录时文件里已有文件头，只消费这 13 字节、不再写入，避免文件中途多出一个头。
     if (!this.headerEmitted && this.buffer.length >= 13) {
-      if (!this.options.skipHeader) out.push(this.buffer.subarray(0, 13));
+      if (!this.options.skipHeader) {
+        out.push(this.buffer.subarray(0, 13));
+        this.emittedBytes += 13;
+      }
       this.headerEmitted = true;
       this.buffer = this.buffer.subarray(13);
     }
@@ -171,8 +214,10 @@ export class FlvTimestampNormalizer {
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
       const tagLen = 11 + dataSize + 4; // 标签头 + 数据 + PreviousTagSize
       if (offset + tagLen > this.buffer.length) break;
-      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
+      if (tagType === 8 || tagType === 9)
+        this.notifyTag(tagType, offset, tagLen, this.mediaTag(tagType, offset));
       out.push(this.buffer.subarray(offset, offset + tagLen));
+      this.emittedBytes += tagLen;
       offset += tagLen;
     }
     this.buffer = Buffer.from(this.buffer.subarray(offset));
@@ -189,7 +234,10 @@ export class FlvTimestampNormalizer {
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
       const tagLen = 11 + dataSize + 4;
       if (offset + tagLen > this.buffer.length) break; // 尾部不完整标签：不写入文件
-      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
+      if (tagType === 8 || tagType === 9)
+        this.notifyTag(tagType, offset, tagLen, this.mediaTag(tagType, offset));
+      // 收尾段的标签同样计入产出字节：否则多标签时索引偏移不递增，命中即误判失效。
+      this.emittedBytes += tagLen;
       offset += tagLen;
       lastComplete = offset;
     }
@@ -273,9 +321,24 @@ export class StreamRecordingEngine implements RecordingEngine {
       ? createWriteStream(outputPath, { flags: append ? "a" : "w" })
       : null;
     const writer = ws ? safeWriter(ws) : null;
+    // 跳播定位索引：写盘链逐标签顺手记关键帧偏移（追加写、不反压录制；失败只降级索引）。
+    const seekWriter = outputPath
+      ? await SeekIndexWriter.open(outputPath, existing?.size ?? 0)
+      : null;
     const normalizer = new FlvTimestampNormalizer({
       skipHeader: Boolean(existing && existing.size > 0),
       offsetMs: resume?.timestampOffsetMs ?? 0,
+      appendBaseBytes: existing?.size ?? 0,
+      ...(seekWriter
+        ? {
+            onTag: (info: FlvTagInfo) =>
+              seekWriter.note(
+                info.seqHeader
+                  ? { t: info.ts, b: info.fileOffset, s: 1, k: info.tagType }
+                  : { t: info.ts, b: info.fileOffset },
+              ),
+          }
+        : {}),
     });
     let size = existing?.size ?? 0;
     if (outputPath) yield { type: "file_created", filePath: outputPath };
@@ -332,6 +395,10 @@ export class StreamRecordingEngine implements RecordingEngine {
       }
       this.lastTimestampMs = normalizer.lastTimestampMs;
       if (writer) await writer.close();
+      if (seekWriter && outputPath) {
+        await seekWriter.close();
+        endSeekWriter(outputPath);
+      }
     }
     if (this.stopped) return;
     yield {

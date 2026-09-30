@@ -29,14 +29,31 @@ const eventStateByRecordingId = new Map<string, Recording["state"]>();
 /** 列表请求代际：后发先至，旧响应不再覆盖新筛选/翻页的结果。 */
 let historyEpoch = 0;
 
+/** 新记录事件无法按分页/筛选语义插行：防抖失效查询、静默重取当前页。 */
+let historyRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 导出选区的确认框参数：确认（保留）前零后台动作，保存后才启动导出。 */
+export type PendingClipExport = {
+  recordingId: string;
+  roomId: string;
+  startSecond: number;
+  endSecond: number;
+  defaultName: string;
+};
+
 interface RecordingState {
   items: Recording[];
   total: number;
   page: number;
   pageSize: number;
   loading: boolean;
+  /** 历史查询是否加载过；未加载过时新事件无需重取（首访自会拉取）。 */
+  historyLoaded: boolean;
   query: RecordingQuery;
-  fetchHistory: (q?: RecordingQuery) => Promise<void>;
+  fetchHistory: (
+    q?: RecordingQuery,
+    opts?: { silent?: boolean },
+  ) => Promise<void>;
   openDirectory: (id: string) => Promise<void>;
   renameRecording: (id: string, streamTitle: string) => Promise<void>;
   removeRecording: (id: string) => Promise<void>;
@@ -59,6 +76,19 @@ interface RecordingState {
   pendingConfirm: Recording | null;
   /** #221：清空待确认保留提示（决策后或弹窗关闭）。 */
   clearPendingConfirm: () => void;
+  /** 导出选区弹框（点导出即弹，保留后才后台导出）；关框/不保留=零动作取消。 */
+  pendingClipExport: PendingClipExport | null;
+  setPendingClipExport: (prompt: PendingClipExport) => void;
+  clearPendingClipExport: () => void;
+  /** 已启动的片段导出（片段记录 id → 源录制 id）：同录并行多条各自独立。 */
+  clipExports: Record<string, string>;
+  beginClipExport: (sourceRecordingId: string, clipRecordingId: string) => void;
+  /** 片段导出终态队列（并行多条可能同帧到达），供通知组件逐条消费。 */
+  clipDoneQueue: Recording[];
+  clearClipDoneQueue: () => void;
+  /** SSE 观察到的录制快照（按 id）：供预览等处读取不在历史列表里的活动录制（如 seekIndexState）。 */
+  recordingSnapshots: Record<string, Recording>;
+  setRecordingSnapshot: (rec: Recording) => void;
 }
 
 export const useRecordingStore = create<RecordingState>((set, get) => ({
@@ -67,13 +97,19 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   page: 1,
   pageSize: 20,
   loading: false,
+  historyLoaded: false,
   completionNotice: null,
   pendingConfirm: null,
+  pendingClipExport: null,
+  clipExports: {},
+  clipDoneQueue: [],
+  recordingSnapshots: {},
   query: {},
-  async fetchHistory(q) {
+  async fetchHistory(q, opts) {
     const query = { ...get().query, ...q };
     const epoch = ++historyEpoch;
-    set({ loading: true, query });
+    // silent=事件触发的后台重取：不闪加载态、旧列表留在屏上直到新数据到位。
+    set(opts?.silent ? { query } : { loading: true, query });
     try {
       const res = await fetchRecordings(query);
       // 旧代际响应直接丢弃：快速切筛选/连点翻页时以最后一次请求为准。
@@ -84,6 +120,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         page: res.page,
         pageSize: res.pageSize,
         loading: false,
+        historyLoaded: true,
       });
     } catch (error) {
       if (epoch !== historyEpoch) return;
@@ -129,18 +166,32 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     });
   },
   upsertRecordingFromEvent(rec) {
+    const known = get().items.some((item) => item.id === rec.id);
+    // 列表外的新记录（新录制/新片段）：分页筛选语义无法客户端插行，防抖重取当前页。
+    if (!known) {
+      const s = get();
+      const inScope =
+        s.historyLoaded && (!s.query.roomId || s.query.roomId === rec.roomId);
+      if (inScope) {
+        if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
+        historyRefreshTimer = setTimeout(() => {
+          historyRefreshTimer = null;
+          void get()
+            .fetchHistory(undefined, { silent: true })
+            .catch(() => undefined);
+        }, 800);
+      }
+    }
     set((s) => {
       const previous = s.items.find((item) => item.id === rec.id);
       const previousEventState = eventStateByRecordingId.get(rec.id);
-      eventStateByRecordingId.set(rec.id, rec.state);
-      // SSE may reconnect after a slow client was dropped. A delayed progress
-      // frame must never turn a terminal recording back into recording/pending.
       if (
-        previous &&
-        TERMINAL_STATES.has(previous.state) &&
+        (TERMINAL_STATES.has(previousEventState ?? "pending") ||
+          (previous && TERMINAL_STATES.has(previous.state))) &&
         !TERMINAL_STATES.has(rec.state)
       )
         return {};
+      eventStateByRecordingId.set(rec.id, rec.state);
       const idx = s.items.findIndex((item) => item.id === rec.id);
       const items =
         idx === -1
@@ -163,15 +214,31 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         previousEventState !== "completed" &&
         rec.endReason !== "interrupted" &&
         rec.endReason !== "service_restart";
-      // #220/#221：进入「待确认保留」态时提示用户（挂起管线/上传，等用户决策保留/删除）。
       const justAwaiting =
         rec.state === "awaiting_confirmation" &&
         previous?.state !== "awaiting_confirmation";
+      const trackedClipExport = rec.id in s.clipExports;
+      const isClipExport =
+        trackedClipExport ||
+        rec.origin === "clip" ||
+        rec.endReason === "clip_export";
+      const clipTerminal =
+        isClipExport &&
+        (rec.state === "completed" || rec.state === "failed") &&
+        (trackedClipExport ||
+          (previousEventState !== undefined &&
+            !TERMINAL_STATES.has(previousEventState)));
+      let clipExports = s.clipExports;
+      if (clipTerminal) {
+        clipExports = { ...s.clipExports };
+        delete clipExports[rec.id];
+      }
       return {
         items,
-        completionNotice: justCompleted
-          ? normalizeRecording(rec)
-          : s.completionNotice,
+        completionNotice:
+          justCompleted && !isClipExport
+            ? normalizeRecording(rec)
+            : s.completionNotice,
         pendingConfirm: justAwaiting
           ? normalizeRecording(rec)
           : // 精彩时刻导出失败可能发生在确认框已提前打开之后；收到失败事件时
@@ -180,6 +247,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
               rec.state !== "awaiting_confirmation"
             ? null
             : s.pendingConfirm,
+        clipExports,
+        clipDoneQueue:
+          clipTerminal && previousEventState !== rec.state
+            ? [...s.clipDoneQueue, normalizeRecording(rec)]
+            : s.clipDoneQueue,
+        recordingSnapshots: {
+          ...s.recordingSnapshots,
+          [rec.id]: normalizeRecording(rec),
+        },
       };
     });
   },
@@ -187,13 +263,43 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     eventStateByRecordingId.delete(recordingId);
     set((s) => ({
       items: s.items.filter((item) => item.id !== recordingId),
-      total: Math.max(0, s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0)),
+      total: Math.max(
+        0,
+        s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0),
+      ),
       pendingConfirm:
         s.pendingConfirm?.id === recordingId ? null : s.pendingConfirm,
     }));
   },
   clearPendingConfirm() {
     set({ pendingConfirm: null });
+  },
+  setPendingClipExport(prompt) {
+    set({ pendingClipExport: prompt });
+  },
+  clearPendingClipExport() {
+    set({ pendingClipExport: null });
+  },
+  beginClipExport(sourceRecordingId, clipRecordingId) {
+    set((s) => {
+      const snapshot = s.recordingSnapshots[clipRecordingId];
+      // 很短的片段可能在响应返回前已经通过 SSE 完成并发出通知。
+      if (snapshot && TERMINAL_STATES.has(snapshot.state)) return {};
+      return {
+        clipExports: { ...s.clipExports, [clipRecordingId]: sourceRecordingId },
+      };
+    });
+  },
+  clearClipDoneQueue() {
+    set({ clipDoneQueue: [] });
+  },
+  setRecordingSnapshot(rec) {
+    set((s) => ({
+      recordingSnapshots: {
+        ...s.recordingSnapshots,
+        [rec.id]: normalizeRecording(rec),
+      },
+    }));
   },
   patchRecordingUpload(recordingId, upload) {
     set((s) => {

@@ -45,6 +45,8 @@ export class VerificationQueue {
     // 新录优先：用户正在等的先校验，历史积压垫后。
     this.queue.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
     this.services.recordings.update(rec.id, { integrityState: 'queued' } as never);
+    // 排队态变化也实时上屏（与其余校验态同口径配对事件）。
+    this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(rec.id)! });
     console.log(`[verify] 入队 ${rec.id}（第 ${this.positionOf(rec.id)} 位）`);
     this.pump();
     return true;

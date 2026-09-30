@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
 import { discardTemp, finalizeMp4, runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
+import { uniqueTargetPath } from '../storage/file-organizer.js';
 import { checkFileIntegrity } from './integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
 
@@ -51,6 +52,23 @@ export async function segmentFile(inputPath: string, outputDir: string, baseName
     .filter((f) => f.startsWith(`${baseName}_seg_`) && f.endsWith('.ts'))
     .sort();
   return { segments: files.map((f) => path.join(outputDir, f)), pattern };
+}
+
+/** Re-encode a precise timeline selection. Copying FLV packets would snap to a preceding keyframe. */
+export async function exportClipFile(
+  inputPath: string,
+  outputPath: string,
+  startSecond: number,
+  endSecond: number,
+  options: { onProgress?: (info: { outTimeMs: number; speed: number | null }) => void } = {},
+): Promise<{ ok: boolean; sizeBytes: number; stderr: string }> {
+  const res = await runFfmpeg([
+    '-y', '-ss', String(startSecond), '-i', inputPath, '-t', String(endSecond - startSecond),
+    '-map', '0:v?', '-map', '0:a?', '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-c:a', 'aac',
+    '-avoid_negative_ts', 'make_zero', outputPath,
+  ], options.onProgress ? { onProgress: options.onProgress } : {});
+  const out = await stat(outputPath).catch(() => null);
+  return { ok: res.ok && Boolean(out && out.size > 0), sizeBytes: out?.size ?? 0, stderr: res.stderr };
 }
 
 export interface AudioExportResult {
@@ -144,12 +162,18 @@ async function unusedPath(preferred: string): Promise<string> {
   }
 }
 
-/** 独立格式转换：安全地输出 MP4，源文件绝不删除或覆盖。 */
+/** 独立格式转换：安全地输出 MP4，源文件绝不删除或覆盖。产物与源同基名（仅换扩展名，不带 _converted 后缀）；
+ *  撞名走命名安全自动加「(n)」序号、绝不覆盖。 */
 export async function convertToMp4(inputPath: string, options: FfmpegRunOptions = {}): Promise<CompressResult | null> {
   if (/\.mp4$/i.test(inputPath)) return null;
-  const preferredPath = inputPath.replace(/\.(flv|ts)$/i, '_converted.mp4');
-  if (preferredPath === inputPath) return null;
-  const outPath = await unusedPath(preferredPath);
+  if (!/\.(flv|ts)$/i.test(inputPath)) return null;
+  const sourceBase = path.basename(inputPath).replace(/\.(flv|ts)$/i, '');
+  const { targetPath: outPath } = await uniqueTargetPath(
+    path.dirname(inputPath),
+    sourceBase,
+    '.mp4',
+    [inputPath],
+  );
   const tempPath = `${outPath}.part`;
   await discardTemp(tempPath);
   const res = await runFfmpeg(['-y', '-i', inputPath, '-c', 'copy', '-f', 'mp4', tempPath], options);

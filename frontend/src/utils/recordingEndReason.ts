@@ -9,6 +9,7 @@ const END_REASON_TEXT: Record<RecordingEndReason, string> = {
   stopped: "手动停止",
   interrupted: "中途中断",
   service_restart: "重启中断",
+  clip_export: "片段导出",
 };
 
 /** 进行中的录制没有结束原因；未知取值也返回 null，绝不把原始枚举漏给界面。 */

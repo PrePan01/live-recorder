@@ -281,6 +281,11 @@ export class RecordingRepository {
     return (this.db.prepare("SELECT * FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')").all() as RecordingRow[]).map(rowToRecording);
   }
 
+  /** 启动恢复用：被重启打断的片段导出（origin=clip 且仍 processing）。 */
+  listClipExporting(): Recording[] {
+    return (this.db.prepare("SELECT * FROM recordings WHERE origin = 'clip' AND state = 'processing'").all() as RecordingRow[]).map(rowToRecording);
+  }
+
   activeCount(): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) AS c FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')`)

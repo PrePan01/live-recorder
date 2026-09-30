@@ -12,6 +12,7 @@ import './styles/tokens.css';
 import './styles/layout.css';
 import './styles/antd-overrides.css';
 import './styles/patterns.css';
+import './styles/recording-track.css';
 import './styles/motion.css';
 import './styles/legacy.css';
 

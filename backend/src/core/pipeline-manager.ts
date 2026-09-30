@@ -6,6 +6,8 @@ import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
 import { checkFileIntegrity, checkFileIntegrityDetailed } from '../recorder/integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
+import { moveMarkerSidecar } from '../storage/recording-markers.js';
+import { removeSeekIndexSidecar } from '../storage/seek-index.js';
 import { extractCoverFrame, segmentFile, exportAudioToMp3, convertToMp4, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
 import type { PipelineArtifact, PipelineStep, Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
@@ -303,12 +305,22 @@ export class PipelineManager {
                 });
           if (converted) {
             const sourcePath = recording.filePath;
-            this.services.recordings.update(recording.id, { filePath: converted.outPath, fileSizeBytes: converted.sizeBytes });
+            const sourceBase = path.basename(sourcePath, path.extname(sourcePath));
+            const outBase = path.basename(converted.outPath, path.extname(converted.outPath));
+            this.services.recordings.update(recording.id, {
+              filePath: converted.outPath,
+              fileSizeBytes: converted.sizeBytes,
+              // 标题=文件名恒等式：原本相等才随产物基名同步（含撞名序号）；默认命名（标题≠基名）不动标题。
+              ...(recording.streamTitle === sourceBase ? { streamTitle: outBase } : {}),
+            });
+            await moveMarkerSidecar(sourcePath, converted.outPath);
             recording.filePath = converted.outPath;
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'ok', path: converted.outPath, sizeBytes: converted.sizeBytes, endedAt: this.services.clock.iso() });
             if (config.deleteSourceAfterConvert) {
               try {
                 await unlink(sourcePath);
+                // 定位索引跟随 FLV 字节偏移：源没了索引一并清（转出的 MP4 用不上它）。
+                await removeSeekIndexSidecar(sourcePath);
               } catch {
                 finalStatus = 'partial';
                 this.services.alerts.create({
@@ -348,7 +360,9 @@ export class PipelineManager {
           });
           if (comp) {
             // 成功后只切换后续步骤的输入，始终保留源文件。
+            const sourcePath = recording.filePath;
             this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
+            await moveMarkerSidecar(sourcePath, comp.outPath);
             recording.filePath = comp.outPath;
             this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
           } else {
