@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { fitPreviewBox, fitPreviewBoxByHeight } from './previewLayout';
 
 describe('fitPreviewBox', () => {
-  it('横屏按宽度适配，高度不设上限（保持既有行为）', () => {
+  it('横屏在可用高度不足时缩小，避免覆盖弹窗操作区', () => {
     expect(fitPreviewBox(16 / 9, 1104, 710)).toEqual({ width: 1104, height: 621 });
-    // 可用高度很小也不压缩横屏：横屏弹窗的高度由宽度决定。
-    expect(fitPreviewBox(16 / 9, 1440, 300)).toEqual({ width: 1440, height: 810 });
+    expect(fitPreviewBox(16 / 9, 1440, 300)).toEqual({ width: 533.3333333333333, height: 300 });
   });
 
   it('竖屏按可用高度适配并收窄宽度', () => {

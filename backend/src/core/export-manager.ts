@@ -6,6 +6,7 @@ import type { Services } from './services.js';
 import type { ExportJob } from '../types/index.js';
 import { ExportRepository } from '../db/repositories/export.repo.js';
 import { APP_VERSION } from '../sidecar/types.js';
+import { markerSidecarPath } from '../storage/recording-markers.js';
 
 /**
  * 录制备份与导出（V5 Batch3 #127）：单场/批量打包为目录（源文件 + sidecar 元数据 + 封面），
@@ -62,7 +63,7 @@ export class ExportManager {
       version: string;
       appVersion: string;
       exportedAt: string;
-      recordings: Array<{ id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string }>;
+      recordings: Array<{ id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; markerFile: string | null; status: string }>;
     } = { version: '1', appVersion: APP_VERSION, exportedAt: this.services.clock.iso(), recordings: [] };
 
     try {
@@ -74,16 +75,17 @@ export class ExportManager {
         if (this.repo.get(jobId)?.status === 'cancelled') return;
         const rec = this.services.recordings.get(recId);
         if (!rec) {
-          manifest.recordings.push({ id: recId, file: null, hash: null, metadata: null, cover: null, status: 'missing' });
+          manifest.recordings.push({ id: recId, file: null, hash: null, metadata: null, cover: null, markerFile: null, status: 'missing' });
           missing += 1;
           continue;
         }
-        const entry: { id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; status: string } = {
+        const entry: { id: string; file: string | null; hash: string | null; metadata: Record<string, unknown> | null; cover: string | null; markerFile: string | null; status: string } = {
           id: rec.id,
           file: null,
           hash: null,
           metadata: rec.metadata ? { ...rec.metadata } : null,
           cover: null,
+          markerFile: null,
           status: 'ok',
         };
         // 源文件。
@@ -100,6 +102,17 @@ export class ExportManager {
         } else {
           entry.status = 'partial';
           missing += 1;
+        }
+        // Marker sidecars are optional: no markers means there is deliberately no file.
+        if (rec.filePath) {
+          try {
+            const sidecar = markerSidecarPath(rec.filePath);
+            const name = path.basename(sidecar);
+            await copyFile(sidecar, path.join(dir, name));
+            entry.markerFile = name;
+          } catch {
+            // Missing sidecar is normal; do not downgrade a recording without markers.
+          }
         }
         // 封面（缺失 → partial 但不失败）。
         if (rec.coverPath) {

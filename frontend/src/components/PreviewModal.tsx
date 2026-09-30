@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   App,
@@ -19,14 +26,17 @@ import {
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import RecordingStopIcon from "./RecordingStopIcon";
+import RecordingTrack from "./RecordingTrack";
 import type { Room } from "../types/room";
 import { useRoomStore } from "../stores/roomStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useRecordingStore } from "../stores/recordingStore";
 import { useDisplayClock } from "../hooks/useDisplayClock";
 import { describeError } from "../utils/errorMap";
 import { fitPreviewBox, fitPreviewBoxByHeight } from "../utils/previewLayout";
 import { ApiError } from "../types/error";
 import VideoPlayer from "./VideoPlayer";
+import { observePreviewProgress } from "../utils/observePreviewProgress";
 import {
   clearHighlightBuffer,
   disableHighlightBuffer,
@@ -35,6 +45,16 @@ import {
   fetchHighlightBufferStatus,
   type HighlightBufferStatus,
 } from "../api/rooms";
+import {
+  createRecordingMarker,
+  deleteRecordingMarker,
+  fetchRecordingMarkers,
+  fetchRecordings,
+  prewarmRecordingSeek,
+  recordingSeekStreamUrl,
+  updateRecordingMarker,
+} from "../api/recordings";
+import type { RecordingMarker } from "../types/recording";
 
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
@@ -43,15 +63,23 @@ const PICTURE_IN_PICTURE_WIDTH = 360;
 const MODAL_BODY_PADDING_X = 48;
 /** Ant Modal 在视口两侧至少保留 16px，视频缩放也必须预留这段空间。 */
 const MODAL_VIEWPORT_GUTTER_X = 32;
-/** 标题栏 + 主体上下内边距 + 视频下方操作行 + 居中留白：竖屏据此把画面压在可视高度内。 */
-const MODAL_CHROME_HEIGHT = 190;
+const MODAL_CHROME_HEIGHT = 108;
+/** 轨道操作区的可用宽度下限；窄于此时才退回到视口可用宽度。 */
+const RECORDING_TRACK_MIN_WIDTH = 450;
 /** 竖屏拖拽缩放的画面高度下限，避免缩到不可用。 */
 const MIN_VIDEO_HEIGHT = 240;
+/** 秒→mm:ss（跳播真值提示用）。 */
+const formatClock = (value: number) => {
+  const total = Math.max(0, Math.floor(value));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
 type PlayerBounds = { left: number; top: number; width: number };
+type PendingPreviewResize = { portrait: boolean; value: number };
 
 /**
- * 直播观看弹窗（#194）：视频画面右下角拖拽调整大小 + 画面下方录制/停止按钮。
- * 监控总览与直播墙共用；录制状态与监控卡片联动（同 roomStore）。
+ * 直播观看弹窗
  */
 export default function PreviewModal({
   room,
@@ -64,7 +92,6 @@ export default function PreviewModal({
   onClose: () => void;
   titlePrefix?: string;
   defaultWidth?: number;
-  /** 直播墙全屏复用本组件，但必须保持纯预览，不启用回溯缓存。 */
   enableHighlights?: boolean;
 }) {
   const { message } = App.useApp();
@@ -88,12 +115,15 @@ export default function PreviewModal({
       ),
   );
   const [recentStop, setRecentStop] = useState(false);
-  // 流的真实比例（宽/高）：元数据就绪前按 16:9，避免弹窗先跳一下再变。
-  const [streamRatio, setStreamRatio] = useState(16 / 9);
+  // 流的真实比例（宽/高）。元数据未就绪时播放器保持隐藏，避免先按 16:9 显示再缩成竖屏。
+  const [streamRatio, setStreamRatio] = useState<number | null>(null);
+  const [streamRatioReady, setStreamRatioReady] = useState(false);
   // 竖屏画面高度（宽度按比例算出）；null = 用满可视高度上限，用户拖拽后才取值。
   const [portraitHeight, setPortraitHeight] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+  const [viewportHeight, setViewportHeight] = useState(
+    () => window.innerHeight,
+  );
   const [highlightSeconds, setHighlightSeconds] = useState(30);
   const [highlightMaxSeconds, setHighlightMaxSeconds] = useState(300);
   const [highlightAvailableSeconds, setHighlightAvailableSeconds] = useState(0);
@@ -101,6 +131,15 @@ export default function PreviewModal({
     string | null
   >(null);
   const [exporting, setExporting] = useState(false);
+  const [markers, setMarkers] = useState<RecordingMarker[]>([]);
+  const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
+  const [displayedTrack, setDisplayedTrack] = useState<{
+    id: string;
+    startedAt: string;
+  } | null>(null);
+  const [trackCollapsed, setTrackCollapsed] = useState(false);
+  const [trackHeight, setTrackHeight] = useState(0);
+  const [trackNode, setTrackNode] = useState<HTMLDivElement | null>(null);
   const [pictureInPicture, setPictureInPicture] = useState(false);
   const [picturePosition, setPicturePosition] = useState({ x: 0, y: 0 });
   const [previewPlayerBounds, setPreviewPlayerBounds] =
@@ -125,6 +164,13 @@ export default function PreviewModal({
   const suppressPictureClickRef = useRef(false);
   const pictureWasPlayingRef = useRef(false);
   const pictureVideoRef = useRef<HTMLVideoElement | null>(null);
+  const trackRevealRef = useCallback((node: HTMLDivElement | null) => {
+    setTrackNode(node);
+  }, []);
+  const streamRatioTimerRef = useRef<number | null>(null);
+  // 鼠标事件可能快于显示器刷新率；尺寸状态只在下一帧提交一次最新值。
+  const resizeFrameRef = useRef<number | null>(null);
+  const pendingResizeRef = useRef<PendingPreviewResize | null>(null);
 
   const live = rooms.find((r) => r.id === room.id) ?? room;
   const recording =
@@ -132,33 +178,150 @@ export default function PreviewModal({
   const now = useDisplayClock(recording);
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
+  const activeRecordingId = live.activeRecording?.recordingId;
+  const handleStreamAspectRatio = useCallback((ratio: number) => {
+    setStreamRatio(ratio);
+    setStreamRatioReady(false);
+    if (streamRatioTimerRef.current !== null)
+      window.clearTimeout(streamRatioTimerRef.current);
+    streamRatioTimerRef.current = window.setTimeout(
+      () => setStreamRatioReady(true),
+      180,
+    );
+  }, []);
 
-  // 画面按流的真实宽高比排版：横屏按宽度，竖屏按高度（默认用满可视高度，可拖拽缩放）。
-  const maxVideoHeight = Math.max(180, viewportHeight - MODAL_CHROME_HEIGHT);
+  useEffect(
+    () => () => {
+      if (streamRatioTimerRef.current !== null)
+        window.clearTimeout(streamRatioTimerRef.current);
+    },
+    [],
+  );
+
+  const commitPendingResize = () => {
+    const next = pendingResizeRef.current;
+    pendingResizeRef.current = null;
+    if (!next) return;
+    if (next.portrait)
+      setPortraitHeight((current) =>
+        current === next.value ? current : next.value,
+      );
+    else setWidth((current) => (current === next.value ? current : next.value));
+  };
+
+  const queuePreviewResize = (next: PendingPreviewResize) => {
+    pendingResizeRef.current = next;
+    if (resizeFrameRef.current !== null) return;
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = null;
+      commitPendingResize();
+    });
+  };
+
+  useEffect(
+    () => () => {
+      if (resizeFrameRef.current !== null)
+        window.cancelAnimationFrame(resizeFrameRef.current);
+    },
+    [],
+  );
+
+  // 停止后保留最后一帧到退场动画结束，避免条件渲染直接卸载而闪退。
+  useEffect(() => {
+    if (recording && activeRecordingId && live.activeRecording?.startedAt) {
+      const next = {
+        id: activeRecordingId,
+        startedAt: live.activeRecording.startedAt,
+      };
+      setDisplayedTrack((current) =>
+        current?.id === next.id && current.startedAt === next.startedAt
+          ? current
+          : next,
+      );
+      return;
+    }
+    if (!displayedTrack) return;
+    const timer = window.setTimeout(() => setDisplayedTrack(null), 1000);
+    return () => window.clearTimeout(timer);
+  }, [
+    recording,
+    activeRecordingId,
+    live.activeRecording?.startedAt,
+    displayedTrack,
+  ]);
+  const trackClosing = Boolean(displayedTrack) && !recording;
+
+  useEffect(() => {
+    if (!activeRecordingId) {
+      setMarkers([]);
+      return;
+    }
+    void fetchRecordingMarkers(activeRecordingId)
+      .then(setMarkers)
+      .catch(() => setMarkers([]));
+  }, [activeRecordingId]);
+  useEffect(() => {
+    if (activeRecordingId) setTrackCollapsed(false);
+  }, [activeRecordingId]);
+
+  useLayoutEffect(() => {
+    const wrapper = trackNode;
+    if (!displayedTrack || !wrapper) return;
+    const node = wrapper.firstElementChild ?? wrapper;
+    const update = () => {
+      if (!node.isConnected) return;
+      const margin = Number.parseFloat(getComputedStyle(node).marginTop) || 0;
+      const next = Math.ceil(node.getBoundingClientRect().height + margin);
+      setTrackHeight((current) => (current === next ? current : next));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [displayedTrack, trackCollapsed, trackNode]);
+
+  // 模态框尺寸只由初始预览/用户拖拽决定；轨道只从其内部视频区扣除实际高度。
   const maxModalWidth = Math.max(
     MODAL_BODY_PADDING_X + 1,
     viewportWidth - MODAL_VIEWPORT_GUTTER_X,
   );
   const maxVideoWidth = Math.max(1, maxModalWidth - MODAL_BODY_PADDING_X);
-  const portrait = streamRatio < 1;
+  const layoutRatio = streamRatio ?? 16 / 9;
+  const portrait = layoutRatio < 1;
+  const maxModalHeight = Math.max(0, viewportHeight - 32);
+  const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
+  const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
+  const maxVideoHeight = Math.max(0, baseVideoHeight - measuredTrackHeight);
   const videoBox = portrait
     ? fitPreviewBoxByHeight(
-        streamRatio,
+        layoutRatio,
         portraitHeight ?? maxVideoHeight,
         maxVideoHeight,
       )
     : fitPreviewBox(
-        streamRatio,
+        layoutRatio,
         Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
         maxVideoHeight,
       );
+  // 弹窗贴内容高：视频 + 轨道预留 + 固定 chrome（标题/内边距/操作行），封顶视口。
+  const modalHeight = Math.min(
+    maxModalHeight,
+    Math.ceil(videoBox.height + measuredTrackHeight + MODAL_CHROME_HEIGHT),
+  );
   const modalWidth = Math.min(
     maxModalWidth,
-    Math.ceil(videoBox.width + MODAL_BODY_PADDING_X),
+    Math.max(
+      MODAL_BODY_PADDING_X + Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
+      Math.min(width, maxModalWidth),
+    ),
+  );
+  const trackWidth = Math.max(
+    videoBox.width,
+    Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
   );
   // 画中画同样按真实比例，以固定宽度为基准，并且不超过窗口高度。
   const pictureBox = fitPreviewBox(
-    streamRatio,
+    layoutRatio,
     PICTURE_IN_PICTURE_WIDTH,
     Math.max(120, viewportHeight - 20),
   );
@@ -210,8 +373,6 @@ export default function PreviewModal({
         .then((status) => {
           if (!alive) return;
           applyStatus(status);
-          // B1：首开 enable 失败或被乱序 DELETE 后，轮询发现未启用则重试 enable，
-          // 而不是一直显示「正在接收直播帧」0 秒。
           if (!status.enabled) {
             bumpHighlightGen(room.id);
             void enableHighlightBuffer(room.id)
@@ -249,8 +410,6 @@ export default function PreviewModal({
     };
   }, [room.id, recording, onAir, enableHighlights, highlightEnabled]);
 
-  // 播放器始终挂在 body。普通预览时用这个占位元素的实际坐标定位，避免
-  // 在画中画与弹窗之间切换时卸载 video / 重建 mpegts 连接。
   useLayoutEffect(() => {
     if (pictureInPicture || !previewPlayerSlot) {
       setPreviewPlayerVisible(false);
@@ -270,37 +429,14 @@ export default function PreviewModal({
     };
     setPreviewPlayerVisible(false);
     syncBounds();
-    const animationStartedAt = performance.now();
-    let previousBounds: PlayerBounds | null = null;
-    let stableFrames = 0;
     let frame = window.requestAnimationFrame(() => {
       setPreviewPlayerVisible(true);
-      // Ant Design 的弹窗进场会改变 transform。逐帧跟随占位区域，避免
-      // 顶层播放器抢先出现在最终位置而与弹窗动画脱节。
-      const followModalAnimation = () => {
-        const { left, top, width: nextWidth } = slot.getBoundingClientRect();
-        const nextBounds = { left, top, width: nextWidth };
-        const changed =
-          !previousBounds ||
-          previousBounds.left !== left ||
-          previousBounds.top !== top ||
-          previousBounds.width !== nextWidth;
-        previousBounds = nextBounds;
-        stableFrames = changed ? 0 : stableFrames + 1;
-        setPreviewPlayerBounds((current) =>
-          current &&
-          current.left === left &&
-          current.top === top &&
-          current.width === nextWidth
-            ? current
-            : nextBounds,
-        );
-        // 至少覆盖完整的默认动效，再等待连续数帧不再变化；这也能兼容
-        // WebView 首帧较慢时动效延后开始的情况。
-        if (performance.now() - animationStartedAt < 500 || stableFrames < 3)
-          frame = window.requestAnimationFrame(followModalAnimation);
+      // 逐帧跟随占位区域：下方轨道插入等布局变化只移动不缩放，RO 不报位移。
+      const followSlot = () => {
+        syncBounds();
+        frame = window.requestAnimationFrame(followSlot);
       };
-      followModalAnimation();
+      followSlot();
     });
     const observer = new ResizeObserver(syncBounds);
     observer.observe(slot);
@@ -310,7 +446,7 @@ export default function PreviewModal({
       observer.disconnect();
       window.removeEventListener("resize", syncBounds);
     };
-  }, [pictureInPicture, previewPlayerSlot, width]);
+  }, [pictureInPicture, previewPlayerSlot]);
 
   const saveHighlight = (seconds: number) => {
     seconds = Math.max(1, Math.min(Math.floor(seconds), highlightMaxSeconds));
@@ -370,15 +506,174 @@ export default function PreviewModal({
     void stopRoomRecording(room.id).catch(() => message.error("停止请求失败"));
   };
 
+  const updateMarkers = async (
+    action: () => Promise<RecordingMarker | void>,
+  ) => {
+    await action();
+    if (activeRecordingId)
+      setMarkers(await fetchRecordingMarkers(activeRecordingId));
+  };
+
+  // 导出选区：只弹「录制完成」确认框（后台零动作）；用户点保留后才启动后台导出。
+  const handleClipExport = (start: number, end: number) => {
+    if (!activeRecordingId) return;
+    setPendingClipExport({
+      recordingId: activeRecordingId,
+      roomId: room.id,
+      startSecond: start,
+      endSecond: end,
+      defaultName: `${live.displayName}_片段`,
+    });
+  };
+
+  // 跳播：松手才起流，代际号防串流；拖回最右/播到已录尾=切回实时直播。
+  const [seekPlayback, setSeekPlayback] = useState<{
+    url: string;
+    generation: number;
+    second: number;
+    startSecond: number;
+  } | null>(null);
+  const seekGenRef = useRef(0);
+  const seekMarkRef = useRef<string | null>(null);
+  const [seekActualStart, setSeekActualStart] = useState<{
+    generation: number;
+    second: number;
+  } | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
+    null,
+  );
+  const previewFrameGenerationRef = useRef<number | null>(null);
+  const requestedPlaybackRef = useRef(seekPlayback);
+  requestedPlaybackRef.current = seekPlayback;
+  const [displayPreview, setDisplayPreview] = useState<{
+    mode: "live" | "history";
+    second?: number;
+  }>({ mode: "live" });
+  useEffect(() => {
+    if (!previewVideo || !seekPlayback) return;
+    const generation = seekPlayback.generation;
+    return observePreviewProgress(
+      previewVideo,
+      (elapsed) => {
+        if (generation !== seekGenRef.current) return;
+        setDisplayPreview({ mode: "history", second: seekPlayback.startSecond + elapsed });
+      },
+      () => previewFrameGenerationRef.current === generation,
+    );
+  }, [previewVideo, seekPlayback]);
+  const recordingSnapshot = useRecordingStore((s) =>
+    activeRecordingId ? s.recordingSnapshots[activeRecordingId] : undefined,
+  );
+  const setRecordingSnapshot = useRecordingStore((s) => s.setRecordingSnapshot);
+  const seekIndexState = recordingSnapshot?.seekIndexState ?? "ready";
+
+  useEffect(() => {
+    if (!activeRecordingId) return;
+    void fetchRecordings({ roomId: room.id, pageSize: 10 })
+      .then((res) => {
+        const rec = res.items.find((item) => item.id === activeRecordingId);
+        if (rec) setRecordingSnapshot(rec);
+      })
+      .catch(() => undefined);
+  }, [activeRecordingId, room.id, setRecordingSnapshot]);
+
+  const handleSeekIntent = useCallback(
+    (second: number) => {
+      if (!activeRecordingId) return;
+      void prewarmRecordingSeek(activeRecordingId, second).catch(
+        () => undefined,
+      );
+    },
+    [activeRecordingId],
+  );
+  const handleSeekCommit = useCallback(
+    (target: number | "live") => {
+      if (target === "live") {
+        seekGenRef.current += 1;
+        setSeekPlayback(null);
+        setSeekActualStart(null);
+        try {
+          performance.mark("lr-seek:to-live");
+        } catch {
+          /* 性能 API 不可用时静默 */
+        }
+        return;
+      }
+      if (!activeRecordingId) return;
+      if (seekIndexState === "building") {
+        message.info("正在加载，请稍候再试");
+        return;
+      }
+      const generation = ++seekGenRef.current;
+      seekMarkRef.current = `lr-seek:pointerup-${generation}`;
+      try {
+        performance.mark(seekMarkRef.current);
+      } catch {
+        /* 性能 API 不可用时静默 */
+      }
+      // 先取得解码起点，再把目标与起点一起交给播放器完成准确定位。
+      void prewarmRecordingSeek(activeRecordingId, target)
+        .then((res) => {
+          if (generation !== seekGenRef.current) return;
+          if (res?.startSecond == null || !Number.isFinite(res.startSecond)) {
+            throw new Error("回看定位信息缺失，请重试");
+          }
+          setSeekActualStart(null);
+          setSeekPlayback({
+            url: recordingSeekStreamUrl(activeRecordingId, target),
+            generation,
+            second: target,
+            startSecond: res.startSecond,
+          });
+        })
+        .catch((error: unknown) => {
+          if (generation !== seekGenRef.current) return;
+          message.error(error instanceof ApiError
+            ? describeError(error.code, error.message)
+            : error instanceof Error ? error.message : "回看定位失败，请重试");
+        });
+    },
+    [activeRecordingId, seekIndexState, message],
+  );
+  const handleSeekTail = useCallback(() => {
+    seekGenRef.current += 1;
+    setSeekPlayback(null);
+    setSeekActualStart(null);
+  }, []);
+  const handleSeekFirstFrame = useCallback((generation: number) => {
+    if (generation !== seekGenRef.current) return;
+    previewFrameGenerationRef.current = generation;
+    const playback = requestedPlaybackRef.current;
+    if (playback?.generation === generation) {
+      setSeekActualStart({ generation, second: playback.second });
+    }
+    if (!seekMarkRef.current) return;
+    try {
+      performance.measure(
+        `lr-seek:to-first-frame-${generation}`,
+        seekMarkRef.current,
+      );
+    } catch {
+      /* 性能 API 不可用时静默 */
+    }
+    seekMarkRef.current = null;
+  }, []);
+  const handleLiveFirstFrame = useCallback(() => {
+    if (requestedPlaybackRef.current) return;
+    setDisplayPreview({ mode: "live" });
+    try {
+      performance.measure("lr-seek:to-live-first-frame", "lr-seek:to-live");
+    } catch {
+      /* 无切直播打点时静默 */
+    }
+  }, []);
+
   const handleClose = () => {
     if (enableHighlights)
       void disableHighlightBuffer(room.id).catch(() => undefined);
     onClose();
   };
 
-  // 页面卸载/切换导致弹窗被销毁时，同样要关闭精彩时刻缓存，避免泄漏。
-  // B2：延迟 + 代际校验——StrictMode 下「cleanup DELETE」可能晚于下一次 enable 到达；
-  // 仅当该房间此后没有更新的 enable 才真正禁用。
   useEffect(() => {
     const roomId = room.id;
     return () => {
@@ -403,8 +698,6 @@ export default function PreviewModal({
   const resumePictureVideo = () => {
     if (!pictureWasPlayingRef.current) return;
     const video = pictureVideoRef.current;
-    // mouseup 后 WebView 可能还会补发一次原生暂停；当前用户手势内先续播，
-    // 下一帧再确认一次，避免拖拽结束后停在暂停状态。
     void video?.play().catch(() => undefined);
     window.requestAnimationFrame(
       () => void video?.play().catch(() => undefined),
@@ -431,10 +724,7 @@ export default function PreviewModal({
       setPicturePosition({
         x: Math.max(
           0,
-          Math.min(
-            window.innerWidth - pictureBox.width,
-            drag.originX + deltaX,
-          ),
+          Math.min(window.innerWidth - pictureBox.width, drag.originX + deltaX),
         ),
         y: Math.max(
           0,
@@ -463,8 +753,6 @@ export default function PreviewModal({
     e.stopPropagation();
     if (!suppressPictureClickRef.current) {
       setPictureInPicture(false);
-      // 部分 WebView 会在 React click 处理结束后才执行原生 video controls
-      // 的暂停逻辑，因此放到下一帧恢复，且仅恢复点击前本来就在播放的视频。
       resumePictureVideo();
     }
     suppressPictureClickRef.current = false;
@@ -485,19 +773,21 @@ export default function PreviewModal({
       if (!drag) return;
       if (drag.portrait) {
         // 竖屏尺寸由高度决定，所以用纵向拖拽缩放；上限仍是可视高度，不会推出屏幕。
-        setPortraitHeight(
-          Math.min(
+        queuePreviewResize({
+          portrait: true,
+          value: Math.min(
             maxVideoHeight,
             Math.max(
               MIN_VIDEO_HEIGHT,
               drag.startHeight + (ev.clientY - drag.startY),
             ),
           ),
-        );
+        });
         return;
       }
-      setWidth(
-        Math.min(
+      queuePreviewResize({
+        portrait: false,
+        value: Math.min(
           MAX_WIDTH,
           maxModalWidth,
           Math.max(
@@ -505,10 +795,16 @@ export default function PreviewModal({
             drag.startW + (ev.clientX - drag.startX),
           ),
         ),
-      );
+      });
     };
     const onUp = () => {
       dragRef.current = null;
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+      // 释放鼠标时立刻提交尚未等到下一帧的末尾位置。
+      commitPendingResize();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -554,6 +850,9 @@ export default function PreviewModal({
         }
         footer={null}
         width={modalWidth}
+        style={
+          { "--lr-preview-modal-height": `${modalHeight}px` } as CSSProperties
+        }
         className="lr-preview-modal"
         centered
         destroyOnHidden
@@ -569,9 +868,68 @@ export default function PreviewModal({
               overflow: "hidden",
               margin: "0 auto",
               width: videoBox.width,
-              aspectRatio: String(streamRatio),
+              height: videoBox.height,
+              willChange: "width, height",
             }}
           />
+          {displayedTrack ? (
+            <div
+              ref={trackRevealRef}
+              className={`lr-recording-track-reveal${trackClosing ? " lr-recording-track-reveal--closing" : ""}`}
+              style={{ width: trackWidth, margin: "0 auto" }}
+            >
+              <RecordingTrack
+                elapsedSeconds={Math.max(
+                  0,
+                  Math.floor(
+                    (now - Date.parse(displayedTrack.startedAt)) / 1000,
+                  ),
+                )}
+                markers={markers}
+                editable
+                onSeekIntent={handleSeekIntent}
+                onSeekCommit={handleSeekCommit}
+                onReturnToLive={
+                  seekPlayback ? () => handleSeekCommit("live") : undefined
+                }
+                previewMode={displayPreview.mode}
+                previewSecond={displayPreview.second}
+                seekHint={
+                  seekIndexState === "building"
+                    ? "正在加载…"
+                    : seekActualStart != null
+                      ? `从 ${formatClock(seekActualStart.second)} 起播`
+                      : undefined
+                }
+                onAdd={(text) =>
+                  updateMarkers(() =>
+                    createRecordingMarker(displayedTrack.id, text),
+                  )
+                }
+                onEdit={(markerId, text) =>
+                  updateMarkers(() =>
+                    updateRecordingMarker(displayedTrack.id, markerId, {
+                      text,
+                    }),
+                  )
+                }
+                onMove={(markerId, positionSeconds) =>
+                  updateMarkers(() =>
+                    updateRecordingMarker(displayedTrack.id, markerId, {
+                      positionSeconds,
+                    }),
+                  )
+                }
+                onDelete={(markerId) =>
+                  updateMarkers(() =>
+                    deleteRecordingMarker(displayedTrack.id, markerId),
+                  )
+                }
+                onExport={handleClipExport}
+                onCollapsedChange={setTrackCollapsed}
+              />
+            </div>
+          ) : null}
           <div style={{ marginTop: 12, textAlign: "center" }}>
             {recording ? (
               <Popconfirm title="确定停止当前录制？" onConfirm={handleStop}>
@@ -790,16 +1148,26 @@ export default function PreviewModal({
               ? "0 10px 28px rgba(0,0,0,.35)"
               : undefined,
             visibility:
-              !pictureInPicture && !previewPlayerBounds ? "hidden" : undefined,
-            opacity: pictureInPicture || previewPlayerVisible ? 1 : 0,
+              !pictureInPicture && (!previewPlayerBounds || !streamRatioReady)
+                ? "hidden"
+                : undefined,
+            opacity:
+              pictureInPicture || (previewPlayerVisible && streamRatioReady)
+                ? 1
+                : 0,
             transition: pictureInPicture ? undefined : "opacity 180ms ease-out",
           }}
         >
           <VideoPlayer
             roomId={room.id}
             platform={room.platform}
-            aspectRatio={streamRatio}
-            onStreamAspectRatio={setStreamRatio}
+            aspectRatio={streamRatio ?? undefined}
+            onStreamAspectRatio={handleStreamAspectRatio}
+            onVideoElementChange={setPreviewVideo}
+            seek={seekPlayback}
+            onSeekTail={handleSeekTail}
+            onSeekFirstFrame={handleSeekFirstFrame}
+            onLiveFirstFrame={handleLiveFirstFrame}
           />
           {!pictureInPicture && (
             <div

@@ -163,19 +163,34 @@ export function buildRecordingColumns(
     {
       title: "状态",
       dataIndex: "state",
-      width: 95,
+      width: 130,
       render: (s, r) => {
         const reason = describeEndReason(r.endReason);
-        if (!reason) return <RecordingStateTag state={s} />;
+        const exporting = s === "processing" && r.progressPercent != null;
         return (
           <Space direction="vertical" size={0}>
             <RecordingStateTag state={s} />
-            <Typography.Text
-              type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
-              style={{ fontSize: 12 }}
-            >
-              {reason}
-            </Typography.Text>
+            {exporting ? (
+              <div
+                className="pipeline-step-progress"
+                aria-label={`片段导出进度 ${r.progressPercent}%`}
+              >
+                <div className="pipeline-step-progress-track">
+                  <span style={{ width: `${r.progressPercent}%` }} />
+                </div>
+                <Typography.Text className="pipeline-step-progress-percent">
+                  导出中 {r.progressPercent}%
+                </Typography.Text>
+              </div>
+            ) : null}
+            {reason ? (
+              <Typography.Text
+                type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
+                style={{ fontSize: 12 }}
+              >
+                {reason}
+              </Typography.Text>
+            ) : null}
           </Space>
         );
       },
@@ -191,7 +206,6 @@ export function buildRecordingColumns(
       dataIndex: "upload",
       width: 150,
       render: (u: Recording["upload"], r: Recording) => {
-        // #18②：无上传任务的录制提供「上传」按钮（未开自动上传或上传被删除时）。
         if (!u) {
           const canUpload = r.state === "completed" && !!r.filePath;
           return (
@@ -312,7 +326,6 @@ export function buildRecordingColumns(
       },
     },
     {
-      // 这一列既放失败原因，也放中断恢复合成一个文件后的"中途缺失 N 秒"。
       title: "录制异常",
       dataIndex: "failureReason",
       width: 180,

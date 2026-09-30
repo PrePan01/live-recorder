@@ -20,11 +20,14 @@ import {
   writeFailure,
   writeRestartExhausted,
 } from "./recording-failure.js";
-import { recordingFilePath } from "../storage/file-organizer.js";
+import { recordingFilePath, sanitizeRenameBase, uniqueTargetPath } from "../storage/file-organizer.js";
+import { moveMarkerSidecar, removeMarkerSidecar } from "../storage/recording-markers.js";
+import { moveSeekIndexSidecar, removeSeekIndexSidecar } from "../storage/seek-index.js";
 import { checkFileIntegrity } from "../recorder/integrity.js";
 import type { RecordingEvent } from "../recorder/engine.js";
 import { FlvTimestampNormalizer } from "../recorder/stream-recorder.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
+import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
 import {
@@ -75,6 +78,17 @@ const SHUTDOWN_GRACE_MS = 3_000;
 /** 收尾时最后一份数据到现在超时时长 */
 const TAIL_SILENCE_MIN_MS = 5_000;
 
+/** 同时进行的片段导出全局上限：防用户连点造成同文件多路读/CPU 风暴（正常并行不受影响）。 */
+const MAX_PARALLEL_CLIP_EXPORTS = 6;
+
+/** 落盘改名临界区：并行导出同名收尾时防「查重→改名」间隙互撞（进程内串行即可）。 */
+let clipFinalizeChain: Promise<unknown> = Promise.resolve();
+function withClipFinalizeLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = clipFinalizeChain.then(fn, fn);
+  clipFinalizeChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /**
  * 收尾时仍未结算的静默时长（毫秒）。录制期间累计缺失只在"恢复拿到数据"时才结算，
  */
@@ -87,11 +101,30 @@ function tailSilenceMs(
   return silent >= TAIL_SILENCE_MIN_MS ? silent : 0;
 }
 
+/**
+ * 片段命名校验：必填 1-120 字、文件名非法字符直接拒绝（用户重输），
+ * 兼容误带的视频扩展名（与历史改名同口径去掉后缀）。
+ */
+function validateClipName(raw: string, recordingId: string): string {
+  const base = (typeof raw === "string" ? raw : "")
+    .trim()
+    .replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, "")
+    .trim();
+  if (!base || base.length > 120) {
+    throw new AppError("CONFIG_INVALID", "片段名称需为 1-120 个字符", { recordingId });
+  }
+  if (/[\\/:*?"<>|\u0000-\u001f]/.test(base)) {
+    throw new AppError("CONFIG_INVALID", "片段名称不能包含 \\ / : * ? \" < > | 等字符", { recordingId });
+  }
+  return base;
+}
+
 interface ActiveSession {
   recordingId: string;
   roomId: string;
   streamSessionId: string | null;
   stopRequested: boolean;
+  requestedEndReason?: RecordingEndReason;
   size: number;
   startedAt: string;
   /** 当前分段实际使用的引擎；停止时必须作用于这个实例。 */
@@ -162,6 +195,10 @@ export interface SharedPreviewRecording {
 export class RecorderManager {
   readonly performance: PerformanceDiagnostics;
   private active = new Map<string, ActiveSession>();
+  /** 片段导出在途：`源录制id:起-止` → clip id（同选区防重复提交，不同选区可并行）。 */
+  private clipExports = new Map<string, string>();
+  /** clip id → 已推送的进度百分比（列表响应补「导出中 x%」用，终态清除）。 */
+  private clipProgress = new Map<string, number>();
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
   private backgroundTasks = 0;
@@ -843,6 +880,8 @@ export class RecorderManager {
         return;
       }
       await rename(rec.filePath, nextPath);
+      await moveMarkerSidecar(rec.filePath, nextPath);
+      await moveSeekIndexSidecar(rec.filePath, nextPath);
       this.services.recordings.update(recordingId, {
         streamTitle: base.trim(),
         filePath: nextPath,
@@ -1830,7 +1869,7 @@ export class RecorderManager {
       if (this.shuttingDown) return;
       if (session.stopRequested) {
         await this.completeRecording(room, recordingId, session.size, "ended", {
-          endReason: "stopped",
+          endReason: session.requestedEndReason ?? "stopped",
         });
         return;
       }
@@ -1980,7 +2019,7 @@ export class RecorderManager {
       // 停止录制的请求也会一直挂在 session.done 上（唯一的出口是重启服务）。
       if (this.active.get(room.id)?.stopRequested) {
         await this.completeRecording(room, recordingId, session.size, "ended", {
-          endReason: "stopped",
+          endReason: session.requestedEndReason ?? "stopped",
         });
         return;
       }
@@ -2072,7 +2111,7 @@ export class RecorderManager {
             session.size,
             "ended",
             {
-              endReason: "stopped",
+              endReason: session.requestedEndReason ?? "stopped",
             },
           );
           return;
@@ -2152,7 +2191,7 @@ export class RecorderManager {
               session.size,
               "ended",
               {
-                endReason: "stopped",
+                endReason: session.requestedEndReason ?? "stopped",
               },
             );
             return;
@@ -2303,10 +2342,11 @@ export class RecorderManager {
     );
   }
 
-  async stopRecording(roomId: string): Promise<void> {
+  async stopRecording(roomId: string, endReason: RecordingEndReason = "stopped"): Promise<void> {
     const session = this.active.get(roomId);
     if (!session) return;
     session.stopRequested = true;
+    session.requestedEndReason = endReason;
     {
       const room = this.services.rooms.get(roomId);
       if (room) {
@@ -2328,7 +2368,7 @@ export class RecorderManager {
           session.recordingId,
           session.size,
           "ended",
-          { preservePreview: true, endReason: "stopped" },
+          { preservePreview: true, endReason },
         );
         // 弹窗已关闭时共享上游流仍会为录制持续到这里；录制结束后没有观看者就收掉它。
         if (!this.preview?.hasClients(roomId))
@@ -2350,6 +2390,124 @@ export class RecorderManager {
     }
     await session.engine?.stop();
     await session.done;
+  }
+
+  /** 片段导出进度快照（0-100）：导出进行中为数字，供历史列表显示「导出中 x%」。 */
+  clipExportProgress(recordingId: string): number | null {
+    return this.clipProgress.get(recordingId) ?? null;
+  }
+
+  /**
+   * 保存命名后后台导出选区（导出不停录，保存后跑到底无取消）：
+   * 完成时按当前标题落盘改名（标题=文件名），撞名加序号绝不覆盖，源文件永远在保护名单。
+   */
+  async exportClip(recordingId: string, startSecond: number, endSecond: number, name: string): Promise<{ source: import("../types/index.js").Recording; clip: import("../types/index.js").Recording }> {
+    const source = this.services.recordings.get(recordingId);
+    if (!source || (source.state !== "recording" && source.state !== "reconnecting")) {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "仅录制中的录像可导出选区", { recordingId });
+    }
+    // 同选区防重复提交；不同选区可并行导出（多条选区同时导出是合法场景），全局上限防资源风暴。
+    const selectionKey = `${recordingId}:${startSecond}-${endSecond}`;
+    if (this.clipExports.has(selectionKey)) {
+      throw new AppError("CONCURRENT_LIMIT_REACHED", "相同选区已有片段导出进行中，请稍后再试", { recordingId });
+    }
+    if (this.clipExports.size >= MAX_PARALLEL_CLIP_EXPORTS) {
+      throw new AppError("CONCURRENT_LIMIT_REACHED", "同时导出的片段过多，请等待部分导出完成后再试", { recordingId });
+    }
+    const title = validateClipName(name, recordingId);
+    const elapsed = Math.max(0, Math.floor((this.services.clock.now() - Date.parse(source.startedAt)) / 1000));
+    if (startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
+      throw new AppError("CONFIG_INVALID", "选区必须在当前已录制时长内，且至少为 1 秒", { recordingId });
+    }
+    if (!source.filePath) {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件尚未就绪，请稍后再试", { recordingId });
+    }
+    const file = path.parse(source.filePath);
+    const clip = this.services.recordings.create({
+      roomId: source.roomId, roomName: source.roomName, platform: source.platform,
+      streamSessionId: source.streamSessionId, streamTitle: title,
+      ...(source.quality ? { quality: source.quality } : {}),
+      ...(source.expectedQuality ? { expectedQuality: source.expectedQuality } : {}), origin: "clip",
+    });
+    const outputPath = path.join(file.dir, `${file.name}_clip_${startSecond}-${endSecond}_${clip.id}${file.ext}`);
+    const pending = this.services.recordings.update(clip.id, {
+      state: "processing", filePath: outputPath,
+      // 选区起止在创建时即映射到时间轴：导出中历史行时长即选区时长（不随录制增长回退）。
+      startedAt: new Date(Date.parse(source.startedAt) + startSecond * 1000).toISOString(),
+      endedAt: new Date(Date.parse(source.startedAt) + endSecond * 1000).toISOString(),
+    });
+    this.clipExports.set(selectionKey, clip.id);
+    void (async () => {
+      const selectionMs = (endSecond - startSecond) * 1000;
+      // 进度节流：整数百分比变化才发、间隔 ≥500ms（onProgress 是高频回调，直接进 SSE 会刷屏）。
+      let lastPct = -1;
+      let lastEmitAt = 0;
+      try {
+        const result = await exportClipFile(source.filePath!, outputPath, startSecond, endSecond, {
+          onProgress: ({ outTimeMs }) => {
+            const pct = Math.max(0, Math.min(99, Math.floor((outTimeMs / selectionMs) * 100)));
+            const now = this.services.clock.now();
+            if (pct <= lastPct || (lastEmitAt !== 0 && now - lastEmitAt < 500)) return;
+            lastPct = pct;
+            lastEmitAt = now;
+            const row = this.services.recordings.get(clip.id);
+            if (row) this.services.events.emit({ type: "recording:updated", data: { ...row, progressPercent: pct } });
+          },
+        });
+        const current = this.services.recordings.get(clip.id) ?? pending;
+        const currentPath = current.filePath ?? outputPath;
+        if (!result.ok) {
+          // 失败：主行只留「片段导出失败」，技术原因进 details；半成品即刻清理。
+          const reason = result.stderr.trim().slice(-200);
+          const failed = this.services.recordings.update(clip.id, {
+            state: "failed",
+            failureReason: new AppError("RECORDING_FILE_CORRUPTED", "片段导出失败", {
+              recordingId: clip.id,
+              ...(reason ? { details: { reason } } : {}),
+            }).toObject(),
+          });
+          this.clipProgress.delete(clip.id);
+          this.services.events.emit({ type: "recording:updated", data: { ...failed, progressPercent: null } });
+          await unlink(currentPath).catch(() => undefined);
+          return;
+        }
+        // 延迟改名：完成落盘按当前标题对齐文件名（用户中途改过名也一致）；
+        // 撞名加「(n)」序号且标题同步，绝不覆盖既有文件，源文件永远不被指向。
+        // 改名临界区串行化：并行导出同名收尾时防「查重→改名」间隙互撞。
+        const { landed, finalTitle } = await withClipFinalizeLock(async () => {
+          const wanted = sanitizeRenameBase(current.streamTitle);
+          const { targetPath, base } = await uniqueTargetPath(file.dir, wanted, file.ext, [source.filePath!], currentPath);
+          if (currentPath !== targetPath) {
+            try {
+              await rename(currentPath, targetPath);
+              return { landed: targetPath, finalTitle: base };
+            } catch {
+              // 落盘改名失败不阻断完成（与确认链改名同容错）：文件留在原处，标题不动。
+              return { landed: currentPath, finalTitle: undefined };
+            }
+          }
+          return { landed: targetPath, finalTitle: base };
+        });
+        const done = this.services.recordings.update(clip.id, {
+          state: "completed", endReason: "clip_export",
+          endedAt: new Date(Date.parse(source.startedAt) + endSecond * 1000).toISOString(),
+          fileSizeBytes: result.sizeBytes,
+          filePath: landed,
+          ...(finalTitle !== undefined ? { streamTitle: finalTitle } : {}),
+        });
+        this.clipProgress.delete(clip.id);
+        // 完成即终态、不进确认链：用户点「保存」时已确认命名（不双弹）。
+        this.services.events.emit({ type: "recording:updated", data: { ...done, progressPercent: null } });
+        // 校验与后处理与正常保存录像完全同链：自动入完整性校验队列 + 按配置自动进管线
+        // （未启用管线时的 not_required+自动上传同语义），不依赖手动批量重校验。
+        this.finishSegmentProcessing(clip.id);
+      } finally {
+        // 解除在途占位；源录制全程不碰（导出不停录）。
+        this.clipExports.delete(selectionKey);
+      }
+    })();
+    this.services.events.emit({ type: "recording:updated", data: pending });
+    return { source: this.services.recordings.get(recordingId)!, clip: pending };
   }
 
   /**
@@ -2388,7 +2546,7 @@ export class RecorderManager {
   ): Promise<void> {
     if (session.stopRequested) {
       await this.completeRecording(room, recordingId, size, "ended", {
-        endReason: "stopped",
+        endReason: session.requestedEndReason ?? "stopped",
       });
       return;
     }
@@ -2414,7 +2572,7 @@ export class RecorderManager {
     });
     if (this.active.get(room.id)?.stopRequested) {
       await this.completeRecording(room, recordingId, size, "ended", {
-        endReason: "stopped",
+        endReason: session.requestedEndReason ?? "stopped",
       });
       return;
     }
@@ -2560,17 +2718,19 @@ export class RecorderManager {
         title: room.displayName,
       });
     // 异步校验文件完整性，不阻塞录制完成响应（#220 询问保留时进入待确认态挂起管线/上传）。
-    this.finishOrConfirm(recordingId);
+    // A selection export explicitly asks for the completion dialog even when the
+    // global "confirm after complete" preference is normally disabled.
+    this.finishOrConfirm(recordingId, options.endReason === "clip_export");
   }
 
   /**
    * 分段完成收尾入口（#220）：设置「完成后询问是否保留」开启时，录制完成进入待确认态并挂起
    * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
    */
-  private finishOrConfirm(recordingId: string): void {
+  private finishOrConfirm(recordingId: string, forceConfirm = false): void {
     const recording = this.services.recordings.get(recordingId);
     if (
-      this.settings().confirmAfterComplete &&
+      (forceConfirm || this.settings().confirmAfterComplete) &&
       recording?.origin !== "floating"
     ) {
       this.enterPendingConfirmation(recordingId);
@@ -2655,7 +2815,12 @@ export class RecorderManager {
     this.clearConfirmTimer(recordingId);
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
-    if (rec.filePath) void unlink(rec.filePath).catch(() => undefined);
+    if (rec.filePath) {
+      void unlink(rec.filePath).catch(() => undefined);
+      void removeMarkerSidecar(rec.filePath);
+      void removeSeekIndexSidecar(rec.filePath);
+    }
+    this.services.recordingMarkers.removeForRecording(recordingId);
     this.services.recordings.remove(recordingId);
     this.services.events.emit({
       type: "recording:deleted",

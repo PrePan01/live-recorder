@@ -11,7 +11,14 @@ export class SSEBroadcaster {
 
   start(services: Services): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = services.events.on((event) => this.dispatch(event));
+    // recording:updated 统一附上跳播索引状态（仅录制中的 FLV 行携带），前端免二次查询。
+    this.unsubscribe = services.events.on((event) =>
+      this.dispatch(
+        event.type === 'recording:updated'
+          ? { ...event, data: services.seek.attachSeekFields(event.data) }
+          : event,
+      ),
+    );
   }
 
   stop(): void {

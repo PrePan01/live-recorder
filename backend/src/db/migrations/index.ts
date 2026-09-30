@@ -931,6 +931,22 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       ensureCriticalColumns(db);
     },
   },
+  {
+    // Timeline text markers belong to a recording, so each live session remains independent.
+    version: 44,
+    sql: `
+      CREATE TABLE IF NOT EXISTS recording_markers (
+        id TEXT PRIMARY KEY,
+        recording_id TEXT NOT NULL,
+        position_seconds INTEGER NOT NULL CHECK(position_seconds >= 0),
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_recording_markers_recording_position
+        ON recording_markers(recording_id, position_seconds, created_at);
+    `,
+  },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

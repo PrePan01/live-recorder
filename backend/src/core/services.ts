@@ -22,6 +22,7 @@ import { openDatabase, type DB } from '../db/connection.js';
 import { ensureCriticalColumns, runMigrations } from '../db/migrations/index.js';
 import { RoomRepository } from '../db/repositories/room.repo.js';
 import { RecordingRepository } from '../db/repositories/recording.repo.js';
+import { RecordingMarkerRepository } from '../db/repositories/recording-marker.repo.js';
 import { SettingsRepository } from '../db/repositories/settings.repo.js';
 import { AlertRepository } from '../db/repositories/alert.repo.js';
 import { TagRepository } from '../db/repositories/tag.repo.js';
@@ -37,6 +38,7 @@ import { Scheduler } from './scheduler.js';
 import { PipelineManager } from './pipeline-manager.js';
 import { UploadManager } from './upload-manager.js';
 import { ExportManager } from './export-manager.js';
+import { SeekService } from './seek-service.js';
 import { notificationPreference } from '../api/routes/notifications.js';
 
 export type AdapterMode = 'fake' | 'real';
@@ -50,6 +52,7 @@ export interface Services {
   db: DB;
   rooms: RoomRepository;
   recordings: RecordingRepository;
+  recordingMarkers: RecordingMarkerRepository;
   liveEvents: LiveEventRepository;
   predictionCalibration: PredictionCalibrationRepository;
   settings: SettingsRepository;
@@ -69,6 +72,8 @@ export interface Services {
   pipeline: PipelineManager;
   uploader: UploadManager;
   exporter: ExportManager;
+  /** 跳播服务（正在录的这条：索引状态/预热/起流）。 */
+  seek: SeekService;
   adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
   engineFor(): RecordingEngine;
   /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
@@ -139,6 +144,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     tags,
     rooms: new RoomRepository(db, tags),
     recordings: new RecordingRepository(db),
+    recordingMarkers: new RecordingMarkerRepository(db),
     liveEvents: new LiveEventRepository(db),
     predictionCalibration: new PredictionCalibrationRepository(db),
     settings: new SettingsRepository(db),
@@ -164,6 +170,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     pipeline: undefined as unknown as PipelineManager,
     uploader: undefined as unknown as UploadManager,
     exporter: undefined as unknown as ExportManager,
+    seek: undefined as unknown as SeekService,
   };
   services.mailer = useKeychain
     ? new SmtpMailer(() => services.secretStore.get(MAIL_PASSWORD_KEY))
@@ -182,6 +189,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);
   services.exporter = new ExportManager(services);
+  services.seek = new SeekService(services);
   services.verificationQueue = new VerificationQueue(services);
   return services;
 }

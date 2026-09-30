@@ -53,6 +53,23 @@ export async function segmentFile(inputPath: string, outputDir: string, baseName
   return { segments: files.map((f) => path.join(outputDir, f)), pattern };
 }
 
+/** Re-encode a precise timeline selection. Copying FLV packets would snap to a preceding keyframe. */
+export async function exportClipFile(
+  inputPath: string,
+  outputPath: string,
+  startSecond: number,
+  endSecond: number,
+  options: { onProgress?: (info: { outTimeMs: number; speed: number | null }) => void } = {},
+): Promise<{ ok: boolean; sizeBytes: number; stderr: string }> {
+  const res = await runFfmpeg([
+    '-y', '-ss', String(startSecond), '-i', inputPath, '-t', String(endSecond - startSecond),
+    '-map', '0:v?', '-map', '0:a?', '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-c:a', 'aac',
+    '-avoid_negative_ts', 'make_zero', outputPath,
+  ], options.onProgress ? { onProgress: options.onProgress } : {});
+  const out = await stat(outputPath).catch(() => null);
+  return { ok: res.ok && Boolean(out && out.size > 0), sizeBytes: out?.size ?? 0, stderr: res.stderr };
+}
+
 export interface AudioExportResult {
   ok: boolean;
   /** ok=true 时为 mp3 路径与大小；失败时 reason：no_audio=预检无音轨，encode_failed=转码/校验失败 */
