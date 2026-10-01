@@ -1,4 +1,5 @@
 import type { DB } from '../connection.js';
+import { ensureCriticalColumns } from '../migrations/index.js';
 import type { ErrorObject, Platform, Quality, Recording, RecordingEndReason, RecordingIntegrity, RecordingMetadata, RecordingOrigin, RecordingState, PipelineStatus, UploadJobStatus } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
 
@@ -280,6 +281,11 @@ export class RecordingRepository {
     return (this.db.prepare("SELECT * FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')").all() as RecordingRow[]).map(rowToRecording);
   }
 
+  /** 启动恢复用：被重启打断的片段导出（origin=clip 且仍 processing）。 */
+  listClipExporting(): Recording[] {
+    return (this.db.prepare("SELECT * FROM recordings WHERE origin = 'clip' AND state = 'processing'").all() as RecordingRow[]).map(rowToRecording);
+  }
+
   activeCount(): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) AS c FROM recordings WHERE state IN ('pending', 'recording', 'reconnecting')`)
@@ -289,6 +295,8 @@ export class RecordingRepository {
 
   /** 中断事件存证（缺失降噪的数据层）：一次中断一行，主表聚合展示。 */
   insertGap(input: { recordingId: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence?: string | null }): void {
+    // 写点防御（P0 三层之三）：写 gap_count 前条件补列，中间版库缺列不再把录制打崩。
+    ensureCriticalColumns(this.db);
     this.db
       .prepare('INSERT INTO recording_gaps (id, recording_id, started_at, ended_at, missing_ms, kind, evidence) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(newId('gap'), input.recordingId, input.startedAt, input.endedAt, input.missingMs, input.kind, input.evidence ?? null);
@@ -308,6 +316,36 @@ export class RecordingRepository {
  pipelineStatus: PipelineStatus; metadata: RecordingMetadata | null; coverPath: string | null; endReason: RecordingEndReason | null; missingMs: number | null; highlightExportPending: boolean; highlightConfirmationDecision: boolean | null; highlightConfirmationFileName: string | null }>): Recording {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
+    if (
+      patch.gapCount !== undefined ||
+      patch.integrityState !== undefined ||
+      patch.integrityAttempts !== undefined ||
+      patch.integrityLastAttempt !== undefined ||
+      patch.integrityError !== undefined
+    ) {
+      // 写点防御（P0 三层之三）：写 42 批就地加过的列前条件补列，中间版库缺列不再把链路打崩。
+      ensureCriticalColumns(this.db);
+    }
+    if (patch.gapCount !== undefined) {
+      sets.push('gap_count = ?');
+      params.push(patch.gapCount);
+    }
+    if (patch.integrityState !== undefined) {
+      sets.push('integrity_state = ?');
+      params.push(patch.integrityState);
+    }
+    if (patch.integrityAttempts !== undefined) {
+      sets.push('integrity_attempts = ?');
+      params.push(patch.integrityAttempts);
+    }
+    if (patch.integrityLastAttempt !== undefined) {
+      sets.push('integrity_last_attempt = ?');
+      params.push(patch.integrityLastAttempt);
+    }
+    if (patch.integrityError !== undefined) {
+      sets.push('integrity_error = ?');
+      params.push(patch.integrityError);
+    }
     if (patch.endReason !== undefined) {
       sets.push('end_reason = ?');
       params.push(patch.endReason);

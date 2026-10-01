@@ -619,8 +619,22 @@ textarea.ant-input,
   height: 40px;
   padding-block: 0 !important;
 }
+.lr-preview-modal .ant-modal-container {
+  height: min(var(--lr-preview-modal-height), calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.lr-preview-modal .ant-modal-content {
+  /* 最外层作为裁切边界，防止视频、轨道动画等绘制到弹窗外。 */
+  overflow: hidden;
+}
 .lr-preview-modal .ant-modal-body {
   padding: 10px !important;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .lr-preview-modal .ant-modal-title {
   flex: 1;

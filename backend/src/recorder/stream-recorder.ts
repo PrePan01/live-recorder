@@ -1,9 +1,15 @@
-import { createWriteStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { once } from 'node:events';
-import { AppError } from '../types/error.js';
-import type { ErrorObject } from '../types/index.js';
-import type { RecordingEngine, RecordingEvent, RecordingResumeOptions, StreamInput } from './engine.js';
+import { createWriteStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { once } from "node:events";
+import { AppError } from "../types/error.js";
+import type { ErrorObject } from "../types/index.js";
+import { SeekIndexWriter, endSeekWriter } from "../storage/seek-index.js";
+import type {
+  RecordingEngine,
+  RecordingEvent,
+  RecordingResumeOptions,
+  StreamInput,
+} from "./engine.js";
 
 /**
  * 首字节之后允许的静默上限：CDN 只挂连接不吐数据时，超时即判定本次拉流已断，
@@ -11,6 +17,62 @@ import type { RecordingEngine, RecordingEvent, RecordingResumeOptions, StreamInp
  * "30 秒拿不到数据就重试" 同口径。再短（10~15 秒）会在网络拥塞 / TCP 重传时误判成断流。
  */
 const STALL_TIMEOUT_MS = 30_000;
+
+function safeWriter(ws: ReturnType<typeof createWriteStream>): {
+  write: (chunk: Buffer) => Promise<void>;
+  failed: () => Error | null;
+  close: () => Promise<void>;
+} {
+  let error: Error | null = null;
+  ws.on("error", (e) => {
+    error ??= e;
+  });
+  return {
+    write: async (chunk: Buffer) => {
+      if (error) throw error;
+      if (!ws.write(chunk)) await once(ws, "drain");
+      if (error) throw error;
+    },
+    failed: () => error,
+    // 最后一次 write 返回后，磁盘错误仍可能异步到达。显式等待 finish/error，
+    // 避免 end 回调中的失败被忽略而将损坏文件误报为 completed。
+    close: async () => {
+      if (error) throw error;
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          ws.removeListener("finish", onFinish);
+          ws.removeListener("error", onError);
+        };
+        const onFinish = () => {
+          cleanup();
+          if (error) reject(error);
+          else resolve();
+        };
+        const onError = (err: Error) => {
+          error ??= err;
+          cleanup();
+          reject(error);
+        };
+        ws.once("finish", onFinish);
+        ws.once("error", onError);
+        ws.end();
+      });
+      if (error) throw error;
+    },
+  };
+}
+
+/** 标签信息：跳播定位索引在写盘链顺手记录（关键帧/序列头 → 文件字节偏移）。 */
+export interface FlvTagInfo {
+  tagType: 8 | 9;
+  /** 写入文件的时间戳（归一化后）。 */
+  ts: number;
+  seqHeader: boolean;
+  keyframe: boolean;
+  /** 标签在落盘文件中的起始字节偏移。 */
+  fileOffset: number;
+  byteLen: number;
+}
 
 /** 续录选项：文件里已有 FLV 头 + 本段时间戳偏移。 */
 export interface FlvNormalizerOptions {
@@ -20,6 +82,10 @@ export interface FlvNormalizerOptions {
   skipHeader?: boolean;
   /** 续录：本段所有时间戳统一加上的偏移（上一段结尾时间戳），保证拼接处播放连续。 */
   offsetMs?: number;
+  /** 文件已有的字节长度（续录追加时的偏移基准），供索引计算落盘偏移。 */
+  appendBaseBytes?: number;
+  /** 关键帧/序列头回调（跳播定位索引）。 */
+  onTag?: (info: FlvTagInfo) => void;
 }
 
 /**
@@ -40,14 +106,23 @@ export class FlvTimestampNormalizer {
   private headerEmitted = false;
   /** 本段写出的最大时间戳；上层据此计算下一段续录的时间偏移。 */
   private maxTs = 0;
+  /** 本段已产出的字节数（含 FLV 头），配合 appendBaseBytes 得到标签落盘偏移。 */
+  private emittedBytes = 0;
 
   constructor(private readonly options: FlvNormalizerOptions = {}) {}
 
   /** 本段最后一个媒体时间戳（毫秒，含续录偏移）。 */
-  get lastTimestampMs(): number { return this.maxTs; }
+  get lastTimestampMs(): number {
+    return this.maxTs;
+  }
 
   private static readTs(buf: Buffer, off: number): number {
-    return (buf[off + 4]! << 16) | (buf[off + 5]! << 8) | buf[off + 6]! | ((buf[off + 7]! & 0xff) << 24);
+    return (
+      (buf[off + 4]! << 16) |
+      (buf[off + 5]! << 8) |
+      buf[off + 6]! |
+      ((buf[off + 7]! & 0xff) << 24)
+    );
   }
 
   private static writeTs(buf: Buffer, off: number, ts: number): void {
@@ -75,16 +150,17 @@ export class FlvTimestampNormalizer {
       return (codec === 7 || codec === 12) && d1 === 0;
     }
     if (tagType === 8) {
-      return (d0 >> 4) === 10 && d1 === 0;
+      return d0 >> 4 === 10 && d1 === 0;
     }
     return false;
   }
 
-  private mediaTag(tagType: number, offset: number): void {
-    // 序列头不参与 base 选择：避免把 ts≈0 的编码器配置当基准，导致绝对 PTS 媒体帧未被扣减（时长虚高）。
-    if (this.isSequenceHeader(tagType, offset)) return;
+  /** 返回标签写入文件的时间戳（序列头=原样，媒体帧=归一化后）。 */
+  private mediaTag(tagType: number, offset: number): number {
     const rawTs = FlvTimestampNormalizer.readTs(this.buffer, offset);
-    const key: 'baseA' | 'baseV' = tagType === 8 ? 'baseA' : 'baseV';
+    // 序列头不参与 base 选择：避免把 ts≈0 的编码器配置当基准，导致绝对 PTS 媒体帧未被扣减（时长虚高）。
+    if (this.isSequenceHeader(tagType, offset)) return rawTs;
+    const key: "baseA" | "baseV" = tagType === 8 ? "baseA" : "baseV";
     let base = this[key];
     if (base === null) {
       base = this.options.rebaseFromFirstMedia || rawTs > 60_000 ? rawTs : 0;
@@ -92,17 +168,42 @@ export class FlvTimestampNormalizer {
     }
     const shift = this.options.offsetMs ?? 0;
     const ts = rawTs - base + shift;
-    if (base > 0 || shift !== 0) FlvTimestampNormalizer.writeTs(this.buffer, offset, ts);
+    if (base > 0 || shift !== 0)
+      FlvTimestampNormalizer.writeTs(this.buffer, offset, ts);
     if (ts > this.maxTs) this.maxTs = ts;
+    return ts;
+  }
+
+  /** 只把关键帧与序列头交给索引；偏移=已产出字节 + 续录基准。 */
+  private notifyTag(tagType: number, offset: number, tagLen: number, ts: number): void {
+    const onTag = this.options.onTag;
+    if (!onTag) return;
+    const d0 = this.buffer[offset + 11]!;
+    const d1 = this.buffer[offset + 12]!;
+    const seq = this.isSequenceHeader(tagType, offset);
+    const keyframe = !seq && tagType === 9 && d0 >> 4 === 1;
+    if (!seq && !keyframe) return;
+    onTag({
+      tagType: tagType === 8 ? 8 : 9,
+      ts,
+      seqHeader: seq,
+      keyframe,
+      fileOffset: (this.options.appendBaseBytes ?? 0) + this.emittedBytes,
+      byteLen: tagLen,
+    });
   }
 
   push(chunk: Buffer): Buffer[] {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
+    this.buffer =
+      this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
     const out: Buffer[] = [];
     // FLV 头（9）+ PreviousTagSize0（4）= 13 字节，之后才是标签流。
     // 续录时文件里已有文件头，只消费这 13 字节、不再写入，避免文件中途多出一个头。
     if (!this.headerEmitted && this.buffer.length >= 13) {
-      if (!this.options.skipHeader) out.push(this.buffer.subarray(0, 13));
+      if (!this.options.skipHeader) {
+        out.push(this.buffer.subarray(0, 13));
+        this.emittedBytes += 13;
+      }
       this.headerEmitted = true;
       this.buffer = this.buffer.subarray(13);
     }
@@ -113,8 +214,10 @@ export class FlvTimestampNormalizer {
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
       const tagLen = 11 + dataSize + 4; // 标签头 + 数据 + PreviousTagSize
       if (offset + tagLen > this.buffer.length) break;
-      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
+      if (tagType === 8 || tagType === 9)
+        this.notifyTag(tagType, offset, tagLen, this.mediaTag(tagType, offset));
       out.push(this.buffer.subarray(offset, offset + tagLen));
+      this.emittedBytes += tagLen;
       offset += tagLen;
     }
     this.buffer = Buffer.from(this.buffer.subarray(offset));
@@ -131,7 +234,10 @@ export class FlvTimestampNormalizer {
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
       const tagLen = 11 + dataSize + 4;
       if (offset + tagLen > this.buffer.length) break; // 尾部不完整标签：不写入文件
-      if (tagType === 8 || tagType === 9) this.mediaTag(tagType, offset);
+      if (tagType === 8 || tagType === 9)
+        this.notifyTag(tagType, offset, tagLen, this.mediaTag(tagType, offset));
+      // 收尾段的标签同样计入产出字节：否则多标签时索引偏移不递增，命中即误判失效。
+      this.emittedBytes += tagLen;
       offset += tagLen;
       lastComplete = offset;
     }
@@ -152,7 +258,10 @@ export class StreamRecordingEngine implements RecordingEngine {
   /** 本段写出的最大媒体时间戳；随 error/completed 上报，供上层计算下一段续录偏移。 */
   private lastTimestampMs = 0;
 
-  constructor(private fetcher: typeof fetch = fetch, private stallTimeoutMs: number = STALL_TIMEOUT_MS) {}
+  constructor(
+    private fetcher: typeof fetch = fetch,
+    private stallTimeoutMs: number = STALL_TIMEOUT_MS,
+  ) {}
 
   stop(): Promise<void> {
     this.stopped = true;
@@ -160,45 +269,79 @@ export class StreamRecordingEngine implements RecordingEngine {
     return Promise.resolve();
   }
 
-  async *start(input: StreamInput, outputPath?: string | null, resume?: RecordingResumeOptions): AsyncIterable<RecordingEvent> {
+  async *start(
+    input: StreamInput,
+    outputPath?: string | null,
+    resume?: RecordingResumeOptions,
+  ): AsyncIterable<RecordingEvent> {
     this.stopped = false;
     // 本段一个字节都没拿到就中断时，把传入的偏移原样带回，
     // 避免上层把续录偏移重置为 0、导致下一段时间轴跳回开头。
     this.lastTimestampMs = resume?.timestampOffsetMs ?? 0;
     try {
-      if (input.format === 'hls') {
-        yield* this.runHls(input, outputPath ?? '', resume);
+      if (input.format === "hls") {
+        yield* this.runHls(input, outputPath ?? "", resume);
       } else {
         yield* this.runHttp(input, outputPath ?? null, resume);
       }
     } catch (err) {
       if (this.stopped) return;
-      yield { type: 'error', error: this.toErrorObject(err), endTimestampMs: this.lastTimestampMs };
+      yield {
+        type: "error",
+        error: this.toErrorObject(err),
+        endTimestampMs: this.lastTimestampMs,
+      };
     }
   }
 
-  private async *runHttp(input: StreamInput, outputPath: string | null, resume?: RecordingResumeOptions): AsyncIterable<RecordingEvent> {
+  private async *runHttp(
+    input: StreamInput,
+    outputPath: string | null,
+    resume?: RecordingResumeOptions,
+  ): AsyncIterable<RecordingEvent> {
     this.controller = new AbortController();
     let res: Response;
     try {
-      res = await this.fetcher(input.url, { ...(input.headers ? { headers: input.headers } : {}), signal: this.controller!.signal });
+      res = await this.fetcher(input.url, {
+        ...(input.headers ? { headers: input.headers } : {}),
+        signal: this.controller!.signal,
+      });
     } catch (err) {
       if (this.stopped) return;
       throw toNetworkError(err);
     }
     if (!res.ok || !res.body) {
-      throw httpStreamError(res.status, '拉流');
+      throw httpStreamError(res.status, "拉流");
     }
     // 续录：追加写入已有文件；文件里已有 FLV 头时不再重复写入（首段 0 字节时仍需补头）。
     const append = Boolean(resume?.append);
-    const existing = append && outputPath ? await stat(outputPath).catch(() => null) : null;
-    const ws = outputPath ? createWriteStream(outputPath, { flags: append ? 'a' : 'w' }) : null;
+    const existing =
+      append && outputPath ? await stat(outputPath).catch(() => null) : null;
+    const ws = outputPath
+      ? createWriteStream(outputPath, { flags: append ? "a" : "w" })
+      : null;
+    const writer = ws ? safeWriter(ws) : null;
+    // 跳播定位索引：写盘链逐标签顺手记关键帧偏移（追加写、不反压录制；失败只降级索引）。
+    const seekWriter = outputPath
+      ? await SeekIndexWriter.open(outputPath, existing?.size ?? 0)
+      : null;
     const normalizer = new FlvTimestampNormalizer({
       skipHeader: Boolean(existing && existing.size > 0),
       offsetMs: resume?.timestampOffsetMs ?? 0,
+      appendBaseBytes: existing?.size ?? 0,
+      ...(seekWriter
+        ? {
+            onTag: (info: FlvTagInfo) =>
+              seekWriter.note(
+                info.seqHeader
+                  ? { t: info.ts, b: info.fileOffset, s: 1, k: info.tagType }
+                  : { t: info.ts, b: info.fileOffset },
+              ),
+          }
+        : {}),
     });
     let size = existing?.size ?? 0;
-    if (outputPath) yield { type: 'file_created', filePath: outputPath };
+    if (outputPath) yield { type: "file_created", filePath: outputPath };
     const reader = res.body.getReader();
     // 首字节之后数据断供（CDN 既不关闭连接、也不再吐字节）时不能永远挂在这里：超时即 abort，
     // 本段按断流上报，由上层进入续录重试。只在拿到过数据之后才计时，启动阶段交给上层 30s 超时。
@@ -218,7 +361,11 @@ export class StreamRecordingEngine implements RecordingEngine {
       while (!this.stopped) {
         const { done, value } = await reader.read();
         if (stalled) {
-          throw new AppError('NETWORK_UNAVAILABLE', '直播流长时间无数据，已中断并重试', { retryable: true });
+          throw new AppError(
+            "NETWORK_UNAVAILABLE",
+            "直播流长时间无数据，已中断并重试",
+            { retryable: true },
+          );
         }
         if (done) break;
         if (this.stopped) break;
@@ -228,76 +375,115 @@ export class StreamRecordingEngine implements RecordingEngine {
         // 文件时长正确（#148），且预览流时间戳为相对值，mpegts.js 实时模式（isLive:true）才能正常推进（#150）。
         for (const part of normalizer.push(chunk)) {
           size += part.length;
-          if (ws) {
-            if (!ws.write(part)) await once(ws, 'drain');
-          }
-          yield { type: 'data', chunk: part };
+          if (writer) await writer.write(part);
+          yield { type: "data", chunk: part };
         }
         this.lastTimestampMs = normalizer.lastTimestampMs;
       }
     } finally {
-      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      }
       if (this.stopped) await reader.cancel().catch(() => undefined);
       // 收尾：把尚未凑成完整标签的尾部字节一并写盘并转发（不完整尾部也转发，保持字节一致）。
       const rest = normalizer.remaining();
-      if (rest.length > 0) {
+      if (rest.length > 0 && !writer?.failed()) {
         size += rest.length;
-        if (ws) {
-          if (!ws.write(rest)) await once(ws, 'drain');
-        }
-        yield { type: 'data', chunk: rest };
+        if (writer) await writer.write(rest);
+        yield { type: "data", chunk: rest };
       }
       this.lastTimestampMs = normalizer.lastTimestampMs;
-      await new Promise<void>((resolve) => (ws ? ws.end(() => resolve()) : resolve()));
+      if (writer) await writer.close();
+      if (seekWriter && outputPath) {
+        await seekWriter.close();
+        endSeekWriter(outputPath);
+      }
     }
     if (this.stopped) return;
-    yield { type: 'completed', fileSize: size, endTimestampMs: this.lastTimestampMs };
+    yield {
+      type: "completed",
+      fileSize: size,
+      endTimestampMs: this.lastTimestampMs,
+    };
   }
 
-  private async *runHls(input: StreamInput, outputPath: string, resume?: RecordingResumeOptions): AsyncIterable<RecordingEvent> {
+  private async *runHls(
+    input: StreamInput,
+    outputPath: string,
+    resume?: RecordingResumeOptions,
+  ): AsyncIterable<RecordingEvent> {
     this.controller = new AbortController();
     // HLS 分片本身可拼接，续录直接追加字节即可（时间轴由 TS 自身的 PTS 决定，无需重写）。
-    const existing = resume?.append ? await stat(outputPath).catch(() => null) : null;
-    const ws = createWriteStream(outputPath, { flags: resume?.append ? 'a' : 'w' });
+    const existing = resume?.append
+      ? await stat(outputPath).catch(() => null)
+      : null;
+    const ws = createWriteStream(outputPath, {
+      flags: resume?.append ? "a" : "w",
+    });
+    const writer = safeWriter(ws);
     let size = existing?.size ?? 0;
     const seen = new Set<string>();
-    yield { type: 'file_created', filePath: outputPath };
+    yield { type: "file_created", filePath: outputPath };
     let ended = false;
-    for (let round = 0; round < 256 && !this.stopped; round += 1) {
-      const text = await this.fetchText(input.url, input.headers);
-      const parsed = parseM3u8(text, input.url);
-      ended = parsed.ended;
-      let progressed = false;
-      for (const seg of parsed.segments) {
-        if (this.stopped) return;
-        if (seen.has(seg)) continue;
-        seen.add(seg);
-        for await (const chunk of this.fetchChunks(seg, input.headers)) {
-          size += chunk.length;
-          if (!ws.write(chunk)) await once(ws, 'drain');
-          yield { type: 'data', chunk };
+    try {
+      for (let round = 0; round < 256 && !this.stopped; round += 1) {
+        const text = await this.fetchText(input.url, input.headers);
+        const parsed = parseM3u8(text, input.url);
+        ended = parsed.ended;
+        let progressed = false;
+        for (const seg of parsed.segments) {
+          if (this.stopped) return;
+          if (seen.has(seg)) continue;
+          seen.add(seg);
+          for await (const chunk of this.fetchChunks(seg, input.headers)) {
+            size += chunk.length;
+            await writer.write(chunk);
+            yield { type: "data", chunk };
+          }
+          progressed = true;
         }
-        progressed = true;
+        if (this.stopped) return;
+        if (ended || !progressed) break;
+        // #226：轮询间隔自适应分片目标时长（默认 3s），HLS 短分片（如 2s）不再每 3s 才一波数据致周期性卡顿。
+        await new Promise((r) =>
+          setTimeout(r, hlsPollIntervalMs(parsed.targetDuration)),
+        );
       }
-      if (this.stopped) return;
-      if (ended || !progressed) break;
-      // #226：轮询间隔自适应分片目标时长（默认 3s），HLS 短分片（如 2s）不再每 3s 才一波数据致周期性卡顿。
-      await new Promise((r) => setTimeout(r, hlsPollIntervalMs(parsed.targetDuration)));
+    } finally {
+      // stop() 可在任一 HLS 分片/轮询点返回；无论哪条路径退出都必须收尾，
+      // 否则既可能丢尾，也可能让收尾阶段的异步写盘错误无人接住。
+      await writer.close();
     }
-    await new Promise<void>((resolve) => ws.end(() => resolve()));
     if (this.stopped) return;
-    yield { type: 'completed', fileSize: size, endTimestampMs: this.lastTimestampMs };
+    yield {
+      type: "completed",
+      fileSize: size,
+      endTimestampMs: this.lastTimestampMs,
+    };
   }
 
-  private async fetchText(url: string, headers: Record<string, string> | undefined): Promise<string> {
-    const res = await this.fetcher(url, { ...(headers ? { headers } : {}), ...(this.controller ? { signal: this.controller.signal } : {}) });
-    if (!res.ok) throw httpStreamError(res.status, 'HLS 播放列表拉取');
+  private async fetchText(
+    url: string,
+    headers: Record<string, string> | undefined,
+  ): Promise<string> {
+    const res = await this.fetcher(url, {
+      ...(headers ? { headers } : {}),
+      ...(this.controller ? { signal: this.controller.signal } : {}),
+    });
+    if (!res.ok) throw httpStreamError(res.status, "HLS 播放列表拉取");
     return res.text();
   }
 
-  private async *fetchChunks(url: string, headers: Record<string, string> | undefined): AsyncIterable<Buffer> {
-    const res = await this.fetcher(url, { ...(headers ? { headers } : {}), ...(this.controller ? { signal: this.controller.signal } : {}) });
-    if (!res.ok || !res.body) throw httpStreamError(res.status, 'HLS 分片拉取');
+  private async *fetchChunks(
+    url: string,
+    headers: Record<string, string> | undefined,
+  ): AsyncIterable<Buffer> {
+    const res = await this.fetcher(url, {
+      ...(headers ? { headers } : {}),
+      ...(this.controller ? { signal: this.controller.signal } : {}),
+    });
+    if (!res.ok || !res.body) throw httpStreamError(res.status, "HLS 分片拉取");
     for await (const chunk of res.body) {
       if (this.stopped) return;
       yield Buffer.from(chunk);
@@ -306,24 +492,45 @@ export class StreamRecordingEngine implements RecordingEngine {
 
   private toErrorObject(err: unknown): ErrorObject {
     if (err instanceof AppError) return err.toObject();
-    if (err instanceof Error && err.name === 'AbortError') {
-      return new AppError('NETWORK_UNAVAILABLE', '拉流中断', { retryable: true }).toObject();
+    if (err instanceof Error && err.name === "AbortError") {
+      return new AppError("NETWORK_UNAVAILABLE", "拉流中断", {
+        retryable: true,
+      }).toObject();
     }
     // 写盘类错误（磁盘满/权限/IO）与网络无关，标为非可重试，让上层直接收尾而不是空等退避。
     const errno = (err as NodeJS.ErrnoException | undefined)?.code;
-    if (typeof errno === 'string' && WRITE_ERRNO.has(errno)) {
-      return new AppError('RECORDING_WRITE_FAILED', `写入录像文件失败（${errno}）`, { retryable: false, details: { errno } }).toObject();
+    if (typeof errno === "string" && WRITE_ERRNO.has(errno)) {
+      return new AppError(
+        "RECORDING_WRITE_FAILED",
+        `写入录像文件失败（${errno}）`,
+        { retryable: false, details: { errno } },
+      ).toObject();
     }
-    return new AppError('RECORDING_START_FAILED', `录制异常: ${(err as Error).message ?? String(err)}`, { retryable: true }).toObject();
+    return new AppError(
+      "RECORDING_START_FAILED",
+      `录制异常: ${(err as Error).message ?? String(err)}`,
+      { retryable: true },
+    ).toObject();
   }
 }
 
 /** 写盘失败的系统错误码：命中即说明是磁盘问题，重试拉流不会好。 */
-const WRITE_ERRNO = new Set(['ENOSPC', 'EDQUOT', 'EACCES', 'EPERM', 'EIO', 'EROFS', 'EMFILE', 'ENFILE', 'ENOTDIR', 'EBUSY']);
+const WRITE_ERRNO = new Set([
+  "ENOSPC",
+  "EDQUOT",
+  "EACCES",
+  "EPERM",
+  "EIO",
+  "EROFS",
+  "EMFILE",
+  "ENFILE",
+  "ENOTDIR",
+  "EBUSY",
+]);
 
 function toNetworkError(err: unknown): AppError {
   if (err instanceof AppError) return err;
-  return new AppError('NETWORK_UNAVAILABLE', '拉流失败', { retryable: true });
+  return new AppError("NETWORK_UNAVAILABLE", "拉流失败", { retryable: true });
 }
 
 /**
@@ -332,27 +539,36 @@ function toNetworkError(err: unknown): AppError {
  */
 function httpStreamError(status: number, what: string): AppError {
   if (status === 401 || status === 403 || status === 410) {
-    return new AppError('STREAM_URL_EXPIRED', `${what}失败 HTTP ${status}`, { retryable: true });
+    return new AppError("STREAM_URL_EXPIRED", `${what}失败 HTTP ${status}`, {
+      retryable: true,
+    });
   }
   if (status >= 500) {
-    return new AppError('PLATFORM_SERVER_ERROR', `${what}失败 HTTP ${status}`, { retryable: true });
+    return new AppError("PLATFORM_SERVER_ERROR", `${what}失败 HTTP ${status}`, {
+      retryable: true,
+    });
   }
-  return new AppError('NETWORK_UNAVAILABLE', `${what}失败 HTTP ${status}`, { retryable: true });
+  return new AppError("NETWORK_UNAVAILABLE", `${what}失败 HTTP ${status}`, {
+    retryable: true,
+  });
 }
 
-export function parseM3u8(text: string, baseUrl: string): { segments: string[]; ended: boolean; targetDuration: number | null } {
+export function parseM3u8(
+  text: string,
+  baseUrl: string,
+): { segments: string[]; ended: boolean; targetDuration: number | null } {
   const segments: string[] = [];
   let ended = false;
   let targetDuration: number | null = null;
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]!.trim();
-    if (line === '#EXT-X-ENDLIST') ended = true;
-    if (line.startsWith('#EXT-X-TARGETDURATION:')) {
-      const d = Number(line.split(':')[1]);
+    if (line === "#EXT-X-ENDLIST") ended = true;
+    if (line.startsWith("#EXT-X-TARGETDURATION:")) {
+      const d = Number(line.split(":")[1]);
       if (Number.isFinite(d) && d > 0) targetDuration = d;
     }
-    if (line.startsWith('#') || line === '') continue;
+    if (line.startsWith("#") || line === "") continue;
     segments.push(new URL(line, baseUrl).toString());
   }
   return { segments, ended, targetDuration };

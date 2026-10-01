@@ -15,7 +15,8 @@
 ## 功能
 
 ### 录制与监控
-- B站 / 抖音直播间检测与自动录制，手动录制 / 停止，支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）
+- B站 / 抖音直播间检测与自动录制，手动录制 / 停止
+- 录制中快速导出片段、回看、标签记录
 - 监控总览：卡片 / 列表视图、收藏置顶、当前录制时长、直播预览、开播预测、实时状态
 - 多路直播墙（2×2 / 3×3 / 3×1）
 - 磁盘空间守卫、断流续录、录制完整性校验、并发上限与去重
@@ -26,14 +27,13 @@
 
 ### 录制历史与回放
 - 历史列表：筛选 / 分页 / 回放（FLV / MP4）、重命名 / 删除、CSV 导出 / 批量删除
-- 上传状态、失败原因与重试
+- 录制统计看板
 
 ### 录制后处理
-- 后处理管线：校验 → 封面帧 → 切片合并 → 压缩转封装 → 归档，失败保留源文件、定向重试
+- 后处理管线：校验 → 获取封面 → 切片 → 导出音频 → 格式转换 → 压缩 → 归档
 - 录制命名规则自定义
-- [OpenList](https://github.com/OpenListTeam/OpenList)（WebDAV）自动上传：进度 / 重试 / 取消
+- 支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）自动上传：进度 / 重试 / 取消
 - 邮件通知（SMTP 预设，失败提醒去重）
-- 录制统计
 
 ### 桌面客户端
 - 支持 macOS / Windows 桌面端
@@ -118,11 +118,15 @@ npm run tauri:build
 ## 截图
 ![监控总览](http://qn.bspartner.top/images/PixPin_2026-09-10_17-10-23-2026-09-10-rJWKbPhY.png)
 
+![录制界面](http://qn.bspartner.top/images/PixPin_2026-10-02_02-12-18-2026-10-02-j34EqNOY.png)
+
 ![直播间管理](http://qn.bspartner.top/images/PixPin_2026-09-10_17-10-34-2026-09-10-waurioYd.png)
 
 ![直播墙](http://qn.bspartner.top/images/PixPin_2026-09-10_17-16-22.png)
 
 ![设置](http://qn.bspartner.top/images/PixPin_2026-09-10_17-15-42-2026-09-10-qU7QjIci.png)
+
+![后处理流程](http://qn.bspartner.top/images/PixPin_2026-10-02_02-14-06-2026-10-02-dVYXdhBF.png)
 
 ## 隐私
 Live Recorder 不会收集、上传任何用户数据，所有数据仅存在本地。

@@ -1,7 +1,7 @@
 import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { mp4PathFor, remuxFlvToMp4, remuxStallMsForSize } from '../../src/recorder/remux.js';
 

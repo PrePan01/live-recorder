@@ -21,6 +21,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../../../types/error";
+import { failurePrimaryText } from "../../../utils/failureReason";
 import { describeError } from "../../../utils/errorMap";
 import { formatBytes, formatDuration, formatTime } from "../../../utils/format";
 import {
@@ -135,7 +136,7 @@ export function buildRecordingColumns(
     {
       title: "完整性",
       dataIndex: "integrity",
-      width: 70,
+      width: 80,
       render: (v: Recording["integrity"], r) => (
         <Space size={4}>
           <IntegrityTag
@@ -162,19 +163,34 @@ export function buildRecordingColumns(
     {
       title: "状态",
       dataIndex: "state",
-      width: 95,
+      width: 130,
       render: (s, r) => {
         const reason = describeEndReason(r.endReason);
-        if (!reason) return <RecordingStateTag state={s} />;
+        const exporting = s === "processing" && r.progressPercent != null;
         return (
           <Space direction="vertical" size={0}>
             <RecordingStateTag state={s} />
-            <Typography.Text
-              type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
-              style={{ fontSize: 12 }}
-            >
-              {reason}
-            </Typography.Text>
+            {exporting ? (
+              <div
+                className="pipeline-step-progress"
+                aria-label={`片段导出进度 ${r.progressPercent}%`}
+              >
+                <div className="pipeline-step-progress-track">
+                  <span style={{ width: `${r.progressPercent}%` }} />
+                </div>
+                <Typography.Text className="pipeline-step-progress-percent">
+                  导出中 {r.progressPercent}%
+                </Typography.Text>
+              </div>
+            ) : null}
+            {reason ? (
+              <Typography.Text
+                type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
+                style={{ fontSize: 12 }}
+              >
+                {reason}
+              </Typography.Text>
+            ) : null}
           </Space>
         );
       },
@@ -190,7 +206,6 @@ export function buildRecordingColumns(
       dataIndex: "upload",
       width: 150,
       render: (u: Recording["upload"], r: Recording) => {
-        // #18②：无上传任务的录制提供「上传」按钮（未开自动上传或上传被删除时）。
         if (!u) {
           const canUpload = r.state === "completed" && !!r.filePath;
           return (
@@ -311,7 +326,6 @@ export function buildRecordingColumns(
       },
     },
     {
-      // 这一列既放失败原因，也放中断恢复合成一个文件后的"中途缺失 N 秒"。
       title: "录制异常",
       dataIndex: "failureReason",
       width: 180,
@@ -324,7 +338,9 @@ export function buildRecordingColumns(
         return (
           <Space direction="vertical" size={0}>
             {f ? (
-              <Typography.Text type="danger">{f.message}</Typography.Text>
+              <Typography.Text type="danger">
+                {failurePrimaryText(f)}
+              </Typography.Text>
             ) : null}
             {missingSeconds > 0 ? (
               <GapDetail
@@ -357,7 +373,9 @@ export function buildRecordingColumns(
             type="link"
             icon={<ExperimentOutlined />}
             disabled={
-              !r.filePath || r.state === "recording" || r.state === "reconnecting"
+              !r.filePath ||
+              r.state === "recording" ||
+              r.state === "reconnecting"
             }
             onClick={() => setPipelineRec(r)}
           >
@@ -404,7 +422,11 @@ export function buildRecordingColumns(
               type="link"
               danger
               icon={<DeleteOutlined />}
-              disabled={!r.filePath}
+              disabled={
+                !r.filePath ||
+                r.state === "recording" ||
+                r.state === "reconnecting"
+              }
             >
               删除
             </Button>

@@ -9,6 +9,16 @@ import { AppError } from "../../types/error.js";
 import type { Services } from "../../core/services.js";
 import type { RecordingState } from "../../types/index.js";
 import { CsvExportWorkerPool } from "../csv-export-worker-pool.js";
+import {
+  moveMarkerSidecar,
+  removeMarkerSidecar,
+  syncMarkerSidecar,
+} from "../../storage/recording-markers.js";
+import {
+  moveSeekIndexSidecar,
+  removeSeekIndexSidecar,
+} from "../../storage/seek-index.js";
+import { compositeClipProgress } from "../../core/task-progress.js";
 
 const STATES: RecordingState[] = [
   "pending",
@@ -20,7 +30,9 @@ const STATES: RecordingState[] = [
 ];
 
 function canVerifyRecording(state: RecordingState): boolean {
-  return state !== "recording" && state !== "reconnecting" && state !== "processing";
+  return (
+    state !== "recording" && state !== "reconnecting" && state !== "processing"
+  );
 }
 
 function parseSingleRange(
@@ -75,6 +87,148 @@ export function registerRecordingRoutes(
     services.db.name === ":memory:"
       ? null
       : new CsvExportWorkerPool(services.db.name);
+
+  const activeMarkerRecording = (id: string) => {
+    const recording = services.recordings.get(id);
+    if (!recording)
+      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
+        recordingId: id,
+      });
+    if (recording.state !== "recording" && recording.state !== "reconnecting") {
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "仅录制中的录像可编辑标记",
+        { recordingId: id },
+      );
+    }
+    return recording;
+  };
+
+  app.get("/api/v1/recordings/:id/markers", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!services.recordings.get(id))
+      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
+        recordingId: id,
+      });
+    return reply.send({ markers: services.recordingMarkers.list(id) });
+  });
+
+  app.post("/api/v1/recordings/:id/markers", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const recording = activeMarkerRecording(id);
+    const body = (req.body ?? {}) as {
+      text?: unknown;
+      positionSeconds?: unknown;
+    };
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    if (!text || text.length > 200)
+      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
+        recordingId: id,
+      });
+    // 位置：客户端可带当前预览播放头秒（与 PATCH 同款校验）；不带则回退「当前已录尾」（直播语义不变）。
+    const recordedSeconds = Math.max(
+      0,
+      Math.floor(
+        (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
+      ),
+    );
+    const rawPosition = body.positionSeconds;
+    if (
+      rawPosition !== undefined &&
+      (typeof rawPosition !== "number" ||
+        !Number.isInteger(rawPosition) ||
+        rawPosition < 0 ||
+        rawPosition > recordedSeconds)
+    ) {
+      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
+        recordingId: id,
+      });
+    }
+    const positionSeconds =
+      rawPosition !== undefined ? rawPosition : recordedSeconds;
+    const marker = services.recordingMarkers.create(id, positionSeconds, text);
+    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    return reply.status(201).send({ marker });
+  });
+
+  app.patch("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
+    const { id, markerId } = req.params as { id: string; markerId: string };
+    const recording = activeMarkerRecording(id);
+    const body = (req.body ?? {}) as {
+      text?: unknown;
+      positionSeconds?: unknown;
+    };
+    const text = typeof body.text === "string" ? body.text.trim() : undefined;
+    const positionSeconds = body.positionSeconds;
+    if (text !== undefined && (!text || text.length > 200))
+      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
+        recordingId: id,
+      });
+    if (
+      positionSeconds !== undefined &&
+      (typeof positionSeconds !== "number" ||
+        !Number.isInteger(positionSeconds) ||
+        positionSeconds < 0 ||
+        positionSeconds >
+          Math.floor(
+            (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
+          ))
+    ) {
+      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
+        recordingId: id,
+      });
+    }
+    const marker = services.recordingMarkers.update(id, markerId, {
+      ...(text !== undefined ? { text } : {}),
+      ...(positionSeconds !== undefined
+        ? { positionSeconds: positionSeconds as number }
+        : {}),
+    });
+    if (!marker)
+      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
+        recordingId: id,
+      });
+    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    return reply.send({ marker });
+  });
+
+  app.delete("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
+    const { id, markerId } = req.params as { id: string; markerId: string };
+    const recording = activeMarkerRecording(id);
+    if (!services.recordingMarkers.remove(id, markerId))
+      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
+        recordingId: id,
+      });
+    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    return reply.status(204).send();
+  });
+
+  app.post("/api/v1/recordings/:id/clip-export", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      startSecond?: unknown;
+      endSecond?: unknown;
+      name?: unknown;
+    };
+    if (
+      !Number.isInteger(body.startSecond) ||
+      !Number.isInteger(body.endSecond)
+    ) {
+      throw new AppError("CONFIG_INVALID", "选区时间必须为整数秒", {
+        recordingId: id,
+      });
+    }
+    if (typeof body.name !== "string") {
+      throw new AppError("CONFIG_INVALID", "片段名称必填", { recordingId: id });
+    }
+    const result = await services.manager.exportClip(
+      id,
+      body.startSecond as number,
+      body.endSecond as number,
+      body.name,
+    );
+    return reply.status(201).send(result);
+  });
   app.get("/api/v1/recordings", async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const page = Number(q.page ?? "1");
@@ -140,6 +294,22 @@ export function registerRecordingRoutes(
       items: rawResult.items.map((item) => ({
         ...item,
         verifyQueuePosition: services.verificationQueue.positionOf(item.id),
+        progressPercent:
+          item.origin === "clip" && item.state === "processing"
+            ? compositeClipProgress({
+                id: item.id,
+                startedAt: item.startedAt,
+                endedAt: item.endedAt,
+                createdAt: item.createdAt,
+                fileSizeBytes: item.fileSizeBytes ?? 0,
+                exportPct: services.manager.clipExportProgress(item.id),
+                run: services.pipeline.repo.runForRecording(item.id),
+                hasPostPhase: services.pipeline.pipelineConfig().enabled,
+                now: Date.now(),
+              })
+            : services.manager.clipExportProgress(item.id),
+        // 跳播索引状态：仅录制中的 FLV 行携带（ready/building/missing）。
+        ...(services.seek.seekInfo(item) ?? {}),
       })),
     };
     return reply.send(result);
@@ -148,16 +318,69 @@ export function registerRecordingRoutes(
   app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
-    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    if (!rec)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", {
+        details: { recordingId: id },
+      });
     return reply.send({ gaps: services.recordings.listGaps(id) });
+  });
+
+  // 跳播起流：从索引命中关键帧字节偏移直通 FLV 字节流（FLV 头+序列头+标签到已写尾部即止）。
+  app.get("/api/v1/recordings/:id/seek-stream", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = req.query as { second?: string };
+    const second = Number(q.second);
+    if (!Number.isInteger(second) || second < 0) {
+      throw new AppError("CONFIG_INVALID", "second 必须为非负整数秒");
+    }
+    const rec = services.recordings.get(id);
+    if (!rec) {
+      throw new AppError("RESOURCE_NOT_FOUND", "录制记录不存在", {
+        recordingId: id,
+        details: { resource: "recording" },
+      });
+    }
+    const { stream, startSecond } = await services.seek.openStream(rec, second);
+    reply.header("Content-Type", "video/x-flv");
+    reply.header("Cache-Control", "no-store");
+    // 实际起播秒（关键帧吸附可能略早于请求秒）：前端手柄/时间显示对齐这个真值。
+    reply.header("X-Seek-Start-Second", String(startSecond));
+    reply.header("Access-Control-Expose-Headers", "X-Seek-Start-Second");
+    return reply.send(stream);
+  });
+
+  // 跳播预热：零进程准备（读索引+校验目标点），幂等可反复调。
+  app.post("/api/v1/recordings/:id/seek-prewarm", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { second?: unknown };
+    const second = Number(body.second);
+    if (!Number.isInteger(second) || second < 0) {
+      throw new AppError("CONFIG_INVALID", "second 必须为非负整数秒");
+    }
+    const rec = services.recordings.get(id);
+    if (!rec) {
+      throw new AppError("RESOURCE_NOT_FOUND", "录制记录不存在", {
+        recordingId: id,
+        details: { resource: "recording" },
+      });
+    }
+    const { startSecond } = await services.seek.prewarm(rec, second);
+    return reply.status(202).send({ ok: true, startSecond });
   });
 
   app.post("/api/v1/recordings/:id/verify", async (req, reply) => {
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
-    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", { details: { recordingId: id } });
+    if (!rec)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", {
+        details: { recordingId: id },
+      });
     if (!canVerifyRecording(rec.state)) {
-      throw new AppError("RECORDING_NOT_AVAILABLE", "录制仍在写入或处理中，结束后才能校验", { recordingId: id, retryable: true });
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "录制仍在写入或处理中，结束后才能校验",
+        { recordingId: id, retryable: true },
+      );
     }
     const accepted = services.verificationQueue.enqueue(rec);
     return reply.send({ accepted });
@@ -165,7 +388,11 @@ export function registerRecordingRoutes(
 
   app.post("/api/v1/recordings/verify-batch", async (req, reply) => {
     const body = (req.body ?? {}) as { ids?: unknown };
-    const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+    const ids = Array.isArray(body.ids)
+      ? (body.ids as unknown[]).filter(
+          (v): v is string => typeof v === "string",
+        )
+      : [];
     let accepted = 0;
     let skippedActive = 0;
     for (const id of ids) {
@@ -204,35 +431,53 @@ export function registerRecordingRoutes(
   });
 
   // 管线产物仅允许按 recording + artifact id 打开，避免接口接受任意本地路径。
-  app.post("/api/v1/recordings/:id/pipeline/artifacts/:artifactId/open", async (req, reply) => {
-    const { id, artifactId } = req.params as { id: string; artifactId: string };
-    const { target } = (req.body ?? {}) as { target?: "file" | "directory" };
-    const run = services.pipeline.repo.runForRecording(id);
-    const artifact = run?.artifacts.find((item) => item.id === artifactId);
-    if (!artifact?.path) {
-      throw new AppError("RESOURCE_NOT_FOUND", "管线产物不存在或文件路径不可用", {
-        recordingId: id,
+  app.post(
+    "/api/v1/recordings/:id/pipeline/artifacts/:artifactId/open",
+    async (req, reply) => {
+      const { id, artifactId } = req.params as {
+        id: string;
+        artifactId: string;
+      };
+      const { target } = (req.body ?? {}) as { target?: "file" | "directory" };
+      const run = services.pipeline.repo.runForRecording(id);
+      const artifact = run?.artifacts.find((item) => item.id === artifactId);
+      if (!artifact?.path) {
+        throw new AppError(
+          "RESOURCE_NOT_FOUND",
+          "管线产物不存在或文件路径不可用",
+          {
+            recordingId: id,
+          },
+        );
+      }
+      if (target !== "file" && target !== "directory") {
+        throw new AppError("CONFIG_INVALID", "打开目标无效", {
+          recordingId: id,
+        });
+      }
+      const targetPath =
+        target === "directory" ? dirname(artifact.path) : artifact.path;
+      await stat(targetPath).catch(() => {
+        throw new AppError("RESOURCE_NOT_FOUND", "目标文件或目录不存在", {
+          recordingId: id,
+        });
       });
-    }
-    if (target !== "file" && target !== "directory") {
-      throw new AppError("CONFIG_INVALID", "打开目标无效", { recordingId: id });
-    }
-    const targetPath = target === "directory" ? dirname(artifact.path) : artifact.path;
-    await stat(targetPath).catch(() => {
-      throw new AppError("RESOURCE_NOT_FOUND", "目标文件或目录不存在", { recordingId: id });
-    });
-    if (process.env.VITEST !== "true") {
-      const command =
-        process.platform === "darwin"
-          ? "open"
-          : process.platform === "win32"
-            ? "explorer"
-            : "xdg-open";
-      const child = spawn(command, [targetPath], { detached: true, stdio: "ignore" });
-      child.unref();
-    }
-    return reply.send({ ok: true });
-  });
+      if (process.env.VITEST !== "true") {
+        const command =
+          process.platform === "darwin"
+            ? "open"
+            : process.platform === "win32"
+              ? "explorer"
+              : "xdg-open";
+        const child = spawn(command, [targetPath], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+      }
+      return reply.send({ ok: true });
+    },
+  );
 
   // 历史页回放：仅 completed 且文件存在的录制可读取，按 FLV 内容输出（.flv/.mkv 均实为 FLV 字节）。
   app.get("/api/v1/recordings/:id/file", async (req, reply) => {
@@ -306,6 +551,8 @@ export function registerRecordingRoutes(
       const nextPath = join(dir, nextName);
       try {
         await rename(rec.filePath, nextPath);
+        await moveMarkerSidecar(rec.filePath, nextPath);
+        await moveSeekIndexSidecar(rec.filePath, nextPath);
         services.recordings.update(id, {
           streamTitle: title,
           filePath: nextPath,
@@ -331,11 +578,26 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
+    if (rec.state === "recording" || rec.state === "reconnecting") {
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "录制进行中，请先停止录制再删除",
+        {
+          recordingId: id,
+        },
+      );
+    }
     await services.manager.cancelHighlightExport(id);
+    await services.manager.stopActiveSessionForDeletion(id);
+    services.pipeline.cancel(id, "录制已删除");
+    services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
     if (rec.filePath) {
       await unlink(rec.filePath).catch(() => undefined);
+      await removeMarkerSidecar(rec.filePath);
+      await removeSeekIndexSidecar(rec.filePath);
     }
+    services.recordingMarkers.removeForRecording(id);
     services.recordings.remove(id);
     services.events.emit({ type: "recording:deleted", data: { id } });
     return reply.status(204).send();
@@ -456,7 +718,19 @@ export function registerRecordingRoutes(
         failed.push({ id, reason: "记录不存在" });
         continue;
       }
+      if (rec.state === "recording" || rec.state === "reconnecting") {
+        throw new AppError(
+          "RECORDING_NOT_AVAILABLE",
+          "录制进行中，请先停止录制再删除",
+          {
+            recordingId: id,
+          },
+        );
+      }
       await services.manager.cancelHighlightExport(id);
+      await services.manager.stopActiveSessionForDeletion(id);
+      services.pipeline.cancel(id, "录制已删除");
+      services.manager.cancelClipExport(id);
       if (rec.filePath) {
         await unlink(rec.filePath).catch(() => undefined);
       }

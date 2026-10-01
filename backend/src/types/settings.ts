@@ -127,6 +127,8 @@ export interface PipelineConfig {
   exportCover: boolean;
   /** 输出格式：source=保留录制源格式；mp4=在独立格式转换步骤无损转为 MP4。 */
   outputFormat: 'source' | 'mp4';
+  /** 转为 MP4 成功后是否删除录制源文件；仅 outputFormat=mp4 时生效。 */
+  deleteSourceAfterConvert: boolean;
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -139,6 +141,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   exportAudio: false,
   exportCover: true,
   outputFormat: 'source',
+  deleteSourceAfterConvert: false,
 };
 
 export interface SettingsView {

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { stat } from 'node:fs/promises';
 import type { Platform, RecordingFormat } from '../types/index.js';
 
 /** 按 UTF-8 字节截断（不切断多字节字符）：文件名单段上限 255B，扣除模板后缀余量后取 160B。 */
@@ -32,6 +33,37 @@ function localParts(iso: string): { date: string; time: string; slug: string } {
 
 export function timestampSlug(iso: string): string {
   return localParts(iso).slug;
+}
+
+/** 改名落盘用的基名净化：与历史改名接口同规则（保留空格、替换文件名非法字符、限长 120）。 */
+export function sanitizeRenameBase(s: string): string {
+  return s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120) || 'recording';
+}
+
+/**
+ * 同目录唯一命名：目标已存在或在保护名单里就加 ` (1)`、` (2)`… 绝不覆盖既有文件；
+ * selfPath 是文件当前所在路径（它自己不算撞名）。保护名单用于源文件等永不可被指向的路径。
+ */
+export async function uniqueTargetPath(
+  dir: string,
+  base: string,
+  ext: string,
+  protectPaths: string[],
+  selfPath?: string,
+): Promise<{ targetPath: string; base: string }> {
+  const protect = new Set(protectPaths.map((p) => path.resolve(p)));
+  const self = selfPath ? path.resolve(selfPath) : undefined;
+  for (let n = 0; n < 1000; n++) {
+    const candidateBase = n === 0 ? base : `${base} (${n})`;
+    const targetPath = path.join(dir, candidateBase + ext);
+    const resolved = path.resolve(targetPath);
+    if (resolved === self) return { targetPath, base: candidateBase };
+    if (protect.has(resolved)) continue;
+    const exists = await stat(targetPath).then(() => true).catch(() => false);
+    if (!exists) return { targetPath, base: candidateBase };
+  }
+  const targetPath = path.join(dir, `${base}-${Date.now()}${ext}`);
+  return { targetPath, base: path.basename(targetPath, ext) };
 }
 
 /** 录制文件路径：source_flv 直写用 .flv；mp4_after 录制阶段仍落 .flv，完成后转 MP4。template 为 V5 命名规则（#115，null 时用时间戳）。 */

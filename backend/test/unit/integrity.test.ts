@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { checkFileIntegrity } from '../../src/recorder/integrity.js';
 
 describe('checkFileIntegrity', () => {

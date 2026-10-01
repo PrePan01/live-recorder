@@ -1,11 +1,15 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { HighlightBuffer } from '../../src/recorder/highlight-buffer.js';
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from 'node:path';
+import { describe, expect, it } from "vitest";
+import { HighlightBuffer } from "../../src/recorder/highlight-buffer.js";
 
-function flvHeader(): Buffer { return Buffer.from([0x46, 0x4c, 0x56, 1, 5, 0, 0, 0, 9, 0, 0, 0, 0]); }
-function keyframe(): Buffer { return Buffer.from([9, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0x17, 1, 0, 0, 0, 13]); }
+function flvHeader(): Buffer {
+  return Buffer.from([0x46, 0x4c, 0x56, 1, 5, 0, 0, 0, 9, 0, 0, 0, 0]);
+}
+function keyframe(): Buffer {
+  return Buffer.from([9, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0x17, 1, 0, 0, 0, 13]);
+}
 function mediaTag(size: number): Buffer {
   const tag = Buffer.alloc(11 + size + 4);
   tag[0] = 9;
@@ -15,10 +19,10 @@ function mediaTag(size: number): Buffer {
   return tag;
 }
 
-describe('highlight buffer export', () => {
-  it('stays awaitingHeader after a non-FLV first chunk until an FLV seed arrives (首开丢头兜底)', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-await-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+describe("highlight buffer export", () => {
+  it("stays awaitingHeader after a non-FLV first chunk until an FLV seed arrives (首开丢头兜底)", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-await-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now();
     expect(buffer.awaitingHeader).toBe(true);
@@ -38,106 +42,135 @@ describe('highlight buffer export', () => {
     expect(buffer.availableSeconds()).toBeGreaterThan(0);
   });
 
-  it('exports a keyframe-aligned cache without loading complete segments into memory', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("exports a keyframe-aligned cache without loading complete segments into memory", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now();
     buffer.append(flvHeader(), at);
     buffer.append(keyframe(), at + 10);
     buffer.append(keyframe(), at + 5_100);
-    const output = path.join(base, 'out.flv');
+    const output = path.join(base, "out.flv");
     const result = await buffer.exportTo(output, 30);
     const bytes = await readFile(output);
-    expect(bytes.subarray(0, 3).toString()).toBe('FLV');
+    expect(bytes.subarray(0, 3).toString()).toBe("FLV");
     expect(result.bytes).toBe(bytes.length);
     expect(bytes.length).toBeGreaterThan(flvHeader().length);
   });
 
-  it('continues caching into a new segment after export', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-continue-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("continues caching into a new segment after export", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-continue-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now();
     buffer.append(flvHeader(), at);
     buffer.append(keyframe(), at);
-    const firstOutput = path.join(base, 'first.flv');
+    const firstOutput = path.join(base, "first.flv");
     await buffer.exportTo(firstOutput, 30);
 
     // This arrives within the old segment's five-second window. Previously it
     // was queued against the stream just closed by export and silently lost.
     buffer.append(keyframe(), at + 1_000);
-    const secondOutput = path.join(base, 'second.flv');
+    const secondOutput = path.join(base, "second.flv");
     await buffer.exportTo(secondOutput, 30);
 
     expect(buffer.isAccepting).toBe(true);
     expect(buffer.availableSeconds()).toBe(1);
-    expect((await readFile(secondOutput)).length).toBeGreaterThan((await readFile(firstOutput)).length);
+    expect((await readFile(secondOutput)).length).toBeGreaterThan(
+      (await readFile(firstOutput)).length,
+    );
   });
 
-  it('reports only the interval covered by successfully written frames', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-stalled-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("reports only the interval covered by successfully written frames", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-stalled-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now() - 180_000;
     buffer.append(flvHeader(), at);
     buffer.append(keyframe(), at);
-    const result = await buffer.exportTo(path.join(base, 'out.flv'), 180);
+    const result = await buffer.exportTo(path.join(base, "out.flv"), 180);
 
     // A stopped cache must not turn elapsed wall-clock time into fake footage.
     expect(buffer.availableSeconds()).toBe(0);
     expect(result.actualSeconds).toBe(0);
   });
 
-  it('stops only this cache when the pending disk-write queue exceeds 8 MiB', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-slow-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("stops only this cache when the pending disk-write queue exceeds 8 MiB", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-slow-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     buffer.append(flvHeader());
     buffer.append(mediaTag(8 * 1024 * 1024 + 1));
     expect(buffer.isAccepting).toBe(false);
-    expect(buffer.backpressureReason).toBe('slow_disk');
+    expect(buffer.backpressureReason).toBe("slow_disk");
   });
 
   // #32：导出进行中触发 clear()，不得删除正在读取的分段（否则 copyRange ENOENT）。
-  it('clear() waits for an in-flight export instead of deleting its segments (#32)', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-clear-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("clear() waits for an in-flight export instead of deleting its segments (#32)", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-clear-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now();
     buffer.append(flvHeader(), at);
     buffer.append(keyframe(), at + 10);
     for (let i = 0; i < 20; i += 1) buffer.append(mediaTag(256), at + 20 + i);
     buffer.append(keyframe(), at + 5_100);
-    const output = path.join(base, 'out.flv');
+    const output = path.join(base, "out.flv");
     const exporting = buffer.exportTo(output, 30);
     const clearing = buffer.clear();
     await expect(exporting).resolves.toBeTruthy();
     await clearing;
     const bytes = await readFile(output);
-    expect(bytes.subarray(0, 3).toString()).toBe('FLV');
+    expect(bytes.subarray(0, 3).toString()).toBe("FLV");
     expect(buffer.isAccepting).toBe(false);
   });
 
   // #32：导出进行中触发 reset()，同样等待导出读取完 pinned 分段后再清理。
-  it('reset() waits for an in-flight export instead of deleting its segments (#32)', async () => {
-    const base = await mkdtemp(path.join(tmpdir(), 'lr-highlight-reset-'));
-    const buffer = new HighlightBuffer(path.join(base, 'cache'), 300);
+  it("reset() waits for an in-flight export instead of deleting its segments (#32)", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-reset-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
     await buffer.start();
     const at = Date.now();
     buffer.append(flvHeader(), at);
     buffer.append(keyframe(), at + 10);
     for (let i = 0; i < 20; i += 1) buffer.append(mediaTag(256), at + 20 + i);
     buffer.append(keyframe(), at + 5_100);
-    const output = path.join(base, 'out.flv');
+    const output = path.join(base, "out.flv");
     const exporting = buffer.exportTo(output, 30);
     const resetting = buffer.reset();
     await expect(exporting).resolves.toBeTruthy();
     await resetting;
     const bytes = await readFile(output);
-    expect(bytes.subarray(0, 3).toString()).toBe('FLV');
+    expect(bytes.subarray(0, 3).toString()).toBe("FLV");
     // reset 后仍接受新分段（保留 init）。
     buffer.append(keyframe(), at + 10_000);
     expect(buffer.isAccepting).toBe(true);
+  });
+
+  it("写盘失败转为导出失败而非进程崩溃（EIO 兑底）", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "lr-highlight-eio-"));
+    const buffer = new HighlightBuffer(path.join(base, "cache"), 300);
+    await buffer.start();
+    const at = Date.now();
+    buffer.append(flvHeader(), at);
+    buffer.append(keyframe(), at + 10);
+    buffer.append(keyframe(), at + 5_100);
+    // 输出指向已存在的目录：打开必失败（模拟磁盘写入不可用）。
+    const bad = path.join(base, "outdir");
+    await mkdir(bad);
+    let caught: Error | null = null;
+    try {
+      await buffer.exportTo(bad, 30);
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(
+      String((caught as NodeJS.ErrnoException).code ?? caught!.message),
+    ).toMatch(/EISDIR|directory|EIO|EPERM|EACCES/i);
+    // 缓存不受影响：写盘恢复后仍能正常导出。
+    const good = path.join(base, "good.flv");
+    const result = await buffer.exportTo(good, 30);
+    expect(result.bytes).toBeGreaterThan(0);
   });
 });

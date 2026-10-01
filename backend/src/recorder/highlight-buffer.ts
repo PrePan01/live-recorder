@@ -1,20 +1,57 @@
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
-import path from 'node:path';
-import { once } from 'node:events';
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { once } from "node:events";
 
 const SEGMENT_MS = 5_000;
 /** A preview cache must never turn a slow disk into unbounded process memory. */
 const MAX_PENDING_WRITE_BYTES = 8 * 1024 * 1024;
 
 /** An entry becomes exportable only after its bytes have reached the cache file. */
-type Entry = { offset: number; length: number; at: number; keyframe: boolean; written: boolean };
+type Entry = {
+  offset: number;
+  length: number;
+  at: number;
+  keyframe: boolean;
+  written: boolean;
+};
 type Segment = {
-  path: string; startedAt: number; endedAt: number; bytes: number; entries: Entry[];
-  stream: ReturnType<typeof createWriteStream> | null; closing: Promise<void> | null;
+  path: string;
+  startedAt: number;
+  endedAt: number;
+  bytes: number;
+  entries: Entry[];
+  stream: ReturnType<typeof createWriteStream> | null;
+  closing: Promise<void> | null;
   resolveClosing?: () => void;
 };
-type WriteOperation = { kind: 'write'; segment: Segment; stream: ReturnType<typeof createWriteStream>; chunk: Buffer; entry: Entry } | { kind: 'close'; segment: Segment; stream: ReturnType<typeof createWriteStream> };
+type WriteOperation =
+  | {
+      kind: "write";
+      segment: Segment;
+      stream: ReturnType<typeof createWriteStream>;
+      chunk: Buffer;
+      entry: Entry;
+    }
+  | {
+      kind: "close";
+      segment: Segment;
+      stream: ReturnType<typeof createWriteStream>;
+    };
+
+const streamErrors = new WeakMap<object, Error>();
+function hookStreamError(
+  stream: ReturnType<typeof createWriteStream>,
+  onError?: (error: Error) => void,
+): void {
+  const marker = stream as unknown as { lrErrHooked?: boolean };
+  if (marker.lrErrHooked) return;
+  marker.lrErrHooked = true;
+  stream.on("error", (error) => {
+    if (!streamErrors.has(stream)) streamErrors.set(stream, error);
+    onError?.(error);
+  });
+}
 type SealedSnapshot = { segments: Segment[]; done: Promise<void> };
 
 function isMedia(chunk: Buffer): boolean {
@@ -22,11 +59,15 @@ function isMedia(chunk: Buffer): boolean {
   const size = chunk.readUIntBE(1, 3);
   if (size + 15 !== chunk.length) return false;
   const codec = chunk[11]! & 0x0f;
-  const seq = (chunk[0] === 9 && (codec === 7 || codec === 12) && chunk[12] === 0) || (chunk[0] === 8 && (chunk[11]! >> 4) === 10 && chunk[12] === 0);
+  const seq =
+    (chunk[0] === 9 && (codec === 7 || codec === 12) && chunk[12] === 0) ||
+    (chunk[0] === 8 && chunk[11]! >> 4 === 10 && chunk[12] === 0);
   return !seq;
 }
 
-function isKeyframe(chunk: Buffer): boolean { return chunk.length >= 12 && chunk[0] === 9 && (chunk[11]! & 0xf0) === 0x10; }
+function isKeyframe(chunk: Buffer): boolean {
+  return chunk.length >= 12 && chunk[0] === 9 && (chunk[11]! & 0xf0) === 0x10;
+}
 
 /** Disk-backed rolling FLV cache used only by the explicit normal-preview highlight feature. */
 export class HighlightBuffer {
@@ -44,7 +85,7 @@ export class HighlightBuffer {
   private writeQueue: WriteOperation[] = [];
   private queuedWriteBytes = 0;
   private writePump: Promise<void> | null = null;
-  private disabledReason: 'slow_disk' | 'write_error' | null = null;
+  private disabledReason: "slow_disk" | "write_error" | null = null;
   /** Reset temporarily drops preview frames so it cannot delete a newly-rotated segment. */
   private resetting = false;
   /** #32：进行中的导出计数——clear/reset 必须等导出读取完 pinned 分段再删除文件，避免 copyRange ENOENT。 */
@@ -52,24 +93,41 @@ export class HighlightBuffer {
   private exportsIdle: Promise<void> = Promise.resolve();
   private resolveExportsIdle: (() => void) | null = null;
 
-  constructor(private readonly directory: string, private retainSeconds = 300) {}
+  constructor(
+    private readonly directory: string,
+    private retainSeconds = 300,
+  ) {}
 
-  async start(): Promise<void> { await mkdir(this.directory, { recursive: true }); }
+  async start(): Promise<void> {
+    await mkdir(this.directory, { recursive: true });
+  }
 
-  setRetainSeconds(seconds: number): void { this.retainSeconds = seconds; this.evict(Date.now()); }
+  setRetainSeconds(seconds: number): void {
+    this.retainSeconds = seconds;
+    this.evict(Date.now());
+  }
 
-  get isAccepting(): boolean { return !this.cleared && !this.resetting && this.disabledReason === null; }
-  get backpressureReason(): 'slow_disk' | 'write_error' | null { return this.disabledReason; }
+  get isAccepting(): boolean {
+    return !this.cleared && !this.resetting && this.disabledReason === null;
+  }
+  get backpressureReason(): "slow_disk" | "write_error" | null {
+    return this.disabledReason;
+  }
   /** 尚未捕获 FLV 头：直播流全程只发一次头，错过需由外部延迟播种兜底。 */
-  get awaitingHeader(): boolean { return this.isAccepting && !this.headerCaptured; }
+  get awaitingHeader(): boolean {
+    return this.isAccepting && !this.headerCaptured;
+  }
 
   append(chunk: Buffer, at = Date.now()): void {
     if (!this.isAccepting) return;
     // 引擎通常逐标签回调，但不能依赖该实现细节：fake/HLS/网络合包都可能一次给出多个标签。
-    this.pending = this.pending.length === 0 ? Buffer.from(chunk) : Buffer.concat([this.pending, chunk]);
+    this.pending =
+      this.pending.length === 0
+        ? Buffer.from(chunk)
+        : Buffer.concat([this.pending, chunk]);
     if (!this.headerCaptured) {
       if (this.pending.length < 13) return;
-      if (this.pending.subarray(0, 3).toString() !== 'FLV') {
+      if (this.pending.subarray(0, 3).toString() !== "FLV") {
         // 非头首块（首开竞态错过文件头/中途加入）：丢弃后仍 awaitingHeader，
         // 由 RecorderManager 在后续帧上延迟播种 recordingBootstrap，而不是永久干等。
         this.pending = Buffer.alloc(0);
@@ -84,7 +142,10 @@ export class HighlightBuffer {
       if (this.pending.length < length) return;
       const tag = this.pending.subarray(0, length);
       this.pending = this.pending.subarray(length);
-      if (!this.mediaStarted && !isMedia(tag)) { this.init.push(Buffer.from(tag)); continue; }
+      if (!this.mediaStarted && !isMedia(tag)) {
+        this.init.push(Buffer.from(tag));
+        continue;
+      }
       if (!isMedia(tag)) continue;
       this.mediaStarted = true;
       this.appendMedia(tag, at);
@@ -92,33 +153,50 @@ export class HighlightBuffer {
   }
 
   private appendMedia(chunk: Buffer, at: number): void {
-    if (!this.current || at - this.current.startedAt >= SEGMENT_MS) this.rotate(at);
+    if (!this.current || at - this.current.startedAt >= SEGMENT_MS)
+      this.rotate(at);
     const segment = this.current!;
     if (this.queuedWriteBytes + chunk.length > MAX_PENDING_WRITE_BYTES) {
       // Keep completed files intact: a user can still export the portion that
       // reached disk, but do not let a stalled volume consume more memory.
-      this.disabledReason = 'slow_disk';
+      this.disabledReason = "slow_disk";
       return;
     }
     const offset = segment.bytes;
     segment.bytes += chunk.length;
     segment.endedAt = at;
-    const entry: Entry = { offset, length: chunk.length, at, keyframe: isKeyframe(chunk), written: false };
+    const entry: Entry = {
+      offset,
+      length: chunk.length,
+      at,
+      keyframe: isKeyframe(chunk),
+      written: false,
+    };
     segment.entries.push(entry);
     this.totalBytes += chunk.length;
     this.queuedWriteBytes += chunk.length;
-    this.writeQueue.push({ kind: 'write', segment, stream: segment.stream!, chunk: Buffer.from(chunk), entry });
+    this.writeQueue.push({
+      kind: "write",
+      segment,
+      stream: segment.stream!,
+      chunk: Buffer.from(chunk),
+      entry,
+    });
     this.startWritePump();
     this.evict(at);
   }
 
   availableSeconds(): number {
-    const entries = this.segments.flatMap((segment) => segment.entries).filter((entry) => entry.written);
+    const entries = this.segments
+      .flatMap((segment) => segment.entries)
+      .filter((entry) => entry.written);
     const first = entries[0];
     const last = entries.at(-1);
     // Do not use wall-clock time here. After a disk failure a cache can stop
     // receiving frames, while wall-clock time would misleadingly keep growing.
-    return first && last ? Math.max(0, Math.floor((last.at - first.at) / 1000)) : 0;
+    return first && last
+      ? Math.max(0, Math.floor((last.at - first.at) / 1000))
+      : 0;
   }
 
   async exportTo(
@@ -127,7 +205,7 @@ export class HighlightBuffer {
     signal?: AbortSignal,
     onProgress?: (bytes: number) => void,
   ): Promise<{ bytes: number; actualSeconds: number }> {
-    if (this.cleared) throw new Error('缓存已清空，无法导出');
+    if (this.cleared) throw new Error("缓存已清空，无法导出");
     // Rotate synchronously before awaiting I/O. New live frames then flow into
     // a new segment, while this export reads an immutable, pinned snapshot.
     const snapshot = this.sealCurrent();
@@ -136,21 +214,27 @@ export class HighlightBuffer {
     this.beginExport();
     try {
       await abortable(snapshot.done, signal);
-      const all = snapshot.segments.flatMap((segment) => segment.entries.filter((entry) => entry.written).map((entry) => ({ segment, entry })));
+      const all = snapshot.segments.flatMap((segment) =>
+        segment.entries
+          .filter((entry) => entry.written)
+          .map((entry) => ({ segment, entry })),
+      );
       const last = all.at(-1);
-      if (!last || this.init.length === 0) throw new Error('缓存尚未收到可导出的关键帧');
+      if (!last || this.init.length === 0)
+        throw new Error("缓存尚未收到可导出的关键帧");
       const target = last.entry.at - seconds * 1000;
       let start = all.findIndex((v) => v.entry.at >= target);
       if (start < 0) start = 0;
       while (start > 0 && !all[start]!.entry.keyframe) start -= 1;
       while (start < all.length && !all[start]!.entry.keyframe) start += 1;
-      if (start >= all.length) throw new Error('缓存尚未收到可导出的关键帧');
+      if (start >= all.length) throw new Error("缓存尚未收到可导出的关键帧");
       await mkdir(path.dirname(output), { recursive: true });
       const selected = all.slice(start);
       let bytes = this.init.reduce((sum, part) => sum + part.length, 0);
       const stream = createWriteStream(output);
+      hookStreamError(stream);
       const abortOutput = () => stream.destroy();
-      signal?.addEventListener('abort', abortOutput, { once: true });
+      signal?.addEventListener("abort", abortOutput, { once: true });
       try {
         for (const part of this.init) {
           await writeChunk(stream, part, signal);
@@ -166,24 +250,44 @@ export class HighlightBuffer {
               rangeEnd += entry.length;
               continue;
             }
-            await copyRange(segment.path, rangeStart, rangeEnd, stream, signal, onProgress);
+            await copyRange(
+              segment.path,
+              rangeStart,
+              rangeEnd,
+              stream,
+              signal,
+              onProgress,
+            );
             bytes += rangeEnd - rangeStart + 1;
             rangeStart = entry.offset;
             rangeEnd = rangeStart + entry.length - 1;
           }
-          await copyRange(segment.path, rangeStart, rangeEnd, stream, signal, onProgress);
+          await copyRange(
+            segment.path,
+            rangeStart,
+            rangeEnd,
+            stream,
+            signal,
+            onProgress,
+          );
           bytes += rangeEnd - rangeStart + 1;
         }
         stream.end();
-        await abortable(once(stream, 'finish'), signal);
+        await abortable(once(stream, "finish"), signal);
       } catch (error) {
         stream.destroy();
-        if (!stream.closed) await once(stream, 'close').catch(() => undefined);
+        if (!stream.closed) await once(stream, "close").catch(() => undefined);
         throw error;
       } finally {
-        signal?.removeEventListener('abort', abortOutput);
+        signal?.removeEventListener("abort", abortOutput);
       }
-      return { bytes, actualSeconds: Math.max(0, Math.round((last.entry.at - all[start]!.entry.at) / 1000)) };
+      return {
+        bytes,
+        actualSeconds: Math.max(
+          0,
+          Math.round((last.entry.at - all[start]!.entry.at) / 1000),
+        ),
+      };
     } finally {
       for (const segment of pinned) this.pinned.delete(segment);
       this.endExport();
@@ -194,7 +298,9 @@ export class HighlightBuffer {
   private beginExport(): void {
     this.exportsInFlight += 1;
     if (this.exportsInFlight === 1) {
-      this.exportsIdle = new Promise<void>((resolve) => { this.resolveExportsIdle = resolve; });
+      this.exportsIdle = new Promise<void>((resolve) => {
+        this.resolveExportsIdle = resolve;
+      });
     }
   }
 
@@ -217,8 +323,13 @@ export class HighlightBuffer {
     // #32：等待进行中的导出读完 pinned 分段，避免并发删除正在读取的缓存文件（copyRange ENOENT）。
     await this.waitForExports();
     await rm(this.directory, { recursive: true, force: true });
-    this.segments = []; this.current = null; this.init = []; this.totalBytes = 0; this.pending = Buffer.alloc(0);
-    this.writeQueue = []; this.queuedWriteBytes = 0;
+    this.segments = [];
+    this.current = null;
+    this.init = [];
+    this.totalBytes = 0;
+    this.pending = Buffer.alloc(0);
+    this.writeQueue = [];
+    this.queuedWriteBytes = 0;
   }
 
   /**
@@ -238,7 +349,9 @@ export class HighlightBuffer {
       // mediaStarted/headerCaptured/init 保留，新到的媒体标签可立即落入新的分段。
       // #32：先等进行中的导出读完 pinned 分段，再删除缓存文件，避免 copyRange ENOENT。
       await this.waitForExports();
-      await Promise.all(snapshot.segments.map((segment) => rm(segment.path, { force: true })));
+      await Promise.all(
+        snapshot.segments.map((segment) => rm(segment.path, { force: true })),
+      );
     } finally {
       this.resetting = false;
     }
@@ -246,21 +359,35 @@ export class HighlightBuffer {
 
   private rotate(at: number): void {
     if (this.current?.stream) this.enqueueClose(this.current);
-    const file = path.join(this.directory, `${at}-${this.segments.length}.part`);
+    const file = path.join(
+      this.directory,
+      `${at}-${this.segments.length}.part`,
+    );
     const stream = createWriteStream(file);
     // The pump observes write errors too; this listener prevents an async
     // filesystem failure from becoming an unhandled EventEmitter error.
-    const hookOnce = (stream as unknown as { lrErrHooked?: boolean });
-    if (!hookOnce.lrErrHooked) {
-      hookOnce.lrErrHooked = true;
-      stream.on('error', () => { this.disabledReason ??= 'write_error'; });
-    }
-    const segment: Segment = { path: file, startedAt: at, endedAt: at, bytes: 0, entries: [], stream, closing: null };
-    this.segments.push(segment); this.current = segment;
+    hookStreamError(stream, () => {
+      this.disabledReason ??= "write_error";
+    });
+    const segment: Segment = {
+      path: file,
+      startedAt: at,
+      endedAt: at,
+      bytes: 0,
+      entries: [],
+      stream,
+      closing: null,
+    };
+    this.segments.push(segment);
+    this.current = segment;
   }
 
   private evict(now: number): void {
-    while (this.segments.length > 1 && !this.pinned.has(this.segments[0]!) && this.segments[0]!.endedAt < now - this.retainSeconds * 1000) {
+    while (
+      this.segments.length > 1 &&
+      !this.pinned.has(this.segments[0]!) &&
+      this.segments[0]!.endedAt < now - this.retainSeconds * 1000
+    ) {
       const old = this.segments.shift()!;
       this.totalBytes -= old.bytes;
       void rm(old.path, { force: true });
@@ -278,7 +405,9 @@ export class HighlightBuffer {
     this.current = null;
     return {
       segments,
-      done: Promise.all(segments.map((segment) => segment.closing)).then(() => undefined),
+      done: Promise.all(segments.map((segment) => segment.closing)).then(
+        () => undefined,
+      ),
     };
   }
 
@@ -286,8 +415,10 @@ export class HighlightBuffer {
     if (!segment.stream) return;
     const stream = segment.stream;
     segment.stream = null;
-    segment.closing = new Promise<void>((resolve) => { segment.resolveClosing = resolve; });
-    this.writeQueue.push({ kind: 'close', segment, stream });
+    segment.closing = new Promise<void>((resolve) => {
+      segment.resolveClosing = resolve;
+    });
+    this.writeQueue.push({ kind: "close", segment, stream });
     this.startWritePump();
   }
 
@@ -303,50 +434,106 @@ export class HighlightBuffer {
     while (this.writeQueue.length > 0) {
       const operation = this.writeQueue.shift()!;
       try {
-        if (operation.kind === 'write') {
-          if (!operation.stream.write(operation.chunk)) await once(operation.stream, 'drain');
+        if (operation.kind === "write") {
+          if (!operation.stream.write(operation.chunk))
+            await waitForDrain(operation.stream);
           operation.entry.written = true;
           this.queuedWriteBytes -= operation.chunk.length;
         } else {
           operation.stream.end();
-          await once(operation.stream, 'finish');
+          await once(operation.stream, "finish");
           operation.segment.resolveClosing?.();
         }
       } catch {
-        this.disabledReason ??= 'write_error';
-        if (operation.kind === 'write') this.queuedWriteBytes -= operation.chunk.length;
+        this.disabledReason ??= "write_error";
+        if (operation.kind === "write")
+          this.queuedWriteBytes -= operation.chunk.length;
         operation.segment.resolveClosing?.();
       }
     }
   }
 }
 
-function groupEntries(items: Array<{ segment: Segment; entry: Entry }>): Map<Segment, Entry[]> {
+function groupEntries(
+  items: Array<{ segment: Segment; entry: Entry }>,
+): Map<Segment, Entry[]> {
   const grouped = new Map<Segment, Entry[]>();
-  for (const item of items) (grouped.get(item.segment) ?? (grouped.set(item.segment, []), grouped.get(item.segment)!)).push(item.entry);
+  for (const item of items)
+    (
+      grouped.get(item.segment) ??
+      (grouped.set(item.segment, []), grouped.get(item.segment)!)
+    ).push(item.entry);
   return grouped;
 }
 
 function abortError(signal?: AbortSignal): Error {
-  return signal?.reason instanceof Error ? signal.reason : new Error('操作已取消');
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error("操作已取消");
 }
 
-async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+async function abortable<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return promise;
   if (signal.aborted) throw abortError(signal);
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(abortError(signal));
-    signal.addEventListener('abort', abort, { once: true });
+    signal.addEventListener("abort", abort, { once: true });
     promise.then(
-      (value) => { signal.removeEventListener('abort', abort); resolve(value); },
-      (error) => { signal.removeEventListener('abort', abort); reject(error); },
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
     );
   });
 }
 
-async function writeChunk(stream: ReturnType<typeof createWriteStream>, chunk: Buffer, signal?: AbortSignal): Promise<void> {
+async function writeChunk(
+  stream: ReturnType<typeof createWriteStream>,
+  chunk: Buffer,
+  signal?: AbortSignal,
+): Promise<void> {
   if (signal?.aborted) throw abortError(signal);
-  if (!stream.write(chunk)) await abortable(once(stream, 'drain'), signal);
+  const failed = streamErrors.get(stream);
+  if (failed) throw failed;
+  if (!stream.write(chunk)) await waitForDrain(stream, signal);
+  const failedAfter = streamErrors.get(stream);
+  if (failedAfter) throw failedAfter;
+}
+
+/** 等待排空：drain/写盘错误/取消三者竞速，任一路落地都完整拆除监听（不再泄漏 drain/error 监听）。 */
+function waitForDrain(
+  stream: ReturnType<typeof createWriteStream>,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      stream.off("drain", onDrain);
+      stream.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(abortError(signal));
+    };
+    stream.on("drain", onDrain);
+    stream.on("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function copyRange(
@@ -359,13 +546,13 @@ async function copyRange(
 ): Promise<void> {
   const input = createReadStream(file, { start, end });
   const abortInput = () => input.destroy();
-  signal?.addEventListener('abort', abortInput, { once: true });
+  signal?.addEventListener("abort", abortInput, { once: true });
   try {
     for await (const chunk of input) {
       await writeChunk(output, chunk as Buffer, signal);
       onProgress?.((chunk as Buffer).length);
     }
   } finally {
-    signal?.removeEventListener('abort', abortInput);
+    signal?.removeEventListener("abort", abortInput);
   }
 }

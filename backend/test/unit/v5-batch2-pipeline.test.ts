@@ -4,9 +4,10 @@ import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
 import { access, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
+import { DEFAULT_PIPELINE_CONFIG } from '../../src/types/settings.js';
 import { recoverOrphanPipelineRuns } from '../../src/core/recovery.js';
 import { resolveBaseName } from '../../src/storage/file-organizer.js';
 import { OPENLIST_2FA_REQUIRED, OPENLIST_AUTH_FAILED, UploadManager, RealWebDavClient } from '../../src/core/upload-manager.js';
@@ -21,7 +22,7 @@ async function waitFor(fn: () => boolean, timeoutMs = 8000): Promise<void> {
 
 function enablePipeline(services: Services): void {
   const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-  services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
+  services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: false } });
 }
 
 function newServices(): Services {
@@ -133,7 +134,7 @@ const LAME_OK = FFMPEG_OK && Boolean(spawnSync('ffmpeg', ['-hide_banner', '-enco
 describe('管线导出音频 exportAudio（task #57，评估稿 c0e54a5f）', () => {
   function enablePipelineAudio(services: Services, exportAudio: boolean): void {
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: false, exportAudio } });
   }
 
   async function seedRecording(mediaFile: string): Promise<{ services: Services; rec: ReturnType<Services['recordings']['create']>; file: string }> {
@@ -236,11 +237,19 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     return { services, rec, file: filePath };
   }
 
-  async function enableAndRun(services: Services, recId: string, opts: { archiveDirectory?: string; exportAudio?: boolean; outputFormat?: 'source' | 'mp4' }): Promise<void> {
+  async function enableAndRun(services: Services, recId: string, opts: { archiveDirectory?: string; exportAudio?: boolean; outputFormat?: 'source' | 'mp4'; deleteSourceAfterConvert?: boolean }): Promise<void> {
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
     services.settings.save({
       ...base,
-      pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: opts.archiveDirectory ?? '', maxConcurrency: 2, exportAudio: opts.exportAudio ?? false, outputFormat: opts.outputFormat ?? 'source' },
+      pipeline: {
+        ...DEFAULT_PIPELINE_CONFIG,
+        enabled: true,
+        verify: false,
+        archiveDirectory: opts.archiveDirectory ?? '',
+        exportAudio: opts.exportAudio ?? false,
+        outputFormat: opts.outputFormat ?? 'source',
+        deleteSourceAfterConvert: opts.deleteSourceAfterConvert ?? false,
+      },
     });
     services.pipeline.enqueue(recId);
     await waitFor(() => {
@@ -254,7 +263,7 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
     expect(gen.status).toBe(0);
     const archiveDir = await mkdtemp(path.join(tmpdir(), 'lr-c63-arch-'));
-    const mp4 = file.replace(/\.flv$/i, '_converted.mp4');
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
     const mp3 = file.replace(/\.flv$/i, '.mp3');
 
     await enableAndRun(services, rec.id, { archiveDirectory: archiveDir, exportAudio: true, outputFormat: 'mp4' });
@@ -272,6 +281,38 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
   });
 
+  it.runIf(FFMPEG_OK)('格式转换成功且开启删除源文件：仅保留 MP4', async () => {
+    const { services, rec, file } = await seed('delete-source.flv');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
+
+    await enableAndRun(services, rec.id, { outputFormat: 'mp4', deleteSourceAfterConvert: true });
+
+    await expect(access(file)).rejects.toThrow();
+    await expect(access(mp4)).resolves.toBeUndefined();
+    expect(services.recordings.get(rec.id)!.filePath).toBe(mp4);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
+  it.runIf(FFMPEG_OK)('转换产物与源同基名（不带 _converted）；撞名自动「(n)」序号、绝不覆盖既有文件', async () => {
+    const { services, rec, file } = await seed('dupe.flv');
+    const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', '-f', 'flv', file], { timeout: 30_000 });
+    expect(gen.status).toBe(0);
+    const mp4 = file.replace(/\.flv$/i, '.mp4');
+    // 预置同基名产物（历史转换/用户文件）：转换绝不覆盖它，按命名安全自动加序号。
+    await writeFile(mp4, 'PREFILLED');
+
+    await enableAndRun(services, rec.id, { outputFormat: 'mp4' });
+
+    const bumped = file.replace(/\.flv$/i, ' (1).mp4');
+    await expect(access(bumped)).resolves.toBeUndefined();
+    const { readFile } = await import('node:fs/promises');
+    expect((await readFile(mp4)).toString()).toBe('PREFILLED');
+    expect(services.recordings.get(rec.id)!.filePath).toBe(bumped);
+    expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('ok');
+  });
+
   it.runIf(FFMPEG_OK)('失败（源可播但无法格式转换）：源保留、无半截产物、filePath 不变、partial', async () => {
     const { services, rec, file } = await seed('legacy.flv');
     // flv1(Sorenson)+mp3：ffprobe 可播（verify/cov 照常过），但 flv1→mp4 转封装不支持 → compress 必失败（真实失败面，非人为构造）。
@@ -281,8 +322,8 @@ describe('管线 compress 成功删源（task #63，PrePan 拍板 A）', () => {
     await enableAndRun(services, rec.id, { outputFormat: 'mp4' });
 
     await expect(access(file)).resolves.toBeUndefined(); // 源保留
-    await expect(access(file.replace(/\.flv$/i, '_converted.mp4'))).rejects.toThrow(); // 无半截
-    await expect(access(`${file.replace(/\.flv$/i, '_converted.mp4')}.part`)).rejects.toThrow(); // 临时零残留
+    await expect(access(file.replace(/\.flv$/i, '.mp4'))).rejects.toThrow(); // 无半截
+    await expect(access(`${file.replace(/\.flv$/i, '.mp4')}.part`)).rejects.toThrow(); // 临时零残留
     expect(services.recordings.get(rec.id)!.filePath).toBe(file); // filePath 不变
     expect(services.recordings.get(rec.id)!.pipelineStatus).toBe('partial');
     const run = services.pipeline.repo.runForRecording(rec.id)!;
@@ -345,7 +386,7 @@ describe('管线封面可选步骤 exportCover（task #71）', () => {
     const gen = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x64:rate=10', '-pix_fmt', 'yuv420p', file], { timeout: 30_000 });
     expect(gen.status).toBe(0);
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: false } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: false, exportCover: false } });
     await runTo(services, rec.id);
 
     const run = services.pipeline.repo.runForRecording(rec.id)!;
@@ -386,7 +427,7 @@ describe('管线 verify 开关门控（task #73，修说谎开关）', () => {
 
   function enableVerify(services: Services, verify: boolean): void {
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, pipeline: { enabled: true, verify, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify, exportCover: true } });
   }
 
   async function runTo(services: Services, recId: string): Promise<void> {
@@ -1004,7 +1045,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'u69', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'completed', filePath: file });
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
 
     // 并发触发：同一 recording 两次并发 enqueue（TOCTOU 窗口）。原子 INSERT OR IGNORE 保证只建 1 条、绝不抛 UNIQUE。
@@ -1551,7 +1592,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
   it('run(): 配置或文件缺失（rec/config 缺失）→ 明确标「配置或文件缺失」', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/cm1', displayName: 'cm' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'scm', streamTitle: 't' });
@@ -1633,7 +1674,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('2FA 验证成功后会自动恢复待验证的上传任务', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
 
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa-resume', displayName: '2FA resume' });
@@ -1669,7 +1710,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('retry keeps a known 2FA challenge visible instead of clearing it into queued', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa', displayName: '2FA' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: '2fa', streamTitle: '2FA' });
@@ -1785,7 +1826,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('POST /settings/openlist/2fa: 无码 400；有效码 ok；无效码报错', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const { app } = buildApp(services);
     const inj = host(app);
@@ -1832,7 +1873,7 @@ describe('V5 OpenList 2FA (#13)', () => {
     const file = path.join(dir, 'a.flv');
     await writeFile(file, Buffer.from([1, 2, 3]));
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2fa1', displayName: '2fa' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 's2fa', streamTitle: 't' });
@@ -1853,7 +1894,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('run(): 源文件已删除 → 明确标「源文件已删除」而非静默/误判（#18）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/del1', displayName: 'del' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sdel', streamTitle: 't' });
@@ -1872,7 +1913,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('POST /recordings/:id/upload：源文件已删除 → 明确报错「源文件已删除」（#18）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/up1', displayName: 'up' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sup', streamTitle: 't' });
@@ -1890,7 +1931,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('run(): 服务端永久性错误（OpenList 后台上传失败）→ 直接 failed 不重试（#22 fail-fast）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/perm1', displayName: 'perm' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sperm', streamTitle: 't' });
@@ -1914,7 +1955,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('run(): 服务端「任务等待超时」→ 直接 failed 不重试（#22）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/to1', displayName: 'to' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sto', streamTitle: 't' });
@@ -1939,7 +1980,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('run(): 瞬时网络错误（无法读取 OpenList 后台上传进度）→ 保留退避重试（非永久性）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     await services.secretStore.set('openlist.token', 'tok');
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/net1', displayName: 'net' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'snet', streamTitle: 't' });
@@ -1965,7 +2006,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('run(): 入队后令牌被移除 → 明确标「OpenList 令牌未配置」（#23）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/tok1', displayName: 'tok' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'stok', streamTitle: 't' });
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-tok-run-'));
@@ -1994,7 +2035,7 @@ describe('V5 OpenList 2FA (#13)', () => {
   it('resolveRemotePath: 特殊字符房间名被净化（\\/:*?"<>| → _）（#23）', async () => {
     const services = newServices();
     const base = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as Parameters<typeof services.settings.save>[0]);
-    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u' } });
+    services.settings.save({ ...base, openlist: { enabled: true, serverUrl: 'https://dav.example.com/dav/ydyun', directoryTemplate: '{room}/{date}', username: 'u', deleteSourceAfterUpload: false, hasToken: true } });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/spec1', displayName: 'a/b:c*d?' });
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sspec', streamTitle: 't' });
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-spec-'));

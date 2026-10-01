@@ -1,6 +1,6 @@
 import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import * as path from 'node:path';
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../../src/api/server.js";
 import { buildServices, type Services } from "../../src/core/services.js";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { buildServices } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { recoverStaleRecordings } from '../../src/core/recovery.js';

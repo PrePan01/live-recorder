@@ -1,6 +1,6 @@
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runFfmpegTracked } from '../../src/recorder/ffmpeg-run.js';
 

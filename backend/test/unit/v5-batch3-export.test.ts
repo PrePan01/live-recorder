@@ -4,7 +4,7 @@ import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });

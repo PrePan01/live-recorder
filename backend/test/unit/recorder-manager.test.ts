@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FakeClock } from "../../src/core/clock.js";
 import type { PreviewSink } from "../../src/core/recorder-manager.js";
