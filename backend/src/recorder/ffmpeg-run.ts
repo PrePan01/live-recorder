@@ -1,13 +1,13 @@
-import { spawn } from 'node:child_process';
-import { rename, unlink } from 'node:fs/promises';
-import { resolveBin } from '../utils/ffmpeg.js';
-import { checkFileIntegrity } from './integrity.js';
+import { spawn } from "node:child_process";
+import { rename, unlink } from "node:fs/promises";
+import { resolveBin } from "../utils/ffmpeg.js";
+import { checkFileIntegrity } from "./integrity.js";
 
 /**
  * 进度静默超过该时长才判定卡死：转封装正常时持续有进度输出，慢盘只是慢、不会静默。
  * 不用「总时长」上限——同一份 5GB 在不同磁盘上耗时差几十倍，任何固定值都会误杀大文件。
  */
-import { trackFfmpeg } from './ffmpeg-registry.js';
+import { trackFfmpeg } from "./ffmpeg-registry.js";
 
 export const DEFAULT_STALL_MS = 60_000;
 /** 判定卡死后等待进程真正退出的上限（SIGKILL 可能卡在不可中断 I/O 上，迟到数十秒）。 */
@@ -26,22 +26,43 @@ export interface FfmpegRunOptions {
   onProgress?: (info: { outTimeMs: number; speed: number | null }) => void;
   stallMs?: number;
   killGraceMs?: number;
+  /** 取消信号：触发即强杀子进程（删除联动/看门狗收割用，真正立即停）。 */
+  signal?: AbortSignal;
 }
 
-const PROGRESS_LINE = /^(frame|fps|bitrate|total_size|out_time_us|out_time_ms|out_time|dup_frames|drop_frames|speed|progress|stream_\d+_\d+_q)=/;
+const PROGRESS_LINE =
+  /^(frame|fps|bitrate|total_size|out_time_us|out_time_ms|out_time|dup_frames|drop_frames|speed|progress|stream_\d+_\d+_q)=/;
 
 /**
  * 运行 ffmpeg 并按「进度」而不是「总时长」判断异常：
  * 只要还在推进就不打断（大文件在慢盘上转封装可以跑很久），连续 stallMs 无任何进度才终止。
  * -progress 由本函数统一注入，调用方只传业务参数。
  */
-export function runFfmpegTracked(args: string[], options: FfmpegRunOptions = {}): Promise<FfmpegRunResult> {
+export function runFfmpegTracked(
+  args: string[],
+  options: FfmpegRunOptions = {},
+): Promise<FfmpegRunResult> {
   const stallMs = options.stallMs ?? DEFAULT_STALL_MS;
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   return new Promise((resolve) => {
-    const child = spawn(resolveBin('ffmpeg'), ['-nostats', '-progress', 'pipe:1', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(
+      resolveBin("ffmpeg"),
+      ["-nostats", "-progress", "pipe:1", ...args],
+      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
     const untrack = trackFfmpeg(child);
-    let stderr = '';
+    const onAbort = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // 已退出
+      }
+    };
+    if (options.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener("abort", onAbort, { once: true });
+    }
+    let stderr = "";
     let stalled = false;
     let settled = false;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -52,6 +73,7 @@ export function runFfmpegTracked(args: string[], options: FfmpegRunOptions = {})
       settled = true;
       if (stallTimer !== undefined) clearTimeout(stallTimer);
       if (killTimer !== undefined) clearTimeout(killTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       resolve({ ok: code === 0 && !stalled, code, stalled, stderr });
     };
 
@@ -59,35 +81,45 @@ export function runFfmpegTracked(args: string[], options: FfmpegRunOptions = {})
       if (stallTimer !== undefined) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
         stalled = true;
-        child.kill('SIGKILL');
+        child.kill("SIGKILL");
         killTimer = setTimeout(() => settle(null), killGraceMs);
       }, stallMs);
     };
 
-    let buffered = '';
+    let buffered = "";
     let lastSpeed: number | null = null;
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout.on("data", (chunk: Buffer) => {
       buffered += chunk.toString();
-      const lines = buffered.split('\n');
-      buffered = lines.pop() ?? '';
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
       if (lines.some((line) => PROGRESS_LINE.test(line.trim()))) armStall();
       if (options.onProgress) {
         for (const raw of lines) {
           const line = raw.trim();
-          if (!line.startsWith('out_time_') && !line.startsWith('speed=')) continue;
-          if (line.startsWith('out_time_ms=')) {
-            const ms = Number(line.slice('out_time_ms='.length));
-            if (Number.isFinite(ms)) options.onProgress({ outTimeMs: ms / 1000, speed: lastSpeed });
-          } else if (line.startsWith('speed=')) {
-            const v = parseFloat(line.slice('speed='.length));
+          if (!line.startsWith("out_time_") && !line.startsWith("speed="))
+            continue;
+          if (line.startsWith("out_time_ms=")) {
+            const ms = Number(line.slice("out_time_ms=".length));
+            if (Number.isFinite(ms))
+              options.onProgress({ outTimeMs: ms / 1000, speed: lastSpeed });
+          } else if (line.startsWith("speed=")) {
+            const v = parseFloat(line.slice("speed=".length));
             lastSpeed = Number.isFinite(v) ? v : lastSpeed;
           }
         }
       }
     });
-    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.on('error', () => { untrack(); settle(null); });
-    child.on('close', (code) => { untrack(); settle(code); });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", () => {
+      untrack();
+      settle(null);
+    });
+    child.on("close", (code) => {
+      untrack();
+      settle(code);
+    });
 
     armStall();
   });
@@ -102,8 +134,11 @@ export async function discardTemp(tempPath: string): Promise<void> {
  * 校验并落地 MP4 产物：ffprobe 确认可解封装后原子改名，产物不完整（退出码为 0 也可能写出坏容器）则丢弃。
  * 只处理产物本身，不动源文件。返回是否产出有效 MP4。
  */
-export async function finalizeMp4(tempPath: string, outPath: string): Promise<boolean> {
-  if ((await checkFileIntegrity(tempPath)) === 'failed') {
+export async function finalizeMp4(
+  tempPath: string,
+  outPath: string,
+): Promise<boolean> {
+  if ((await checkFileIntegrity(tempPath)) === "failed") {
     await discardTemp(tempPath);
     return false;
   }

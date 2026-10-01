@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { Services } from "./services.js";
 
@@ -71,6 +71,33 @@ export async function recoverStaleRecordings(
  * recording 复位（processing→有文件 completed / 无文件 failed，pipelineStatus=failed 放开 retry）、
  * 清理录制目录下孤儿 *.part（重启后无在途 ffmpeg，后缀白名单删除安全；下次 run 起始 discardTemp 兜底仍在）。
  */
+/**
+ * 启动收敛孤儿片段导出：导出进行中（processing）被重启打断的 clip 不会自己活过来——
+ * 按「保存后跑到底」口径收敛为 failed（「导出因应用重启中断」），半成品一并清理。
+ */
+export async function recoverOrphanClipExports(services: Services): Promise<number> {
+  const now = services.clock.iso();
+  let recovered = 0;
+  for (const clip of services.recordings.listClipExporting()) {
+    if (!services.db.open) break;
+    if (clip.filePath) await unlink(clip.filePath).catch(() => undefined);
+    services.recordings.update(clip.id, {
+      state: "failed",
+      endedAt: now,
+      failureReason: {
+        code: "RECORDING_FILE_CORRUPTED",
+        message: "导出因应用重启中断",
+        roomId: clip.roomId,
+        recordingId: clip.id,
+        occurredAt: now,
+        retryable: false,
+      },
+    });
+    recovered += 1;
+  }
+  return recovered;
+}
+
 export async function recoverOrphanPipelineRuns(services: Services): Promise<number> {
   const orphans = services.pipeline.repo.listRunsByStatuses(["queued", "running"]);
   const now = services.clock.iso();

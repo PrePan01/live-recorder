@@ -14,7 +14,7 @@ export type RecordingState =
   | 'failed';
 
 /** 发起录制的入口；悬浮窗录制完成后始终保留文件。 */
-export type RecordingOrigin = 'manual' | 'automatic' | 'floating' | 'highlight';
+export type RecordingOrigin = 'manual' | 'automatic' | 'floating' | 'highlight' | 'clip';
 
 /**
  * 录制结束原因：区分正常收尾与各类中断。
@@ -22,7 +22,7 @@ export type RecordingOrigin = 'manual' | 'automatic' | 'floating' | 'highlight';
  * interrupted=网络中断导致重连耗尽（去重时不算"已录过"，网络恢复后仍可续录）；
  * service_restart=服务重启中断（只标注，不自动续录）。
  */
-export type RecordingEndReason = 'natural' | 'stopped' | 'interrupted' | 'service_restart';
+export type RecordingEndReason = 'natural' | 'stopped' | 'interrupted' | 'service_restart' | 'clip_export';
 
 /** 录制文件完整性：verified=ffprobe 校验通过、failed=损坏/截断、pending=校验中或 ffprobe 缺失。 */
 export type RecordingIntegrity = 'verified' | 'failed' | 'pending';
@@ -83,4 +83,10 @@ export interface Recording {
   /** 导出尚未结束时用户已提交的保留决定；null 代表尚未决定。 */
   highlightConfirmationDecision?: boolean | null;
   highlightConfirmationFileName?: string | null;
+  /** 片段导出进度（0-100）：导出进行中为数字、终态为 null；历史行据此显示「导出中 x%」。 */
+  progressPercent?: number | null;
+  /** 跳播定位索引状态（仅录制中的 FLV 行携带）：ready=可跳播、building=补建中、missing=无索引。 */
+  seekIndexState?: 'ready' | 'building' | 'missing';
+  /** 索引补建进度（0-100），仅 building 时携带。 */
+  seekIndexProgress?: number;
 }

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Spin } from "antd";
 import mpegts from "mpegts.js";
 import { previewWsUrl } from "../api/client";
+import { reportError } from "../utils/errorDiagnostics";
+import { isPlausibleSeekOffset } from "../utils/recordingTimeline";
+import { prepareSeekPlayback } from "../utils/prepareSeekPlayback";
 
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
@@ -23,6 +26,14 @@ export interface VideoPlayerProps {
   onStreamAspectRatio?: (ratio: number) => void;
   /** 预览弹窗：fill 未开启时用于排版的宽高比；不传保持 16:9（直播墙不动）。 */
   aspectRatio?: number;
+  /** 跳播回看源：携带目标时间和解码关键帧时间；空=实时直播。 */
+  seek?: { url: string; generation: number; second: number; startSecond: number } | null;
+  /** 回看播到已写尾部 →调用方切回实时。 */
+  onSeekTail?: () => void;
+  /** 回看首帧渲染（松手→首帧掍表打点），携带代际号防旧代际串打点。 */
+  onSeekFirstFrame?: (generation: number) => void;
+  /** 实时流首帧（切实时段掍表打点）。 */
+  onLiveFirstFrame?: () => void;
 }
 
 export default function VideoPlayer({
@@ -33,6 +44,10 @@ export default function VideoPlayer({
   onVideoElementChange,
   onStreamAspectRatio,
   aspectRatio,
+  seek = null,
+  onSeekTail,
+  onSeekFirstFrame,
+  onLiveFirstFrame,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const attachVideoRef = useCallback(
@@ -91,6 +106,8 @@ export default function VideoPlayer({
   }, [onStreamAspectRatio]);
 
   useEffect(() => {
+    // 复用 video，但直播与回看只能由一个播放器持有。
+    if (seek) return;
     if (currentRoomIdRef.current !== roomId) {
       currentRoomIdRef.current = roomId;
       hasEverPlayedRef.current = false;
@@ -186,6 +203,7 @@ export default function VideoPlayer({
         restoreAudioPreference();
         lastProgressAt = Date.now();
         retry = 0;
+        liveFirstFrameRef.current?.();
       };
       videoRef.current.addEventListener("playing", playingListener);
       instance.on(EVENTS.ERROR, (_t, _detail) => {
@@ -225,7 +243,111 @@ export default function VideoPlayer({
       if (watchdogTimer) clearInterval(watchdogTimer);
       destroyPlayer();
     };
-  }, [roomId, platform, reloadToken]);
+    // 回看模式复用同一个 video 元素，实时路径让位（卸掉 mpegts）；
+    // 退出回看时本 effect 重跑重建直播流。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, platform, reloadToken, !!seek]);
+
+  // 回看跳播：走 mpegts 同管道（FLV 流；原生 src 在 WKWebView 播不了流式 fMP4）。
+  // 代际号防串流：旧代际的迟到事件一律丢弃。
+  const seekGenRef = useRef(0);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!seek || !video) return;
+    const gen = seek.generation;
+    seekGenRef.current = gen;
+    let disposed = false;
+    const stale = () => disposed || seekGenRef.current !== gen;
+    setState("loading");
+    setErrorMsg("");
+    const instance = mpegts.createPlayer(
+      { type: "flv", url: seek.url, isLive: false },
+      {
+        enableStashBuffer: false,
+        accurateSeek: true,
+        lazyLoadMaxDuration: Math.max(180, seek.second - seek.startSecond + 30),
+      },
+    );
+    instance.attachMediaElement(video);
+    let positioned = false;
+    const onPlaying = () => {
+      if (stale() || !positioned) return;
+      hasEverPlayedRef.current = true;
+      setState("playing");
+      onSeekFirstFrame?.(gen);
+    };
+    const onEnded = () => {
+      if (stale() || !positioned) return;
+      onSeekTail?.();
+    };
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("ended", onEnded);
+    instance.on(EVENTS.ERROR, () => {
+      if (stale()) return;
+      // 取证：跳播起流失败必须进诊断包（不只弹 toast），否则复现了也无痕可查。
+      reportError(
+        "jump-seek",
+        new Error(`jump-seek failed gen=${gen} second=${seek.second} start=${seek.startSecond}`),
+      );
+      setState("error");
+      setErrorMsg("跳播起流失败，请重试");
+    });
+    // 吸附偏移超 GOP 量级=索引错乱信号：不等永不可能的缓冲覆盖，按流起点放行并留诊断。
+    const offsetPlausible = isPlausibleSeekOffset(
+      seek.second,
+      seek.startSecond,
+    );
+    if (!offsetPlausible)
+      reportError(
+        "jump-seek-index",
+        new Error(
+          `index skew gen=${gen} second=${seek.second} start=${seek.startSecond}`,
+        ),
+      );
+    const stopPreparing = prepareSeekPlayback(
+      video,
+      offsetPlausible ? seek.second - seek.startSecond : 0,
+      () => {
+        if (stale()) return;
+        positioned = true;
+        // 定位完成后才播放；自动播放被拦时保留原有静音重试。
+        void Promise.resolve(instance.play()).catch(() => {
+          if (stale()) return;
+          video.muted = true;
+          void Promise.resolve(instance.play()).catch(() => undefined);
+        });
+      },
+      () => !stale(),
+      () => {
+        // 看狗放行：定位超时从缓冲起点起播（误差不超一个 GOP），留诊断痕。
+        reportError(
+          "jump-seek-watchdog",
+          new Error(`seek fallback gen=${gen} second=${seek.second}`),
+        );
+      },
+    );
+    // 载入延迟到下一帧：StrictMode 双跑 effect 时首帧载入被取消，同一目标只发一次起流。
+    const loadFrame = requestAnimationFrame(() => {
+      if (!disposed) instance.load();
+    });
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(loadFrame);
+      stopPreparing();
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("ended", onEnded);
+      try {
+        video.pause();
+      } catch {
+        /* 忽略 */
+      }
+      instance.destroy();
+    };
+  }, [seek, onSeekTail, onSeekFirstFrame]);
+
+  // 实时首帧回调仅在直播路径生效；effect 依赖保持最小，避免重连风暴。
+  const liveFirstFrameRef = useRef(onLiveFirstFrame);
+  liveFirstFrameRef.current = onLiveFirstFrame;
 
   return (
     <div
@@ -270,11 +392,11 @@ export default function VideoPlayer({
         ref={attachVideoRef}
         controls
         muted={muted}
-        autoPlay
+        autoPlay={!seek}
         onCanPlay={() =>
-          setState((current) => (current === "loading" ? "playing" : current))
+          !seek && setState((current) => (current === "loading" ? "playing" : current))
         }
-        onPlaying={() => setState("playing")}
+        onPlaying={() => { if (!seek) setState("playing"); }}
         style={{
           width: "100%",
           // 竖屏墙不预设比例：占满格子，画面按流自己的宽高比留边显示。

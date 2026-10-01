@@ -1,6 +1,6 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';

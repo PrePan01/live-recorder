@@ -196,6 +196,8 @@ export default function PipelineConfigCard() {
   const crfOn = Form.useWatch("crfEnabled", form) === true;
   const archiveOn = Form.useWatch("archiveEnabled", form) === true;
   const outputFormat = Form.useWatch("outputFormat", form) ?? "source";
+  const deleteSourceAfterConvert =
+    Form.useWatch("deleteSourceAfterConvert", form) === true;
   const verifyOn = Form.useWatch("verify", form) === true;
   const audioOn = Form.useWatch("exportAudio", form) === true;
   const coverOn = Form.useWatch("exportCover", form) === true;
@@ -343,10 +345,12 @@ export default function PipelineConfigCard() {
             <StepCard
               num="5"
               label="格式转换"
-              tip="录制完成后可无损转为 MP4；始终保留源文件"
+              tip="录制完成后可无损转为 MP4；可选择删除源文件"
               desc={
                 outputFormat === "mp4"
-                  ? "无损转换为 MP4，保留源文件"
+                  ? deleteSourceAfterConvert
+                    ? "无损转换为 MP4，完成后删除源文件"
+                    : "无损转换为 MP4，保留源文件"
                   : "保留原格式"
               }
               on={outputFormat === "mp4"}
@@ -362,7 +366,18 @@ export default function PipelineConfigCard() {
                   />
                 </Form.Item>
               }
-            />
+            >
+              {outputFormat === "mp4" ? (
+                <Form.Item
+                  label="删除源文件"
+                  name="deleteSourceAfterConvert"
+                  valuePropName="checked"
+                  extra="MP4 转换成功后删除录制源文件"
+                >
+                  <Switch aria-label="格式转换后删除源文件" />
+                </Form.Item>
+              ) : null}
+            </StepCard>
             <StepCard
               num="6"
               label="压缩"

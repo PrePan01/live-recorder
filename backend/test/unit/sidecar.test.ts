@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, writeFile, unlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';

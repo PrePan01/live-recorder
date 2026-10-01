@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices } from '../../src/core/services.js';

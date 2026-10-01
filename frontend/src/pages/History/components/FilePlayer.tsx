@@ -52,7 +52,7 @@ export default function FilePlayer({
         }
       });
       instance.load();
-      void instance.play()?.catch?.(() => undefined);
+      void Promise.resolve(instance.play()).catch(() => undefined);
     };
 
     create();

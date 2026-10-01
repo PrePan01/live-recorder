@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import type { Services } from './services.js';
@@ -6,7 +6,10 @@ import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
 import { checkFileIntegrity, checkFileIntegrityDetailed } from '../recorder/integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
+import { moveMarkerSidecar } from '../storage/recording-markers.js';
+import { removeSeekIndexSidecar } from '../storage/seek-index.js';
 import { extractCoverFrame, segmentFile, exportAudioToMp3, convertToMp4, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
+import { composeRunProgress } from './task-progress.js';
 import type { PipelineArtifact, PipelineStep, Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
 interface QueueEntry {
@@ -24,6 +27,20 @@ export class PipelineManager {
   private queue: QueueEntry[] = [];
   private running = new Set<string>();
   private lastProgressEmitAt = new Map<string, number>();
+  /** 槽位看门狗缺省阈值：心跳超时即判挂死强制收割（正常步秒级刷心跳，不会误杀）。 */
+  static readonly HEARTBEAT_TIMEOUT_MS = 10 * 60_000;
+  /** 实际生效阈值：环境变量 PIPELINE_HEARTBEAT_TIMEOUT_MS 可覆盖（测试在 dev 缩短窗口实证收割；产品缺省 10min 不变，零后门）。 */
+  readonly heartbeatTimeoutMs: number = (() => {
+    const raw = Number(process.env.PIPELINE_HEARTBEAT_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : PipelineManager.HEARTBEAT_TIMEOUT_MS;
+  })();
+  private readonly aborts = new Map<string, AbortController>();
+  private readonly cancelled = new Set<string>();
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  private log(...args: unknown[]): void {
+    console.log('[pipeline]', ...args);
+  }
   get busy(): boolean { return this.running.size > 0 || this.queue.length > 0; }
   private pipelineRepo: PipelineRepository;
 
@@ -38,7 +55,7 @@ export class PipelineManager {
   pipelineConfig(): PipelineConfig {
     const settings = this.services.settings.load();
     const stored = settings?.pipeline;
-    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, outputFormat: 'source', ...(stored ?? {}) };
+    return { enabled: false, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, exportAudio: false, exportCover: true, outputFormat: 'source', deleteSourceAfterConvert: false, ...(stored ?? {}) };
   }
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
@@ -55,6 +72,7 @@ export class PipelineManager {
     if (this.running.has(recordingId) || this.queue.some((q) => q.recordingId === recordingId)) return;
     // 入队即建 run 行：调用方（启动/继续/重试）立刻拿到真实 run，不再有「run=null 像失败」的观感。
     const run = this.pipelineRepo.createRun({ recordingId, configSnapshot: { ...config, attempt } });
+    this.log('enqueue', recordingId, run.id, `attempt=${attempt}`);
     this.queue.push({ recordingId, attempt, runId: run.id });
     this.services.recordings.update(recordingId, { state: 'processing', pipelineStatus: 'queued' });
     this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(recordingId)! });
@@ -72,6 +90,51 @@ export class PipelineManager {
   }
 
   /** FIFO 泵：最多 N=2 并发，录制主链路永远不被阻塞（异步执行）。 */
+  /** 删除联动/关停：取消该录制的在途任务（队列出队标失败 + 强杀在跑步骤 + 释放槽位）。 */
+  cancel(recordingId: string, reason = '任务已取消'): void {
+    this.cancelled.add(recordingId);
+    this.log('cancel', recordingId, reason);
+    const pending = this.queue.filter((q) => q.recordingId === recordingId);
+    for (const q of pending) {
+      if (q.runId) {
+        this.pipelineRepo.setRunStatus(q.runId, 'failed', this.services.clock.iso());
+        this.log('cancel-queued', recordingId, q.runId);
+      }
+    }
+    this.queue = this.queue.filter((q) => q.recordingId !== recordingId);
+    this.aborts.get(recordingId)?.abort();
+    const run = this.pipelineRepo.runForRecording(recordingId);
+    if (run && (run.status === 'queued' || run.status === 'running')) {
+      this.pipelineRepo.setRunStatus(run.id, 'failed', this.services.clock.iso());
+    }
+    this.running.delete(recordingId);
+  }
+
+  /** 看门狗：心跳超时的占用者强制收割（僵死不占槽），收割即可重试。 */
+  checkWatchdog(): void {
+    for (const recordingId of [...this.running]) {
+      const run = this.pipelineRepo.runForRecording(recordingId);
+      const hbRaw = run?.heartbeatAt ?? run?.startedAt ?? null;
+      const hb = hbRaw ? Date.parse(hbRaw) : 0;
+      if (hb > 0 && Date.now() - hb > this.heartbeatTimeoutMs) {
+        this.log('watchdog-reap', recordingId, run?.id ?? '-', `heartbeat=${hbRaw}`);
+        this.cancel(recordingId, '心跳超时强制收割');
+      }
+    }
+  }
+
+  private ensureWatchdog(): void {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => {
+      try {
+        this.checkWatchdog();
+      } catch {
+        // 看门狗自身异常不影响管线
+      }
+    }, 60_000);
+    this.watchdogTimer.unref?.();
+  }
+
   private pump(): void {
     let maxConcurrency = 2;
     try {
@@ -88,17 +151,25 @@ export class PipelineManager {
       const entry = this.queue.shift()!;
       if (this.running.has(entry.recordingId)) continue;
       this.running.add(entry.recordingId);
+      this.log('dispatch', entry.recordingId, entry.runId ?? '-');
+      this.ensureWatchdog();
       void this.run(entry);
     }
   }
 
   private async run(entry: QueueEntry): Promise<void> {
+    const controller = new AbortController();
+    this.aborts.set(entry.recordingId, controller);
+    this.log('run-start', entry.recordingId, entry.runId ?? '-');
     try {
-      await this.runInner(entry, entry.runId);
+      await this.runInner(entry, entry.runId, controller.signal);
       if (entry.runId) this.finishInterruptedArtifacts(entry.runId);
-    } catch {
-      // 服务关闭/管线异常：静默收束（管线非关键路径）。
+      this.log('run-finish', entry.recordingId, entry.runId ?? '-');
+    } catch (err) {
+      // 服务关闭/管线异常：静默收束（管线非关键路径）；取消态只记日志不告警。
+      this.log('run-error', entry.recordingId, entry.runId ?? '-', this.cancelled.has(entry.recordingId) ? 'cancelled' : (err instanceof Error ? err.message : 'unknown'));
     } finally {
+      this.aborts.delete(entry.recordingId);
       this.running.delete(entry.recordingId);
       this.pump();
     }
@@ -121,10 +192,12 @@ export class PipelineManager {
 
   /** 复用既有步骤产物（续跑）或新建；顺带推进进度（步骤名/百分比/心跳/ETA）并推送事件。 */
   private stepStart(run: PipelineRun, step: PipelineStep): PipelineArtifact {
+    // 步界取消检查：删除联动/看门狗收割后不再开新步。
+    if (this.aborts.get(run.recordingId)?.signal.aborted) throw new Error('任务已取消');
     const existing = this.pipelineRepo.listArtifacts(run.id).find((a) => a.step === step);
     const art = existing ?? this.pipelineRepo.createArtifact({ runId: run.id, step });
-    const idx = PipelineManager.STEPS.indexOf(step as (typeof PipelineManager.STEPS)[number]) + 1;
-    const pct = Math.round(((idx - 1) / PipelineManager.STEPS.length) * 100);
+    // 刻度归一：进度=已完成/跳过步权重和（从 0 起铺满 0-100，不再混算步序/硬编码两套刻度）。
+    const pct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), step, 0);
     const startedAt = run.startedAt ? Date.parse(run.startedAt) : Date.now();
     const elapsed = Math.max(1, Date.now() - startedAt);
     const eta = pct > 0 ? Math.round(((elapsed / pct) * (100 - pct)) / 1000) : null;
@@ -165,11 +238,12 @@ export class PipelineManager {
       exportAudio: false,
       exportCover: true,
       outputFormat: 'source',
+      deleteSourceAfterConvert: false,
       ...(run.configSnapshot as Partial<PipelineConfig>),
     };
   }
 
-  private async runInner(entry: QueueEntry, resumeRunId?: string): Promise<void> {
+  private async runInner(entry: QueueEntry, resumeRunId?: string, signal?: AbortSignal): Promise<void> {
     const recording = this.services.recordings.get(entry.recordingId);
     let run: PipelineRun;
     if (resumeRunId) {
@@ -289,21 +363,46 @@ export class PipelineManager {
             : this.stepDone(convertArt) && convertArt.path
               ? { outPath: convertArt.path, sizeBytes: convertArt.sizeBytes ?? 0 }
               : await convertToMp4(recording.filePath, {
+                ...(signal ? { signal } : {}),
                 onProgress: ({ outTimeMs }) => {
                   const now = Date.now();
                   if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
                   this.lastProgressEmitAt.set(run.id, now);
                   const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-                  const progressPct = 62 + Math.round(ratio * 13);
+                  const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'convert', ratio);
                   this.pipelineRepo.setRunProgress(run.id, { progressStep: 'convert', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
                   const fresh = this.pipelineRepo.getRun(run.id);
                   if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
                 },
                 });
           if (converted) {
-            this.services.recordings.update(recording.id, { filePath: converted.outPath, fileSizeBytes: converted.sizeBytes });
+            const sourcePath = recording.filePath;
+            const sourceBase = path.basename(sourcePath, path.extname(sourcePath));
+            const outBase = path.basename(converted.outPath, path.extname(converted.outPath));
+            this.services.recordings.update(recording.id, {
+              filePath: converted.outPath,
+              fileSizeBytes: converted.sizeBytes,
+              // 标题=文件名恒等式：原本相等才随产物基名同步（含撞名序号）；默认命名（标题≠基名）不动标题。
+              ...(recording.streamTitle === sourceBase ? { streamTitle: outBase } : {}),
+            });
+            await moveMarkerSidecar(sourcePath, converted.outPath);
             recording.filePath = converted.outPath;
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'ok', path: converted.outPath, sizeBytes: converted.sizeBytes, endedAt: this.services.clock.iso() });
+            if (config.deleteSourceAfterConvert) {
+              try {
+                await unlink(sourcePath);
+                // 定位索引跟随 FLV 字节偏移：源没了索引一并清（转出的 MP4 用不上它）。
+                await removeSeekIndexSidecar(sourcePath);
+              } catch {
+                finalStatus = 'partial';
+                this.services.alerts.create({
+                  level: 'warning',
+                  source: 'pipeline',
+                  message: `已转为 MP4，但删除源文件失败（${recording.id}）`,
+                  occurredAt: this.services.clock.iso(),
+                });
+              }
+            }
           } else {
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'failed', error: '格式转换失败，已保留并使用源文件', endedAt: this.services.clock.iso() });
             finalStatus = 'partial';
@@ -319,13 +418,14 @@ export class PipelineManager {
         } else {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
           const comp = this.stepDone(compArt) && compArt.path ? { outPath: compArt.path, sizeBytes: compArt.sizeBytes ?? 0 } : await compressOrRemux(recording.filePath, config.crf, {
+            ...(signal ? { signal } : {}),
             onProgress: ({ outTimeMs }) => {
               const now = Date.now();
               if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
               this.lastProgressEmitAt.set(run.id, now);
               const durationMs = metadata.durationMs ?? 0;
               const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-              const progressPct = 75 + Math.round(ratio * 13);
+              const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'compress', ratio);
               this.pipelineRepo.setRunProgress(run.id, { progressStep: 'compress', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
               const fresh = this.pipelineRepo.getRun(run.id);
               if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
@@ -333,7 +433,9 @@ export class PipelineManager {
           });
           if (comp) {
             // 成功后只切换后续步骤的输入，始终保留源文件。
+            const sourcePath = recording.filePath;
             this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
+            await moveMarkerSidecar(sourcePath, comp.outPath);
             recording.filePath = comp.outPath;
             this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
           } else {
@@ -354,7 +456,19 @@ export class PipelineManager {
       if (config.archiveDirectory) {
     const archArt = this.stepStart(run, 'archive');
         this.pipelineRepo.setArtifact(archArt.id, { status: 'running', startedAt: this.services.clock.iso() });
-        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory);
+        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory, (copied, total) => {
+          // 长步骤心跳+步内进度：归档大文件复制耗时长，分块回调既当刻度数据源也保心跳活跃。
+          const now = Date.now();
+          if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
+          this.lastProgressEmitAt.set(run.id, now);
+          const ratio = total > 0 ? Math.min(0.99, copied / total) : 0;
+          this.pipelineRepo.setRunProgress(run.id, {
+            progressStep: 'archive',
+            progressPct: composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'archive', ratio),
+            heartbeatAt: this.services.clock.iso(),
+            etaSeconds: null,
+          });
+        }, signal);
         if (archived) {
           this.pipelineRepo.setArtifact(archArt.id, { status: 'ok', path: archived, sizeBytes: (await stat(archived as string).catch(() => ({ size: 0 }))).size, endedAt: this.services.clock.iso() });
         } else {
@@ -369,7 +483,9 @@ export class PipelineManager {
       // 管线异常：保留源文件，标记 failed（源文件完好）。
       this.services.recordings.update(entry.recordingId, { state: 'completed', pipelineStatus: 'failed' });
       this.finish(run.id, 'failed');
+      if (!this.cancelled.has(entry.recordingId)) {
       this.services.alerts.create({ level: 'warning', source: 'pipeline', message: `后处理管线失败（${entry.recordingId}）：${message}`, occurredAt: this.services.clock.iso() });
+      }
     }
   }
 
