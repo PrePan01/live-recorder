@@ -10,7 +10,7 @@
 
 直播录制助手是一款常驻本机的直播录制服务
 
-支持开播自动录制、手动开始录制、直播实时预览、录制历史回放、后处理管线、自动上传、通知提醒等等完整功能
+支持开播自动录制、手动开始与停止录制、直播实时预览与回看、实时片段导出、录制历史回放、后处理管线、自动上传、通知提醒等等完整功能
 
 ## 功能
 
@@ -116,9 +116,12 @@ npm run tauri:build
 4. 合入前请确保：lint / typecheck / 全量测试通过，并由 QA 完成回归
 
 ## 截图
-![监控总览](http://qn.bspartner.top/images/PixPin_2026-09-10_17-10-23-2026-09-10-rJWKbPhY.png)
 
-![录制界面](http://qn.bspartner.top/images/PixPin_2026-10-02_02-12-18-2026-10-02-j34EqNOY.png)
+![监控总览](http://qn.bspartner.top/images/PixPin_2026-10-02_02-28-14-2026-10-02-OswtbzVn.png)
+
+![录制界面](http://qn.bspartner.top/images/PixPin_2026-10-02_02-25-56-2026-10-02-DKpsqeTS.png)
+
+![录制历史与处理](http://qn.bspartner.top/images/PixPin_2026-10-02_02-26-35-2026-10-02-O9G1XmLe.png)
 
 ![直播间管理](http://qn.bspartner.top/images/PixPin_2026-09-10_17-10-34-2026-09-10-waurioYd.png)
 
