@@ -214,6 +214,7 @@ export async function archiveTo(
   inputPath: string,
   archiveDirectory: string,
   onProgress?: (copied: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const dest = path.join(archiveDirectory, path.basename(inputPath));
   await mkdir(path.dirname(dest), { recursive: true });
@@ -223,6 +224,7 @@ export async function archiveTo(
     const ws = createWriteStream(dest);
     let copied = 0;
     for await (const chunk of rs) {
+      if (signal?.aborted) throw new Error('任务已取消');
       if (!ws.write(chunk as Buffer)) {
         await new Promise<void>((resolve) => ws.once('drain', () => resolve()));
       }

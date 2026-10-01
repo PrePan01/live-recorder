@@ -225,6 +225,8 @@ export class RecorderManager {
   private clipExports = new Map<string, string>();
   /** clip id → 已推送的进度百分比（列表响应补「导出中 x%」用，终态清除）。 */
   private clipProgress = new Map<string, number>();
+  /** 片段导出取消信号（删除联动：导出任务立即真停）。 */
+  private clipExportAborts = new Map<string, AbortController>();
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
   private backgroundTasks = 0;
@@ -2401,6 +2403,38 @@ export class RecorderManager {
     );
   }
 
+  /** 删除联动兜底（#112 根因面）：行被删而会话仍在录=停捕获拆链+清房间录制态，房间不留残影。 */
+  async stopActiveSessionForDeletion(recordingId: string): Promise<void> {
+    const entry = [...this.active.entries()].find(([, s]) => s.recordingId === recordingId);
+    if (!entry) return;
+    const [roomId, session] = entry;
+    session.stopRequested = true;
+    session.requestedEndReason = 'stopped';
+    const previewSession = this.previewSessions.get(roomId);
+    const sharedRecording = previewSession?.recording;
+    if (previewSession && sharedRecording?.session === session) {
+      previewSession.recording = null;
+      try {
+        await this.closeSharedPreviewRecording(sharedRecording);
+      } catch {
+        sharedRecording.writer.destroy();
+        this.abandonSeekIndex(sharedRecording);
+      }
+    }
+    this.active.delete(roomId);
+    const room = this.services.rooms.get(roomId);
+    if (room) {
+      this.services.rooms.setState(roomId, 'idle', {
+        lastCheckedAt: this.services.clock.iso(),
+        lastError: null,
+      });
+      this.services.events.emit({
+        type: 'room:updated',
+        data: this.enrichRoom(this.services.rooms.get(roomId)!),
+      });
+    }
+  }
+
   async stopRecording(
     roomId: string,
     endReason: RecordingEndReason = "stopped",
@@ -2456,6 +2490,14 @@ export class RecorderManager {
   }
 
   /** 片段导出进度快照（0-100）：导出进行中为数字，供历史列表显示「导出中 x%」。 */
+  /** 删除联动：取消该片段的在途导出（立即真停，不留孤儿任务）。 */
+  cancelClipExport(recordingId: string): void {
+    const abort = this.clipExportAborts.get(recordingId);
+    if (!abort) return;
+    this.clipExportAborts.delete(recordingId);
+    abort.abort();
+  }
+
   clipExportProgress(recordingId: string): number | null {
     return this.clipProgress.get(recordingId) ?? null;
   }
@@ -2550,6 +2592,8 @@ export class RecorderManager {
       ).toISOString(),
     });
     this.clipExports.set(selectionKey, clip.id);
+    const abort = new AbortController();
+    this.clipExportAborts.set(clip.id, abort);
     void (async () => {
       const selectionMs = (endSecond - startSecond) * 1000;
       // 进度节流：整数百分比变化才发、间隔 ≥500ms（onProgress 是高频回调，直接进 SSE 会刷屏）。
@@ -2562,6 +2606,7 @@ export class RecorderManager {
           startSecond,
           endSecond,
           {
+            ...(abort.signal.aborted ? {} : { signal: abort.signal }),
             onProgress: ({ outTimeMs }) => {
               const pct = Math.max(
                 0,
@@ -2652,6 +2697,7 @@ export class RecorderManager {
       } finally {
         // 解除在途占位；源录制全程不碰（导出不停录）。
         this.clipExports.delete(selectionKey);
+        this.clipExportAborts.delete(clip.id);
       }
     })();
     this.services.events.emit({ type: "recording:updated", data: pending });
@@ -2966,6 +3012,8 @@ export class RecorderManager {
     this.clearConfirmTimer(recordingId);
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
+    this.services.pipeline.cancel(recordingId, '录制已删除');
+    this.cancelClipExport(recordingId);
     if (rec.filePath) {
       void unlink(rec.filePath).catch(() => undefined);
       void removeMarkerSidecar(rec.filePath);

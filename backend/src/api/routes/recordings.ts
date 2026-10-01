@@ -578,7 +578,19 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
+    if (rec.state === "recording" || rec.state === "reconnecting") {
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "录制进行中，请先停止录制再删除",
+        {
+          recordingId: id,
+        },
+      );
+    }
     await services.manager.cancelHighlightExport(id);
+    await services.manager.stopActiveSessionForDeletion(id);
+    services.pipeline.cancel(id, "录制已删除");
+    services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
     if (rec.filePath) {
       await unlink(rec.filePath).catch(() => undefined);
@@ -706,7 +718,19 @@ export function registerRecordingRoutes(
         failed.push({ id, reason: "记录不存在" });
         continue;
       }
+      if (rec.state === "recording" || rec.state === "reconnecting") {
+        throw new AppError(
+          "RECORDING_NOT_AVAILABLE",
+          "录制进行中，请先停止录制再删除",
+          {
+            recordingId: id,
+          },
+        );
+      }
       await services.manager.cancelHighlightExport(id);
+      await services.manager.stopActiveSessionForDeletion(id);
+      services.pipeline.cancel(id, "录制已删除");
+      services.manager.cancelClipExport(id);
       if (rec.filePath) {
         await unlink(rec.filePath).catch(() => undefined);
       }

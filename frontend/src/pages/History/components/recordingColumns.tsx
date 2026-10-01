@@ -422,7 +422,11 @@ export function buildRecordingColumns(
               type="link"
               danger
               icon={<DeleteOutlined />}
-              disabled={!r.filePath}
+              disabled={
+                !r.filePath ||
+                r.state === "recording" ||
+                r.state === "reconnecting"
+              }
             >
               删除
             </Button>
