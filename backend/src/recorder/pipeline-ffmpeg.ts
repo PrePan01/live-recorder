@@ -1,4 +1,5 @@
 import { mkdir, stat, copyFile, rm, rename } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
@@ -208,12 +209,30 @@ export async function compressOrRemux(
   return st ? { outPath, sizeBytes: st.size } : null;
 }
 
-/** 归档：复制到归档目录（保留相对子路径），失败不删除源文件。 */
-export async function archiveTo(inputPath: string, archiveDirectory: string): Promise<string | null> {
+/** 归档：复制到归档目录（保留相对子路径），失败不删除源文件。分块复制带进度回调（长步骤心跳数据源）。 */
+export async function archiveTo(
+  inputPath: string,
+  archiveDirectory: string,
+  onProgress?: (copied: number, total: number) => void,
+): Promise<string | null> {
   const dest = path.join(archiveDirectory, path.basename(inputPath));
   await mkdir(path.dirname(dest), { recursive: true });
   try {
-    await copyFile(inputPath, dest);
+    const total = (await stat(inputPath)).size;
+    const rs = createReadStream(inputPath);
+    const ws = createWriteStream(dest);
+    let copied = 0;
+    for await (const chunk of rs) {
+      if (!ws.write(chunk as Buffer)) {
+        await new Promise<void>((resolve) => ws.once('drain', () => resolve()));
+      }
+      copied += (chunk as Buffer).length;
+      onProgress?.(copied, total);
+    }
+    await new Promise<void>((resolve, reject) => {
+      ws.once('error', reject);
+      ws.end(() => resolve());
+    });
     return dest;
   } catch {
     return null;

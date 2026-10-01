@@ -41,6 +41,22 @@ type Props = {
   seekHint?: string;
 };
 type Drag = { kind: "start" | "end" } | { markerId: string } | null;
+// 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
+const TRACK_COLLAPSED_KEY = "lr-recording-track-collapsed";
+function readTrackCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(TRACK_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function persistTrackCollapsed(value: boolean): void {
+  try {
+    window.localStorage.setItem(TRACK_COLLAPSED_KEY, value ? "1" : "0");
+  } catch {
+    /* 存储不可用静默，行为退化为本次会话内记忆 */
+  }
+}
 // 仅调整这个值即可同时改变初始显示上限与每次扩展的阶梯大小。
 const TIMELINE_STEP_SECONDS = 60;
 const clock = (value: number) => {
@@ -81,7 +97,7 @@ export default function RecordingTrack({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<RecordingMarker | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(readTrackCollapsed);
   const movedRef = useRef(false);
   const touchedRef = useRef(false);
   const lastElapsedRef = useRef(elapsedSeconds);
@@ -286,12 +302,12 @@ export default function RecordingTrack({
         : [start, Math.min(recordingEnd, Math.max(start + 1, end + delta))],
     );
   };
-  const toggleCollapsed = () =>
-    setCollapsed((current) => {
-      const next = !current;
-      onCollapsedChange?.(next);
-      return next;
-    });
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    persistTrackCollapsed(next);
+    onCollapsedChange?.(next);
+  };
   const onHandleKeyDown = (
     kind: "start" | "end",
     event: React.KeyboardEvent,

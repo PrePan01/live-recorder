@@ -19,6 +19,7 @@ import { formatBytes, formatRelative } from "../utils/format";
 import { diskDisplay } from "../utils/diskDisplay";
 import { alertSourceText } from "../utils/alertText";
 import GlobalSearch from "./GlobalSearch";
+import { TaskProgressEntry } from "./TaskProgressEntry";
 
 export default function StatusBar() {
   const { pathname } = useLocation();
@@ -199,6 +200,7 @@ export default function StatusBar() {
             />
           </Badge>
         </Popover>
+        <TaskProgressEntry />
       </div>
     </div>
   );

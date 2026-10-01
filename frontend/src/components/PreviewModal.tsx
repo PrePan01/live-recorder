@@ -262,9 +262,6 @@ export default function PreviewModal({
       .then(setMarkers)
       .catch(() => setMarkers([]));
   }, [activeRecordingId]);
-  useEffect(() => {
-    if (activeRecordingId) setTrackCollapsed(false);
-  }, [activeRecordingId]);
 
   useLayoutEffect(() => {
     const wrapper = trackNode;
@@ -305,7 +302,7 @@ export default function PreviewModal({
   // 拖拽上限用视口常量（base-occupied），绝不从用户当前尺寸派生（否则还原拖被自家上限锁死）。
   const reservedVideoCap = Math.max(0, baseVideoHeight - measuredTrackHeight);
   const naturalVideoHeight = portrait
-    ? portraitHeight ?? reservedVideoCap
+    ? (portraitHeight ?? reservedVideoCap)
     : fitPreviewBox(
         layoutRatio,
         Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
@@ -313,17 +310,13 @@ export default function PreviewModal({
       ).height;
   const contentTotalHeight =
     Math.min(naturalVideoHeight, reservedVideoCap) + measuredTrackHeight;
-  const maxVideoHeight = Math.max(
+  const maxVideoHeight = Math.max(0, baseVideoHeight - occupiedTrackHeight);
+  const videoRenderHeight = Math.max(
     0,
-    baseVideoHeight - occupiedTrackHeight,
+    contentTotalHeight - occupiedTrackHeight,
   );
-  const videoRenderHeight = Math.max(0, contentTotalHeight - occupiedTrackHeight);
   const videoBox = portrait
-    ? fitPreviewBoxByHeight(
-        layoutRatio,
-        videoRenderHeight,
-        videoRenderHeight,
-      )
+    ? fitPreviewBoxByHeight(layoutRatio, videoRenderHeight, videoRenderHeight)
     : fitPreviewBox(
         layoutRatio,
         Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
@@ -936,86 +929,111 @@ export default function PreviewModal({
         closable={false}
         onCancel={handleClose}
       >
-        <div>
+        <div
+          style={{ display: "flex", flexDirection: "column", height: "100%" }}
+        >
           <div
-            ref={setPreviewPlayerSlot}
             style={{
-              position: "relative",
-              background: "#000",
+              flex: "1 1 auto",
+              minHeight: 0,
               overflow: "hidden",
-              margin: "0 auto",
-              width: videoBox.width,
-              height: videoBox.height,
-              willChange: "width, height",
+              display: "flex",
+              flexDirection: "column",
             }}
-          />
-          {displayedTrack ? (
+          >
             <div
-              ref={trackRevealRef}
-              className={`lr-recording-track-reveal${trackClosing ? " lr-recording-track-reveal--closing" : ""}`}
-              style={{ width: trackWidth, margin: "0 auto" }}
-            >
-              <RecordingTrack
-                elapsedSeconds={Math.max(
-                  0,
-                  Math.floor(
-                    (now - Date.parse(displayedTrack.startedAt)) / 1000,
-                  ),
-                )}
-                markers={markers}
-                editable
-                onSeekIntent={handleSeekIntent}
-                onSeekCommit={handleSeekCommit}
-                onReturnToLive={
-                  seekPlayback ? () => handleSeekCommit("live") : undefined
-                }
-                previewMode={displayPreview.mode}
-                previewSecond={displayPreview.second}
-                seekHint={
-                  seekIndexState === "building"
-                    ? "正在加载…"
-                    : seekActualStart != null
-                      ? `从 ${formatClock(seekActualStart.second)} 起播`
-                      : undefined
-                }
-                onAdd={(text) =>
-                  updateMarkers(() =>
-                    createRecordingMarker(
-                      displayedTrack.id,
-                      text,
-                      // 标记落在当前预览位置（播放头真值）；直播中不传=服务端按当前时刻=尾部语义不变。
-                      displayPreview.mode === "history" &&
-                        displayPreview.second != null
-                        ? Math.floor(displayPreview.second)
-                        : undefined,
+              ref={setPreviewPlayerSlot}
+              style={{
+                position: "relative",
+                background: "#000",
+                overflow: "hidden",
+                margin: "0 auto",
+                width: videoBox.width,
+                height: videoBox.height,
+                flexShrink: 1,
+                minHeight: 0,
+                willChange: "width, height",
+              }}
+            />
+            {displayedTrack ? (
+              <div
+                ref={trackRevealRef}
+                className={`lr-recording-track-reveal${trackClosing ? " lr-recording-track-reveal--closing" : ""}`}
+                style={{
+                  width: trackWidth,
+                  margin: "0 auto",
+                  flexShrink: 1,
+                  minHeight: 0,
+                }}
+              >
+                <RecordingTrack
+                  elapsedSeconds={Math.max(
+                    0,
+                    Math.floor(
+                      (now - Date.parse(displayedTrack.startedAt)) / 1000,
                     ),
-                  )
-                }
-                onEdit={(markerId, text) =>
-                  updateMarkers(() =>
-                    updateRecordingMarker(displayedTrack.id, markerId, {
-                      text,
-                    }),
-                  )
-                }
-                onMove={(markerId, positionSeconds) =>
-                  updateMarkers(() =>
-                    updateRecordingMarker(displayedTrack.id, markerId, {
-                      positionSeconds,
-                    }),
-                  )
-                }
-                onDelete={(markerId) =>
-                  updateMarkers(() =>
-                    deleteRecordingMarker(displayedTrack.id, markerId),
-                  )
-                }
-                onExport={handleClipExport}
-                onCollapsedChange={setTrackCollapsed}
-              />
-            </div>
-          ) : null}
-          <div style={{ marginTop: 12, textAlign: "center" }}>
+                  )}
+                  markers={markers}
+                  editable
+                  onSeekIntent={handleSeekIntent}
+                  onSeekCommit={handleSeekCommit}
+                  onReturnToLive={
+                    seekPlayback ? () => handleSeekCommit("live") : undefined
+                  }
+                  previewMode={displayPreview.mode}
+                  previewSecond={displayPreview.second}
+                  seekHint={
+                    seekIndexState === "building"
+                      ? "正在加载…"
+                      : seekActualStart != null
+                        ? `从 ${formatClock(seekActualStart.second)} 起播`
+                        : undefined
+                  }
+                  onAdd={(text) =>
+                    updateMarkers(() =>
+                      createRecordingMarker(
+                        displayedTrack.id,
+                        text,
+                        // 标记落在当前预览位置（播放头真值）；直播中不传=服务端按当前时刻=尾部语义不变。
+                        displayPreview.mode === "history" &&
+                          displayPreview.second != null
+                          ? Math.floor(displayPreview.second)
+                          : undefined,
+                      ),
+                    )
+                  }
+                  onEdit={(markerId, text) =>
+                    updateMarkers(() =>
+                      updateRecordingMarker(displayedTrack.id, markerId, {
+                        text,
+                      }),
+                    )
+                  }
+                  onMove={(markerId, positionSeconds) =>
+                    updateMarkers(() =>
+                      updateRecordingMarker(displayedTrack.id, markerId, {
+                        positionSeconds,
+                      }),
+                    )
+                  }
+                  onDelete={(markerId) =>
+                    updateMarkers(() =>
+                      deleteRecordingMarker(displayedTrack.id, markerId),
+                    )
+                  }
+                  onExport={handleClipExport}
+                  onCollapsedChange={setTrackCollapsed}
+                />
+              </div>
+            ) : null}
+          </div>
+          <div
+            style={{
+              flexShrink: 0,
+              marginTop: 12,
+              textAlign: "center",
+            }}
+          >
             {recording ? (
               <Popconfirm title="确定停止当前录制？" onConfirm={handleStop}>
                 <Button

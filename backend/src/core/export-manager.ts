@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { Services } from "./services.js";
 import type { ExportJob } from "../types/index.js";
 import { ExportRepository } from "../db/repositories/export.repo.js";
+import { AppError } from "../types/error.js";
 import { APP_VERSION } from "../sidecar/types.js";
 import { resolveMarkerSidecarPath } from "../storage/recording-markers.js";
 
@@ -29,6 +30,18 @@ export class ExportManager {
 
   /** 创建导出任务（目标目录 = 用户选择的导出根目录/export_<ts>/）。 */
   async create(recordingIds: string[], baseDir: string): Promise<ExportJob> {
+    if (recordingIds.length === 0) {
+      throw new AppError("CONFIG_INVALID", "请选择要导出的录制");
+    }
+    for (const id of recordingIds) {
+      if (!this.services.recordings.get(id)) {
+        throw new AppError(
+          "RESOURCE_NOT_FOUND",
+          "录制不存在，无法创建导出任务",
+          { recordingId: id },
+        );
+      }
+    }
     const job = this.repo.create({ recordingIds });
     const dir = path.join(
       baseDir,

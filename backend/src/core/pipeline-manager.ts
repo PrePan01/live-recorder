@@ -9,6 +9,7 @@ import { resolveBin } from '../utils/ffmpeg.js';
 import { moveMarkerSidecar } from '../storage/recording-markers.js';
 import { removeSeekIndexSidecar } from '../storage/seek-index.js';
 import { extractCoverFrame, segmentFile, exportAudioToMp3, convertToMp4, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
+import { composeRunProgress } from './task-progress.js';
 import type { PipelineArtifact, PipelineStep, Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
 
 interface QueueEntry {
@@ -125,8 +126,8 @@ export class PipelineManager {
   private stepStart(run: PipelineRun, step: PipelineStep): PipelineArtifact {
     const existing = this.pipelineRepo.listArtifacts(run.id).find((a) => a.step === step);
     const art = existing ?? this.pipelineRepo.createArtifact({ runId: run.id, step });
-    const idx = PipelineManager.STEPS.indexOf(step as (typeof PipelineManager.STEPS)[number]) + 1;
-    const pct = Math.round(((idx - 1) / PipelineManager.STEPS.length) * 100);
+    // 刻度归一：进度=已完成/跳过步权重和（从 0 起铺满 0-100，不再混算步序/硬编码两套刻度）。
+    const pct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), step, 0);
     const startedAt = run.startedAt ? Date.parse(run.startedAt) : Date.now();
     const elapsed = Math.max(1, Date.now() - startedAt);
     const eta = pct > 0 ? Math.round(((elapsed / pct) * (100 - pct)) / 1000) : null;
@@ -297,7 +298,7 @@ export class PipelineManager {
                   if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
                   this.lastProgressEmitAt.set(run.id, now);
                   const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-                  const progressPct = 62 + Math.round(ratio * 13);
+                  const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'convert', ratio);
                   this.pipelineRepo.setRunProgress(run.id, { progressStep: 'convert', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
                   const fresh = this.pipelineRepo.getRun(run.id);
                   if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
@@ -352,7 +353,7 @@ export class PipelineManager {
               this.lastProgressEmitAt.set(run.id, now);
               const durationMs = metadata.durationMs ?? 0;
               const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-              const progressPct = 75 + Math.round(ratio * 13);
+              const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'compress', ratio);
               this.pipelineRepo.setRunProgress(run.id, { progressStep: 'compress', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
               const fresh = this.pipelineRepo.getRun(run.id);
               if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
@@ -383,7 +384,19 @@ export class PipelineManager {
       if (config.archiveDirectory) {
     const archArt = this.stepStart(run, 'archive');
         this.pipelineRepo.setArtifact(archArt.id, { status: 'running', startedAt: this.services.clock.iso() });
-        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory);
+        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory, (copied, total) => {
+          // 长步骤心跳+步内进度：归档大文件复制耗时长，分块回调既当刻度数据源也保心跳活跃。
+          const now = Date.now();
+          if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
+          this.lastProgressEmitAt.set(run.id, now);
+          const ratio = total > 0 ? Math.min(0.99, copied / total) : 0;
+          this.pipelineRepo.setRunProgress(run.id, {
+            progressStep: 'archive',
+            progressPct: composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'archive', ratio),
+            heartbeatAt: this.services.clock.iso(),
+            etaSeconds: null,
+          });
+        });
         if (archived) {
           this.pipelineRepo.setArtifact(archArt.id, { status: 'ok', path: archived, sizeBytes: (await stat(archived as string).catch(() => ({ size: 0 }))).size, endedAt: this.services.clock.iso() });
         } else {

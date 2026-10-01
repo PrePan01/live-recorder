@@ -308,15 +308,20 @@ describe('片段导出（保存命名→后台导出）', () => {
     const { clock, services, source } = await startRecording();
     const events: AppEvent[] = [];
     services.events.on((event) => events.push(event));
+    const ref: { id?: string } = {};
+    let midProgress: number | null = null;
     mockExportOk(512, (opts) => {
       opts?.onProgress?.({ outTimeMs: 500, speed: 1 }); // 25%
       clock.advance(100);
       opts?.onProgress?.({ outTimeMs: 1000, speed: 1 }); // 50%，500ms 内被节流丢弃
       clock.advance(600);
       opts?.onProgress?.({ outTimeMs: 1500, speed: 1 }); // 75%
+      // 进度同源采样（#102 回归）：导出中途 API 面与 SSE 同一份内存值。
+      if (ref.id) midProgress = services.manager.clipExportProgress(ref.id);
     });
 
     const started = await services.manager.exportClip(source.id, 0, 2, '带进度');
+    ref.id = started.clip.id;
     await waitFor(
       () => services.recordings.get(started.clip.id)?.state === 'completed',
     );
@@ -330,6 +335,10 @@ describe('片段导出（保存命名→后台导出）', () => {
       .map((e) => (e.data as Recording).progressPercent)
       .filter((p): p is number => typeof p === 'number');
     expect(pcts).toEqual([25, 75]);
+    // 进度同源钉（#102 回归）：导出中途 API 面（列表/任务聚合）与 SSE 同跳。
+    expect(midProgress).toBe(75);
+    // 终态清零：完成后 API 面不再报导出中。
+    expect(services.manager.clipExportProgress(started.clip.id)).toBeNull();
     // 终态事件显式置 null（历史行退出「导出中」显示）。
     const doneEvent = clipEvents.find(
       (e) => (e.data as Recording).state === 'completed',

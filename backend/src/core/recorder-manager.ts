@@ -20,12 +20,26 @@ import {
   writeFailure,
   writeRestartExhausted,
 } from "./recording-failure.js";
-import { recordingFilePath, sanitizeRenameBase, uniqueTargetPath } from "../storage/file-organizer.js";
-import { moveMarkerSidecar, removeMarkerSidecar, promoteMarkerSidecar } from "../storage/recording-markers.js";
-import { moveSeekIndexSidecar, removeSeekIndexSidecar } from "../storage/seek-index.js";
+import {
+  recordingFilePath,
+  sanitizeRenameBase,
+  uniqueTargetPath,
+} from "../storage/file-organizer.js";
+import {
+  moveMarkerSidecar,
+  removeMarkerSidecar,
+  promoteMarkerSidecar,
+} from "../storage/recording-markers.js";
+import {
+  moveSeekIndexSidecar,
+  removeSeekIndexSidecar,
+} from "../storage/seek-index.js";
 import { checkFileIntegrity } from "../recorder/integrity.js";
 import type { RecordingEvent } from "../recorder/engine.js";
-import { FlvTimestampNormalizer, type FlvTagInfo } from "../recorder/stream-recorder.js";
+import {
+  FlvTimestampNormalizer,
+  type FlvTagInfo,
+} from "../recorder/stream-recorder.js";
 import { SeekIndexWriter, endSeekWriter } from "../storage/seek-index.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
 import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
@@ -86,7 +100,10 @@ const MAX_PARALLEL_CLIP_EXPORTS = 6;
 let clipFinalizeChain: Promise<unknown> = Promise.resolve();
 function withClipFinalizeLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = clipFinalizeChain.then(fn, fn);
-  clipFinalizeChain = run.then(() => undefined, () => undefined);
+  clipFinalizeChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
   return run;
 }
 
@@ -112,10 +129,16 @@ function validateClipName(raw: string, recordingId: string): string {
     .replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, "")
     .trim();
   if (!base || base.length > 120) {
-    throw new AppError("CONFIG_INVALID", "片段名称需为 1-120 个字符", { recordingId });
+    throw new AppError("CONFIG_INVALID", "片段名称需为 1-120 个字符", {
+      recordingId,
+    });
   }
   if (/[\\/:*?"<>|\u0000-\u001f]/.test(base)) {
-    throw new AppError("CONFIG_INVALID", "片段名称不能包含 \\ / : * ? \" < > | 等字符", { recordingId });
+    throw new AppError(
+      "CONFIG_INVALID",
+      '片段名称不能包含 \\ / : * ? " < > | 等字符',
+      { recordingId },
+    );
   }
   return base;
 }
@@ -2378,7 +2401,10 @@ export class RecorderManager {
     );
   }
 
-  async stopRecording(roomId: string, endReason: RecordingEndReason = "stopped"): Promise<void> {
+  async stopRecording(
+    roomId: string,
+    endReason: RecordingEndReason = "stopped",
+  ): Promise<void> {
     const session = this.active.get(roomId);
     if (!session) return;
     session.stopRequested = true;
@@ -2438,40 +2464,90 @@ export class RecorderManager {
    * 保存命名后后台导出选区（导出不停录，保存后跑到底无取消）：
    * 完成时按当前标题落盘改名（标题=文件名），撞名加序号绝不覆盖，源文件永远在保护名单。
    */
-  async exportClip(recordingId: string, startSecond: number, endSecond: number, name: string): Promise<{ source: import("../types/index.js").Recording; clip: import("../types/index.js").Recording }> {
+  async exportClip(
+    recordingId: string,
+    startSecond: number,
+    endSecond: number,
+    name: string,
+  ): Promise<{
+    source: import("../types/index.js").Recording;
+    clip: import("../types/index.js").Recording;
+  }> {
     const source = this.services.recordings.get(recordingId);
-    if (!source || (source.state !== "recording" && source.state !== "reconnecting")) {
-      throw new AppError("RECORDING_NOT_AVAILABLE", "仅录制中的录像可导出选区", { recordingId });
+    if (
+      !source ||
+      (source.state !== "recording" && source.state !== "reconnecting")
+    ) {
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "仅录制中的录像可导出选区",
+        { recordingId },
+      );
     }
     // 同选区防重复提交；不同选区可并行导出（多条选区同时导出是合法场景），全局上限防资源风暴。
     const selectionKey = `${recordingId}:${startSecond}-${endSecond}`;
     if (this.clipExports.has(selectionKey)) {
-      throw new AppError("CONCURRENT_LIMIT_REACHED", "相同选区已有片段导出进行中，请稍后再试", { recordingId });
+      throw new AppError(
+        "CONCURRENT_LIMIT_REACHED",
+        "相同选区已有片段导出进行中，请稍后再试",
+        { recordingId },
+      );
     }
     if (this.clipExports.size >= MAX_PARALLEL_CLIP_EXPORTS) {
-      throw new AppError("CONCURRENT_LIMIT_REACHED", "同时导出的片段过多，请等待部分导出完成后再试", { recordingId });
+      throw new AppError(
+        "CONCURRENT_LIMIT_REACHED",
+        "同时导出的片段过多，请等待部分导出完成后再试",
+        { recordingId },
+      );
     }
     const title = validateClipName(name, recordingId);
-    const elapsed = Math.max(0, Math.floor((this.services.clock.now() - Date.parse(source.startedAt)) / 1000));
+    const elapsed = Math.max(
+      0,
+      Math.floor(
+        (this.services.clock.now() - Date.parse(source.startedAt)) / 1000,
+      ),
+    );
     if (startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
-      throw new AppError("CONFIG_INVALID", "选区必须在当前已录制时长内，且至少为 1 秒", { recordingId });
+      throw new AppError(
+        "CONFIG_INVALID",
+        "选区必须在当前已录制时长内，且至少为 1 秒",
+        { recordingId },
+      );
     }
     if (!source.filePath) {
-      throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件尚未就绪，请稍后再试", { recordingId });
+      throw new AppError(
+        "RECORDING_NOT_AVAILABLE",
+        "录像文件尚未就绪，请稍后再试",
+        { recordingId },
+      );
     }
     const file = path.parse(source.filePath);
     const clip = this.services.recordings.create({
-      roomId: source.roomId, roomName: source.roomName, platform: source.platform,
-      streamSessionId: source.streamSessionId, streamTitle: title,
+      roomId: source.roomId,
+      roomName: source.roomName,
+      platform: source.platform,
+      streamSessionId: source.streamSessionId,
+      streamTitle: title,
       ...(source.quality ? { quality: source.quality } : {}),
-      ...(source.expectedQuality ? { expectedQuality: source.expectedQuality } : {}), origin: "clip",
+      ...(source.expectedQuality
+        ? { expectedQuality: source.expectedQuality }
+        : {}),
+      origin: "clip",
     });
-    const outputPath = path.join(file.dir, `${file.name}_clip_${startSecond}-${endSecond}_${clip.id}${file.ext}`);
+    const outputPath = path.join(
+      file.dir,
+      `${file.name}_clip_${startSecond}-${endSecond}_${clip.id}${file.ext}`,
+    );
     const pending = this.services.recordings.update(clip.id, {
-      state: "processing", filePath: outputPath,
+      state: "processing",
+      filePath: outputPath,
       // 选区起止在创建时即映射到时间轴：导出中历史行时长即选区时长（不随录制增长回退）。
-      startedAt: new Date(Date.parse(source.startedAt) + startSecond * 1000).toISOString(),
-      endedAt: new Date(Date.parse(source.startedAt) + endSecond * 1000).toISOString(),
+      startedAt: new Date(
+        Date.parse(source.startedAt) + startSecond * 1000,
+      ).toISOString(),
+      endedAt: new Date(
+        Date.parse(source.startedAt) + endSecond * 1000,
+      ).toISOString(),
     });
     this.clipExports.set(selectionKey, clip.id);
     void (async () => {
@@ -2480,17 +2556,36 @@ export class RecorderManager {
       let lastPct = -1;
       let lastEmitAt = 0;
       try {
-        const result = await exportClipFile(source.filePath!, outputPath, startSecond, endSecond, {
-          onProgress: ({ outTimeMs }) => {
-            const pct = Math.max(0, Math.min(99, Math.floor((outTimeMs / selectionMs) * 100)));
-            const now = this.services.clock.now();
-            if (pct <= lastPct || (lastEmitAt !== 0 && now - lastEmitAt < 500)) return;
-            lastPct = pct;
-            lastEmitAt = now;
-            const row = this.services.recordings.get(clip.id);
-            if (row) this.services.events.emit({ type: "recording:updated", data: { ...row, progressPercent: pct } });
+        const result = await exportClipFile(
+          source.filePath!,
+          outputPath,
+          startSecond,
+          endSecond,
+          {
+            onProgress: ({ outTimeMs }) => {
+              const pct = Math.max(
+                0,
+                Math.min(99, Math.floor((outTimeMs / selectionMs) * 100)),
+              );
+              const now = this.services.clock.now();
+              if (
+                pct <= lastPct ||
+                (lastEmitAt !== 0 && now - lastEmitAt < 500)
+              )
+                return;
+              lastPct = pct;
+              lastEmitAt = now;
+              const row = this.services.recordings.get(clip.id);
+              if (row) {
+                this.clipProgress.set(clip.id, pct);
+                this.services.events.emit({
+                  type: "recording:updated",
+                  data: { ...row, progressPercent: pct },
+                });
+              }
+            },
           },
-        });
+        );
         const current = this.services.recordings.get(clip.id) ?? pending;
         const currentPath = current.filePath ?? outputPath;
         if (!result.ok) {
@@ -2498,22 +2593,32 @@ export class RecorderManager {
           const reason = result.stderr.trim().slice(-200);
           const failed = this.services.recordings.update(clip.id, {
             state: "failed",
-            failureReason: new AppError("RECORDING_FILE_CORRUPTED", "片段导出失败", {
-              recordingId: clip.id,
-              ...(reason ? { details: { reason } } : {}),
-            }).toObject(),
+            failureReason: new AppError(
+              "RECORDING_FILE_CORRUPTED",
+              "片段导出失败",
+              {
+                recordingId: clip.id,
+                ...(reason ? { details: { reason } } : {}),
+              },
+            ).toObject(),
           });
           this.clipProgress.delete(clip.id);
-          this.services.events.emit({ type: "recording:updated", data: { ...failed, progressPercent: null } });
+          this.services.events.emit({
+            type: "recording:updated",
+            data: { ...failed, progressPercent: null },
+          });
           await unlink(currentPath).catch(() => undefined);
           return;
         }
-        // 延迟改名：完成落盘按当前标题对齐文件名（用户中途改过名也一致）；
-        // 撞名加「(n)」序号且标题同步，绝不覆盖既有文件，源文件永远不被指向。
-        // 改名临界区串行化：并行导出同名收尾时防「查重→改名」间隙互撞。
         const { landed, finalTitle } = await withClipFinalizeLock(async () => {
           const wanted = sanitizeRenameBase(current.streamTitle);
-          const { targetPath, base } = await uniqueTargetPath(file.dir, wanted, file.ext, [source.filePath!], currentPath);
+          const { targetPath, base } = await uniqueTargetPath(
+            file.dir,
+            wanted,
+            file.ext,
+            [source.filePath!],
+            currentPath,
+          );
           if (currentPath !== targetPath) {
             try {
               await rename(currentPath, targetPath);
@@ -2526,15 +2631,21 @@ export class RecorderManager {
           return { landed: targetPath, finalTitle: base };
         });
         const done = this.services.recordings.update(clip.id, {
-          state: "completed", endReason: "clip_export",
-          endedAt: new Date(Date.parse(source.startedAt) + endSecond * 1000).toISOString(),
+          state: "completed",
+          endReason: "clip_export",
+          endedAt: new Date(
+            Date.parse(source.startedAt) + endSecond * 1000,
+          ).toISOString(),
           fileSizeBytes: result.sizeBytes,
           filePath: landed,
           ...(finalTitle !== undefined ? { streamTitle: finalTitle } : {}),
         });
         this.clipProgress.delete(clip.id);
         // 完成即终态、不进确认链：用户点「保存」时已确认命名（不双弹）。
-        this.services.events.emit({ type: "recording:updated", data: { ...done, progressPercent: null } });
+        this.services.events.emit({
+          type: "recording:updated",
+          data: { ...done, progressPercent: null },
+        });
         // 校验与后处理与正常保存录像完全同链：自动入完整性校验队列 + 按配置自动进管线
         // （未启用管线时的 not_required+自动上传同语义），不依赖手动批量重校验。
         this.finishSegmentProcessing(clip.id);
@@ -2544,7 +2655,10 @@ export class RecorderManager {
       }
     })();
     this.services.events.emit({ type: "recording:updated", data: pending });
-    return { source: this.services.recordings.get(recordingId)!, clip: pending };
+    return {
+      source: this.services.recordings.get(recordingId)!,
+      clip: pending,
+    };
   }
 
   /**
