@@ -27,8 +27,7 @@ export function fitPreviewBox(
 ): PreviewVideoBox {
   const safeRatio = sanitizeRatio(ratio);
   const heightForWidth = preferredWidth / safeRatio;
-  const height =
-    safeRatio >= 1 ? heightForWidth : Math.min(heightForWidth, maxHeight);
+  const height = Math.min(heightForWidth, maxHeight);
   return boxOf(safeRatio, height);
 }
 

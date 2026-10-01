@@ -31,17 +31,7 @@ import type {
   PipelineArtifact,
   PipelineRunStatus,
 } from "../../../types/pipeline";
-
-const STEP_LABEL: Record<string, string> = {
-  verify: "完整性校验",
-  cover: "封面",
-  segment: "切片",
-  // task #57/#58：管线自动导出音频（segment 后、compress 前）
-  audio: "导出音频",
-  convert: "格式转换",
-  compress: "压缩",
-  archive: "归档",
-};
+import { STEP_LABEL } from "../../../utils/pipelineStepText";
 
 const STATUS_COLOR: Record<string, string> = {
   queued: "default",

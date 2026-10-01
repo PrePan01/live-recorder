@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import {

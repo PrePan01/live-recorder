@@ -2,7 +2,7 @@ import { installFfmpegExitReap, reapTrackedFfmpegs } from '../recorder/ffmpeg-re
 import path from 'node:path';
 import { buildApp } from '../api/server.js';
 import { buildServices, defaultDataDir } from '../core/services.js';
-import { recoverStaleRecordings, recoverOrphanPipelineRuns } from '../core/recovery.js';
+import { recoverStaleRecordings, recoverOrphanPipelineRuns, recoverOrphanClipExports } from '../core/recovery.js';
 import { DEFAULT_HOST, APP_VERSION, API_VERSION } from './types.js';
 import type { AppInstance } from './types.js';
 import { InstanceLock } from './instance-lock.js';
@@ -91,6 +91,12 @@ export async function startSidecar(
           console.log(`recovered ${count} orphaned pipeline run(s)`);
       })
       .catch((error) => console.error('pipeline recovery failed', error));
+    // 孤儿片段导出：重启打断的 clip 导出收敛为失败并清半成品。
+    void recoverOrphanClipExports(services)
+      .then((count) => {
+        if (count > 0) console.log(`recovered ${count} orphaned clip export(s)`);
+      })
+      .catch((error) => console.error('clip export recovery failed', error));
     // #220：重启时遗留的「待确认保留」录制按默认保留恢复管线/上传。
     services.manager.resumePendingConfirmations();
     // 恢复重启前排队中的上传任务（#195：上传队列为内存态，DB 中 queued/running 需启动续传）。
@@ -104,6 +110,13 @@ export async function startSidecar(
     // 校验队列恢复：被打断/从未校验过的记录全部重新入队（新录优先，队列自行限流）。
     const requeued = services.verificationQueue.requeuePending();
     if (requeued > 0) console.log(`requeued ${requeued} pending verification(s)`);
+    // 跳播定位索引补扫：重启/上线前写入的前缀后台补建（顺序读、让位写盘，建好前跳播入口显式不可用）。
+    void services.seek
+      .startupScan()
+      .then((count) => {
+        if (count > 0) console.log(`seek index scan started for ${count} recording(s)`);
+      })
+      .catch((error) => console.error('seek index scan failed', error));
 
     const extraOrigins = opts.extraOrigins ?? [
       'http://localhost:5173',

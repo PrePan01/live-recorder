@@ -3,7 +3,57 @@ import type {
   PagedRecordings,
   Recording,
   RecordingQuery,
+  RecordingMarker,
 } from "../types/recording";
+
+export async function fetchRecordingMarkers(id: string): Promise<RecordingMarker[]> {
+  const { data } = await http.get<{ markers: RecordingMarker[] }>(`/recordings/${id}/markers`);
+  return data.markers;
+}
+
+export async function createRecordingMarker(
+  id: string,
+  text: string,
+  positionSeconds?: number,
+): Promise<RecordingMarker> {
+  const { data } = await http.post<{ marker: RecordingMarker }>(
+    `/recordings/${id}/markers`,
+    positionSeconds !== undefined ? { text, positionSeconds } : { text },
+  );
+  return data.marker;
+}
+
+export async function updateRecordingMarker(id: string, markerId: string, patch: { text?: string; positionSeconds?: number }): Promise<RecordingMarker> {
+  const { data } = await http.patch<{ marker: RecordingMarker }>(`/recordings/${id}/markers/${markerId}`, patch);
+  return data.marker;
+}
+
+export async function deleteRecordingMarker(id: string, markerId: string): Promise<void> {
+  await http.delete(`/recordings/${id}/markers/${markerId}`);
+}
+
+export async function exportRecordingClip(id: string, startSecond: number, endSecond: number, name: string): Promise<{ source: Recording; clip: Recording }> {
+  const { data } = await http.post<{ source: Recording; clip: Recording }>(`/recordings/${id}/clip-export`, { startSecond, endSecond, name });
+  return data;
+}
+
+/** 跳播起流地址：GET 流式 fMP4，从目标点前关键帧起切；每次请求即一个新代际。 */
+export function recordingSeekStreamUrl(id: string, startSecond: number): string {
+  return `/api/v1/recordings/${id}/seek-stream?second=${Math.max(0, Math.floor(startSecond))}`;
+}
+
+/** 跳播预热（pointerdown/提交时）：后端零进程准备（开句柄+查索引）；
+ *  返回吸附后的实际起播秒（关键帧级），供 UI 显示真值。 */
+export async function prewarmRecordingSeek(
+  id: string,
+  startSecond: number,
+): Promise<{ startSecond?: number } | null> {
+  const { data } = await http.post<{ startSecond?: number } | null>(
+    `/recordings/${id}/seek-prewarm`,
+    { second: Math.max(0, Math.floor(startSecond)) },
+  );
+  return data ?? null;
+}
 
 export async function fetchRecordingGaps(
   id: string,

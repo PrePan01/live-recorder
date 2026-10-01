@@ -196,8 +196,6 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     },
   },
   {
-    // #93 V5 Phase 0：标签分组（Tag + RoomTag）与房间上传开关（Room.uploadEnabled）。
-    // 幂等保护：表存在即跳过；rooms.upload_enabled 列存在即跳过列迁移。
     version: 9,
     up: (db) => {
       const tagsExists = Boolean(
@@ -911,9 +909,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX IF NOT EXISTS idx_recording_gaps_rec ON recording_gaps(recording_id);
 `);
       // 存量模拟库可能缺 pipeline_runs（历史迁移被跳过）：表存在才补进度列，保证老库可迁移。
-      const hasRuns = db.prepare(
-        "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'",
-      ).get();
+      const hasRuns = db
+        .prepare(
+          "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'",
+        )
+        .get();
       if (hasRuns) {
         db.exec(`
   ALTER TABLE pipeline_runs ADD COLUMN progress_step TEXT;
@@ -925,7 +925,93 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     },
   },
 
+  {
+    version: 43,
+    up: (db) => {
+      ensureCriticalColumns(db);
+    },
+  },
+  {
+    // Timeline text markers belong to a recording, so each live session remains independent.
+    version: 44,
+    sql: `
+      CREATE TABLE IF NOT EXISTS recording_markers (
+        id TEXT PRIMARY KEY,
+        recording_id TEXT NOT NULL,
+        position_seconds INTEGER NOT NULL CHECK(position_seconds >= 0),
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_recording_markers_recording_position
+        ON recording_markers(recording_id, position_seconds, created_at);
+    `,
+  },
 ];
+
+/** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */
+export function ensureColumn(
+  db: DB,
+  table: string,
+  column: string,
+  ddl: string,
+): void {
+  const has = db
+    .prepare(
+      `SELECT 1 AS x FROM pragma_table_info('${table}') WHERE name = '${column}'`,
+    )
+    .get();
+  if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/**
+ * 「版本已标但列缺失」自愈（v16 教训、v42 复发的根治层）：42 批曾就地加列不升版本号
+ * （gap_count 等），跑过中间版的库版本已标 42 被跳过，启动链写列即报「no such column」。
+ * 覆盖 42 批就地补过的全集：recordings 4 列 + gap_count、recording_gaps 表、
+ * pipeline_runs 进度 4 列（表可能不存在——历史迁移被跳过，表在才补）。
+ * 三层共用：迁移 43、启动自愈（buildServices 开库后）、写点防御（recording.repo 写 gap_count 前）。
+ * 幂等：列/表在则跳过。
+ */
+export function ensureCriticalColumns(db: DB): void {
+  ensureColumn(db, "recordings", "integrity_state", "integrity_state TEXT");
+  ensureColumn(
+    db,
+    "recordings",
+    "integrity_attempts",
+    "integrity_attempts INTEGER NOT NULL DEFAULT 0",
+  );
+  ensureColumn(
+    db,
+    "recordings",
+    "integrity_last_attempt",
+    "integrity_last_attempt TEXT",
+  );
+  ensureColumn(db, "recordings", "integrity_error", "integrity_error TEXT");
+  ensureColumn(db, "recordings", "gap_count", "gap_count INTEGER");
+  db.exec(`CREATE TABLE IF NOT EXISTS recording_gaps (
+    id TEXT PRIMARY KEY,
+    recording_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    missing_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    evidence TEXT
+  )`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_recording_gaps_rec ON recording_gaps(recording_id)`,
+  );
+  const hasRuns = db
+    .prepare(
+      "SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'",
+    )
+    .get();
+  if (hasRuns) {
+    ensureColumn(db, "pipeline_runs", "progress_step", "progress_step TEXT");
+    ensureColumn(db, "pipeline_runs", "progress_pct", "progress_pct INTEGER");
+    ensureColumn(db, "pipeline_runs", "heartbeat_at", "heartbeat_at TEXT");
+    ensureColumn(db, "pipeline_runs", "eta_seconds", "eta_seconds INTEGER");
+  }
+}
 
 /** 幂等保护：执行迁移前检查其依赖的列/表已存在，避免历史 DB 重复执行报错。 */
 export function runMigrations(db: DB): number {

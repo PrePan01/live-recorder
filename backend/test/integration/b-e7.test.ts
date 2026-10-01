@@ -1,6 +1,6 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { FakeClock } from '../../src/core/clock.js';
@@ -175,16 +175,16 @@ describe('B-E7 migration upgrade', () => {
   it('reopens an on-disk DB, applies nothing new and preserves data', async () => {
     const file = path.join(await mkdtemp(path.join(tmpdir(), 'lr-mig-')), 'live-recorder.db');
     let db = openDatabase(file);
-    expect(runMigrations(db)).toBe(42);
+    expect(runMigrations(db)).toBe(44);
     const room = new RoomRepository(db).create({ platform: 'bilibili', url: 'https://live.bilibili.com/9000', displayName: '旧数据' });
     const rec = new RecordingRepository(db).create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sx', streamTitle: '旧录制' });
-    expect(currentSchemaVersion(db)).toBe(42);
+    expect(currentSchemaVersion(db)).toBe(44);
     db.close();
 
     db = openDatabase(file);
-    expect(currentSchemaVersion(db)).toBe(42);
+    expect(currentSchemaVersion(db)).toBe(44);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(42);
+    expect(currentSchemaVersion(db)).toBe(44);
     const rooms = new RoomRepository(db);
     expect(rooms.list()).toHaveLength(1);
     expect(rooms.get(room.id)?.displayName).toBe('旧数据');

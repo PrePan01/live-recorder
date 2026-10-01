@@ -1,0 +1,384 @@
+.lr-recording-track-reveal {
+  overflow: hidden;
+  will-change: max-height;
+  animation: lr-recording-track-reveal 1000ms cubic-bezier(0.2, 0.8, 0.2, 1)
+    both;
+}
+.lr-recording-track-reveal--closing {
+  pointer-events: none;
+  animation: lr-recording-track-reveal-out 1000ms cubic-bezier(0.4, 0, 1, 1)
+    both;
+}
+@keyframes lr-recording-track-reveal {
+  from {
+    max-height: 0;
+  }
+  to {
+    max-height: 240px;
+  }
+}
+@keyframes lr-recording-track-reveal-out {
+  from {
+    max-height: 240px;
+  }
+  to {
+    max-height: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-recording-track-reveal {
+    animation: none;
+  }
+}
+.lr-recording-track {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-top: 1px dashed var(--lr-ink);
+  background: var(--lr-surface);
+}
+.lr-recording-track__topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.lr-recording-track__topline .ant-btn {
+  height: 28px;
+  min-height: 28px;
+  padding-inline: 6px;
+  gap: 4px;
+  font-size: 12px;
+}
+.lr-recording-track__toggle svg {
+  transition: transform 1000ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lr-recording-track__toggle.ant-btn {
+  width: 28px;
+  min-width: 28px;
+  padding-inline: 0;
+}
+.lr-recording-track--collapsed .lr-recording-track__toggle svg {
+  transform: rotate(180deg);
+}
+.lr-recording-track__canvas-wrap {
+  max-height: 110px;
+  overflow: hidden;
+  /* 图钉在轨道两端各向外延伸 7px；为折叠裁切层保留这段横向空间。 */
+  margin-inline: -7px;
+  padding-inline: 7px;
+  opacity: 1;
+  transition:
+    max-height 1000ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms linear;
+}
+.lr-recording-track--collapsed .lr-recording-track__canvas-wrap {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.lr-recording-track__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  gap: 4px;
+}
+.lr-recording-track__actions .lr-recording-track__export {
+  width: 88px;
+  min-width: 88px;
+}
+.lr-recording-track__status-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.lr-recording-track__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lr-recording-track__status > i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-teal);
+  border-radius: 50%;
+}
+.lr-recording-track__status--history > i {
+  border-radius: 0;
+  transform: rotate(45deg);
+  background: var(--lr-pink);
+}
+.lr-recording-track__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lr-muted);
+  font-size: 11px;
+}
+.lr-recording-track__canvas {
+  --lr-recording-track-rail-top: 41px;
+  --lr-recording-track-rail-height: 18px;
+  position: relative;
+  height: 79px;
+  padding-top: var(--lr-recording-track-rail-top);
+}
+.lr-recording-track__rail {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--lr-recording-track-rail-height);
+  border: 2px solid var(--lr-ink);
+  background: #fff;
+  cursor: crosshair;
+}
+.lr-recording-track__recorded {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--lr-primary) 20%, #fff);
+  pointer-events: none;
+}
+.lr-recording-track__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--lr-primary);
+}
+.lr-recording-track__selection::before,
+.lr-recording-track__selection::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--lr-ink);
+}
+.lr-recording-track__selection::before {
+  left: -1px;
+}
+.lr-recording-track__selection::after {
+  right: -1px;
+}
+.lr-recording-track__selection--at-start::before {
+  display: none;
+}
+.lr-recording-track__selection--at-end::after {
+  display: none;
+}
+.lr-recording-track__playhead {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 2px;
+  background: var(--lr-ink);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 3;
+}
+.lr-recording-track__playhead::after {
+  content: "";
+  position: absolute;
+  bottom: -3px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-pink);
+  transform: rotate(45deg);
+}
+.lr-recording-track__playhead--live::after {
+  background: var(--lr-teal);
+}
+.lr-recording-track__handle {
+  position: absolute;
+  z-index: 4;
+  /* 图钉尖端停在轨道顶边上方 3px。 */
+  top: -29px;
+  width: 28px;
+  height: 30px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+}
+.lr-recording-track__handle:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 2px;
+}
+.lr-recording-track__handle-time {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  --lr-recording-track-label-shift: 0px;
+  transform: translateX(calc(-50% + var(--lr-recording-track-label-shift)));
+  font-size: 11px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+.lr-recording-track__handle-time--inset-start {
+  /* 对齐图钉可见外轮廓左边缘（形状从 7px 开始）。 */
+  left: 7px;
+  transform: translateX(var(--lr-recording-track-label-shift));
+}
+.lr-recording-track__handle-time--inset-end {
+  left: auto;
+  /* 对齐图钉可见外轮廓右边缘（形状在 21px 结束）。 */
+  right: 7px;
+  transform: translateX(var(--lr-recording-track-label-shift));
+}
+.lr-recording-track__handle-shape {
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 14px;
+  height: 22px;
+  background: var(--lr-ink);
+  clip-path: polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%);
+}
+.lr-recording-track__handle-shape::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--lr-yellow);
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+}
+.lr-recording-track__handle--end .lr-recording-track__handle-shape::before {
+  background: var(--lr-pink);
+}
+.lr-recording-track__guide {
+  display: none;
+}
+.lr-recording-track__labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.lr-recording-track__markers {
+  /* 标记叠加在轨道上方（钉在轨道上沿），不再占下方独立行。 */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--lr-recording-track-rail-top);
+  pointer-events: none;
+}
+.lr-recording-track__marker {
+  position: absolute;
+  bottom: 1px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 21px;
+  transform: translateX(-50%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 0;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+  z-index: 2;
+}
+.lr-recording-track__marker:is(:hover, :focus-visible) {
+  /* 标记互叠时悬停/聚焦的一枚升到最上层，点击命中不被同位标记抢走。 */
+  z-index: 5;
+}
+.lr-recording-track__marker::before {
+  content: "";
+  width: 7px;
+  height: 12px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-yellow);
+}
+.lr-recording-track__marker:is(:hover, :focus-visible)::before {
+  background: var(--lr-pink);
+  transform: rotate(-8deg);
+}
+.lr-recording-track__marker:is(:hover, :focus-visible, :active) {
+  z-index: 5;
+}
+.lr-recording-track__marker:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: -2px;
+}
+.lr-recording-track__marker:active {
+  cursor: grabbing;
+}
+.lr-recording-track__follow {
+  padding-inline: 2px;
+}
+.lr-recording-track__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  max-height: 40px;
+  transition:
+    max-height 1000ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding-top 1000ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms linear;
+}
+.lr-recording-track__range-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lr-recording-track__range-summary > i {
+  width: 10px;
+  height: 7px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-primary);
+}
+.lr-recording-track__preview-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.lr-recording-track__preview-legend > i {
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-pink);
+  transform: rotate(45deg);
+}
+.lr-recording-track__preview-legend--live > i {
+  background: var(--lr-teal);
+}
+.lr-recording-track__range-summary > span,
+.lr-recording-track__duration {
+  color: var(--lr-text);
+}
+.lr-recording-track__duration {
+  white-space: nowrap;
+}
+.lr-recording-track--collapsed .lr-recording-track__summary {
+  max-height: 0;
+  padding-top: 0;
+  opacity: 0;
+  pointer-events: none;
+}
