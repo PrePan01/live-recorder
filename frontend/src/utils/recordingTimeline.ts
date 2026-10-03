@@ -38,9 +38,10 @@ export function previewPosition(
   mode: "live" | "history" | undefined,
   recordingEnd: number,
   playbackSecond: number | undefined,
+  loading = false,
 ): number | undefined {
   if (!mode) return undefined;
-  const second = mode === "live" ? recordingEnd : playbackSecond;
+  const second = mode === "live" && !loading ? recordingEnd : playbackSecond;
   return second == null
     ? undefined
     : Math.max(0, Math.min(recordingEnd, second));

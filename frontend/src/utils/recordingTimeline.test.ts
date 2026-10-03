@@ -16,6 +16,16 @@ describe("录制时间轴的位置来源", () => {
     expect(previewPosition("live", 100, undefined)).toBe(100);
   });
 
+  it("加载回看期间保留直播位置，首帧就绪后使用新位置", () => {
+    expect(previewPosition("live", 105, 100, true)).toBe(100);
+    expect(previewPosition("history", 105, 25, false)).toBe(25);
+  });
+
+  it("回看切回直播加载时保持原位置，就绪后移到直播尾部", () => {
+    expect(previewPosition("history", 105, 25, true)).toBe(25);
+    expect(previewPosition("live", 105, 25, false)).toBe(105);
+  });
+
   it("拖动左右手柄不影响视频位置来源", () => {
     expect(previewPosition("history", 95, 80)).toBe(80);
     expect(previewPosition("live", 95, undefined)).toBe(95);
