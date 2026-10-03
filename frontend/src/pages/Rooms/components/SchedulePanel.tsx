@@ -10,6 +10,7 @@ import {
   Switch,
   Table,
   TimePicker,
+  Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -66,7 +67,6 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
     form.resetFields();
     form.setFieldsValue({
       daysOfWeek: [1],
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
     setModalOpen(true);
   };
@@ -77,7 +77,6 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
       daysOfWeek: s.daysOfWeek,
       startTime: dayjs(`2000-01-01T${s.startTime}`),
       endTime: s.endTime ? dayjs(`2000-01-01T${s.endTime}`) : null,
-      timezone: s.timezone,
       enabled: s.enabled,
     });
     setModalOpen(true);
@@ -89,7 +88,6 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
       daysOfWeek: values.daysOfWeek,
       startTime: values.startTime.format("HH:mm"),
       endTime: values.endTime ? values.endTime.format("HH:mm") : null,
-      timezone: values.timezone,
       enabled: values.enabled ?? true,
     };
     try {
@@ -115,7 +113,6 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
         daysOfWeek: s.daysOfWeek,
         startTime: s.startTime,
         endTime: s.endTime,
-        timezone: s.timezone,
         enabled,
       });
       void load();
@@ -141,7 +138,6 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
       width: 80,
       render: (v: string | null) => v ?? "无",
     },
-    { title: "时区", dataIndex: "timezone", width: 130, ellipsis: true },
     {
       title: "下次执行",
       dataIndex: "nextRunAt",
@@ -205,7 +201,7 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
         dataSource={items}
         loading={loading}
         sticky={{ offsetScroll: 8 }}
-        scroll={{ x: 800 }}
+        scroll={{ x: 670 }}
         pagination={false}
         locale={{ emptyText: "暂无定时计划" }}
       />
@@ -224,34 +220,36 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
           >
             <Select mode="multiple" options={DAYS} placeholder="选择星期" />
           </Form.Item>
-          <Space style={{ width: "100%" }} size={12}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: 12,
+              alignItems: "start",
+            }}
+          >
             <Form.Item
               label="开始时间"
               name="startTime"
               rules={[{ required: true, message: "必填" }]}
             >
-              <TimePicker aria-label="开始时间" format="HH:mm" />
+              <TimePicker
+                aria-label="开始时间"
+                format="HH:mm"
+                style={{ width: "100%" }}
+              />
             </Form.Item>
             <Form.Item label="结束时间（可选）" name="endTime">
-              <TimePicker aria-label="结束时间（可选）" format="HH:mm" />
+              <TimePicker
+                aria-label="结束时间（可选）"
+                format="HH:mm"
+                style={{ width: "100%" }}
+              />
             </Form.Item>
-          </Space>
-          <Form.Item
-            label="时区"
-            name="timezone"
-            extra="默认本机时区；结束早于开始视为跨天"
-          >
-            <Select
-              showSearch
-              options={
-                Intl.supportedValuesOf?.("timeZone")?.map((tz) => ({
-                  value: tz,
-                  label: tz,
-                })) ?? []
-              }
-              placeholder="选择时区"
-            />
-          </Form.Item>
+          </div>
+          <Typography.Paragraph type="secondary">
+            按本机时间执行；结束早于开始视为跨天
+          </Typography.Paragraph>
           <Form.Item label="启用" name="enabled" valuePropName="checked">
             <Switch aria-label="启用" />
           </Form.Item>

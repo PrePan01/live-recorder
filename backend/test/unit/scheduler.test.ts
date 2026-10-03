@@ -7,7 +7,7 @@ import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
-import type { AppSettings } from '../../src/types/index.js';
+import type { AppSettings, ScheduleDay } from '../../src/types/index.js';
 import { AppError } from '../../src/types/error.js';
 
 function newServices(): { services: Services; clock: FakeClock } {
@@ -46,6 +46,42 @@ function baseSettings(dir = ''): AppSettings {
 }
 
 describe('Scheduler', () => {
+  it.each([false, true])('due plans start independently of automatic recording and prior manual stops (stopped=%s)', async (stopped) => {
+    const { services, clock } = newServices();
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-plan-start-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/598', displayName: '定时录制' });
+    services.rooms.update(room.id, { autoRecord: false });
+    const opening = new Date(clock.now() - 60_000).toISOString();
+    services.rooms.setLiveStatus(room.id, 'live', opening);
+    if (stopped) {
+      services.rooms.setAutoRecordStopped(room.id, opening);
+      const previous = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'same-live', quality: 'original' });
+      services.recordings.update(previous.id, { state: 'completed', endedAt: services.clock.iso() });
+    }
+    const previousCount = services.recordings.list({ roomId: room.id }).items.length;
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live', streamSessionId: 'same-live' }]);
+    const plan = services.schedules.create({ roomId: room.id, daysOfWeek: [new Date(clock.now()).getDay() as ScheduleDay], startTime: '00:00', timezone: 'local' });
+    services.schedules.update(plan.id, { nextRunAt: new Date(clock.now() - 1000).toISOString() });
+    try {
+      services.scheduler.start();
+      await waitFor(() => services.manager.isRoomActive(room.id));
+      expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(previousCount + 1);
+      expect(services.recordings.list({ roomId: room.id }).items[0]!.origin).toBe('automatic');
+      expect(Date.parse(services.schedules.get(plan.id)!.nextRunAt!)).toBeGreaterThan(clock.now());
+      // 停止本次计划录制后，普通轮询不能再次启动同一场直播。
+      services.scheduler.stop();
+      await services.manager.stopRecording(room.id);
+      await services.scheduler.checkRoom(services.rooms.get(room.id)!);
+      expect(services.manager.isRoomActive(room.id)).toBe(false);
+      expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(previousCount + 1);
+    } finally {
+      services.scheduler.stop();
+      await services.manager.shutdown();
+    }
+  });
+
   it('merges repeated enabled-room checks while a batch is still running', async () => {
     const { services } = newServices();
     services.settings.save({ ...baseSettings(), autoRecord: false });

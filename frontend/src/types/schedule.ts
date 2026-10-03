@@ -15,6 +15,5 @@ export interface ScheduleInput {
   daysOfWeek: number[];
   startTime: string;
   endTime?: string | null;
-  timezone?: string;
   enabled?: boolean;
 }

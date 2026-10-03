@@ -1645,6 +1645,7 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     opts: {
       manual?: boolean;
+      scheduled?: boolean;
       liveStartedAt?: string | null;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
@@ -1710,6 +1711,7 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     opts: {
       manual?: boolean;
+      scheduled?: boolean;
       liveStartedAt?: string | null;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
@@ -1721,6 +1723,7 @@ export class RecorderManager {
     const sessionId = status.streamSessionId ?? null;
     if (
       !opts.manual &&
+      !opts.scheduled &&
       opts.liveStartedAt &&
       this.services.recordings.hasRecordingSince(room.id, opts.liveStartedAt)
     ) {
