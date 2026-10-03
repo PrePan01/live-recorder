@@ -181,8 +181,14 @@ export default function PreviewModal({
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
   const activeRecordingId = live.activeRecording?.recordingId;
+  const lastStreamRatioRef = useRef<number | null>(null);
   const handleStreamAspectRatio = useCallback((ratio: number) => {
+    const previous = lastStreamRatioRef.current;
+    if (previous === ratio) return;
+    lastStreamRatioRef.current = ratio;
     setStreamRatio(ratio);
+    // 仅首次确定比例时隐藏；切流重复元数据或分辨率变化不应闪黑。
+    if (previous !== null) return;
     setStreamRatioReady(false);
     if (streamRatioTimerRef.current !== null)
       window.clearTimeout(streamRatioTimerRef.current);
@@ -252,6 +258,9 @@ export default function PreviewModal({
     displayedTrack,
   ]);
   const trackClosing = Boolean(displayedTrack) && !recording;
+  const trackElapsedSeconds = displayedTrack
+    ? Math.max(0, Math.floor((now - Date.parse(displayedTrack.startedAt)) / 1000))
+    : 0;
 
   useEffect(() => {
     if (!activeRecordingId) {
@@ -558,6 +567,11 @@ export default function PreviewModal({
     generation: number;
     second: number;
   } | null>(null);
+  useEffect(() => {
+    if (!seekActualStart) return;
+    const timer = window.setTimeout(() => setSeekActualStart(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [seekActualStart]);
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
   );
@@ -567,6 +581,7 @@ export default function PreviewModal({
   const [displayPreview, setDisplayPreview] = useState<{
     mode: "live" | "history";
     second?: number;
+    loading?: boolean;
   }>({ mode: "live" });
   useEffect(() => {
     if (!previewVideo || !seekPlayback) return;
@@ -619,17 +634,32 @@ export default function PreviewModal({
   } | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const handleSeekCommit = useCallback(
-    (target: number | "live") => {
+    (target: number | "live", indicatorSecond?: number) => {
       // 同目标在途即忽略（状态语义去重，不按时间窗）：双柄同帧/事件重发/内核再请求
       // 都不再产生第二次起流。
       const nowTs = Date.now();
       const lastCommit = lastSeekCommitRef.current;
-      if (lastCommit && lastCommit.target === target) return;
+      if (lastCommit && lastCommit.target === target) {
+        if (indicatorSecond != null)
+          setDisplayPreview((current) => ({ ...current, second: indicatorSecond }));
+        return;
+      }
       lastSeekCommitRef.current = { target, at: nowTs };
+      pendingSeekRef.current = null;
       if (target === "live") {
         seekGenRef.current += 1;
+        if (requestedPlaybackRef.current) {
+          setDisplayPreview((current) => ({
+            ...current,
+            second: indicatorSecond ?? (
+              current.mode === "live" && !current.loading
+                ? trackElapsedSeconds
+                : current.second
+            ),
+            loading: true,
+          }));
+        } else setDisplayPreview({ mode: "live" });
         setSeekPlayback(null);
-        setSeekActualStart(null);
         try {
           performance.mark("lr-seek:to-live");
         } catch {
@@ -638,21 +668,28 @@ export default function PreviewModal({
         return;
       }
       if (!activeRecordingId) return;
+      const generation = ++seekGenRef.current;
+      setDisplayPreview((current) => ({
+        ...current,
+        second: indicatorSecond ?? (
+          current.mode === "live" && !current.loading
+            ? trackElapsedSeconds
+            : current.second
+        ),
+        loading: true,
+      }));
       if (seekIndexState === "building") {
         // 索引未就绪：不弹 toast（轨道已有「正在加载」提示），记下拖拽意图，
         // 就绪后自动落点，用户无需再拖一次。
         pendingSeekRef.current = target;
         return;
       }
-      const generation = ++seekGenRef.current;
       seekMarkRef.current = `lr-seek:pointerup-${generation}`;
       try {
         performance.mark(seekMarkRef.current);
       } catch {
         /* 性能 API 不可用时静默 */
       }
-      // 提交即切回看态标签：起流/首帧前的空窗不再挂「直播中」，真值秒由进度回调补上。
-      setDisplayPreview({ mode: "history", second: undefined });
       // 先取得解码起点，再把目标与起点一起交给播放器完成准确定位。
       void prewarmRecordingSeek(activeRecordingId, target)
         .then((res) => {
@@ -660,7 +697,6 @@ export default function PreviewModal({
           if (res?.startSecond == null || !Number.isFinite(res.startSecond)) {
             throw new Error("回看定位信息缺失，请重试");
           }
-          setSeekActualStart(null);
           setSeekPlayback({
             url: recordingSeekStreamUrl(activeRecordingId, target),
             generation,
@@ -670,11 +706,13 @@ export default function PreviewModal({
         })
         .catch((error: unknown) => {
           if (generation !== seekGenRef.current) return;
+          lastSeekCommitRef.current = null;
           // 索引未就绪类拒绝（可重试）＝同「正在加载」：挂起意图等就绪自动落点，不弹 toast。
           if (error instanceof ApiError && error.retryable) {
             pendingSeekRef.current = target;
             return;
           }
+          setDisplayPreview((current) => ({ ...current, loading: false }));
           message.error(
             error instanceof ApiError
               ? describeError(error.code, error.message)
@@ -684,12 +722,13 @@ export default function PreviewModal({
           );
         });
     },
-    [activeRecordingId, seekIndexState, message],
+    [activeRecordingId, seekIndexState, message, trackElapsedSeconds],
   );
   const handleSeekTail = useCallback(() => {
+    lastSeekCommitRef.current = null;
     seekGenRef.current += 1;
     setSeekPlayback(null);
-    setSeekActualStart(null);
+    setDisplayPreview((current) => ({ ...current, loading: true }));
     pendingSeekRef.current = null;
   }, []);
   // 索引就绪后自动落点：挂起的拖拽意图自动触发回看，无需用户再拖一次。
@@ -712,9 +751,11 @@ export default function PreviewModal({
   }, [activeRecordingId]);
   const handleSeekFirstFrame = useCallback((generation: number) => {
     if (generation !== seekGenRef.current) return;
+    lastSeekCommitRef.current = null;
     previewFrameGenerationRef.current = generation;
     const playback = requestedPlaybackRef.current;
     if (playback?.generation === generation) {
+      setDisplayPreview({ mode: "history", second: playback.second });
       setSeekActualStart({ generation, second: playback.second });
     }
     if (!seekMarkRef.current) return;
@@ -730,6 +771,8 @@ export default function PreviewModal({
   }, []);
   const handleLiveFirstFrame = useCallback(() => {
     if (requestedPlaybackRef.current) return;
+    if (typeof lastSeekCommitRef.current?.target === "number") return;
+    lastSeekCommitRef.current = null;
     setDisplayPreview({ mode: "live" });
     try {
       performance.measure("lr-seek:to-live-first-frame", "lr-seek:to-live");
@@ -967,12 +1010,7 @@ export default function PreviewModal({
                 }}
               >
                 <RecordingTrack
-                  elapsedSeconds={Math.max(
-                    0,
-                    Math.floor(
-                      (now - Date.parse(displayedTrack.startedAt)) / 1000,
-                    ),
-                  )}
+                  elapsedSeconds={trackElapsedSeconds}
                   markers={markers}
                   editable
                   onSeekIntent={handleSeekIntent}
@@ -982,6 +1020,7 @@ export default function PreviewModal({
                   }
                   previewMode={displayPreview.mode}
                   previewSecond={displayPreview.second}
+                  previewLoading={displayPreview.loading}
                   seekHint={
                     seekIndexState === "building"
                       ? "正在加载…"
@@ -1262,6 +1301,7 @@ export default function PreviewModal({
           }}
         >
           <VideoPlayer
+            preserveFrameOnSwitch
             roomId={room.id}
             platform={room.platform}
             aspectRatio={streamRatio ?? undefined}

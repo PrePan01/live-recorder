@@ -16,7 +16,7 @@ export interface WebDavClient {
     onProgress: (pct: number) => void,
     serverUrl?: string,
   ): Promise<void>;
-  /** 提交 2FA 一次性码换取短期 API token（#13）。 */
+  /** 提交 2FA 一次性码换取短期 API token。 */
   submit2fa?(
     root: string,
     username: string,
@@ -80,7 +80,7 @@ interface OpenListTaskInfo {
   error?: string;
 }
 
-/** OpenList 需要 2FA 一次性码时抛出的标识错误（job.error 含此标记，FE 据此弹窗输入验证码）。 */
+/** OpenList 需要 2FA 一次性码时抛出的标识错误。 */
 export const OPENLIST_2FA_REQUIRED = "OpenList 需要 2FA 验证";
 
 /**
@@ -580,7 +580,7 @@ export class RealWebDavClient implements WebDavClient {
   }
 
   /**
-   * #229 分片并发上传：OpenList PUT /api/fs/multipart?action=upload|complete（PR #1877）。
+   * #229 分片并发上传：OpenList PUT /api/fs/multipart?action=upload|complete。
    * 能力探测 + 严格回退：分片端点不支持（404/405）或响应 schema 未知 → 返回 false 走既有单 PUT/As-Task，
    * 绝不影响既有上传路径。大文件按 chunk 分片并发上传（分片幂等=断点续传只传缺失片），complete 走 As-Task 轮询。
    */
@@ -993,7 +993,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 const UPLOAD_PUMP_CONCURRENCY = 2;
 
 /**
- * OpenList 自动上传（V5 Batch2 #116）：上传队列、进度、重试、取消。
+ * OpenList 自动上传：上传队列、进度、重试、取消。
  * 令牌进 SecretStore（OPENLIST_TOKEN_KEY）不落盘；远端对象用 recordingId 幂等键，失败不删本地原件。
  */
 export class UploadManager {
@@ -1088,7 +1088,7 @@ export class UploadManager {
   }
 
   /**
-   * 启动恢复（#195）：DB 中 queued/running 的上传任务重新入队续传——上传队列为内存态，重启后不恢复会永远停在排队。
+   * 启动恢复：DB 中 queued/running 的上传任务重新入队续传——上传队列为内存态，重启后不恢复会永远停在排队。
    * running=上次进程中断于上传中（PUT 被中止），改为 queued 重传（WebDAV PUT 覆盖幂等）；随后 pump 串行执行。
    */
   resumePending(): number {

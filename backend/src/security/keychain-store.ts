@@ -21,7 +21,7 @@ let cached: Keytar | undefined;
 const keytar = (): Keytar => cached ??= require('keytar') as Keytar;
 
 /** keytar 实现：SMTP 密码等机密存操作系统 keychain（macOS Keychain / Windows Credential Manager）。
- *  服务名按环境隔离（#224 P0）：dev 用 live-recorder-dev，与生产 live-recorder 凭据互不读写。 */
+ *  服务名按环境隔离：dev 用 live-recorder-dev，与生产 live-recorder 凭据互不读写。 */
 export class KeytarSecretStore implements SecretStore {
   private readonly service = keychainService();
 

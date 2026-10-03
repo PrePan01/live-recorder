@@ -92,7 +92,7 @@ describe('写盘失败自动恢复录制（PrePan 钦定参数）', () => {
     let urlCalls = 0;
     services.adapterFor = () => ({
       platform: 'bilibili' as const,
-      checkLiveStatus: async () => ({ status: 'live' as const }),
+      checkLiveStatus: async () => ({ status: urlCalls >= 2 ? 'offline' as const : 'live' as const }),
       getStreamUrl: async (url, quality) => {
         urlCalls += 1;
         if (urlCalls >= 2) setScript(services, { frames: 4, intervalMs: 500 });

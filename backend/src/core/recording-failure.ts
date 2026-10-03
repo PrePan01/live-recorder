@@ -213,7 +213,7 @@ export function writeFailure(
 }
 
 /**
- * 写盘类错误族（自动恢复录制的准入判定，PrePan 需求①）：磁盘瞬时故障
+ * 写盘类错误族（自动恢复录制的准入判定，产品要求）：磁盘瞬时故障
  * （USB 抖动/休眠唤醒）值得退避重启；其他非可重试错误维持直接收尾。
  */
 export function isWriteFailure(error: ErrorObject): boolean {

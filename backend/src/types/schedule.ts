@@ -5,10 +5,11 @@ export interface RecordingSchedule {
   roomId: string;
   /** ISO 星期：0=周日 ... 6=周六。 */
   daysOfWeek: ScheduleDay[];
-  /** HH:mm（24h，本机/指定时区）。 */
+  /** HH:mm（24h，本机时间）。 */
   startTime: string;
   /** HH:mm（24h，可跨天：end < start 表示次日结束）。 */
   endTime: string | null;
+  /** 兼容旧数据的存储字段，计划统一遵循本机时间（local）。 */
   timezone: string;
   enabled: boolean;
   /** 下次应执行时间（ISO，由服务端计算；enabled 且 future）。 */

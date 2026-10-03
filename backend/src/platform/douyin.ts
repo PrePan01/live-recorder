@@ -236,7 +236,7 @@ export class DouyinAdapter implements PlatformAdapter {
   ) {}
 
   /**
-   * 主播昵称解析：抖音 enter 接口结构变更后不再返回 user.nickname（QA 验收 #2a 定位），
+   * 主播昵称解析：抖音 enter 接口结构变更后不再返回 user.nickname，
    * 改为从直播间页面（live.douyin.com/<roomId>）解析 data-anchor-info/SSR 中的主播昵称。
    * 带 TTL 缓存避免每次检测都拉大页面。
    *

@@ -11,7 +11,7 @@ import type { TaskItem } from '../types/tasks';
 import { pipelineStepText } from '../utils/pipelineStepText';
 
 /**
- * 任务进度入口（#103）：告警按钮右侧同构三件套——按钮＋右上角小角标＋点击弹层。
+ * 任务进度入口：告警按钮右侧同构三件套——按钮＋右上角小角标＋点击弹层。
  * 无任务 = 入口完全不存在（非禁用）；角标 = 在途清单长度（宽限期内仍计数）。
  * 数据 = GET /api/v1/tasks 聚合 + 听现有四类 store 变化 debounce 重拉（不新增事件契约）。
  */
@@ -23,7 +23,7 @@ const KIND_LABEL: Record<TaskItem['kind'], string> = {
   export: '诊断导出',
 };
 
-/** 卡面「处理阶段」：clip 单卡两相位（#107）——后处理相位随 state 换段名。 */
+/** 卡面「处理阶段」：clip 单卡两相位——后处理相位随 state 换段名。 */
 function stageText(task: TaskItem): string {
   if (task.kind === 'clip' && task.state === 'post_processing') return '后处理';
   return KIND_LABEL[task.kind];
@@ -63,7 +63,7 @@ function TaskCard({ task }: { task: TaskItem }) {
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
         {task.title}
       </div>
-      {/* 第二行两端对齐（PrePan 版式）：左=状态（百分比）、右=处理阶段-步骤 */}
+      {/* 第二行两端对齐：左=状态（百分比）、右=处理阶段-步骤 */}
       <div
         style={{
           display: 'flex',
@@ -117,8 +117,8 @@ export function TaskProgressEntry() {
       if (state.sseConnected && !wasConnected) void refresh(); // 重连校准（断线期间不冻结）
       wasConnected = state.sseConnected;
     });
-    // 1.5s 真轮询兑底（QA 抓到的反饥饿关键）：直调 refresh()、绝不经 debounce
-    // （密集事件会无限重置 debounce，任务变化的时刻恰恰拉不成）。
+    // 真轮询兑底：直调 refresh()、绝不经 debounce（密集事件会无限重置 debounce，
+    // 任务变化的时刻恰恰拉不成）。
     // 零新增事件契约；接口为内存微扫，常开零负担。
     const poll = setInterval(() => void useTasksStore.getState().refresh(), 1200);
     return () => {

@@ -159,7 +159,7 @@ interface ActionResult {
   detail: string | null;
 }
 
-/** 动作分派：执行对应自愈动作（V5 骨架，先提供可观测结果；真实修复在后续批次接入）。 */
+/** 动作分派：执行对应自愈动作。 */
 async function runAction(
   services: Services,
   code: string,

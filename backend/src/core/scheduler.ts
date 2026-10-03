@@ -490,7 +490,8 @@ export class Scheduler {
       const autoStoppedThisSession = Boolean(
         checkedRoom.autoRecordStoppedSession,
       );
-      if (!effectiveAuto || autoStoppedThisSession) {
+      // 定时计划是独立的开录指令，不受持续自动录制开关及本场手动停止标记限制。
+      if (!opts.scheduled && (!effectiveAuto || autoStoppedThisSession)) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
           lastError: null,

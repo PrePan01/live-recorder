@@ -507,16 +507,21 @@ async function writeChunk(
   if (failedAfter) throw failedAfter;
 }
 
-/** 等待排空：drain/写盘错误/取消三者竞速，任一路落地都完整拆除监听（不再泄漏 drain/error 监听）。 */
+const drainWaiters = new WeakMap<object, Set<() => void>>();
+
 function waitForDrain(
   stream: ReturnType<typeof createWriteStream>,
   signal?: AbortSignal,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    const shared = drainWaiters.get(stream) ?? new Set<() => void>();
+    drainWaiters.set(stream, shared);
     const cleanup = () => {
       stream.off("drain", onDrain);
       stream.off("error", onError);
-      signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener("abort", onAbort);  // 坑点：不摘会在 signal 上逐次残留 abort 监听。
+      shared.delete(onAbort);
+      if (shared.size === 0) drainWaiters.delete(stream);
     };
     const onDrain = () => {
       cleanup();
@@ -530,8 +535,12 @@ function waitForDrain(
       cleanup();
       reject(abortError(signal));
     };
-    stream.on("drain", onDrain);
-    stream.on("error", onError);
+    if (shared.size === 0) {
+      // 首个等待者挂共享监听；后续等待者只登记 abort，不重复挂 stream 监听。
+      stream.on("drain", onDrain);
+      stream.on("error", onError);
+    }
+    shared.add(onAbort);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }

@@ -34,13 +34,14 @@ type Props = {
   onExport?: (start: number, end: number) => void | Promise<void>;
   onCollapsedChange?: (collapsed: boolean) => void;
   onSeekIntent?: (second: number) => void;
-  onSeekCommit?: (target: number | "live") => void;
+  onSeekCommit?: (target: number | "live", indicatorSecond?: number) => void;
   onReturnToLive?: () => void;
   previewMode?: "live" | "history";
   previewSecond?: number;
+  previewLoading?: boolean;
   seekHint?: string;
 };
-type Drag = { kind: "start" | "end" } | { markerId: string } | null;
+type Drag = { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
 // 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
 const TRACK_COLLAPSED_KEY = "lr-recording-track-collapsed";
 function readTrackCollapsed(): boolean {
@@ -84,6 +85,7 @@ export default function RecordingTrack({
   onReturnToLive,
   previewMode,
   previewSecond,
+  previewLoading = false,
   seekHint,
 }: Props) {
   const [range, setRange] = useState<[number, number]>(() => [
@@ -91,6 +93,7 @@ export default function RecordingTrack({
     elapsedSeconds,
   ]);
   const [dragging, setDragging] = useState<Drag>(null);
+  const [playheadSecond, setPlayheadSecond] = useState<number | null>(null);
   const [markerPositions, setMarkerPositions] = useState<
     Record<string, number>
   >({});
@@ -143,11 +146,13 @@ export default function RecordingTrack({
   }, [elapsedSeconds, recordingEnd]);
 
   const pct = (value: number) => timelinePercent(value, timelineEnd);
-  const positionSecond = previewPosition(
-    previewMode,
-    recordingEnd,
-    previewSecond,
-  );
+  const positionSecond =
+    playheadSecond ?? previewPosition(
+      previewMode,
+      recordingEnd,
+      previewSecond,
+      previewLoading,
+    );
   useLayoutEffect(() => {
     const update = () => {
       const next = {
@@ -201,20 +206,30 @@ export default function RecordingTrack({
     if (!dragging) return;
     const move = (event: PointerEvent) => {
       movedRef.current = true;
-      if ("kind" in dragging) setRangeAt(dragging.kind, event.clientX);
-      else
+      if ("kind" in dragging) {
+        if (dragging.kind === "playhead")
+          setPlayheadSecond(positionAt(event.clientX));
+        else setRangeAt(dragging.kind, event.clientX);
+      } else
         setMarkerPositions((current) => ({
           ...current,
           [dragging.markerId]: positionAt(event.clientX),
         }));
     };
     const up = (event: PointerEvent) => {
-      // 末手柄松手=跳播提交：贴右端 = 切回实时直播，否则从松手位置起播。
+      // 手柄或播放指示器松手时提交跳播；贴录制末尾则切回直播。
       if (dragging && "kind" in dragging) {
         // 起播真值按「钳制生效位」提交（左柄不过 end-1、右柄贴右端=回直播），
         // 不拿指针原始落点冒充。
-        const clamped = setRangeAt(dragging.kind, event.clientX);
-        onSeekCommit?.(clamped >= recordingEnd ? "live" : clamped);
+        const clamped =
+          dragging.kind === "playhead"
+            ? positionAt(event.clientX)
+            : setRangeAt(dragging.kind, event.clientX);
+        onSeekCommit?.(
+          clamped >= recordingEnd ? "live" : clamped,
+          dragging.kind === "playhead" ? clamped : undefined,
+        );
+        setPlayheadSecond(null);
       }
       if (dragging && !("kind" in dragging)) {
         const position = markerPositions[dragging.markerId];
@@ -235,9 +250,17 @@ export default function RecordingTrack({
       }
       setDragging(null);
     };
+    const cancel = () => {
+      if ("kind" in dragging && dragging.kind === "playhead") {
+        setPlayheadSecond(null);
+        setDragging(null);
+      }
+    };
+    window.addEventListener("pointercancel", cancel);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => {
+      window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -258,6 +281,15 @@ export default function RecordingTrack({
     touchedRef.current = true;
     onSeekIntent?.(positionAt(event.clientX));
     setDragging({ kind });
+  };
+  const beginPlayhead = (event: React.PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    movedRef.current = false;
+    const second = positionAt(event.clientX);
+    setPlayheadSecond(second);
+    onSeekIntent?.(second);
+    setDragging({ kind: "playhead" });
   };
   const beginMarker = (marker: RecordingMarker, event: React.PointerEvent) => {
     if (!editable) return;
@@ -411,7 +443,7 @@ export default function RecordingTrack({
             icon={<CaretUpOutlined />}
             onClick={toggleCollapsed}
           />
-          {seekHint && (!previewMode || previewSecond == null) ? (
+          {seekHint ? (
             <span className="lr-recording-track__hint">{seekHint}</span>
           ) : null}
         </div>
@@ -467,7 +499,7 @@ export default function RecordingTrack({
             />
             {previewMode && positionSecond != null && (
               <div
-                className={`lr-recording-track__playhead lr-recording-track__playhead--${previewMode}`}
+                className={`lr-recording-track__playhead lr-recording-track__playhead--${previewMode}${dragging && "kind" in dragging && dragging.kind === "playhead" ? " lr-recording-track__playhead--dragging" : ""}`}
                 style={{
                   left: `${pct(positionSecond)}%`,
                 }}
@@ -476,6 +508,32 @@ export default function RecordingTrack({
                     ? "直播位置"
                     : `回看位置 ${clock(Math.floor(positionSecond))}`
                 }
+                role="slider"
+                tabIndex={0}
+                aria-valuemin={0}
+                aria-valuemax={recordingEnd}
+                aria-valuenow={positionSecond}
+                aria-valuetext={clock(Math.floor(positionSecond))}
+                onPointerDown={beginPlayhead}
+                onKeyDown={(event) => {
+                  const direction =
+                    event.key === "ArrowLeft" || event.key === "ArrowDown"
+                      ? -1
+                      : event.key === "ArrowRight" || event.key === "ArrowUp"
+                        ? 1
+                        : 0;
+                  if (!direction) return;
+                  event.preventDefault();
+                  const second = Math.max(
+                    0,
+                    Math.min(
+                      recordingEnd,
+                      positionSecond + direction * (event.shiftKey ? 5 : 1),
+                    ),
+                  );
+                  onSeekIntent?.(second);
+                  onSeekCommit?.(second >= recordingEnd ? "live" : second);
+                }}
               />
             )}
             {handle("start", range[0])}
@@ -485,7 +543,7 @@ export default function RecordingTrack({
             <i
               className="lr-recording-track__guide"
               style={{
-                left: `${pct("kind" in dragging ? range[dragging.kind === "start" ? 0 : 1] : (markerPositions[dragging.markerId] ?? 0))}%`,
+                left: `${pct("kind" in dragging ? dragging.kind === "playhead" ? (positionSecond ?? 0) : range[dragging.kind === "start" ? 0 : 1] : (markerPositions[dragging.markerId] ?? 0))}%`,
               }}
             />
           )}
@@ -537,7 +595,9 @@ export default function RecordingTrack({
           </span>
         )}
         <span className="lr-recording-track__duration">
-          {previewMode === "live"
+          {previewLoading
+            ? "加载中..."
+            : previewMode === "live"
             ? "直播中"
             : `回看${previewSecond != null ? ` ${clock(Math.floor(previewSecond))}` : ""}`}
         </span>

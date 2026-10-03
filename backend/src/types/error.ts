@@ -106,7 +106,7 @@ export class AppError extends Error {
 }
 
 /**
- * 13 个曾缺中文兜底的错误码默认文案（#20 后端面）：投递处未带 message 时由 errorHandler 补齐，
+ * 13 个曾缺中文兜底的错误码默认文案：投递处未带 message 时由 errorHandler 补齐，
  * 保证前端 describeError 永远能拿到人话，而不是空串或英文技术词。
  */
 const DEFAULT_MESSAGES: Partial<Record<ErrorCode, string>> = {

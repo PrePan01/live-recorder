@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs';
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { PassThrough, Readable } from 'node:stream';
-import { AppError } from '../types/error.js';
-import type { Recording } from '../types/index.js';
+import { existsSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { PassThrough, Readable } from "node:stream";
+import { AppError } from "../types/error.js";
+import type { Recording } from "../types/index.js";
 import {
   SeekIndexWriter,
   beginSeekScan,
@@ -20,8 +20,8 @@ import {
   validateSeekEntry,
   type SeekEntry,
   type SeekIndexInfo,
-} from '../storage/seek-index.js';
-import type { Services } from './services.js';
+} from "../storage/seek-index.js";
+import type { Services } from "./services.js";
 
 /**
  * 跳播服务（正在录的这条，拖到哪 1 秒内从哪播）。
@@ -68,10 +68,13 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
   const out = new PassThrough();
   let reader: ReturnType<typeof createReadStream> | null = null;
   let killed = false;
-  const pace = plan.paceBytesPerMs && plan.paceBytesPerMs > 0 ? plan.paceBytesPerMs : FEED_DEFAULT_PACE_BYTES_PER_MS;
+  const pace =
+    plan.paceBytesPerMs && plan.paceBytesPerMs > 0
+      ? plan.paceBytesPerMs
+      : FEED_DEFAULT_PACE_BYTES_PER_MS;
   const done = new Promise<void>((resolve) => {
-    out.on('end', () => resolve());
-    out.on('close', () => resolve());
+    out.on("end", () => resolve());
+    out.on("close", () => resolve());
   });
   const t0 = Date.now();
   let fed = 0;
@@ -89,12 +92,12 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
           // 源侧背压：消费端排空前不再读盘（close 也放行，防 kill 后悬挂）。
           await new Promise<void>((resolve) => {
             const settle = () => {
-              out.off('drain', settle);
-              out.off('close', settle);
+              out.off("drain", settle);
+              out.off("close", settle);
               resolve();
             };
-            out.once('drain', settle);
-            out.once('close', settle);
+            out.once("drain", settle);
+            out.once("close", settle);
           });
         }
         // burst 之后按码率限速供给。
@@ -102,12 +105,13 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
         if (fed > due) {
           const waitMs = Math.min(500, Math.ceil((fed - due) / pace));
           await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, waitMs);
             const early = () => {
               clearTimeout(timer);
+              out.off("close", early);
               resolve();
             };
-            out.once('close', early);
+            const timer = setTimeout(early, waitMs);
+            out.once("close", early);
           });
           if (killed) break;
         }
@@ -141,14 +145,17 @@ interface SeekSession {
 
 export class SeekService {
   private sessions = new Map<string, SeekSession>();
-  private warm = new Map<string, { entries: SeekEntry[]; seqs: SeekEntry[]; size: number }>();
+  private warm = new Map<
+    string,
+    { entries: SeekEntry[]; seqs: SeekEntry[]; size: number }
+  >();
   private scans = new Map<string, Promise<void>>();
   private scanSignals = new Map<string, { aborted: boolean }>();
   /** 会话流水号：与录制 id 一起进日志，一次跳播的全链（起/杀/首包/结束/错误）可串起来。 */
   private sessionSeq = 0;
 
   private log(...args: unknown[]): void {
-    console.log('[seek]', ...args);
+    console.log("[seek]", ...args);
   }
 
   constructor(
@@ -157,13 +164,13 @@ export class SeekService {
   ) {
     // 录制一停、轨道退场：立即收掉该录像的在途跳播会话（作用范围=仅正在录这条）。
     services.events.on((event) => {
-      if (event.type === 'recording:updated') {
+      if (event.type === "recording:updated") {
         const state = event.data.state;
-        if (state !== 'recording' && state !== 'reconnecting') {
+        if (state !== "recording" && state !== "reconnecting") {
           this.killSession(event.data.id);
-          this.warm.delete(event.data.filePath ?? '');
+          this.warm.delete(event.data.filePath ?? "");
         }
-      } else if (event.type === 'recording:deleted') {
+      } else if (event.type === "recording:deleted") {
         this.killSession(event.data.id);
       }
     });
@@ -172,8 +179,9 @@ export class SeekService {
   /** API/SSE 展示字段：仅「正在录的 FLV」给索引状态，其余行不带字段（历史零改动）。 */
   seekInfo(rec: Recording): SeekIndexInfo | undefined {
     if (!rec.filePath) return undefined;
-    if (rec.state !== 'recording' && rec.state !== 'reconnecting') return undefined;
-    if (!rec.filePath.endsWith('.flv')) return { seekIndexState: 'missing' };
+    if (rec.state !== "recording" && rec.state !== "reconnecting")
+      return undefined;
+    if (!rec.filePath.endsWith(".flv")) return { seekIndexState: "missing" };
     return seekIndexOf(rec.filePath, existsSync(seekSidecarPath(rec.filePath)));
   }
 
@@ -192,17 +200,17 @@ export class SeekService {
 
   private requireSeekable(rec: Recording): string {
     if (!rec.filePath) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '录制文件不存在', {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录制文件不存在", {
         details: { recordingId: rec.id },
       });
     }
-    if (rec.state !== 'recording' && rec.state !== 'reconnecting') {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '仅录制中的录像支持跳播', {
+    if (rec.state !== "recording" && rec.state !== "reconnecting") {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "仅录制中的录像支持跳播", {
         details: { recordingId: rec.id, state: rec.state },
       });
     }
-    if (!rec.filePath.endsWith('.flv')) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '该录像格式暂不支持跳播', {
+    if (!rec.filePath.endsWith(".flv")) {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "该录像格式暂不支持跳播", {
         details: { recordingId: rec.id },
       });
     }
@@ -211,7 +219,9 @@ export class SeekService {
 
   /** 索引加载：带版本校验的短缓存——侧车只追加，大小变了（录制持续写入）即重载，
    *  避免预热快照过期把不同目标秒都吸到旧末条（真值错位）。 */
-  private async loadIndex(filePath: string): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
+  private async loadIndex(
+    filePath: string,
+  ): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
     const sidecar = seekSidecarPath(filePath);
     const s = await stat(sidecar).catch(() => null);
     const cached = this.warm.get(filePath);
@@ -229,7 +239,11 @@ export class SeekService {
    * 解析起播目标：查索引命中前一个关键帧、校验与真实文件对得上。
    * 索引建立中=显式「建立中」拒绝；索引失效=触发后台重建绝不硬播。
    */
-  private async resolveTarget(rec: Recording, filePath: string, second: number): Promise<{
+  private async resolveTarget(
+    rec: Recording,
+    filePath: string,
+    second: number,
+  ): Promise<{
     entry: SeekEntry;
     startSecond: number;
     seqs: SeekEntry[];
@@ -237,22 +251,35 @@ export class SeekService {
   }> {
     const { entries, seqs } = await this.loadIndex(filePath);
     const info = seekIndexOf(filePath, existsSync(seekSidecarPath(filePath)));
-    if (info.seekIndexState === 'building') {
-      this.log(`reject building rec=${rec.id} second=${second} progress=${info.seekIndexProgress ?? 0}`);
+    if (info.seekIndexState === "building") {
+      this.log(
+        `reject building rec=${rec.id} second=${second} progress=${info.seekIndexProgress ?? 0}`,
+      );
       void this.startScan(filePath, rec.id);
-      throw new AppError('RECORDING_START_FAILED', '正在建立定位索引，请稍后再试', {
-        retryable: true,
-        details: { recordingId: rec.id, seekIndexProgress: info.seekIndexProgress ?? 0 },
-      });
+      throw new AppError(
+        "RECORDING_START_FAILED",
+        "正在建立定位索引，请稍后再试",
+        {
+          retryable: true,
+          details: {
+            recordingId: rec.id,
+            seekIndexProgress: info.seekIndexProgress ?? 0,
+          },
+        },
+      );
     }
     if (entries.length === 0) {
       // 在录但索引缺失（写入降级/被清理）：后台重建，先明确告知不可用。
       this.log(`reject missing-index rec=${rec.id} second=${second}`);
       void this.startScan(filePath, rec.id);
-      throw new AppError('RECORDING_START_FAILED', '正在建立定位索引，请稍后再试', {
-        retryable: true,
-        details: { recordingId: rec.id },
-      });
+      throw new AppError(
+        "RECORDING_START_FAILED",
+        "正在建立定位索引，请稍后再试",
+        {
+          retryable: true,
+          details: { recordingId: rec.id },
+        },
+      );
     }
     const targetMs = Math.max(0, Math.floor(second * 1000));
     const entry = lookupSeekEntry(entries, targetMs) ?? entries[0]!;
@@ -260,13 +287,19 @@ export class SeekService {
     // 宁可显式「建立中」触发补扫自愈（读真文件补条目），也不硬吸旧条目（曾导致拖哪都跳同一位置）。
     const lastEntry = entries[entries.length - 1];
     if (lastEntry && targetMs > lastEntry.t + 8_000) {
-      this.log(`reject index-gap rec=${rec.id} second=${second} covered-to=${lastEntry.t}ms`);
+      this.log(
+        `reject index-gap rec=${rec.id} second=${second} covered-to=${lastEntry.t}ms`,
+      );
       this.invalidate(filePath);
       void this.startScan(filePath, rec.id);
-      throw new AppError('RECORDING_START_FAILED', '正在建立定位索引，请稍后再试', {
-        retryable: true,
-        details: { recordingId: rec.id, coveredToMs: lastEntry.t },
-      });
+      throw new AppError(
+        "RECORDING_START_FAILED",
+        "正在建立定位索引，请稍后再试",
+        {
+          retryable: true,
+          details: { recordingId: rec.id, coveredToMs: lastEntry.t },
+        },
+      );
     }
     // 供给速率估值：索引末条的字节/毫秒均值×4 倍余量（无有效估值用 32Mbps 兼底），限速防瞬灌。
     const last = lastEntry;
@@ -274,13 +307,19 @@ export class SeekService {
     const pace = est > 0 ? Math.max(250, Math.min(est * 4, 8000)) : 4000;
     const valid = await validateSeekEntry(filePath, entry);
     if (!valid) {
-      this.log(`reject invalid-entry rec=${rec.id} second=${second} entry=t${entry.t},b${entry.b}`);
+      this.log(
+        `reject invalid-entry rec=${rec.id} second=${second} entry=t${entry.t},b${entry.b}`,
+      );
       this.invalidate(filePath);
       void this.startScan(filePath, rec.id);
-      throw new AppError('RECORDING_START_FAILED', '定位索引已失效，正在重建，请稍后再试', {
-        retryable: true,
-        details: { recordingId: rec.id },
-      });
+      throw new AppError(
+        "RECORDING_START_FAILED",
+        "定位索引已失效，正在重建，请稍后再试",
+        {
+          retryable: true,
+          details: { recordingId: rec.id },
+        },
+      );
     }
     return { entry, startSecond: entry.t / 1000, seqs, pace };
   }
@@ -288,7 +327,10 @@ export class SeekService {
   /** 预热：零进程准备（读索引进缓存+校验目标点），松手才真正起流。幂等。
    *  返回吸附后的起播真值：起流对同一请求秒的吸附是确定性的（同一关键帧），
    *  前端用 startSecond+播放进度即可精确映射源时间轴（fMP4 输出时间轴会被 ffmpeg 归零）。 */
-  async prewarm(rec: Recording, second: number): Promise<{ startSecond: number }> {
+  async prewarm(
+    rec: Recording,
+    second: number,
+  ): Promise<{ startSecond: number }> {
     const filePath = this.requireSeekable(rec);
     const { startSecond } = await this.resolveTarget(rec, filePath, second);
     this.log(`prewarm rec=${rec.id} second=${second} -> start=${startSecond}`);
@@ -296,17 +338,24 @@ export class SeekService {
   }
 
   /** 起流：返回 fMP4 流与实际起播秒（关键帧吸附，可能略早于请求秒）。 */
-  async openStream(rec: Recording, second: number): Promise<{ stream: Readable; startSecond: number }> {
+  async openStream(
+    rec: Recording,
+    second: number,
+  ): Promise<{ stream: Readable; startSecond: number }> {
     const filePath = this.requireSeekable(rec);
-    const { entry, startSecond, seqs, pace } = await this.resolveTarget(rec, filePath, second);
+    const { entry, startSecond, seqs, pace } = await this.resolveTarget(
+      rec,
+      filePath,
+      second,
+    );
     const tail = await fileSizeSnapshot(filePath);
     if (tail === null) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '录像文件不可读', {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件不可读", {
         details: { recordingId: rec.id },
       });
     }
     if (tail <= entry.b + 13) {
-      throw new AppError('RECORDING_NOT_AVAILABLE', '该位置暂无可播放内容', {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "该位置暂无可播放内容", {
         retryable: true,
         details: { recordingId: rec.id },
       });
@@ -318,15 +367,27 @@ export class SeekService {
     const existing = this.sessions.get(rec.id);
     if (existing) this.killSession(rec.id);
     if (this.sessions.size >= MAX_SEEK_SESSIONS) {
-      this.log(`reject cap rec=${rec.id} second=${second} inflight=${this.sessions.size}`);
-      throw new AppError('CONCURRENT_LIMIT_REACHED', '跳播并发已满，请稍后再试', {
-        retryable: true,
-        details: { recordingId: rec.id, limit: MAX_SEEK_SESSIONS },
-      });
+      this.log(
+        `reject cap rec=${rec.id} second=${second} inflight=${this.sessions.size}`,
+      );
+      throw new AppError(
+        "CONCURRENT_LIMIT_REACHED",
+        "跳播并发已满，请稍后再试",
+        {
+          retryable: true,
+          details: { recordingId: rec.id, limit: MAX_SEEK_SESSIONS },
+        },
+      );
     }
 
     const prefix = await this.buildPrefix(filePath, entry, seqs);
-    const proc = this.procFactory({ filePath, prefix, from: entry.b, to: tail, paceBytesPerMs: pace });
+    const proc = this.procFactory({
+      filePath,
+      prefix,
+      from: entry.b,
+      to: tail,
+      paceBytesPerMs: pace,
+    });
     const sid = ++this.sessionSeq;
     const session: SeekSession = {
       recordingId: rec.id,
@@ -339,9 +400,11 @@ export class SeekService {
     const startedAt = Date.now();
     let firstByteLogged = false;
     let sentBytes = 0;
-    this.log(`start sid=${sid} rec=${rec.id} second=${second} start=${startSecond} range=${entry.b}-${tail} prefix=${prefix.length}B pace=${Math.round(pace)}B/ms`);
+    this.log(
+      `start sid=${sid} rec=${rec.id} second=${second} start=${startSecond} range=${entry.b}-${tail} prefix=${prefix.length}B pace=${Math.round(pace)}B/ms`,
+    );
     const stream = proc.stdout;
-    stream.on('data', (chunk: Buffer) => {
+    stream.on("data", (chunk: Buffer) => {
       if (!firstByteLogged) {
         firstByteLogged = true;
         this.log(`first-byte sid=${sid} +${Date.now() - startedAt}ms`);
@@ -350,27 +413,37 @@ export class SeekService {
     });
     void proc.done.then(() => {
       if (this.sessions.get(rec.id) === session) this.sessions.delete(rec.id);
-      this.log(`end sid=${sid} rec=${rec.id} sent=${sentBytes}B ${Date.now() - startedAt}ms`);
+      this.log(
+        `end sid=${sid} rec=${rec.id} sent=${sentBytes}B ${Date.now() - startedAt}ms`,
+      );
     });
     // 消费端断开（换源/停止/abort）即销流：杜绝「弃流继续全速灌」——瞬灌与旧 overflow 的真正来源。
-    stream.on('close', () => {
+    stream.on("close", () => {
       if (stream.readableEnded) return;
       if (this.sessions.get(rec.id) === session) {
-        this.log(`dispose sid=${sid} rec=${rec.id} sent=${sentBytes}B（消费端断开销流）`);
+        this.log(
+          `dispose sid=${sid} rec=${rec.id} sent=${sentBytes}B（消费端断开销流）`,
+        );
         this.killSession(rec.id);
       }
     });
     return { stream, startSecond };
   }
 
-  private async buildPrefix(filePath: string, entry: SeekEntry, seqs: SeekEntry[]): Promise<Buffer> {
+  private async buildPrefix(
+    filePath: string,
+    entry: SeekEntry,
+    seqs: SeekEntry[],
+  ): Promise<Buffer> {
     const parts: Buffer[] = [];
-    const handle = await import('node:fs/promises').then((m) => m.open(filePath, 'r'));
+    const handle = await import("node:fs/promises").then((m) =>
+      m.open(filePath, "r"),
+    );
     try {
       const head = Buffer.alloc(13);
       const { bytesRead } = await handle.read(head, 0, 13, 0);
-      if (bytesRead < 13 || head.subarray(0, 3).toString('ascii') !== 'FLV') {
-        throw new AppError('RECORDING_NOT_AVAILABLE', '录像文件不可读', {});
+      if (bytesRead < 13 || head.subarray(0, 3).toString("ascii") !== "FLV") {
+        throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件不可读", {});
       }
       parts.push(head);
       let chosen = pickFeedSeqHeaders(seqs, entry.b);
@@ -404,7 +477,9 @@ export class SeekService {
   killSession(recordingId: string): void {
     const session = this.sessions.get(recordingId);
     if (!session) return;
-    this.log(`kill sid=${session.sid} rec=${recordingId} second=${session.second} (换秒/停录/删除)`);
+    this.log(
+      `kill sid=${session.sid} rec=${recordingId} second=${session.second} (换秒/停录/删除)`,
+    );
     this.sessions.delete(recordingId);
     session.proc.kill();
   }
@@ -415,12 +490,19 @@ export class SeekService {
    */
   async startupScan(): Promise<number> {
     let count = 0;
-    for (const state of ['recording', 'reconnecting'] as const) {
-      const rows = this.services.recordings.list({ page: 1, pageSize: 100, state }).items;
+    for (const state of ["recording", "reconnecting"] as const) {
+      const rows = this.services.recordings.list({
+        page: 1,
+        pageSize: 100,
+        state,
+      }).items;
       for (const rec of rows) {
-        if (!rec.filePath || !rec.filePath.endsWith('.flv')) continue;
-        const info = seekIndexOf(rec.filePath, existsSync(seekSidecarPath(rec.filePath)));
-        if (info.seekIndexState === 'ready') continue;
+        if (!rec.filePath || !rec.filePath.endsWith(".flv")) continue;
+        const info = seekIndexOf(
+          rec.filePath,
+          existsSync(seekSidecarPath(rec.filePath)),
+        );
+        if (info.seekIndexState === "ready") continue;
         void this.startScan(rec.filePath, rec.id);
         count += 1;
       }
@@ -449,7 +531,9 @@ export class SeekService {
     this.emitSeekState(recId);
     let lastEmit = 0;
     // 扫描期持有 writer 批量追加；不登记覆盖（扫描不是写入段）。
-    const writer = await SeekIndexWriter.open(filePath, 0, { trackCoverage: false });
+    const writer = await SeekIndexWriter.open(filePath, 0, {
+      trackCoverage: false,
+    });
     try {
       await scanSeekIndex(filePath, {
         from: 0,
@@ -486,7 +570,7 @@ export class SeekService {
       const rec = this.services.recordings.get(recId);
       if (!rec) return;
       this.services.events.emit({
-        type: 'recording:updated',
+        type: "recording:updated",
         data: this.attachSeekFields(rec),
       });
     } catch {
