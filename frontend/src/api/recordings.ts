@@ -137,6 +137,11 @@ export async function openRecordingDirectory(id: string): Promise<void> {
   await http.post(`/recordings/${id}/open`);
 }
 
+/** 打开播放器前检查源文件，HEAD 不下载录像内容。 */
+export async function checkRecordingFile(id: string): Promise<void> {
+  await http.head(`/recordings/${id}/file`);
+}
+
 export async function renameRecording(
   id: string,
   streamTitle: string,
