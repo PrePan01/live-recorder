@@ -14,8 +14,8 @@ import {
   causeLabel,
   failureText,
   humanizeFailure,
-  isWriteFailure,
   reconnectExhausted,
+  isWriteFailure,
   withReasonCategory,
   writeFailure,
   writeRestartExhausted,
@@ -82,6 +82,25 @@ const SHARED_WRITER_SLOW_GRACE_MS = 180_000;
 const WRITE_RESTART_ATTEMPTS = 3;
 /** 开录后多久还没写出文件即视为拿不到数据 */
 const START_TIMEOUT_MS = 30_000;
+/** 复用前体检阈值：预览上游静默超过此时长即判陈旧、拆旧回退现解析。 */
+const PREVIEW_FRESHNESS_MS = 30_000;
+/** 录制中停流检测窗：静默超此值立即触发断流重连（6s≈2~3 个 GOP，历史断流恢复节奏全落窗内）。 */
+const RECORDING_STALL_MS = 6_000;
+/** 缺口记账条目门槛：短抖动只留日志不刷历史条目；缺失时长照旧累计一秒不丢。 */
+export const GAP_ROW_MIN_MS = 30_000;
+/** 取流失败持续告警阈值：超过此时长仍重连中即发人话告警（持续重试不停录）。 */
+export const RECONNECT_ALERT_AFTER_MS = 5 * 60_000;
+/** 断流重连快速退避链（秒）：判定即首试零等待，其后 1-2-5-10-30 封顶——宁可误判几次也不干等丢内容。 */
+export const RECONNECT_CHAIN_SEC = [0, 1, 2, 5, 10, 30];
+
+/**
+ * 涓流判据：只有媒体时间戳推进才算「活着」。冻结 TS 的涓流字节会喂饱字节判据
+ * 但内容不长（空录制死法），故看门狗按时间戳复位、不按字节复位。
+ * 无录制（纯预览，ts=-1）时按字节活跃处理。
+ */
+export function mediaAliveSince(prevTs: number, tsNow: number): boolean {
+  return tsNow < 0 || tsNow > prevTs;
+}
 /** Preview has no recording-level start watchdog; recycle a source that never yields its first byte. */
 const PREVIEW_START_TIMEOUT_MS = 10_000;
 /** 恢复后稳定录满这么久，就归还重连额度——几小时前的旧故障不该拖累现在这一次抖动。 */
@@ -148,6 +167,9 @@ interface ActiveSession {
   roomId: string;
   streamSessionId: string | null;
   stopRequested: boolean;
+  wakeReconnect?: () => void;
+  reconnectSince?: number;
+  recoveringAlerted?: boolean;
   requestedEndReason?: RecordingEndReason;
   size: number;
   startedAt: string;
@@ -167,7 +189,7 @@ interface ActiveSession {
   missingMs: number;
   /** 写盘失败自动恢复已用次数（PrePan 钦定共 3 次；稳定录满 STABLE_RESET_MS 归还）。 */
   writeRestartCount: number;
-  /** 写盘自动恢复尝试进行中：手动开录（PrePan 钦定边界）据此让位。 */
+  /** 写盘自动恢复尝试进行中：手动开录（产品边界）据此让位。 */
   writeRestartPending: boolean;
   /** 用户手动介入后置位：恢复循环逐次检查，立即停止自动重启。 */
   writeRestartCancelled: boolean;
@@ -193,6 +215,10 @@ interface PreviewSession {
   actualQuality: string;
   /** First upstream data arrived; a socket alone is not enough to trust a preview as live. */
   hasReceivedData: boolean;
+  /** 最近一次上游数据时刻：复用体检与停流判据的事实源（缺此字段=只认首包、不认新鲜度）。 */
+  lastDataAt: number;
+  /** 停流看门狗命中：收束必须走断流重连（记缺失）而非自然结束——干涸不是播完。 */
+  stalled: boolean;
   done: Promise<void>;
   recording: SharedPreviewRecording | null;
   /** 仅供没有可复用 bootstrap 时走旧交接路径。 */
@@ -257,6 +283,7 @@ export class RecorderManager {
     this.shuttingDown = true;
     const pending: Promise<void>[] = [];
     for (const session of [...this.active.values()]) {
+      session.wakeReconnect?.();
       pending.push(
         session.engine?.stop().catch(() => undefined) ?? Promise.resolve(),
       );
@@ -287,7 +314,7 @@ export class RecorderManager {
   }
   preview: PreviewSink | null = null;
 
-  /** 待确认保留的录制 → 超时自动保留定时器（#220）。 */
+  /** 待确认保留的录制 → 超时自动保留定时器。 */
   private confirmTimers = new Map<string, unknown>();
   /** 正在转 MP4 的录制；分段收尾与录制完成可能各触发一次，必须避免两个 ffmpeg 抢同一份产物。 */
   /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
@@ -972,6 +999,8 @@ export class RecorderManager {
         engine,
         actualQuality: stream.actualQuality,
         hasReceivedData: false,
+        lastDataAt: this.services.clock.now(),
+        stalled: false,
         done: Promise.resolve(),
         recording: null,
         transitioningToRecording: false,
@@ -982,6 +1011,7 @@ export class RecorderManager {
         let streamError: ErrorObject | null = null;
         let gotData = false;
         let startupTimedOut = false;
+        let stallTimer: unknown = null;
         const startupTimer = this.services.clock.setTimeout(() => {
           if (gotData) return;
           startupTimedOut = true;
@@ -993,8 +1023,31 @@ export class RecorderManager {
             format: stream.format,
             ...(stream.headers ? { headers: stream.headers } : {}),
           };
+          // 停流看门狗：上游静默超阈即停引擎，收束走断流重连换新流并记缺失。
+          // 坑点：涓流字节也会刷新 lastDataAt，静默判据必须看「数据时刻」而非连接状态。
+          // 坑点：看门狗必须收到首包后才启用——启动期归原 10 秒启动超时管，
+          // 提前计时会把首包耗时 6~10 秒的正常请求误停。
+          const armStallWatchdog = () => {
+            clearTimeout2(this.services, stallTimer);
+            stallTimer = this.services.clock.setTimeout(() => {
+              session.stalled = true;
+              void session.engine.stop().catch(() => undefined);
+            }, RECORDING_STALL_MS);
+          };
+          // 涓流反制：只有媒体时间戳推进才算「活着」——冻结 TS 的涓流字节会喂饱字节判据
+          // 但内容不长（正是空录制死法），故看门狗按时间戳复位、不按字节复位。
+          // 坑点：基准必须随录制实例切换重置——新录制时间戳从 0 重排，沿用旧基准会永不复位误断流。
+          let tsBaseOwner: unknown = null;
+          let lastSeenTs = -1;
           for await (const event of engine.start(input, null)) {
             if (event.type === "data") {
+              session.lastDataAt = this.services.clock.now();
+              const owner = session.recording ?? null;
+              const ownerChanged = owner !== tsBaseOwner;
+              if (ownerChanged) {
+                tsBaseOwner = owner;
+                lastSeenTs = owner?.normalizer.lastTimestampMs ?? -1;
+              }
               if (!gotData) {
                 gotData = true;
                 session.hasReceivedData = true;
@@ -1026,6 +1079,12 @@ export class RecorderManager {
                   ).catch(() => undefined);
                 }
               }
+              // Parse this chunk before checking progress; a fresh frame must reset the timer now.
+              const tsNow = session.recording?.normalizer.lastTimestampMs ?? -1;
+              if (mediaAliveSince(lastSeenTs, tsNow) || ownerChanged) {
+                armStallWatchdog();
+              }
+              if (tsNow > lastSeenTs) lastSeenTs = tsNow;
               if (this.settings().highlightEnabled !== false) {
                 // 首开竞态：mkdir 期间首帧可能已丢、enable 时 bootstrap 也可能尚不可用。
                 // 当前块不是 FLV 头时先从预览房延迟播种（此前帧已在 broadcastFrame 留底），
@@ -1070,6 +1129,7 @@ export class RecorderManager {
           if (!gotData)
             session.startupTrace?.finish("failed", streamError.code);
         } finally {
+          clearTimeout2(this.services, stallTimer);
           clearTimeout2(this.services, startupTimer);
           if (startupTimedOut && !gotData)
             session.startupTrace?.finish("failed", "PREVIEW_START_TIMEOUT");
@@ -1109,11 +1169,19 @@ export class RecorderManager {
                 activeSession.timestampOffsetMs,
                 sharedRecording.normalizer.lastTimestampMs,
               );
-              if (streamError) {
+              if (streamError || session.stalled) {
                 await this.handleDisconnect(
                   room,
                   activeSession.recordingId,
-                  streamError,
+                  streamError ??
+                    new AppError(
+                      "NETWORK_UNAVAILABLE",
+                      "上游数据中断（静默超时）",
+                      {
+                        roomId,
+                        retryable: true,
+                      },
+                    ).toObject(),
                   0,
                   activeSession.timestampOffsetMs,
                 );
@@ -1263,6 +1331,10 @@ export class RecorderManager {
       await recording.seekWriter.close();
       if (recording.session.filePath) endSeekWriter(recording.session.filePath);
       recording.seekWriter = null;
+      // 共享链收束：输出 filePath、写入字节与最大媒体时间戳，与单录口径一致。
+      console.log(
+        `[recording ${new Date().toISOString()}] writer-close file=${recording.session.filePath ?? "-"} bytes=${recording.session.size} lastTs=${recording.normalizer.lastTimestampMs}ms (shared-preview)`,
+      );
     }
   }
 
@@ -1363,6 +1435,10 @@ export class RecorderManager {
     // A volume can disappear after the successful file creation. Keep an error
     // listener for the whole writer lifetime so that a late EIO is surfaced to
     // the recording flow instead of becoming an unhandled EventEmitter error.
+    // 共享链起点：带 filePath，供与收束行配对定位。
+    console.log(
+      `[recording ${new Date().toISOString()}] writer-open file=${filePath} append=false (shared-preview)`,
+    );
     if (!writerErrorHooks.has(writer)) {
       writerErrorHooks.add(writer);
       writer.on("error", (error) => {
@@ -1425,6 +1501,18 @@ export class RecorderManager {
   ): Promise<boolean> {
     const preview = this.previewSessions.get(room.id);
     if (!preview) return false;
+    // 复用前检查上游新鲜度：静默超阈或从未到数据即丢弃并重新取流。
+    // 坑点：仅凭「收到过首包」不等于此刻可用，旧上游可能已干涸或被平台过期。
+    // 拆掉旧会话返回 false → 调用方自然回退到现解析 getStreamUrl（与手动链同路）。
+    const silentMs = this.services.clock.now() - preview.lastDataAt;
+    if (!preview.hasReceivedData || silentMs > PREVIEW_FRESHNESS_MS) {
+      console.log(
+        `[recording ${new Date().toISOString()}] preview-reuse-reject silentMs=${silentMs} hasData=${preview.hasReceivedData} → 拆旧上游回退现解析`,
+      );
+      this.previewSessions.delete(room.id);
+      void preview.engine.stop().catch(() => undefined);
+      return false;
+    }
     return this.startSharedPreviewRecording(
       room,
       status,
@@ -1557,6 +1645,7 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     opts: {
       manual?: boolean;
+      scheduled?: boolean;
       liveStartedAt?: string | null;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
@@ -1622,6 +1711,7 @@ export class RecorderManager {
     status: { streamSessionId?: string; streamTitle?: string },
     opts: {
       manual?: boolean;
+      scheduled?: boolean;
       liveStartedAt?: string | null;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
@@ -1633,6 +1723,7 @@ export class RecorderManager {
     const sessionId = status.streamSessionId ?? null;
     if (
       !opts.manual &&
+      !opts.scheduled &&
       opts.liveStartedAt &&
       this.services.recordings.hasRecordingSince(room.id, opts.liveStartedAt)
     ) {
@@ -1867,6 +1958,9 @@ export class RecorderManager {
             if (session.gapStartAt !== null) {
               const gapMs = Math.max(0, now - session.gapStartAt);
               session.missingMs += gapMs;
+              if (gapMs < GAP_ROW_MIN_MS) {
+                console.log(`[recording ${new Date().toISOString()}] short-gap ${gapMs}ms（不记条目，时长已累计）`);
+              } else {
               // 中断事件存证：先存证据再定归因（kind 为当前可判的粗归因，数据层留给后续细分）。
               this.services.recordings.insertGap({
                 recordingId: session.recordingId,
@@ -1881,6 +1975,7 @@ export class RecorderManager {
                   size: session.size,
                 }),
               });
+              }
               session.gapStartAt = null;
             }
             session.lastDataAt = now;
@@ -2022,17 +2117,50 @@ export class RecorderManager {
     }
 
     const settings = this.settings();
-    // 起始重连额度：稳定录满 STABLE_RESET_MS 后归还——几小时前的旧故障不该拖累现在这一次抖动。
+    // Preserve the explicit opt-out; positive legacy attempt counts no longer cap network recovery.
+    if (settings.retry.maxAttempts === 0) {
+      await this.finishInterrupted(room, recordingId, reconnectExhausted(error, 0));
+      return;
+    }
+    // 稳定录满 STABLE_RESET_MS 后重置退避阶段，旧故障不拖慢新的恢复。
     let effective =
       this.services.clock.now() - session.lastRecoveryAt >= STABLE_RESET_MS
         ? 0
         : attempt;
     let cause = error;
 
-    // 退避重试循环：探测不到确定结论（网络错误/受限）或取流失败都只是"这一次没接上"，
-    // 消耗一次额度后继续等下一轮，只有额度耗尽才收尾。绝不能把"没探测成功"当成"主播下播"——
-    // 那会在网络抖动时把一次好录制无声结束掉。
+    // Transient failures keep recovering. Only confirmed offline, explicit stop,
+    // shutdown, deletion, or a non-retryable error ends this loop.
+    if (effective === 0 || session.reconnectSince === undefined) {
+      session.reconnectSince = this.services.clock.now();
+      session.recoveringAlerted = false;
+    }
+    const reconnectSince = session.reconnectSince;
     for (;;) {
+      if (this.shuttingDown || this.active.get(room.id) !== session) return;
+      if (session.stopRequested) {
+        await this.completeRecording(room, recordingId, session.size, "ended", {
+          endReason: session.requestedEndReason ?? "stopped",
+        });
+        return;
+      }
+      if (cause.retryable === false) {
+        if (isWriteFailure(cause)) await this.restartAfterWriteFailure(room, recordingId, session, cause);
+        else await this.finishInterrupted(room, recordingId, humanizeFailure(cause));
+        return;
+      }
+      if (
+        !session.recoveringAlerted &&
+        this.services.clock.now() - reconnectSince >= RECONNECT_ALERT_AFTER_MS
+      ) {
+        session.recoveringAlerted = true;
+        // 坑点：告警只提示不改行为——持续重试不停录是产品底线，此处绝不触发收尾。
+        this.raiseAlert("warning", "recorder", new AppError(
+          "NETWORK_UNAVAILABLE",
+          "正在努力恢复该直播间录制",
+          { roomId: room.id, retryable: true },
+        ));
+      }
       const prevState = this.services.rooms.get(room.id)?.monitorState;
       const recording = this.services.recordings.update(recordingId, {
         state: "reconnecting",
@@ -2052,15 +2180,8 @@ export class RecorderManager {
       }
       this.services.events.emit({ type: "recording:updated", data: recording });
 
-      const delay = settings.retry.delaysSeconds[effective];
-      if (delay === undefined || effective >= settings.retry.maxAttempts) {
-        await this.finishInterrupted(
-          room,
-          recordingId,
-          reconnectExhausted(cause, settings.retry.maxAttempts),
-        );
-        return;
-      }
+      // Network recovery keeps retrying until confirmed offline or explicitly stopped.
+      const delay = RECONNECT_CHAIN_SEC[Math.min(effective, RECONNECT_CHAIN_SEC.length - 1)] ?? 0;
       this.raiseAlert(
         "warning",
         "recorder",
@@ -2071,11 +2192,8 @@ export class RecorderManager {
         ),
       );
 
-      await new Promise<void>((resolve) => {
-        // 退避抖动 ±20%：多个房间同参数退避会在同一时刻同时打回平台/探测端，错峰后恢复流量摊开。
-        const jittered = delay * 1000 * (0.8 + Math.random() * 0.4);
-        this.services.clock.setTimeout(() => resolve(), jittered);
-      });
+      await this.waitForReconnect(session, Math.min(30_000, delay * 1000 * (0.8 + Math.random() * 0.4)));
+      if (this.shuttingDown || this.active.get(room.id) !== session) return;
       // 退避期间用户点了停止：按手动停止收尾。直接 return 会把记录永远留在"重连中"、占着并发名额，
       // 停止录制的请求也会一直挂在 session.done 上（唯一的出口是重启服务）。
       if (this.active.get(room.id)?.stopRequested) {
@@ -2126,7 +2244,8 @@ export class RecorderManager {
           .adapterFor(room.platform)
           .getStreamUrl(room.url, settings.quality, cookie);
         const cur = this.active.get(room.id);
-        if (!cur) return;
+        if (!cur || this.shuttingDown) return;
+        if (cur.stopRequested) continue;
         await this.resumeSession(room, recordingId, cur, stream, next);
         return;
       } catch (err) {
@@ -2348,6 +2467,19 @@ export class RecorderManager {
     }
   }
 
+  /** Stop and shutdown wake the backoff immediately and remove its timer. */
+  private waitForReconnect(session: ActiveSession, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const wake = () => {
+        clearTimeout2(this.services, timer);
+        if (session.wakeReconnect === wake) delete session.wakeReconnect;
+        resolve();
+      };
+      const timer = this.services.clock.setTimeout(wake, ms);
+      session.wakeReconnect = wake;
+    });
+  }
+
   /** 等旧拉流收尾（正常会被 stop() 立刻打断）；引擎万一不响应 stop，也不能把重连永久卡住。 */
   private async waitForPullToStop(session: ActiveSession): Promise<void> {
     const pull = session.pullDone;
@@ -2403,13 +2535,16 @@ export class RecorderManager {
     );
   }
 
-  /** 删除联动兜底（#112 根因面）：行被删而会话仍在录=停捕获拆链+清房间录制态，房间不留残影。 */
+  /** 删除联动兜底：行被删而会话仍在录=停捕获拆链+清房间录制态，房间不留残影。 */
   async stopActiveSessionForDeletion(recordingId: string): Promise<void> {
-    const entry = [...this.active.entries()].find(([, s]) => s.recordingId === recordingId);
+    const entry = [...this.active.entries()].find(
+      ([, s]) => s.recordingId === recordingId,
+    );
     if (!entry) return;
     const [roomId, session] = entry;
     session.stopRequested = true;
-    session.requestedEndReason = 'stopped';
+    session.wakeReconnect?.();
+    session.requestedEndReason = "stopped";
     const previewSession = this.previewSessions.get(roomId);
     const sharedRecording = previewSession?.recording;
     if (previewSession && sharedRecording?.session === session) {
@@ -2424,12 +2559,12 @@ export class RecorderManager {
     this.active.delete(roomId);
     const room = this.services.rooms.get(roomId);
     if (room) {
-      this.services.rooms.setState(roomId, 'idle', {
+      this.services.rooms.setState(roomId, "idle", {
         lastCheckedAt: this.services.clock.iso(),
         lastError: null,
       });
       this.services.events.emit({
-        type: 'room:updated',
+        type: "room:updated",
         data: this.enrichRoom(this.services.rooms.get(roomId)!),
       });
     }
@@ -2442,6 +2577,7 @@ export class RecorderManager {
     const session = this.active.get(roomId);
     if (!session) return;
     session.stopRequested = true;
+    session.wakeReconnect?.();
     session.requestedEndReason = endReason;
     {
       const room = this.services.rooms.get(roomId);
@@ -2748,6 +2884,10 @@ export class RecorderManager {
       return;
     }
     const settings = this.settings();
+    if (settings.retry.maxAttempts === 0) {
+      await this.completeRecording(room, recordingId, size, "ended");
+      return;
+    }
     if (endTimestampMs > session.timestampOffsetMs)
       session.timestampOffsetMs = endTimestampMs;
     if (session.gapStartAt === null)
@@ -2756,17 +2896,9 @@ export class RecorderManager {
       this.services.clock.now() - session.lastRecoveryAt >= STABLE_RESET_MS
         ? 0
         : attempt;
-    if (effective >= settings.retry.maxAttempts) {
-      await this.completeRecording(room, recordingId, size, "ended");
-      return;
-    }
-    const rapid =
-      settings.retry.delaysSeconds[effective] ?? settings.retry.maxAttempts;
-    await new Promise<void>((resolve) => {
-      const rapidJittered =
-        Math.min(rapid, 5) * 1000 * (0.8 + Math.random() * 0.4);
-      this.services.clock.setTimeout(() => resolve(), rapidJittered);
-    });
+    const rapid = RECONNECT_CHAIN_SEC[Math.min(effective, RECONNECT_CHAIN_SEC.length - 1)] ?? 0;
+    await this.waitForReconnect(session, Math.min(30_000, rapid * 1000 * (0.8 + Math.random() * 0.4)));
+    if (this.shuttingDown || this.active.get(room.id) !== session) return;
     if (this.active.get(room.id)?.stopRequested) {
       await this.completeRecording(room, recordingId, size, "ended", {
         endReason: session.requestedEndReason ?? "stopped",
@@ -2809,7 +2941,13 @@ export class RecorderManager {
         .adapterFor(room.platform)
         .getStreamUrl(room.url, settings.quality, cookie);
       const cur = this.active.get(room.id);
-      if (!cur) return;
+      if (!cur || this.shuttingDown) return;
+      if (cur.stopRequested) {
+        await this.completeRecording(room, recordingId, cur.size, "ended", {
+          endReason: cur.requestedEndReason ?? "stopped",
+        });
+        return;
+      }
       await this.resumeSession(room, recordingId, cur, stream, effective + 1);
     } catch (err) {
       // 主播刚探测到还在播、这里只是取流/探测失败：属于可重试的中断，必须走退避重试并在额度耗尽时记录原因，
@@ -2921,7 +3059,7 @@ export class RecorderManager {
   }
 
   /**
-   * 分段完成收尾入口（#220）：设置「完成后询问是否保留」开启时，录制完成进入待确认态并挂起
+   * 分段完成收尾入口：设置「完成后询问是否保留」开启时，录制完成进入待确认态并挂起
    * 管线/上传（由保留/不保留/超时/重启决定）；关闭时按原流程立即执行分段级收尾。
    */
   private finishOrConfirm(recordingId: string, forceConfirm = false): void {
@@ -2953,7 +3091,7 @@ export class RecorderManager {
   }
 
   /**
-   * 保留决策（#220）：恢复管线+上传（等价于原分段级收尾）。清除超时定时器；
+   * 保留决策：恢复管线+上传（等价于原分段级收尾）。清除超时定时器；
    * 文件存在 → completed + 收尾；文件缺失 → failed（无法保留）。
    */
   resumeAfterConfirmation(recordingId: string): void {
@@ -3007,12 +3145,12 @@ export class RecorderManager {
     this.finishSegmentProcessing(recordingId);
   }
 
-  /** 不保留决策（#220）：删除文件 + 删除录制记录，并清除超时定时器。 */
+  /** 不保留决策：删除文件 + 删除录制记录，并清除超时定时器。 */
   discardAfterConfirmation(recordingId: string): void {
     this.clearConfirmTimer(recordingId);
     const rec = this.services.recordings.get(recordingId);
     if (!rec) return;
-    this.services.pipeline.cancel(recordingId, '录制已删除');
+    this.services.pipeline.cancel(recordingId, "录制已删除");
     this.cancelClipExport(recordingId);
     if (rec.filePath) {
       void unlink(rec.filePath).catch(() => undefined);
@@ -3027,7 +3165,7 @@ export class RecorderManager {
     });
   }
 
-  /** 启动恢复（#220）：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
+  /** 启动恢复：上次运行遗留的待确认录制按「默认保留」恢复管线/上传。 */
   resumePendingConfirmations(): void {
     const pending = this.services.recordings
       .list({ pageSize: 100 })

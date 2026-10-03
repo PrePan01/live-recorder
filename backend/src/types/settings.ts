@@ -45,7 +45,7 @@ export interface AppSettings {
   quality: Quality;
   /** 录制格式（v4）：source_flv 直写或完成后转 MP4。 */
   recordingFormat: RecordingFormat;
-  /** 检测到开播时是否自动录制（v4，#63）：默认 false；false=仅检测不自动录。 */
+  /** 检测到开播时是否自动录制：默认 false；false=仅检测不自动录。 */
   autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
   retry: RetryConfig;
@@ -53,7 +53,7 @@ export interface AppSettings {
   mail: MailConfig;
   /** 邮件去重窗口 v1 固定 30 分钟，不暴露到 /settings。 */
   dedupeWindowMinutes: number;
-  /** V5 界面主题偏好（FE 持久化经此字段）；缺省 system。 */
+  /** V5 界面主题偏好；缺省 system。 */
   theme: ThemePreference;
   /** 全局悬浮录制按钮半径（px）。 */
   floatingRecorderSize: number;
@@ -61,21 +61,21 @@ export interface AppSettings {
   notifications?: NotificationPreference;
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
   pipeline?: PipelineConfig;
-  /** V5 录制文件命名模板（Batch2 #115）；修改只影响新录制。 */
+  /** V5 录制文件命名模板；修改只影响新录制。 */
   namingRule?: string;
-  /** 录制完成后是否询问保留（#220）：默认关；开启后完成进入待确认态并挂起管线/上传，保留则恢复、不保留则删除。 */
+  /** 录制完成后是否询问保留：默认关；开启后完成进入待确认态并挂起管线/上传，保留则恢复、不保留则删除。 */
   confirmAfterComplete?: boolean;
   /** 普通观看的精彩时刻缓存上限（秒），默认 5 分钟。 */
   highlightBufferSeconds?: number;
   /** 精彩时刻总开关；关闭时普通观看不写入回溯缓存。 */
   highlightEnabled?: boolean;
-  /** V5 OpenList 上传配置（Batch2 #116；令牌经 SecretStore 不落盘）。 */
+  /** V5 OpenList 上传配置。 */
   openlist?: OpenListConfig;
 }
 
 export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';
 
-/** 命名模板支持的变量（#115）。 */
+/** 命名模板支持的变量。 */
 export const NAMING_VARS = ['room', 'platform', 'date', 'time', 'quality', 'roomId'] as const;
 
 export interface NotificationEventPreference {
@@ -123,7 +123,7 @@ export interface PipelineConfig {
   maxConcurrency: number;
   /** 导出音频（mp3，CBR 192k）；默认关，只对之后触发的 run 生效（评估稿 c0e54a5f）。 */
   exportAudio: boolean;
-  /** 封面导出（管线可选步骤，默认开保持现状行为，关=skipped 不执行，task #71）。 */
+  /** 封面导出。 */
   exportCover: boolean;
   /** 输出格式：source=保留录制源格式；mp4=在独立格式转换步骤无损转为 MP4。 */
   outputFormat: 'source' | 'mp4';
@@ -165,9 +165,9 @@ export interface SettingsView {
   notifications?: NotificationPreference;
   /** V5 后处理管线配置视图（与写入契约一致）。 */
   pipeline?: PipelineConfig;
-  /** V5 录制文件命名模板（Batch2 #115）。 */
+  /** V5 录制文件命名模板。 */
   namingRule: string;
-  /** 录制完成后是否询问保留（#220）。 */
+  /** 录制完成后是否询问保留。 */
   confirmAfterComplete: boolean;
   highlightBufferSeconds: number;
   highlightEnabled: boolean;

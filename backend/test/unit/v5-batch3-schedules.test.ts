@@ -13,35 +13,89 @@ function host(app: { inject: (o: Record<string, unknown>) => Promise<{ statusCod
 }
 
 describe('V5 Batch3 #125: schedules', () => {
-it('computeNextRunAt finds next matching weekday start', () => {
-  const now = new Date('2026-08-29T10:00:00.000Z').getTime();
-  const nowDow = new Date(now).getDay();
-  // 若今天不在 daysOfWeek，必然推进到未来某匹配日。
-  const next = computeNextRunAt({ daysOfWeek: [nowDow], startTime: '12:00', endTime: null, timezone: 'local' }, now);
-  expect(next).not.toBeNull();
-  const nextDate = new Date(next!).getTime();
-  expect(nextDate).toBeGreaterThan(now);
-  expect(new Date(next!).getDay()).toBe(nowDow);
+  it('starts today when Saturday 17:00 is still ahead of Saturday 16:50', () => {
+    const now = new Date(2026, 9, 3, 16, 50).getTime();
+    const schedule = { daysOfWeek: [6] as const, startTime: '17:00', endTime: null, timezone: 'local' };
+    const input = { ...schedule, daysOfWeek: [...schedule.daysOfWeek] };
+    expect(computeNextRunAt(input, now)).toBe(new Date(2026, 9, 3, 17, 0).toISOString());
+    // 达到或超过今天的开始时间后，才轮到下周六。
+    for (const minute of [0, 1]) {
+      expect(computeNextRunAt(input, new Date(2026, 9, 3, 17, minute).getTime()))
+        .toBe(new Date(2026, 9, 10, 17, 0).toISOString());
+    }
+    expect(computeNextRunAt({ ...input, daysOfWeek: [] }, now)).toBeNull();
+  });
 
-  // 已过今天 start → 推到下个匹配日（同日已不可能，>7 天内仍有匹配日）。
-  const past = computeNextRunAt({ daysOfWeek: [nowDow], startTime: '09:00', endTime: null, timezone: 'local' }, now);
-  expect(past).not.toBeNull();
-  expect(new Date(past!).getDay()).toBe(nowDow);
-  // 无匹配日 → null。
-  const none = computeNextRunAt({ daysOfWeek: [] as never[], startTime: '12:00', endTime: null, timezone: 'local' }, now);
-  expect(none).toBeNull();
-});
+  it('keeps Saturday 17:11 on October 3 rather than displaying Sunday October 4', () => {
+    const now = new Date(2026, 9, 3, 17, 10).getTime();
+    const next = computeNextRunAt({ daysOfWeek: [1, 6], startTime: '17:11', endTime: null, timezone: 'local' }, now);
+    expect(next).toBe(new Date(2026, 9, 3, 17, 11).toISOString());
+    expect(new Date(next!).getDay()).toBe(6);
+  });
 
-it('honors timezone when computing nextRunAt (#135)', () => {
-  // 基准：2026-08-29 00:00 UTC = 北京 08:00（UTC+8）。
-  const now = new Date('2026-08-29T00:00:00.000Z').getTime();
-  // Asia/Shanghai 时区下今天 08:00 已过，09:00 未到 → 今天 09:00 CST = 01:00 UTC。
-  const next = computeNextRunAt({ daysOfWeek: [6], startTime: '09:00', endTime: null, timezone: 'Asia/Shanghai' }, now);
-  expect(next).toBe('2026-08-29T01:00:00.000Z');
-  // UTC 时区下今天 09:00 未到 → 09:00 UTC。
-  const nextUtc = computeNextRunAt({ daysOfWeek: [6], startTime: '09:00', endTime: null, timezone: 'UTC' }, now);
-  expect(nextUtc).toBe('2026-08-29T09:00:00.000Z');
-});
+  it('uses local time even for legacy explicit or invalid timezones', () => {
+    const now = new Date(2026, 9, 3, 16, 50).getTime();
+    for (const timezone of ['local', 'UTC', 'America/New_York', 'Bad/Zone']) {
+      const next = computeNextRunAt({ daysOfWeek: [6], startTime: '17:00', endTime: '01:00', timezone }, now);
+      expect(next).toBe(new Date(2026, 9, 3, 17, 0).toISOString());
+    }
+  });
+
+  it('handles midnight, calendar rollover and the nearest selected weekday', () => {
+    const now = new Date(2026, 11, 31, 23, 50).getTime();
+    expect(computeNextRunAt({ daysOfWeek: [4, 5, 6], startTime: '00:00', endTime: null, timezone: 'local' }, now))
+      .toBe(new Date(2027, 0, 1, 0, 0).toISOString());
+  });
+
+  it('keeps the local start hour across daylight-saving transitions', () => {
+    for (const [month, day] of [[2, 7], [9, 31]]) {
+      const now = new Date(2026, month!, day!, 23, 50).getTime();
+      const expected = new Date(2026, month!, day! + 1, 17, 0);
+      expect(computeNextRunAt({ daysOfWeek: [0], startTime: '17:00', endTime: null, timezone: 'local' }, now))
+        .toBe(expected.toISOString());
+    }
+  });
+
+  it('creates, lists and executes today’s plan using local time, and repairs old cached dates', async () => {
+    const clock = new FakeClock(new Date(2026, 9, 3, 16, 50).getTime());
+    const services = buildServices({ dbPath: ':memory:', clock });
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 's' });
+    const url = `/api/v1/rooms/${room.id}/schedules`;
+    try {
+      const create = await inj({ method: 'POST', url, payload: { daysOfWeek: [6], startTime: '17:00', timezone: 'UTC' } });
+      expect(create.statusCode).toBe(201);
+      const schedule = create.json().schedule;
+      const today = new Date(2026, 9, 3, 17, 0).toISOString();
+      expect(schedule.timezone).toBe('local');
+      expect(schedule.nextRunAt).toBe(today);
+
+      // 旧版误算到下周的缓存，列表读取时也必须校正。
+      services.schedules.update(schedule.id, { nextRunAt: new Date(2026, 9, 10, 17, 0).toISOString() });
+      const list = (await inj({ method: 'GET', url })).json().schedules;
+      expect(list[0].nextRunAt).toBe(today);
+      expect(services.schedules.get(schedule.id)!.nextRunAt).toBe(today);
+
+      // 旧版指定时区计划在调度时转换；转换前的过期时间不能导致提前执行。
+      services.schedules.update(schedule.id, { timezone: 'America/New_York', nextRunAt: new Date(clock.now() - 60_000).toISOString() });
+      expect(dueSchedules(services, clock.now())).toHaveLength(0);
+      expect(services.schedules.get(schedule.id)!.timezone).toBe('local');
+      expect(services.schedules.get(schedule.id)!.nextRunAt).toBe(today);
+      clock.advance(10 * 60_000);
+      expect(dueSchedules(services, clock.now())).toHaveLength(1);
+      expect(dueSchedules(services, clock.now())).toHaveLength(0);
+      expect(services.schedules.get(schedule.id)!.nextRunAt).toBe(new Date(2026, 9, 10, 17, 0).toISOString());
+
+      const disabled = await inj({ method: 'POST', url, payload: { daysOfWeek: [6], startTime: '18:00', enabled: false } });
+      expect(disabled.json().schedule.nextRunAt).toBeNull();
+      const updated = await inj({ method: 'PATCH', url: `${url}/${schedule.id}`, payload: { startTime: '18:00', timezone: 'UTC' } });
+      expect(updated.json().schedule.timezone).toBe('local');
+      expect(updated.json().schedule.nextRunAt).toBe(new Date(2026, 9, 3, 18, 0).toISOString());
+    } finally {
+      await app.close();
+    }
+  });
 
   it('schedule CRUD with nextRunAt computation', async () => {
     const services = newServices();
@@ -70,14 +124,16 @@ it('honors timezone when computing nextRunAt (#135)', () => {
     const badTime = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '25:99' } });
     expect(badTime.statusCode).toBe(422);
     const badTz = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '20:00', timezone: 'Bad/Zone' } });
-    expect(badTz.statusCode).toBe(422);
+    expect(badTz.statusCode).toBe(201);
+    expect(badTz.json().schedule.timezone).toBe('local');
+    await inj({ method: 'DELETE', url: `/api/v1/rooms/${room.id}/schedules/${badTz.json().schedule.id}` });
 
     const del = await inj({ method: 'DELETE', url: `/api/v1/rooms/${room.id}/schedules/${schedule.id}` });
     expect(del.statusCode).toBe(204);
     const missing = await inj({ method: 'GET', url: `/api/v1/rooms/${room.id}/schedules` });
     expect(missing.json().schedules).toHaveLength(0);
 
-    // 有效 IANA 时区可创建（校验通过）
+    // 旧客户端传入时区时，统一标准化为本机时间。
     const okTz = await inj({ method: 'POST', url: `/api/v1/rooms/${room.id}/schedules`, payload: { daysOfWeek: [1], startTime: '20:00', timezone: 'Asia/Shanghai' } });
     expect(okTz.statusCode).toBe(201);
     await app.close();

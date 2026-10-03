@@ -21,9 +21,10 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../../../types/error";
+import { checkRecordingFile } from "../../../api/recordings";
 import { failurePrimaryText } from "../../../utils/failureReason";
 import { describeError } from "../../../utils/errorMap";
-import { formatBytes, formatDuration, formatTime } from "../../../utils/format";
+import { formatBytes, formatDurationMs, formatTime } from "../../../utils/format";
 import {
   IntegrityTag,
   RecordingStateTag,
@@ -43,6 +44,7 @@ import {
 } from "../../../utils/uploadError";
 import type { Recording } from "../../../types/recording";
 import GapDetail from "./GapDetail";
+import EditableRecordingTitle from "./EditableRecordingTitle";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
 
 type MessageApi = ReturnType<typeof import("antd").App.useApp>["message"];
@@ -51,6 +53,7 @@ export interface RecordingColumnsDeps {
   roomLabel: (r: Recording) => ReactNode;
   openDirectory: (id: string) => Promise<unknown>;
   removeRecording: (id: string) => Promise<unknown>;
+  renameRecording: (id: string, title: string) => Promise<void>;
   message: MessageApi;
   handleManualUpload: (id: string) => Promise<unknown>;
   handleUploadErrorDetail: (recording: Recording) => void;
@@ -68,6 +71,7 @@ export function buildRecordingColumns(
     roomLabel,
     openDirectory,
     removeRecording,
+    renameRecording,
     message,
     handleManualUpload,
     handleUploadErrorDetail,
@@ -98,9 +102,11 @@ export function buildRecordingColumns(
       ellipsis: true,
       render: (t: string, r) => (
         <div className="lr-history-title-cell">
-          <Typography.Text ellipsis title={t || "未命名"}>
-            {t || "未命名"}
-          </Typography.Text>
+          <EditableRecordingTitle
+            id={r.id}
+            title={t}
+            onSave={renameRecording}
+          />
           <Button
             size="small"
             type="text"
@@ -158,7 +164,9 @@ export function buildRecordingColumns(
     {
       title: "时长",
       width: 85,
-      render: (_, r) => formatDuration(r.startedAt, r.endedAt),
+      render: (_, r) =>
+        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
+        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "状态",
@@ -364,7 +372,20 @@ export function buildRecordingColumns(
             type="link"
             icon={<PlayCircleOutlined />}
             disabled={r.state !== "completed" || !r.filePath}
-            onClick={() => setPlaying(r)}
+            onClick={async () => {
+              try {
+                await checkRecordingFile(r.id);
+                setPlaying(r);
+              } catch (e) {
+                message.error(
+                  e instanceof ApiError && e.status === 404
+                    ? "录像文件已删除"
+                    : e instanceof ApiError
+                      ? describeError(e.code, e.message)
+                      : "无法播放录像，请稍后重试",
+                );
+              }
+            }}
           >
             播放
           </Button>

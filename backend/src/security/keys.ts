@@ -10,7 +10,7 @@ export const OPENLIST_TOKEN_KEY = 'openlist.token';
 export const KEYCHAIN_SERVICE = 'live-recorder';
 
 /**
- * 按环境取钥匙串服务名（#224 P0 隔离）：dev（LIVE_RECORDER_DATA_DIR 隔离）用独立服务名
+ * 按环境取钥匙串服务名：dev（LIVE_RECORDER_DATA_DIR 隔离）用独立服务名
  * `live-recorder-dev`，与生产正式客户端凭据（Cookie/SMTP/OpenList token）完全隔离互不读写。
  */
 export function keychainService(): string {

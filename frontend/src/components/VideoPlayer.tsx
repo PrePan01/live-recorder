@@ -5,6 +5,7 @@ import { previewWsUrl } from "../api/client";
 import { reportError } from "../utils/errorDiagnostics";
 import { isPlausibleSeekOffset } from "../utils/recordingTimeline";
 import { prepareSeekPlayback } from "../utils/prepareSeekPlayback";
+import { holdVideoFrame, releaseVideoFrame, waitForVideoFrame } from "../utils/videoFrameTransition";
 
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
@@ -26,6 +27,8 @@ export interface VideoPlayerProps {
   onStreamAspectRatio?: (ratio: number) => void;
   /** 预览弹窗：fill 未开启时用于排版的宽高比；不传保持 16:9（直播墙不动）。 */
   aspectRatio?: number;
+  /** 预览切流期间保留最后一帧，直到新源真正呈现画面。 */
+  preserveFrameOnSwitch?: boolean;
   /** 跳播回看源：携带目标时间和解码关键帧时间；空=实时直播。 */
   seek?: { url: string; generation: number; second: number; startSecond: number } | null;
   /** 回看播到已写尾部 →调用方切回实时。 */
@@ -44,12 +47,21 @@ export default function VideoPlayer({
   onVideoElementChange,
   onStreamAspectRatio,
   aspectRatio,
+  preserveFrameOnSwitch = false,
   seek = null,
   onSeekTail,
   onSeekFirstFrame,
   onLiveFirstFrame,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const transitionRef = useRef<HTMLCanvasElement>(null);
+  const holdFrame = useCallback(() => {
+    if (preserveFrameOnSwitch && videoRef.current && transitionRef.current)
+      holdVideoFrame(videoRef.current, transitionRef.current);
+  }, [preserveFrameOnSwitch]);
+  const releaseFrame = useCallback(() => {
+    if (transitionRef.current) releaseVideoFrame(transitionRef.current);
+  }, []);
   const attachVideoRef = useCallback(
     (element: HTMLVideoElement | null) => {
       videoRef.current = element;
@@ -111,6 +123,7 @@ export default function VideoPlayer({
     if (currentRoomIdRef.current !== roomId) {
       currentRoomIdRef.current = roomId;
       hasEverPlayedRef.current = false;
+      releaseFrame();
     }
     setState("loading");
     setErrorMsg("");
@@ -128,6 +141,7 @@ export default function VideoPlayer({
     let lastProgressAt = Date.now();
     let hasPlayed = false;
     let playingListener: (() => void) | null = null;
+    let stopWaitingForFrame: (() => void) | null = null;
 
     const video = videoRef.current;
     const startMutedForAutoplay = () => {
@@ -149,10 +163,13 @@ export default function VideoPlayer({
       video.muted = preferredMuted;
     };
     const destroyPlayer = (deferred = false) => {
+      stopWaitingForFrame?.();
+      stopWaitingForFrame = null;
       if (playingListener && video)
         video.removeEventListener("playing", playingListener);
       playingListener = null;
       const current = player;
+      if (current) holdFrame();
       player = null;
       // mpegts may emit ERROR inside appendMediaSegment, then continue using its
       // controllers. Let that stack finish before destroying those controllers.
@@ -203,7 +220,12 @@ export default function VideoPlayer({
         restoreAudioPreference();
         lastProgressAt = Date.now();
         retry = 0;
-        liveFirstFrameRef.current?.();
+        if (!stopWaitingForFrame) {
+          stopWaitingForFrame = waitForVideoFrame(videoRef.current!, () => {
+            releaseFrame();
+            liveFirstFrameRef.current?.();
+          }, () => !disposed && player === instance);
+        }
       };
       videoRef.current.addEventListener("playing", playingListener);
       instance.on(EVENTS.ERROR, (_t, _detail) => {
@@ -270,11 +292,17 @@ export default function VideoPlayer({
     );
     instance.attachMediaElement(video);
     let positioned = false;
+    let stopWaitingForFrame: (() => void) | null = null;
     const onPlaying = () => {
       if (stale() || !positioned) return;
       hasEverPlayedRef.current = true;
       setState("playing");
-      onSeekFirstFrame?.(gen);
+      if (!stopWaitingForFrame) {
+        stopWaitingForFrame = waitForVideoFrame(video, () => {
+          releaseFrame();
+          onSeekFirstFrame?.(gen);
+        }, () => !stale());
+      }
     };
     const onEnded = () => {
       if (stale() || !positioned) return;
@@ -333,6 +361,8 @@ export default function VideoPlayer({
     return () => {
       disposed = true;
       cancelAnimationFrame(loadFrame);
+      stopWaitingForFrame?.();
+      holdFrame();
       stopPreparing();
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("ended", onEnded);
@@ -343,7 +373,7 @@ export default function VideoPlayer({
       }
       instance.destroy();
     };
-  }, [seek, onSeekTail, onSeekFirstFrame]);
+  }, [seek, onSeekTail, onSeekFirstFrame, holdFrame, releaseFrame]);
 
   // 实时首帧回调仅在直播路径生效；effect 依赖保持最小，避免重连风暴。
   const liveFirstFrameRef = useRef(onLiveFirstFrame);
@@ -406,6 +436,23 @@ export default function VideoPlayer({
           display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />
+      {preserveFrameOnSwitch && (
+        <canvas
+          ref={transitionRef}
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            background: "#000",
+            pointerEvents: "none",
+            display: "none",
+            visibility: state === "error" || state === "ended" ? "hidden" : "visible",
+          }}
+        />
+      )}
     </div>
   );
 }

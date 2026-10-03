@@ -64,9 +64,9 @@ export async function recoverStaleRecordings(
 }
 
 /**
- * 启动恢复孤儿管线 run（task #59）：管线 run 执行中进程被杀（升级/崩溃/强退）后，
+ * 启动恢复孤儿管线 run：管线 run 执行中进程被杀（升级/崩溃/强退）后，
  * queued/running 状态永久卡死、recording 停在 processing、ffmpeg .part 半截残留、
- * retry 被守卫拦死——此前 recovery 对 pipeline_runs 零引用（先于 #57 的底座稳定性洞）。
+ * retry 被守卫拦死——此前 recovery 对 pipeline_runs 零引用。
  * 处置：孤儿 run → failed（「服务重启中断，可重试」）、其 queued/running artifacts → failed 同文案、
  * recording 复位（processing→有文件 completed / 无文件 failed，pipelineStatus=failed 放开 retry）、
  * 清理录制目录下孤儿 *.part（重启后无在途 ffmpeg，后缀白名单删除安全；下次 run 起始 discardTemp 兜底仍在）。

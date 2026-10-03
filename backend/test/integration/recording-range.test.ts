@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -32,6 +32,14 @@ describe('recording HTTP range playback', () => {
     const multiple = await app.inject({ ...base, headers: { ...base.headers, range: 'bytes=0-1,3-4' } });
     expect(multiple.statusCode).toBe(200);
     expect(multiple.rawPayload).toEqual(data);
+    const head = await app.inject({ ...base, method: 'HEAD' });
+    expect(head.statusCode).toBe(200);
+    expect(head.headers['content-length']).toBe(String(data.length));
+    expect(head.rawPayload.length).toBe(0);
+    await unlink(file);
+    const missing = await app.inject({ ...base, method: 'HEAD' });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.rawPayload.length).toBe(0);
     await app.close();
   });
 });

@@ -197,7 +197,7 @@ export function installShutdownSignals(run: SidecarResult): void {
 }
 
 /**
- * 父进程死亡自检（#199 兜底）：Tauri 宿主被强杀/崩溃（未走优雅退出）时，
+ * 父进程死亡自检：Tauri 宿主被强杀/崩溃（未走优雅退出）时，
  * 后端子进程会被 reparent 到 init/launchd，process.ppid 变化即判定宿主已退出，
  * 优雅收束（关服务→删 ready/锁）后自行退出，避免孤儿后端常驻占用 43120 致新版连旧后端。
  */

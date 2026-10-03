@@ -382,7 +382,7 @@ export function validatePipelineConfig(config: PipelineConfig): AppError | null 
   return null;
 }
 
-/** V5 邮件服务商预设（#117）：常用 SMTP 一键填充。 */
+/** V5 邮件服务商预设：常用 SMTP 一键填充。 */
 export const SMTP_PRESETS = [
   { id: 'qq', name: 'QQ 邮箱', host: 'smtp.qq.com', port: 465, secure: true },
   { id: '163', name: '网易 163', host: 'smtp.163.com', port: 465, secure: true },
@@ -391,7 +391,7 @@ export const SMTP_PRESETS = [
   { id: 'custom', name: '自定义', host: '', port: 465, secure: true },
 ] as const;
 
-/** 按 host 探测服务商 id（供 FE 预设下拉回显）。 */
+/** 按 host 探测服务商 id。 */
 export function detectProvider(host: string): string {
   if (!host) return 'custom';
   const found = SMTP_PRESETS.find((p) => p.host && host.includes(p.host.replace(/^smtp\./, '')));
