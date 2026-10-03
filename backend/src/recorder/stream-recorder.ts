@@ -13,10 +13,10 @@ import type {
 
 /**
  * 首字节之后允许的静默上限：CDN 只挂连接不吐数据时，超时即判定本次拉流已断，
- * 交给上层续录重试。直播流每秒都在推数据，30 秒静默已经等同连接死掉；与启动阶段
- * "30 秒拿不到数据就重试" 同口径。再短（10~15 秒）会在网络拥塞 / TCP 重传时误判成断流。
+ * 交给上层续录重试。6 秒≈2~3 个直播 GOP 没数据=流已死（历史断流恢复节奏 5.7~7.3s
+ * 全落此窗内）；宁可弱网下偶发误判重连（重连上有数据即回归），也不静默干等丢内容。
  */
-const STALL_TIMEOUT_MS = 30_000;
+const STALL_TIMEOUT_MS = 6_000;
 
 function safeWriter(ws: ReturnType<typeof createWriteStream>): {
   write: (chunk: Buffer) => Promise<void>;
@@ -175,7 +175,12 @@ export class FlvTimestampNormalizer {
   }
 
   /** 只把关键帧与序列头交给索引；偏移=已产出字节 + 续录基准。 */
-  private notifyTag(tagType: number, offset: number, tagLen: number, ts: number): void {
+  private notifyTag(
+    tagType: number,
+    offset: number,
+    tagLen: number,
+    ts: number,
+  ): void {
     const onTag = this.options.onTag;
     if (!onTag) return;
     const d0 = this.buffer[offset + 11]!;
@@ -224,7 +229,7 @@ export class FlvTimestampNormalizer {
     return out;
   }
 
-  /** 收尾：只返回完整 FLV 标签；丢弃不完整的尾部标签，保证落盘文件结构完整（#181：截断尾标签致 ffprobe duration=0 → 误判损坏）。 */
+  /** 收尾：只返回完整 FLV 标签；丢弃不完整的尾部标签，保证落盘文件结构完整。 */
   remaining(): Buffer {
     if (this.buffer.length === 0) return this.buffer;
     let offset = 0;
@@ -286,6 +291,9 @@ export class StreamRecordingEngine implements RecordingEngine {
       }
     } catch (err) {
       if (this.stopped) return;
+      console.log(
+        `[recording ${new Date().toISOString()}] capture-failed file=${outputPath ?? "preview-upstream"} err=${this.toErrorObject(err).message}`,
+      );
       yield {
         type: "error",
         error: this.toErrorObject(err),
@@ -321,6 +329,10 @@ export class StreamRecordingEngine implements RecordingEngine {
       ? createWriteStream(outputPath, { flags: append ? "a" : "w" })
       : null;
     const writer = ws ? safeWriter(ws) : null;
+    // 写盘链起点：与收束行成对，供比对写入总量与内容时长。
+    console.log(
+      `[recording ${new Date().toISOString()}] writer-open file=${outputPath ?? "preview-upstream"} append=${append}`,
+    );
     // 跳播定位索引：写盘链逐标签顺手记关键帧偏移（追加写、不反压录制；失败只降级索引）。
     const seekWriter = outputPath
       ? await SeekIndexWriter.open(outputPath, existing?.size ?? 0)
@@ -347,6 +359,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     // 本段按断流上报，由上层进入续录重试。只在拿到过数据之后才计时，启动阶段交给上层 30s 超时。
     let stallTimer: ReturnType<typeof setTimeout> | null = null;
     let stalled = false;
+    let receivedBytes = false;
     const armStallWatchdog = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
@@ -369,11 +382,17 @@ export class StreamRecordingEngine implements RecordingEngine {
         }
         if (done) break;
         if (this.stopped) break;
-        armStallWatchdog();
+        const previousTs = normalizer.lastTimestampMs;
         const chunk = Buffer.from(value);
+        const parts = normalizer.push(chunk);
+        // Pure preview uses byte activity; recordings require media time to advance.
+        if (!receivedBytes || !outputPath || normalizer.lastTimestampMs > previousTs) {
+          armStallWatchdog();
+        }
+        receivedBytes = true;
         // 写盘 + 预览都使用时间戳归一化后的完整 FLV 标签：
         // 文件时长正确（#148），且预览流时间戳为相对值，mpegts.js 实时模式（isLive:true）才能正常推进（#150）。
-        for (const part of normalizer.push(chunk)) {
+        for (const part of parts) {
           size += part.length;
           if (writer) await writer.write(part);
           yield { type: "data", chunk: part };
@@ -399,6 +418,14 @@ export class StreamRecordingEngine implements RecordingEngine {
         await seekWriter.close();
         endSeekWriter(outputPath);
       }
+      // 收束时同帧输出写入字节与最大媒体时间戳：比值异常即写入量与内容时长失配。
+      console.log(
+        `[recording ${new Date().toISOString()}] writer-close file=${outputPath ?? "preview-upstream"} bytes=${size} lastTs=${this.lastTimestampMs}ms`,
+      );
+      // 收束日志须在 finally 内：停录走 generator.return() 只执行 finally、其后语句被跳过。
+      console.log(
+        `[recording ${new Date().toISOString()}] capture-end file=${outputPath ?? "preview-upstream"} ${this.stopped ? "stop-requested" : "source-exhausted"}`,
+      );
     }
     if (this.stopped) return;
     yield {
@@ -418,33 +445,46 @@ export class StreamRecordingEngine implements RecordingEngine {
     const existing = resume?.append
       ? await stat(outputPath).catch(() => null)
       : null;
-    const ws = createWriteStream(outputPath, {
+    const ws = outputPath ? createWriteStream(outputPath, {
       flags: resume?.append ? "a" : "w",
-    });
-    const writer = safeWriter(ws);
+    }) : null;
+    const writer = ws ? safeWriter(ws) : null;
     let size = existing?.size ?? 0;
     const seen = new Set<string>();
-    yield { type: "file_created", filePath: outputPath };
+    if (outputPath) yield { type: "file_created", filePath: outputPath };
     let ended = false;
+    // 停流看门狗：分片/字节静默超阈即判流死（flag+abort 让在途 fetch 收束抛错），
+    // 走既有断流重连链；此前 HLS 路径无判据裸奔。
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    const armStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        this.controller?.abort();
+      }, this.stallTimeoutMs);
+      stallTimer.unref();
+    };
     try {
-      for (let round = 0; round < 256 && !this.stopped; round += 1) {
+      armStall();
+      while (!this.stopped) {
         const text = await this.fetchText(input.url, input.headers);
         const parsed = parseM3u8(text, input.url);
         ended = parsed.ended;
-        let progressed = false;
         for (const seg of parsed.segments) {
           if (this.stopped) return;
           if (seen.has(seg)) continue;
           seen.add(seg);
           for await (const chunk of this.fetchChunks(seg, input.headers)) {
+            armStall();
             size += chunk.length;
-            await writer.write(chunk);
+            await writer?.write(chunk);
             yield { type: "data", chunk };
           }
-          progressed = true;
         }
         if (this.stopped) return;
-        if (ended || !progressed) break;
+        if (ended) break;
+        if (stalled) throw new AppError("NETWORK_UNAVAILABLE", "HLS 直播流长时间无数据", { retryable: true });
         // #226：轮询间隔自适应分片目标时长（默认 3s），HLS 短分片（如 2s）不再每 3s 才一波数据致周期性卡顿。
         await new Promise((r) =>
           setTimeout(r, hlsPollIntervalMs(parsed.targetDuration)),
@@ -453,7 +493,8 @@ export class StreamRecordingEngine implements RecordingEngine {
     } finally {
       // stop() 可在任一 HLS 分片/轮询点返回；无论哪条路径退出都必须收尾，
       // 否则既可能丢尾，也可能让收尾阶段的异步写盘错误无人接住。
-      await writer.close();
+      if (stallTimer) clearTimeout(stallTimer);
+      await writer?.close();
     }
     if (this.stopped) return;
     yield {

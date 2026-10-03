@@ -10,7 +10,7 @@ import { APP_VERSION } from "../sidecar/types.js";
 import { resolveMarkerSidecarPath } from "../storage/recording-markers.js";
 
 /**
- * 录制备份与导出（V5 Batch3 #127）：单场/批量打包为目录（源文件 + sidecar 元数据 + 封面），
+ * 录制备份与导出：单场/批量打包为目录（源文件 + sidecar 元数据 + 封面），
  * 生成 manifest.json（含哈希/版本，不含密钥）。缺失 sidecar/封面标部分成功，不损坏源文件。
  */
 export class ExportManager {
@@ -57,7 +57,7 @@ export class ExportManager {
   /**
    * 启动恢复：进程中断遗留的 queued/running 导出任务置失败。
    * 目标目录参数只存在于创建时的内存里（未落库），无法原地续跑——
-   * 置失败并注明原因，用户重新点导出即可（task #66 修复面，与管线/上传孤儿恢复同型）。
+   * 置失败并注明原因，用户重新点导出即可。
    */
   recoverInterrupted(): number {
     const stuck = this.repo

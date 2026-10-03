@@ -18,7 +18,7 @@ interface QueueEntry {
   runId?: string;
 }
 /**
- * 后处理管线（V5 Batch2 #114）：并发 N=2 FIFO、录制主链路优先（不占录制线程）。
+ * 后处理管线：并发 N=2 FIFO、录制主链路优先（不占录制线程）。
  * 步骤：verify(ffprobe) → sidecar(元数据) → cover(封面帧) → segment(切片) → compress(压缩/remux) → archive(归档)。
  * 单步失败 → partial（保成功产物）；致命校验失败（源文件损坏）→ failed 但保留源文件。
  * 配置快照随 run 存储，改配置不追溯历史 run。

@@ -562,3 +562,134 @@ describe("#226 HLS 轮询间隔自适应", () => {
     expect(hlsPollIntervalMs(null)).toBe(3000);
   });
 });
+
+describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）', () => {
+  it('④ 涓流判据双面：TS 冻结不算活跃、TS 推进算活跃、纯预览按字节活跃', async () => {
+    const { mediaAliveSince } = await import("../../src/core/recorder-manager.js");
+    // 冻结 TS 的涓流字节（空录制死法）：不算活跃 → 看门狗不复位 → 触发换流
+    expect(mediaAliveSince(1000, 1000)).toBe(false);
+    expect(mediaAliveSince(1000, 999)).toBe(false);
+    // TS 推进（哪怕缓慢）= 有真内容 = 活跃
+    expect(mediaAliveSince(1000, 1001)).toBe(true);
+    // 纯预览（无录制，ts=-1）按字节活跃
+    expect(mediaAliveSince(-1, -1)).toBe(true);
+  });
+
+  it('③ HLS 停流看门狗：分片静默超阈 → 收束报错交上层断流重连（不再裸奔）', async () => {
+    const { StreamRecordingEngine } = await import("../../src/recorder/stream-recorder.js");
+    // 伪 fetcher：首个清单正常、分片请求永久挂起（模拟 CDN 挂连接不吐数据）
+    const fakeFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(".m3u8")) {
+        return Promise.resolve(
+          new Response("#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n"),
+        );
+      }
+      // 挂起的分片请求：真实 fetch 在 abort 时会 reject——伪实现必须同样听 signal。
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    }) as unknown as typeof fetch;
+    const engine = new StreamRecordingEngine(fakeFetch, 80); // 80ms 停流阈值（测试缩时）
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-hls-stall-"));
+    const events: string[] = [];
+    const errors: string[] = [];
+    const t0 = Date.now();
+    for await (const ev of engine.start(
+      { url: "https://x/live.m3u8", format: "hls" },
+      path.join(dir, "a.ts"),
+    )) {
+      events.push(ev.type);
+      if (ev.type === "error") { errors.push(ev.error.code); expect(ev.error.retryable).toBe(true); }
+    }
+    const elapsed = Date.now() - t0;
+    // 看门狗必须在阈值附近收束（远小于旧 30s 语义），且不会挂死
+    expect(elapsed).toBeLessThan(3000);
+    expect(elapsed).toBeGreaterThanOrEqual(60);
+    expect(errors).toEqual(["NETWORK_UNAVAILABLE"]);
+    expect(events).not.toContain("completed");
+  });
+});
+
+describe('断流立即重试·阈值与链语义钉', () => {
+  it('零等待首试+退避链封顶：链首 0 秒（判定即试）、递增、30 秒封顶', async () => {
+    const { RECONNECT_CHAIN_SEC, GAP_ROW_MIN_MS, RECONNECT_ALERT_AFTER_MS } =
+      await import("../../src/core/recorder-manager.js");
+    expect(RECONNECT_CHAIN_SEC[0]).toBe(0);            // 判定即首试零等待
+    for (let i = 1; i < RECONNECT_CHAIN_SEC.length; i += 1) {
+      expect(RECONNECT_CHAIN_SEC[i]!).toBeGreaterThanOrEqual(RECONNECT_CHAIN_SEC[i - 1]!);
+    }
+    expect(Math.max(...RECONNECT_CHAIN_SEC)).toBe(30); // 30s 封顶
+    expect(GAP_ROW_MIN_MS).toBe(30_000);               // 缺口条目门槛=30s（时长不丢秒在累计面）
+    expect(RECONNECT_ALERT_AFTER_MS).toBe(5 * 60_000); // 持续重连 5 分钟发人话告警
+  });
+});
+
+describe("media progress watchdog", () => {
+  function liveFetch(frozen: boolean): typeof fetch {
+    return (async (_url, init) => {
+      let tick = 0;
+      let cancelled = false;
+      let timer: ReturnType<typeof setInterval>;
+      const tag = (ts: number) => {
+        const b = Buffer.alloc(16);
+        b[0] = 9; b.writeUIntBE(1, 1, 3); b.writeUIntBE(ts, 4, 3);
+        b[11] = 0x12; b.writeUInt32BE(12, 12); return b;
+      };
+      return new Response(new ReadableStream({
+        start(c) {
+          c.enqueue(Buffer.concat([Buffer.from([70,76,86,1,1,0,0,0,9,0,0,0,0]), tag(0)]));
+          timer = setInterval(() => c.enqueue(tag(frozen ? 0 : ++tick * 10)), 10);
+          init?.signal?.addEventListener("abort", () => { clearInterval(timer); if (!cancelled) c.close(); }, { once: true });
+        },
+        cancel() { cancelled = true; clearInterval(timer); },
+      }));
+    }) as typeof fetch;
+  }
+
+  it("interrupts a recording whose bytes keep arriving with frozen timestamps", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-frozen-"));
+    const engine = new StreamRecordingEngine(liveFetch(true), 60);
+    const errors: string[] = [];
+    const guard = setTimeout(() => void engine.stop(), 1500);
+    try {
+      for await (const ev of engine.start({url: "https://x/live.flv", format: "flv"}, path.join(dir, "a.flv"))) {
+        if (ev.type === "error") errors.push(ev.error.code);
+      }
+      expect(errors).toEqual(["NETWORK_UNAVAILABLE"]);
+      expect((await stat(path.join(dir, "a.flv"))).size).toBeGreaterThan(13);
+    } finally { clearTimeout(guard); await engine.stop(); }
+  });
+
+  it.each([false, true])("keeps healthy recording / byte-active preview alive (preview=%s)", async preview => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-progress-"));
+    const engine = new StreamRecordingEngine(liveFetch(preview), 60);
+    const errors: string[] = [];
+    const stop = setTimeout(() => void engine.stop(), 180);
+    try {
+      for await (const ev of engine.start({url: "https://x/live.flv", format: "flv"}, preview ? null : path.join(dir, "a.flv"))) {
+        if (ev.type === "error") errors.push(ev.error.code);
+      }
+      expect(errors).toEqual([]);
+    } finally { clearTimeout(stop); await engine.stop(); }
+  });
+});
+
+describe("HLS watchdog cleanup", () => {
+  it("does not abort after the final playlist completes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-hls-end-"));
+    let signal: AbortSignal | null = null;
+    const fetcher = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? null;
+      return new Response("#EXTM3U\n#EXT-X-ENDLIST\n");
+    }) as typeof fetch;
+    const engine = new StreamRecordingEngine(fetcher, 40);
+    const events: string[] = [];
+    for await (const ev of engine.start({ url: "https://x/live.m3u8", format: "hls" }, path.join(dir, "a.ts"))) events.push(ev.type);
+    await new Promise(r => setTimeout(r, 80));
+    expect(events).toContain("completed");
+    expect(signal!.aborted).toBe(false);
+  });
+});

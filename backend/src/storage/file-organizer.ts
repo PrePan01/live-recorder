@@ -66,7 +66,7 @@ export async function uniqueTargetPath(
   return { targetPath, base: path.basename(targetPath, ext) };
 }
 
-/** 录制文件路径：source_flv 直写用 .flv；mp4_after 录制阶段仍落 .flv，完成后转 MP4。template 为 V5 命名规则（#115，null 时用时间戳）。 */
+/** 录制文件路径：source_flv 直写用 .flv；mp4_after 录制阶段仍落 .flv，完成后转 MP4。template 为 V5 命名规则。 */
 export function recordingFilePath(recordingDirectory: string, platform: Platform, displayName: string, startedAtIso: string, format?: RecordingFormat, template?: string | null, quality?: string, roomId?: string): string {
   const ext = format === 'mp4_after' ? '.flv' : '.flv';
   const base = resolveBaseName(displayName, startedAtIso, platform, quality, roomId, template);

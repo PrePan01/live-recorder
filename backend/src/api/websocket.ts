@@ -46,7 +46,7 @@ function isKeyframeTag(tag: Buffer): boolean {
 
 /**
  * FLV 初始化段提取器：只缓存流头 + onMetaData + AVC/AAC sequence headers，
- * 不缓存媒体帧——避免中途加入重放带时间戳的旧媒体导致 MSE 时间断点卡播（#193「卡在第一秒」）。
+ * 不缓存媒体帧——避免中途加入重放带时间戳的旧媒体导致 MSE 时间断点卡播。
  */
 class FlvInitExtractor {
   private pending: Buffer = Buffer.alloc(0);
@@ -159,7 +159,7 @@ class FlvInitExtractor {
   }
 }
 
-/** 预览会话上限（V5 直播墙 #124）：最多 4 个活跃预览会话（按房间计数）。 */
+/** 预览会话上限：最多 4 个活跃预览会话（按房间计数）。 */
 export const PREVIEW_MAX_SESSIONS = 4;
 
 export class PreviewManager {

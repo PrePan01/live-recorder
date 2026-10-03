@@ -13,10 +13,10 @@ export type MonitorState =
   | 'failed'
   | 'disabled';
 
-/** 最近一次检测的直播状态（#78）：live=开播、offline=未开播、restricted=受限/需更新 Cookie。 */
+/** 最近一次检测的直播状态：live=开播、offline=未开播、restricted=受限/需更新 Cookie。 */
 export type LiveStatus = 'live' | 'offline' | 'restricted';
 
-/** 房间标题来源（V5 #91 扩展）：adapter=平台接口识别、fallback=回退源、manual=手动改名、placeholder=安全占位（#128）。 */
+/** 房间标题来源：adapter=平台接口识别、fallback=回退源、manual=手动改名、placeholder=安全占位。 */
 export type TitleSource = 'adapter' | 'fallback' | 'manual' | 'placeholder';
 
 export interface Room {
@@ -28,11 +28,11 @@ export interface Room {
   avatarUrl: string | null;
   enabled: boolean;
   favorited: boolean;
-  /** 是否单独设置自动录制（v4 P0 #75）：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
+  /** 是否单独设置自动录制：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
   autoRecord: boolean | null;
   /** 是否在该直播间离线转开播时发送桌面提醒；默认关闭。 */
   liveNotificationEnabled: boolean;
-  /** 最近一次检测的直播状态（#78）：live/offline/restricted，未检测过为 null。 */
+  /** 最近一次检测的直播状态：live/offline/restricted，未检测过为 null。 */
   lastLiveStatus: LiveStatus | null;
   /** 当前已确认开播周期的本地起点；下播后清空。自动录制去重只在此周期内生效。 */
   liveStartedAt: string | null;
@@ -55,7 +55,7 @@ export interface Room {
   tags: Tag[];
   /** V5 上传开关：null=继承全局 openlist.enabled；true/false=单独覆盖。 */
   uploadEnabled: boolean | null;
-  /** V5 标题识别元数据（#91）：识别来源与时间，供 UI 展示回退/手动状态。 */
+  /** V5 标题识别元数据：识别来源与时间，供 UI 展示回退/手动状态。 */
   titleSource: TitleSource | null;
   titleUpdatedAt: string | null;
   titleFallbackUsed: boolean;

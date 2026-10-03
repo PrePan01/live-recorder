@@ -3,16 +3,16 @@ import { fetchTasks } from '../api/tasks';
 import type { TaskItem } from '../types/tasks';
 
 /**
- * 任务进度聚合 store（#103）。
+ * 任务进度聚合 store。
  *
- * 展示口径（拍板）：
+ * 展示口径：
  * - 角标 = 在途清单长度；完成任务展示宽限 5 秒后，弹窗与角标同步消失
  *   （宽限期内仍计数；同刻完成的一批一起减）；
  * - 后端「完成即离在途扫描」——消失的任务由前端留 5 秒展示宽限（后端不存已读）；
- * - 数据 = GET /api/v1/tasks 聚合 + 听现有 SSE（debounce 800ms 重拉，#84 失效模式）
+ * - 数据 = GET /api/v1/tasks 聚合 + 听现有 SSE（debounce 800ms 重拉）
  *   + 1.5s 真轮询兜底，不新增事件契约；SSE 断线角标不冻结、重连校准。
  *
- * ⚠ 反饥饿（QA 矩阵 p0v 抓到的真缺陷）：debounce 重拉在密集事件段会被无限重置
+ * ⚠ 反饥饿：debounce 重拉在密集事件段会被无限重置
  * （任务正在变化的时刻恰恰拉不成）——轮询必须**直调 refresh()**（真轮询），
  * 绝不能与 debounce 共用一个入口；debounce 只负责 SSE 突发的合并降频。
  */

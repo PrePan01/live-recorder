@@ -278,7 +278,7 @@ export class RoomRepository {
       .run(title?.trim() || null, nowIso(), id);
   }
 
-  /** 写入房间标题识别元数据（V5 #91：识别来源/时间/回退标记）。 */
+  /** 写入房间标题识别元数据。 */
   setTitleInfo(id: string, info: { titleSource: TitleSource; titleFallbackUsed: boolean }): void {
     this.db
       .prepare(`UPDATE rooms SET title_source = ?, title_updated_at = ?, title_fallback_used = ?, updated_at = ? WHERE id = ?`)

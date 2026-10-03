@@ -6,6 +6,7 @@ import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS, KEEP_CONFIRM_TIMEOUT_MS } from '../../src/core/recorder-manager.js';
+import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 
 function newServices(): Services {
@@ -135,6 +136,7 @@ describe('#220 录制完成「询问是否保留」', () => {
     services.rooms.setLiveStatus(room.id, 'live');
 
     await services.manager.maybeStartRecording(services.rooms.get(room.id)!, { streamSessionId: 'floating-session' }, { manual: true, origin: 'floating' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'offline' }]);
     const deadline = Date.now() + 5_000;
     while (!services.recordings.list({ pageSize: 100 }).items.some((r) => r.state === 'completed') && Date.now() < deadline) {
       clock.advance(500);

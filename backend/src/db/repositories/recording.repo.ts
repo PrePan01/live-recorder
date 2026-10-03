@@ -217,7 +217,7 @@ export class RecordingRepository {
     return rows.map(rowToRecording);
   }
 
-  /** 批量附最近上传任务快照（#190）：单次窗口函数查询取每录制最新任务，避免 N+1。 */
+  /** 批量附最近上传任务快照：单次窗口函数查询取每录制最新任务，避免 N+1。 */
   private attachUploadSnapshots(rows: RecordingRow[]): void {
     if (rows.length === 0) return;
     const ids = rows.map((r) => r.id);

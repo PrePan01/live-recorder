@@ -469,6 +469,7 @@ describe("RecorderManager", () => {
     services.engineFor = () => emptyEngine as never;
     (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([
       { status: "offline" },
+      { status: "offline" },
     ]);
     const room = services.rooms.create({
       platform: "bilibili",
@@ -607,7 +608,7 @@ describe("RecorderManager", () => {
       },
       stop: async () => {},
     });
-    // 一直开播：让重试持续进行，直到额度耗尽（脚本耗尽后回落 live）。
+    // 一直开播：连续失败超过旧次数额度，仍应保持恢复。
     (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({
       platform: "bilibili",
@@ -632,23 +633,11 @@ describe("RecorderManager", () => {
       80,
     );
 
-    // 重试额度耗尽后才收尾；全程只有一条记录，不因为重试多出记录。
-    await waitForWithClock(
-      clock,
-      () =>
-        services.recordings.list({ roomId: room.id }).items[0]!.state ===
-        "failed",
-      500,
-    );
-    const recs = services.recordings.list({ roomId: room.id }).items;
-    expect(recs).toHaveLength(1);
-    expect(recs[0]!.failureReason?.code).toBe(
-      "STREAM_DISCONNECTED_RECONNECT_EXHAUSTED",
-    );
-    // 失败原因要带上真正的原因，而不是笼统的"次数已耗尽"。
-    expect(recs[0]!.failureReason?.message).toContain("等待直播数据超时");
-    expect(services.rooms.get(room.id)!.monitorState).toBe("failed");
-    expect(preview.closed.some((c) => c.code === 4004)).toBe(true);
+    // Startup retries must outlive the old three-attempt budget.
+    await waitForWithClock(clock, () => (services.recordings.list({ roomId: room.id }).items[0]!.retryCount ?? 0) >= 4, 500);
+    expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+    expect(["recording", "reconnecting"]).toContain(services.rooms.get(room.id)!.monitorState);
+    await services.manager.shutdown();
   });
 
   it("reconnects into the same file: one recording, appended bytes, interruption noted on the row", async () => {
@@ -671,7 +660,7 @@ describe("RecorderManager", () => {
         retryable: true,
       },
     };
-    // 一直开播：让 5/15/45 三次退避重连都真的发生，最后才耗尽。
+    // 一直开播：连续失败超过旧三次额度，仍应保持同一录制。
     (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({
       platform: "bilibili",
@@ -687,34 +676,26 @@ describe("RecorderManager", () => {
     );
     const filePath = services.recordings.get(rec.id)!.filePath!;
 
-    // 重连耗尽但文件里有数据 → 收成"已完成 + 中途中断"，而不是把整条录制判失败。
-    await waitForWithClock(
-      clock,
-      () => services.recordings.get(rec.id)!.state === "completed",
-      300,
-    );
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.retryCount >= 4, 300);
+    await services.manager.stopRecording(room.id);
     const after = services.recordings.get(rec.id)!;
     // 关键回归：重连不再新开文件、不再新建记录。
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
     expect(after.filePath).toBe(filePath);
-    expect(after.endReason).toBe("interrupted");
+    expect(after.endReason).toBe("stopped");
     expect(after.fileSizeBytes).toBeGreaterThan(13);
-    // 失败原因要带上真正的原因，而不是笼统的"次数已耗尽"。
-    expect(after.failureReason?.code).toBe(
-      "STREAM_DISCONNECTED_RECONNECT_EXHAUSTED",
-    );
-    expect(after.failureReason?.message).toContain("网络中断");
+    expect(after.failureReason).toBeNull();
     // 中断期间的缺失时长要累计到这条录制上。
     expect(after.missingMs).toBeGreaterThan(0);
     expect(services.rooms.get(room.id)!.monitorState).toBe("completed");
-    expect(preview.closed.some((c) => c.code === 4004)).toBe(true);
+    expect(preview.closed.some((c) => c.code === 1000)).toBe(true);
     // 续录是追加写入：整个文件里只应有一个 FLV 头。
     expect(
       (await readFile(filePath)).toString("latin1").split("FLV").length - 1,
     ).toBe(1);
   });
 
-  it("keeps retrying when the reconnect probe cannot confirm liveness, and records a real reason", async () => {
+  it("keeps retrying beyond the legacy budget and allows manual stop when liveness is unknown", async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), "lr-probe-"));
     const services = buildServices({ dbPath: ":memory:", clock });
@@ -733,7 +714,7 @@ describe("RecorderManager", () => {
       },
     };
     // 断流后的存活探测永远拿不到确定结论（受限/网络错误）：以前会被当成"已下播"静默收成 natural 且无原因，
-    // 现在必须继续重试，并在额度耗尽后按中断收尾、留下真正的原因。
+    // 现在必须持续重试，直至确认下播或用户停止。
     (services.adapterFor("bilibili") as FakePlatformAdapter).setScript(
       Array.from({ length: 40 }, () => ({ status: "restricted" as const })),
     );
@@ -747,19 +728,16 @@ describe("RecorderManager", () => {
       streamSessionId: "probe",
     });
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
-    await waitForWithClock(
-      clock,
-      () => services.recordings.get(rec.id)!.state === "completed",
-      800,
-    );
-    const after = services.recordings.get(rec.id)!;
-    expect(after.endReason).toBe("interrupted");
-    expect(after.failureReason?.code).toBe(
-      "STREAM_DISCONNECTED_RECONNECT_EXHAUSTED",
-    );
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.retryCount >= 4, 800);
+    expect(services.recordings.get(rec.id)!.state).toBe("reconnecting");
+    // Stay in recovery beyond five minutes, raise the persistent warning, and allow immediate stop.
+    for (let i = 0; i < 70; i++) await settle(clock, 5000);
+    expect(services.alerts.list().some(a => a.message === "正在努力恢复该直播间录制")).toBe(true);
+    await services.manager.stopRecording(room.id);
+    expect(services.recordings.get(rec.id)!.endReason).toBe("stopped");
   });
 
-  it("records a reason instead of a silent natural end when re-pulling after a natural end fails", async () => {
+  it("keeps recovering when re-pulling after a natural end fails", async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), "lr-natural-refail-"));
     const services = buildServices({ dbPath: ":memory:", clock });
@@ -793,14 +771,10 @@ describe("RecorderManager", () => {
 
     await services.manager.maybeStartRecording(room, { streamSessionId: "nr" });
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
-    await waitForWithClock(
-      clock,
-      () => services.recordings.get(rec.id)!.state === "completed",
-      800,
-    );
-    const after = services.recordings.get(rec.id)!;
-    expect(after.endReason).toBe("interrupted");
-    expect(after.failureReason).not.toBeNull();
+    await waitForWithClock(clock, () => services.recordings.get(rec.id)!.retryCount >= 4, 800);
+    expect(services.recordings.get(rec.id)!.state).toBe("reconnecting");
+    await services.manager.stopRecording(room.id);
+    expect(services.recordings.get(rec.id)!.endReason).toBe("stopped");
   });
 
   it("hands a shared (preview) recording back to the normal path when the preview stream ends", async () => {
@@ -1579,12 +1553,9 @@ describe("RecorderManager", () => {
     // 正是「循环每轮重复 setState」的场景：守卫生效时 room:updated 只发一次。
     // maybeStartRecording 的开播状态由参数传入（不消耗脚本）：脚本全部供断流重连探测消费——
     // 一律 restricted（非 offline 不收尾、非 live 不接力）→ 同一断流周期内多轮退避，守卫生效时只发一次。
-    (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([
-      { status: "restricted" },
-      { status: "restricted" },
-      { status: "restricted" },
-      { status: "restricted" },
-    ]);
+    (services.adapterFor("bilibili") as FakePlatformAdapter).setScript(
+      Array.from({ length: 100 }, () => ({ status: "restricted" as const })),
+    );
     const room = services.rooms.create({
       platform: "bilibili",
       url: "https://live.bilibili.com/150",
@@ -1611,11 +1582,271 @@ describe("RecorderManager", () => {
     // 退避循环多轮重试：状态已是 reconnecting，不应每轮重复广播。
     await waitForWithClock(
       clock,
-      () => services.recordings.list({ roomId: room.id }).items[0]!.state === "failed",
+      () => services.recordings.list({ roomId: room.id }).items[0]!.retryCount >= 4,
       500,
     );
     const firstIdx = reconnectingUpdates.indexOf(room.id);
     expect(reconnectingUpdates.indexOf(room.id, firstIdx + 1)).toBe(-1);
+    await services.manager.shutdown();
   });
 
+});
+
+describe('#116 预览复用新鲜度守卫（僵尸上游绝不被复用开录）', () => {
+  async function setupOne() {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "live-rec-116-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({
+      platform: "douyin",
+      url: "https://live.douyin.com/116",
+      displayName: "116房",
+    });
+    return { services, room, clock };
+  }
+  const privOf = (manager: unknown) => manager as unknown as {
+    previewSessions: Map<string, unknown>;
+    startRecordingFromExistingPreview: (r: unknown, s: unknown, se: unknown, o: string) => Promise<boolean>;
+  };
+
+  it('干涸上游（静默超阈）→ 拒绝复用+拆旧会话+停引擎，回退现解析', async () => {
+    const { services, room, clock } = await setupOne();
+    const priv = privOf(services.manager);
+    let engineStopped = false;
+    priv.previewSessions.set(room.id, {
+      engine: { stop: async () => { engineStopped = true; } },
+      actualQuality: "uhd",
+      hasReceivedData: true,
+      lastDataAt: clock.now() - 60_000,  // 静默 60s > 30s 阈值（与 FakeClock 同时基）
+      done: Promise.resolve(),
+      recording: null,
+      transitioningToRecording: false,
+    });
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { logLines.push(String(args[0])); };
+    let started: boolean;
+    try {
+      started = await priv.startRecordingFromExistingPreview(room, {}, services.settings.load(), "automatic");
+    } finally {
+      console.log = origLog;
+    }
+    expect(started).toBe(false);
+    expect(priv.previewSessions.has(room.id)).toBe(false);   // 旧会话已拆
+    expect(engineStopped).toBe(true);                        // 引擎已停
+    expect(logLines.some((l) => l.includes("preview-reuse-reject"))).toBe(true);  // 可观测
+  });
+
+  it('从未到数的预览同样拒绝复用（socket 不等于可信任）', async () => {
+    const { services, room, clock } = await setupOne();
+    const priv = privOf(services.manager);
+    priv.previewSessions.set(room.id, {
+      engine: { stop: async () => undefined },
+      actualQuality: "uhd",
+      hasReceivedData: false,
+      lastDataAt: clock.now(),  // 新鲜但从未到数
+      done: Promise.resolve(),
+      recording: null,
+      transitioningToRecording: false,
+    });
+    const started = await priv.startRecordingFromExistingPreview(room, {}, services.settings.load(), "automatic");
+    expect(started).toBe(false);
+    expect(priv.previewSessions.has(room.id)).toBe(false);
+  });
+});
+
+describe('#116 路2 三钉（FakePlatformAdapter=纯触发逻辑面）', () => {
+  async function setupOne() {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "live-rec-116b-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const room = services.rooms.create({
+      platform: "douyin",
+      url: "https://live.douyin.com/222",
+      displayName: "116b房",
+    });
+    return { services, room, clock };
+  }
+  const privOf = (manager: unknown) => manager as unknown as {
+    previewSessions: Map<string, unknown>;
+    maybeStartRecording: (r: unknown, s: unknown, o?: unknown) => Promise<boolean>;
+  };
+
+  it('钉2\'：僵尸预览被拦后回退现解析（getStreamUrl 必被调用）', async () => {
+    const { services, room, clock } = await setupOne();
+    const priv = privOf(services.manager);
+    priv.previewSessions.set(room.id, {
+      engine: { stop: async () => undefined },
+      actualQuality: "uhd",
+      hasReceivedData: true,
+      lastDataAt: clock.now() - 60_000,  // 僵尸上游
+      done: Promise.resolve(),
+      recording: null,
+      transitioningToRecording: false,
+    });
+    let resolvedFresh = 0;
+    const adapter = services.adapterFor(room.platform);
+    const origGet = adapter.getStreamUrl.bind(adapter);
+    adapter.getStreamUrl = async (...args: Parameters<typeof origGet>) => {
+      resolvedFresh += 1;  // 回退现解析=必达面
+      return await origGet(...args);
+    };
+    // 起录走不到真引擎也会先过现解析口：断言 getStreamUrl 被调（=复用被弃、回到手动同路）
+    await priv.maybeStartRecording(room, { streamTitle: "t" }, {}).catch(() => undefined);
+    expect(resolvedFresh).toBeGreaterThanOrEqual(1);
+    expect(priv.previewSessions.has(room.id)).toBe(false);
+  });
+
+  it('钉3：干涸上游触发停流看门狗→stalled 置位+引擎被停（走断流重连链）', async () => {
+    const { services, room, clock } = await setupOne();
+    const priv = privOf(services.manager);
+    let stopped = false;
+    // 伪引擎：吐一包后挂死（模拟干涸），stop 时收束生成器
+    let release: (() => void) | null = null;
+    const hanging = new Promise<void>((r) => { release = r; });
+    const fakeEngine = {
+      stop: async () => { stopped = true; release?.(); },
+      start: async function* () {
+        yield { type: "data", chunk: Buffer.from("x") };
+        await hanging;  // 干涸：永不再吐数据
+      },
+    };
+    const session = {
+      engine: fakeEngine,
+      actualQuality: "uhd",
+      hasReceivedData: true,
+      lastDataAt: clock.now(),
+      done: Promise.resolve(),
+      recording: null,
+      transitioningToRecording: false,
+      stalled: false,
+    };
+    priv.previewSessions.set(room.id, session);
+    // 直接驱动看门狗判据面（与预览泵同款 30s 阈值）：静默超阈必须置 stalled 并停引擎
+    const freshness = 30_000;
+    const silent = clock.now() + freshness + 1 - session.lastDataAt;
+    if (silent > freshness) {
+      session.stalled = true;
+      await fakeEngine.stop();
+    }
+    expect(session.stalled).toBe(true);
+    expect(stopped).toBe(true);
+  });
+});
+
+describe("shared preview watchdog lifecycle", () => {
+  async function setup(firstDelayMs = 0) {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-shared-watchdog-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save({ ...baseSettings(dir), mail: { ...baseSettings(dir).mail, enabled: false } });
+    const tag = (ts: number) => {
+      const b = Buffer.alloc(16); b[0] = 9; b.writeUIntBE(1, 1, 3);
+      b.writeUIntBE(ts, 4, 3); b[11] = 0x12; b.writeUInt32BE(12, 12); return b;
+    };
+    const bootstrap = Buffer.concat([Buffer.from([70,76,86,1,1,0,0,0,9,0,0,0,0]), tag(0)]);
+    const preview = new FakePreview(); preview.bootstrap = bootstrap;
+    services.manager.preview = preview;
+    let release: ((chunk: Buffer | null) => void) | undefined;
+    let stopped = false;
+    let stops = 0;
+    const engine: RecordingEngine = {
+      async stop() { stopped = true; stops++; release?.(null); },
+      async *start() {
+        if (firstDelayMs) await new Promise<void>(r => clock.setTimeout(r, firstDelayMs));
+        yield { type: "data", chunk: bootstrap };
+        while (!stopped) {
+          const chunk = await new Promise<Buffer | null>(r => { release = r; });
+          if (!chunk || stopped) return;
+          yield { type: "data", chunk };
+        }
+      },
+    };
+    services.engineFor = () => engine;
+    const room = services.rooms.create({ platform: "bilibili", url: "https://live.bilibili.com/123", displayName: "Watchdog" });
+    services.rooms.setLiveStatus(room.id, "live");
+    await services.manager.ensurePreviewStream(room.id);
+    if (firstDelayMs) {
+      clock.advance(6000);
+      expect(stops).toBe(0);
+      clock.advance(firstDelayMs - 6000);
+    }
+    await waitFor(() => services.manager.isPreviewReadyForRecording(room.id));
+    const send = async (ts: number) => { release!(tag(ts)); await new Promise(r => setTimeout(r, 10)); };
+    return { clock, services, room, send, stops: () => stops };
+  }
+
+  it("allows a first preview packet after seven seconds", async () => {
+    const { services, room, stops } = await setup(7000);
+    expect(stops()).toBe(0);
+    expect(services.manager.isPreviewReadyForRecording(room.id)).toBe(true);
+    await services.manager.stopPreviewStream(room.id);
+  });
+
+  it("counts the current frame and resets the baseline when recording restarts", async () => {
+    const { clock, services, room, send, stops } = await setup();
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    clock.advance(5000); await send(5000);
+    clock.advance(1001); expect(stops()).toBe(0);
+    await services.manager.stopRecording(room.id);
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    clock.advance(4000); await send(1000);
+    clock.advance(3000); await send(2000);
+    expect(stops()).toBe(0);
+    await services.manager.stopRecording(room.id);
+    await services.manager.stopPreviewStream(room.id);
+  });
+
+  it("clears the watchdog when preview stops", async () => {
+    const { clock, services, room, stops } = await setup();
+    await services.manager.stopPreviewStream(room.id);
+    const count = stops();
+    clock.advance(6001);
+    expect(stops()).toBe(count);
+  });
+});
+
+describe("persistent network recovery", () => {
+  it("uses the complete backoff chain and resumes the same file after six failed stream lookups", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-recovery-chain-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const adapter = services.adapterFor("bilibili") as FakePlatformAdapter;
+    adapter.setScript([]);
+    const getStream = adapter.getStreamUrl.bind(adapter);
+    let calls = 0;
+    adapter.getStreamUrl = async (...args) => {
+      calls++;
+      if (calls > 1 && calls < 8) throw new AppError("NETWORK_UNAVAILABLE", "temporary outage", { retryable: true });
+      return getStream(...args);
+    };
+    let engines = 0;
+    services.engineFor = () => new FakeRecordingEngine(clock, ++engines === 1 ? {
+      frames: 2, intervalMs: 500, failAfterMs: 30,
+      failError: new AppError("NETWORK_UNAVAILABLE", "lost stream", { retryable: true }).toObject(),
+    } : { frames: 1000, intervalMs: 500 });
+    const room = services.rooms.create({ platform: "bilibili", url: "https://live.bilibili.com/321", displayName: "Recover" });
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const timers = vi.spyOn(clock, "setTimeout");
+    try {
+      await services.manager.maybeStartRecording(room, {});
+      const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+      await waitForWithClock(clock, () => calls >= 8 && services.recordings.get(rec.id)!.state === "recording", 300);
+      const delays = timers.mock.calls.map(args => args[1]);
+      for (const ms of [0, 1000, 2000, 5000, 10000, 30000]) expect(delays).toContain(ms);
+      expect(delays.filter(ms => ms === 30000).length).toBeGreaterThanOrEqual(2);
+      expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
+      const file = services.recordings.get(rec.id)!.filePath!;
+      await settle(clock, 500);
+      await services.manager.stopRecording(room.id);
+      const after = services.recordings.get(rec.id)!;
+      expect(after.filePath).toBe(file);
+      expect(after.endReason).toBe("stopped");
+      expect(after.missingMs).toBeGreaterThan(0);
+      expect((await readFile(file)).toString("latin1").split("FLV")).toHaveLength(2);
+    } finally { timers.mockRestore(); random.mockRestore(); await services.manager.shutdown(); }
+  });
 });

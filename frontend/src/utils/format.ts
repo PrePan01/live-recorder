@@ -23,6 +23,11 @@ export function formatRelative(iso: string | null | undefined): string {
 
 export function formatDuration(startIso: string, endIso?: string | null): string {
   const ms = dayjs(endIso ?? dayjs()).diff(dayjs(startIso));
+  return formatDurationMs(ms);
+}
+
+/** 毫秒 → 时长文案（与 formatDuration 同输出格式）。 */
+export function formatDurationMs(ms: number): string {
   const sec = Math.max(Math.floor(ms / 1000), 0);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);

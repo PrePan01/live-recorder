@@ -79,7 +79,7 @@ export class PipelineRepository {
     return this.getRun(row.id);
   }
 
-  /** 按状态集取 run（含 artifacts）——启动恢复扫描孤儿 run（task #59）。 */
+  /** 按状态集取 run（含 artifacts）——启动恢复扫描孤儿 run。 */
   listRunsByStatuses(statuses: PipelineRunStatus[]): PipelineRun[] {
     if (statuses.length === 0) return [];
     const placeholders = statuses.map(() => '?').join(',');

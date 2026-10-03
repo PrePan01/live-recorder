@@ -23,7 +23,7 @@ import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../../../types/error";
 import { failurePrimaryText } from "../../../utils/failureReason";
 import { describeError } from "../../../utils/errorMap";
-import { formatBytes, formatDuration, formatTime } from "../../../utils/format";
+import { formatBytes, formatDurationMs, formatTime } from "../../../utils/format";
 import {
   IntegrityTag,
   RecordingStateTag,
@@ -158,7 +158,9 @@ export function buildRecordingColumns(
     {
       title: "时长",
       width: 85,
-      render: (_, r) => formatDuration(r.startedAt, r.endedAt),
+      render: (_, r) =>
+        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
+        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "状态",
