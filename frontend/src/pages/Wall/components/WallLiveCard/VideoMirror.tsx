@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import styles from "./index.module.css";
+import styles from "./WallLiveCard.module.css";
 
 const DEBUG_STORAGE_KEY = "lr-wall-mirror-debug";
 

@@ -10,7 +10,7 @@ import {
 import { PlatformLogoTag } from "../../../../components/PlatformLogo";
 import LiveStatusTag from "../../../../components/LiveStatusTag";
 import type { Room } from "../../../../types/room";
-import styles from "./index.module.css";
+import styles from "./WallLiveCard.module.css";
 import VideoMirror from "./VideoMirror";
 
 const VideoPlayer = lazy(() => import("../../../../components/VideoPlayer"));
@@ -29,7 +29,7 @@ export interface WallLiveCardProps {
   onRemove: (room: Room, slot: number) => void;
 }
 
-export default function Index({
+export default function WallLiveCard({
   room,
   fill = false,
   slot,

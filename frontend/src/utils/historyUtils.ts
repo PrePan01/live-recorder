@@ -1,4 +1,4 @@
-import { bridge } from "../../../stores/bootStore";
+import { bridge } from "../stores/bootStore";
 
 const QUALITY_LABEL: Record<string, string> = {
   original: "原画",

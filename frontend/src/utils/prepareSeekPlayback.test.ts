@@ -171,4 +171,23 @@ describe("WebKit 守卫区与看狗", () => {
     stop();
     vi.useRealTimers();
   });
+
+  it("守卫区推进停滞时，看狗放行必须恢复正常播放速度", () => {
+    vi.useFakeTimers();
+    const { video, state, emit } = guardFixture(0.1);
+    Object.defineProperty(video, "play", { value: vi.fn().mockResolvedValue(undefined) });
+    const onReady = vi.fn();
+    const stop = prepareSeekPlayback(video, 0.8, onReady);
+    state.end = 20;
+    emit("loadedmetadata");
+    state.time = 0.1;
+    state.seeking = false;
+    emit("seeked");
+    expect(video.playbackRate).toBe(8);
+    vi.advanceTimersByTime(8000);
+    expect(video.playbackRate).toBe(1);
+    expect(onReady).toHaveBeenCalledOnce();
+    stop();
+    vi.useRealTimers();
+  });
 });

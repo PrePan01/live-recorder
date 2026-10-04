@@ -22,8 +22,8 @@ import {
   ExclamationCircleFilled,
   SnippetsOutlined,
 } from "@ant-design/icons";
-import { guessPlatform, PLATFORM_LABEL } from "./components/roomPlatform";
-import { buildRoomColumns } from "./components/roomColumns";
+import { guessPlatform, PLATFORM_LABEL } from "../../utils/roomPlatform";
+import { buildRoomColumns } from "../../utils/roomColumns";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
 import { useResizableColumns } from "../../hooks/useResizableColumns";

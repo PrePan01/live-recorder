@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { isTauri } from '@tauri-apps/api/core';
-import { enterWallFullscreen } from './fullscreen';
+import { enterWallFullscreen } from './wallFullscreen';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: vi.fn() }));
 afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });

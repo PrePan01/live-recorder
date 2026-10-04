@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import * as tagsApi from '../api/tags';
 import type { Tag } from '../types/tag';
 

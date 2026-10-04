@@ -18,12 +18,12 @@ import {
   StarOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { ApiError } from "../../../types/error";
-import { describeError } from "../../../utils/errorMap";
-import { formatRelative } from "../../../utils/format";
-import { MonitorStateTag } from "../../../components/StatusTags";
-import { PlatformLogoTag } from "../../../components/PlatformLogo";
-import type { Room } from "../../../types/room";
+import { ApiError } from "../types/error";
+import { describeError } from "./errorMap";
+import { formatRelative } from "./format";
+import { MonitorStateTag } from "../components/StatusTags";
+import { PlatformLogoTag } from "../components/PlatformLogo";
+import type { Room } from "../types/room";
 
 type MessageApi = ReturnType<typeof App.useApp>["message"];
 

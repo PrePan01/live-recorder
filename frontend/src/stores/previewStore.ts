@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 
 /** Preview decoding sessions are deliberately capped independently of recording. */
 const MAX_PREVIEWS = 4;

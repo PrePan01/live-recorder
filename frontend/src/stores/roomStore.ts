@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "./createStore";
 import * as roomsApi from "../api/rooms";
 import { setRoomTags } from "../api/tags";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";

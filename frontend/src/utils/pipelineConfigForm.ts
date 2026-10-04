@@ -1,4 +1,4 @@
-import type { PipelineConfig } from "../../../types/pipeline";
+import type { PipelineConfig } from "../types/pipeline";
 
 /**
  * 设置页「后处理管线」步骤化表单的纯映射层（task #65）。

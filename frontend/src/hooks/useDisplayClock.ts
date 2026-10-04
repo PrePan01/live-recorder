@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { scheduleStoreSubscription } from '../stores/createStore';
 
 // A single UI clock replaces one interval per room card. It is paused whenever
 // the document is hidden, so background recording work never keeps WebView
@@ -38,10 +39,12 @@ function subscribe(listener: () => void): () => void {
 }
 
 const noopSubscribe = () => () => undefined;
+const scheduledSubscribe = scheduleStoreSubscription<number>((listener) =>
+  subscribe(() => listener(value, value)));
 
 /** Timestamp updates once per second only while this element is visible. */
 export function useDisplayClock(active: boolean): number {
-  return useSyncExternalStore(active ? subscribe : noopSubscribe, () => value, () => value);
+  return useSyncExternalStore(active ? scheduledSubscribe : noopSubscribe, () => value, () => value);
 }
 
 /** IntersectionObserver gates text-only time updates to cards on screen. */

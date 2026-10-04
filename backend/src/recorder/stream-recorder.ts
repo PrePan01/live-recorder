@@ -96,7 +96,7 @@ export interface FlvNormalizerOptions {
  * 策略：音频/视频各自独立以【首个媒体标签】（排除 AVC/HEVC/AAC 序列头）扣减归零，
  * 使两条流都从 0 开始、容器时长 = 各自真实跨度（录制时长）。首帧≈0 的正常流（bilibili）透传。
  * 序列头 ts≈0 而媒体为绝对 PTS（抖音）时，基准取首个媒体标签，避免时长虚高（PrePan 复验）。
- * 时间戳严格按 FLV 规范读写：3 字节大端（byte4 为高位），byte7 为扩展高字节（>0xFFFFFF 时置 0xFFFFFF+高位）。
+ * 时间戳按 FLV 规范读写：3 字节大端保存低 24 位，byte7 保存扩展高字节。
  * 兼容任意 chunk 边界（标签可能跨块），可流式处理。
  */
 export class FlvTimestampNormalizer {
@@ -117,26 +117,15 @@ export class FlvTimestampNormalizer {
   }
 
   private static readTs(buf: Buffer, off: number): number {
-    return (
-      (buf[off + 4]! << 16) |
-      (buf[off + 5]! << 8) |
-      buf[off + 6]! |
-      ((buf[off + 7]! & 0xff) << 24)
-    );
+    return buf.readUIntBE(off + 4, 3) + buf[off + 7]! * 0x1000000;
   }
 
   private static writeTs(buf: Buffer, off: number, ts: number): void {
-    if (ts <= 0xffffff) {
-      buf[off + 4] = (ts >> 16) & 0xff;
-      buf[off + 5] = (ts >> 8) & 0xff;
-      buf[off + 6] = ts & 0xff;
-      buf[off + 7] = 0;
-    } else {
-      buf[off + 4] = 0xff;
-      buf[off + 5] = 0xff;
-      buf[off + 6] = 0xff;
-      buf[off + 7] = (ts >> 24) & 0xff;
-    }
+    // FLV 扩展字节存高 8 位，低 24 位仍须保留原值，不能一律写成 0xffffff。
+    buf[off + 4] = (ts >>> 16) & 0xff;
+    buf[off + 5] = (ts >>> 8) & 0xff;
+    buf[off + 6] = ts & 0xff;
+    buf[off + 7] = (ts >>> 24) & 0xff;
   }
 
   /** 是否为 AVC/HEVC/AAC 序列头（编码器配置标签）：不计入时间戳 base——抖音等流序列头 ts≈0 而媒体帧为绝对 PTS。 */
@@ -352,6 +341,9 @@ export class StreamRecordingEngine implements RecordingEngine {
           }
         : {}),
     });
+    const previewNormalizer = outputPath
+      ? new FlvTimestampNormalizer({ rebaseFromFirstMedia: true })
+      : null;
     let size = existing?.size ?? 0;
     if (outputPath) yield { type: "file_created", filePath: outputPath };
     const reader = res.body.getReader();
@@ -384,6 +376,12 @@ export class StreamRecordingEngine implements RecordingEngine {
         if (this.stopped) break;
         const previousTs = normalizer.lastTimestampMs;
         const chunk = Buffer.from(value);
+        // 写盘归一器会原地修改时间戳，观看支路须先处理自己的副本。
+        // 每个新上游都发送 FLV 头并从本段起播，绝不沿用文件的续录偏移。
+        if (previewNormalizer) {
+          for (const part of previewNormalizer.push(Buffer.from(chunk)))
+            yield { type: "preview_data", chunk: part };
+        }
         const parts = normalizer.push(chunk);
         // Pure preview uses byte activity; recordings require media time to advance.
         if (!receivedBytes || !outputPath || normalizer.lastTimestampMs > previousTs) {
@@ -395,7 +393,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         for (const part of parts) {
           size += part.length;
           if (writer) await writer.write(part);
-          yield { type: "data", chunk: part };
+          yield { type: "data", chunk: part, previewForwarded: Boolean(previewNormalizer) };
         }
         this.lastTimestampMs = normalizer.lastTimestampMs;
       }
@@ -406,11 +404,14 @@ export class StreamRecordingEngine implements RecordingEngine {
       }
       if (this.stopped) await reader.cancel().catch(() => undefined);
       // 收尾：把尚未凑成完整标签的尾部字节一并写盘并转发（不完整尾部也转发，保持字节一致）。
+      const previewRest = previewNormalizer?.remaining();
+      if (previewRest && previewRest.length > 0)
+        yield { type: "preview_data", chunk: previewRest };
       const rest = normalizer.remaining();
       if (rest.length > 0 && !writer?.failed()) {
         size += rest.length;
         if (writer) await writer.write(rest);
-        yield { type: "data", chunk: rest };
+        yield { type: "data", chunk: rest, previewForwarded: Boolean(previewNormalizer) };
       }
       this.lastTimestampMs = normalizer.lastTimestampMs;
       if (writer) await writer.close();

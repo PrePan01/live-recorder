@@ -33,6 +33,62 @@ describe('任务进度聚合 store（#103）', () => {
     vi.useRealTimers();
   });
 
+  it('连续空响应不发布新快照（无任务时不触发 React 同步更新）', async () => {
+    vi.mocked(fetchTasks).mockImplementation(async () => []);
+    const initial = useTasksStore.getState();
+    const listener = vi.fn();
+    const unsubscribe = useTasksStore.subscribe(listener);
+    try {
+      for (let i = 0; i < 100; i++) await useTasksStore.getState().refresh();
+      expect(useTasksStore.getState()).toBe(initial);
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('相同任务响应保留引用，进度变化仍通知且保留完成宽限', async () => {
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('a', { progressPercent: 10 })]);
+    await useTasksStore.getState().refresh();
+    const initial = useTasksStore.getState();
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('a', { progressPercent: 10 })]);
+    await useTasksStore.getState().refresh();
+    expect(useTasksStore.getState()).toBe(initial);
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('a', { progressPercent: 20 })]);
+    await useTasksStore.getState().refresh();
+    expect(useTasksStore.getState().active[0]?.progressPercent).toBe(20);
+    vi.mocked(fetchTasks).mockResolvedValueOnce([]);
+    await useTasksStore.getState().refresh();
+    const graceState = useTasksStore.getState();
+    vi.mocked(fetchTasks).mockResolvedValueOnce([]);
+    await useTasksStore.getState().refresh();
+    expect(useTasksStore.getState()).toBe(graceState);
+    await vi.advanceTimersByTimeAsync(TASK_DISPLAY_GRACE_MS + 100);
+    expect(selectVisibleTasks(useTasksStore.getState())).toEqual([]);
+  });
+
+  it('后台不安排 SSE 补拉，已安排的补拉在切后台后也跳过', async () => {
+    const document = { visibilityState: 'hidden' };
+    vi.stubGlobal('document', document);
+    vi.mocked(fetchTasks).mockResolvedValue([]);
+    try {
+      await useTasksStore.getState().scheduleRefresh();
+      await flush();
+      expect(fetchTasks).not.toHaveBeenCalled();
+      document.visibilityState = 'visible';
+      await useTasksStore.getState().scheduleRefresh();
+      document.visibilityState = 'hidden';
+      await flush();
+      expect(fetchTasks).not.toHaveBeenCalled();
+      document.visibilityState = 'visible';
+      await useTasksStore.getState().scheduleRefresh();
+      await flush();
+      expect(fetchTasks).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('宽限：完成即离的任务留 5 秒展示（角标仍计数）后同批归零', async () => {
     vi.mocked(fetchTasks).mockResolvedValueOnce([task('a'), task('b')]);
     await useTasksStore.getState().refresh();

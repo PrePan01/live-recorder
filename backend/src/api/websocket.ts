@@ -25,6 +25,7 @@ interface PreviewRoom {
   /** 初始化段之后的近期媒体帧（完整 FLV 标签，滚动窗口，接近直播实时位置），与实时帧时间戳连续。 */
   tail: Buffer[];
   tailBytes: number;
+  pendingTags: Buffer;
 }
 
 /** 初始化段安全上限：正常 FLV init（头+metadata+编码器配置）通常 <10KB，64KB 足兜底异常流。 */
@@ -41,7 +42,15 @@ export const PREVIEW_IDLE_GRACE_MS = 2_000;
 
 /** 是否为视频关键帧 FLV 标签：type=9（视频）且 data[0] 高 4 位 FrameType==1。 */
 function isKeyframeTag(tag: Buffer): boolean {
-  return tag.length >= 12 && tag[0] === 9 && (tag[11]! & 0xf0) === 0x10;
+  return tag.length >= 13 && tag[0] === 9 && (tag[11]! & 0xf0) === 0x10 && !isSequenceTag(tag);
+}
+
+/** 比较编码器配置时忽略标签时间戳；重复序列头不应导致播放器重连。 */
+function isSequenceTag(tag: Buffer): boolean {
+  if (tag.length < 17 || tag[12] !== 0) return false;
+  if (tag[0] === 8) return (tag[11]! >> 4) === 10;
+  const codec = tag[11]! & 0x0f;
+  return tag[0] === 9 && (codec === 7 || codec === 12);
 }
 
 /**
@@ -86,52 +95,37 @@ class FlvInitExtractor {
 
     let cursor = 0;
     if (this.captured.length === 0) {
-      if (this.pending.length < 13) {
-        if (this.pending.length > PREVIEW_HEADER_MAX) {
-          this.done = true;
-          this.captured = this.pending.subarray(0, PREVIEW_HEADER_MAX);
-          this.pending = Buffer.alloc(0);
-          return this.captured;
-        }
+      if (this.pending.length < 13) return null;
+      if (this.pending.subarray(0, 3).toString() !== 'FLV') {
+        // 不把无文件头的续录标签伪装成有效初始化段。
+        this.pending = Buffer.alloc(0);
         return null;
       }
-      if ((this.pending.readUInt32BE(0) >>> 8) !== 0x464c56) {
-        // 非 FLV 开头（异常流）：整段按上限兜底缓存，保留旧行为可初始化。
-        this.done = true;
-        this.captured = this.pending.subarray(0, Math.min(this.pending.length, PREVIEW_HEADER_MAX));
-        this.pending = Buffer.alloc(0);
-        return this.captured;
-      }
+      this.captured = Buffer.from(this.pending.subarray(0, 13));
       cursor = 13;
     }
-
     while (this.pending.length - cursor >= 15) {
-      const type = this.pending[cursor];
-      const dataSize = (this.pending[cursor + 1]! << 16) | (this.pending[cursor + 2]! << 8) | this.pending[cursor + 3]!;
-      const tagTotal = 11 + dataSize + 4;
+      const dataSize = this.pending.readUIntBE(cursor + 1, 3);
+      const tagTotal = dataSize + 15;
       if (this.pending.length - cursor < tagTotal) break;
-      const videoSeq = type === 9 && dataSize >= 2 && (this.pending[cursor + 11]! & 0x0f) === 7 && this.pending[cursor + 12] === 0;
-      const audioSeq = type === 8 && dataSize >= 2 && (this.pending[cursor + 11]! >> 4) === 10 && this.pending[cursor + 12] === 0;
-      const mediaTag = (type === 8 || type === 9) && !videoSeq && !audioSeq;
+      const tag = this.pending.subarray(cursor, cursor + tagTotal);
+      const type = tag[0];
+      const sequence = isSequenceTag(tag);
+      const mediaTag = (type === 8 || type === 9) && !sequence;
       if (type === 18) this.seenMeta = true;
-      if (videoSeq) this.seenVideoSeq = true;
-      if (audioSeq) this.seenAudioSeq = true;
-      // 完成条件：已见视频编码器序列头，且（音频序列头已见 或 即将进入首个媒体帧）。
-      // 不强制依赖 AAC audioSeq（部分流段音频码率/码型不同，缺失时首媒体帧即终止，init 不含媒体帧）。
-      const complete = this.seenVideoSeq && (this.seenAudioSeq || mediaTag);
-      if (complete) {
-        // 首个媒体帧不计入 init（避免 init 含旧时间戳媒体）；audioSeq 计入。
-        if (mediaTag) this.firstMediaSeen = true;
-        if (!mediaTag) cursor += tagTotal;
+      if (sequence && type === 9) this.seenVideoSeq = true;
+      if (sequence && type === 8) this.seenAudioSeq = true;
+      if (mediaTag && this.seenVideoSeq) {
+        this.firstMediaSeen = true;
         break;
       }
+      // 某些上游先发音频媒体再发视频配置；init 只包含元数据和配置，
+      // 否则晚加入会重放旧音频并同步生成整段录制长度的静音补帧。
+      if (!mediaTag) this.captured = Buffer.concat([this.captured, tag]);
       cursor += tagTotal;
+      if (this.seenVideoSeq && this.seenAudioSeq) break;
     }
-
-    if (cursor > 0) {
-      this.captured = this.captured.length === 0 ? this.pending.subarray(0, cursor) : Buffer.concat([this.captured, this.pending.subarray(0, cursor)]);
-      this.pending = this.pending.subarray(cursor);
-    }
+    this.pending = this.pending.subarray(cursor);
     if (this.seenVideoSeq && (this.seenAudioSeq || this.firstMediaSeen)) {
       this.done = true;
       this.initialMedia = Buffer.from(this.pending);
@@ -173,7 +167,7 @@ export class PreviewManager {
   /** 会话=房间：每个被预览的房间算一个会话（同一房间多个 socket 共享一个会话）。 */
   canAccept(roomId?: string): boolean {
     // 同一房间重连不新增会话，即使已达总上限也必须允许，否则重开预览会永久收到 4003。
-    return (roomId !== undefined && this.rooms.has(roomId)) || this.rooms.size < this.maxSessions;
+    return (roomId !== undefined && this.hasClients(roomId)) || this.activeCount < this.maxSessions;
   }
 
   hasClients(roomId: string): boolean {
@@ -184,7 +178,7 @@ export class PreviewManager {
     this.clearEmptyRoomTimer(roomId);
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0 };
+      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0, pendingTags: Buffer.alloc(0) };
       this.rooms.set(roomId, room);
     }
     room.sockets.add(ws);
@@ -202,7 +196,7 @@ export class PreviewManager {
       room!.sockets.delete(ws);
       // 保留房间与流头缓冲：录制/预览流活动期间客户端重开仍能初始化（#193 重开预览卡连接视频流）。
       // 房间的移除由流生命周期负责：closeRoom（流结束）/resetRoom（新段）清理。
-      if (room!.sockets.size === 0) this.deferRoomEmpty(roomId);
+      if (this.rooms.get(roomId) === room && room!.sockets.size === 0) this.deferRoomEmpty(roomId);
     });
   }
 
@@ -229,7 +223,7 @@ export class PreviewManager {
     // 无论是否有预览客户端，都先记录 FLV 初始化段与近期尾部，保证中途加入的客户端能初始化 FLV 并从实时附近起播。
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0 };
+      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0, pendingTags: Buffer.alloc(0) };
       this.rooms.set(roomId, room);
     }
     if (room.header === null) {
@@ -238,25 +232,11 @@ export class PreviewManager {
         room.header = header;
         const initialMedia = room.extractor.takeInitialMedia();
         if (initialMedia.length > 0) {
-          room.tail.push(initialMedia);
-          room.tailBytes += initialMedia.length;
+          this.cacheTags(roomId, room, initialMedia);
         }
       }
     } else {
-      // 初始化段之后：追加到近期尾部（每个 chunk 为完整 FLV 标签）。
-      room.tail.push(chunk);
-      room.tailBytes += chunk.length;
-      // ① 按字节上限裁剪。
-      while (room.tailBytes > PREVIEW_TAIL_MAX && room.tail.length > 1) {
-        const dropped = room.tail.shift()!;
-        room.tailBytes -= dropped.length;
-      }
-      // ② 保证队首为视频关键帧：裁剪/追加后队首若落在非关键帧上，继续裁掉直到关键帧（或仅剩 1 chunk）。
-      // 晚加入/重开预览回放 [init]+[tail] 从关键帧起播，解码立即启动（FE 定位：P 帧开头卡第一秒）。
-      while (room.tail.length > 1 && !isKeyframeTag(room.tail[0]!)) {
-        const dropped = room.tail.shift()!;
-        room.tailBytes -= dropped.length;
-      }
+      this.cacheTags(roomId, room, chunk);
     }
     for (const ws of room.sockets) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -272,6 +252,71 @@ export class PreviewManager {
           // 写失败由 close 事件回收
         }
       }
+    }
+  }
+
+  /** 缓存完整标签，更新当前编码配置，并只保留可独立解码的近期 GOP。 */
+  private cacheTags(roomId: string, room: PreviewRoom, chunk: Buffer): void {
+    room.pendingTags = room.pendingTags.length > 0
+      ? Buffer.concat([room.pendingTags, chunk]) : chunk;
+    let offset = 0;
+    while (offset + 15 <= room.pendingTags.length) {
+      const size = room.pendingTags.readUIntBE(offset + 1, 3);
+      const length = size + 15;
+      // 异常/过大标签不应让每次广播重复拼接、无限保留网络数据。
+      if (![8, 9, 18].includes(room.pendingTags[offset]!) || length > PREVIEW_SOCKET_MAX_PENDING_BYTES) {
+        room.pendingTags = Buffer.alloc(0);
+        return;
+      }
+      if (offset + length > room.pendingTags.length) break;
+      const tag = room.pendingTags.subarray(offset, offset + length);
+      offset += length;
+      if (isSequenceTag(tag) || tag[0] === 18) {
+        this.refreshHeader(roomId, room, tag);
+        continue;
+      }
+      if (isKeyframeTag(tag)) {
+        room.tail = [];
+        room.tailBytes = 0;
+      }
+      // 无关键帧时等待下一个 GOP，不能把 P 帧当作晚加入的解码起点。
+      if (room.tail.length === 0 && !isKeyframeTag(tag)) continue;
+      if (room.tailBytes + length > PREVIEW_TAIL_MAX) {
+        room.tail = [];
+        room.tailBytes = 0;
+        continue;
+      }
+      // 独立副本避免一个很小的标签长期引用整块网络缓冲。
+      room.tail.push(Buffer.from(tag));
+      room.tailBytes += length;
+    }
+    room.pendingTags = Buffer.from(room.pendingTags.subarray(offset));
+  }
+
+  private refreshHeader(roomId: string, room: PreviewRoom, tag: Buffer): void {
+    const header = room.header;
+    if (!header || header.subarray(0, 3).toString() !== 'FLV') return;
+    const parts = [header.subarray(0, 13)];
+    let previous: Buffer | null = null;
+    for (let offset = 13; offset + 15 <= header.length;) {
+      const length = header.readUIntBE(offset + 1, 3) + 15;
+      if (offset + length > header.length) break;
+      const part = header.subarray(offset, offset + length);
+      if (part[0] === tag[0] && (tag[0] === 18 || isSequenceTag(part))) previous = part;
+      else parts.push(part);
+      offset += length;
+    }
+    if (previous?.subarray(11).equals(tag.subarray(11))) return;
+    if (parts.reduce((n, part) => n + part.length, tag.length) > PREVIEW_HEADER_MAX) return;
+    parts.push(Buffer.from(tag));
+    room.header = Buffer.concat(parts);
+    if (isSequenceTag(tag)) {
+      room.tail = [];
+      room.tailBytes = 0;
+      // WebKit 的 MSE 解码器不能继续用旧 SPS/AAC 配置处理新帧。
+      // 保留房间和新配置，让当前观看端重连后从新关键帧开始。
+      for (const ws of room.sockets) ws.close(1012, 'preview configuration changed');
+      console.log(`[preview] configuration-changed room=…${roomId.slice(-6)} type=${tag[0]}`);
     }
   }
 
@@ -297,10 +342,13 @@ export class PreviewManager {
   resetRoom(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    for (const ws of room.sockets) ws.close(1012, 'preview source changed');
     room.header = null;
     room.extractor = new FlvInitExtractor();
     room.tail = [];
     room.tailBytes = 0;
+    room.pendingTags = Buffer.alloc(0);
+    console.log(`[preview] source-reset room=…${roomId.slice(-6)}`);
   }
 
   /**
@@ -315,7 +363,7 @@ export class PreviewManager {
     }
     // 初始化尚未完成时仍可交给写入器：它会保留当前连续 FLV 前缀并继续接收后续帧。
     // 这覆盖刚打开观看就点击录制的场景，避免为了等待关键帧而回退到断开重连。
-    return room.extractor.snapshot();
+    return room.header ?? room.extractor.snapshot();
   }
 
   /**
@@ -343,7 +391,7 @@ export class PreviewManager {
 
   /** 当前活跃预览会话数（按房间）。 */
   get activeCount(): number {
-    return this.rooms.size;
+    return [...this.rooms.values()].filter((room) => room.sockets.size > 0).length;
   }
 }
 

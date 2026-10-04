@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
 import { AppError } from "../types/error.js";
 import type { Recording } from "../types/index.js";
@@ -9,7 +9,7 @@ import {
   beginSeekScan,
   finishSeekScan,
   fileSizeSnapshot,
-  loadSeekIndex,
+  SeekIndexReader,
   lookupSeekEntry,
   pickFeedSeqHeaders,
   progressSeekScan,
@@ -28,7 +28,7 @@ import type { Services } from "./services.js";
  *
  * 定位靠录制期顺手记的关键帧字节索引；起流把「FLV 头+序列头+关键帧起的字节段」
  * 直通输出为 FLV 流（不转封装不回扫，成本与文件大小无关；标签时间戳=源时间轴）。
- * 同秒复用在途会话、换秒杀旧起新，任何时刻每个录像最多一路读。
+ * 同一回看快照支持按字节续读；换源杀旧起新，每个录像最多一路读。
  */
 
 /** 跳播独立并发小上限（与 clip 导出 6 分开计数、互不挤占）：只拒新、不杀在途。 */
@@ -42,6 +42,8 @@ export interface SeekFeedPlan {
   to: number;
   /** 供给速率上限（字节/毫秒）：burst 之后按码率倍数供，防瞬灌砸爆播放器缓存。 */
   paceBytesPerMs?: number;
+  /** 馈送取证不使用 data 监听，避免 HTTP 消费端接入前把可读流提前切为 flowing。 */
+  onFeed?: (bytes: number) => void;
 }
 
 export interface SeekProc {
@@ -80,7 +82,10 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
   let fed = 0;
   void (async () => {
     try {
+      if (killed) return;
       out.write(plan.prefix);
+      if (plan.prefix.length) plan.onFeed?.(plan.prefix.length);
+      if (plan.from >= plan.to) { out.end(); return; }
       reader = createReadStream(plan.filePath, {
         start: plan.from,
         end: plan.to - 1,
@@ -88,6 +93,7 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
       for await (const chunk of reader) {
         if (killed) break;
         fed += chunk.length;
+        plan.onFeed?.(chunk.length);
         if (!out.write(chunk as Buffer)) {
           // 源侧背压：消费端排空前不再读盘（close 也放行，防 kill 后悬挂）。
           await new Promise<void>((resolve) => {
@@ -118,9 +124,8 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
       }
       reader.destroy();
       out.end();
-    } catch {
-      // 消费端断开/文件读失败：交给 close 收束，不反压。
-      out.end();
+    } catch (error) {
+      if (!killed) out.destroy(error as Error);
     }
   })();
   return {
@@ -128,10 +133,38 @@ export function defaultSeekStreamFactory(plan: SeekFeedPlan): SeekProc {
     kill: () => {
       killed = true;
       reader?.destroy();
-      out.end();
+      out.destroy();
     },
     done,
   };
+}
+
+interface SeekSnapshot {
+  recordingId: string;
+  second: number;
+  startSecond: number;
+  lastUsed: number;
+  plan: SeekFeedPlan;
+}
+
+export class SeekRangeError extends Error {
+  constructor(readonly total: number) { super('Requested seek range is not satisfiable'); }
+}
+
+/** 单个 HTTP 字节范围，返回右开区间；支持续读、限定范围和尾部范围。 */
+export function seekByteRange(header: string | undefined, total: number): { from: number; to: number } {
+  if (header === undefined) return { from: 0, to: total };
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
+  if (!match || (!match[1] && !match[2])) throw new SeekRangeError(total);
+  if (!match[1]) {
+    const count = Number(match[2]);
+    if (!Number.isSafeInteger(count) || count <= 0) throw new SeekRangeError(total);
+    return { from: Math.max(0, total - count), to: total };
+  }
+  const from = Number(match[1]);
+  const last = match[2] ? Number(match[2]) : total - 1;
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(last) || from >= total || last < from) throw new SeekRangeError(total);
+  return { from, to: Math.min(total, last + 1) };
 }
 
 interface SeekSession {
@@ -145,10 +178,10 @@ interface SeekSession {
 
 export class SeekService {
   private sessions = new Map<string, SeekSession>();
-  private warm = new Map<
-    string,
-    { entries: SeekEntry[]; seqs: SeekEntry[]; size: number }
-  >();
+  private warm = new Map<string, SeekIndexReader>();
+  private invalidEntries = new Map<string, Set<string>>();
+  private snapshots = new Map<string, SeekSnapshot>();
+  private opening = new Map<string, object>();
   private scans = new Map<string, Promise<void>>();
   private scanSignals = new Map<string, { aborted: boolean }>();
   /** 会话流水号：与录制 id 一起进日志，一次跳播的全链（起/杀/首包/结束/错误）可串起来。 */
@@ -169,9 +202,12 @@ export class SeekService {
         if (state !== "recording" && state !== "reconnecting") {
           this.killSession(event.data.id);
           this.warm.delete(event.data.filePath ?? "");
+          this.invalidEntries.delete(event.data.filePath ?? "");
+          this.clearSnapshots(event.data.id);
         }
       } else if (event.type === "recording:deleted") {
         this.killSession(event.data.id);
+        this.clearSnapshots(event.data.id);
       }
     });
   }
@@ -217,18 +253,14 @@ export class SeekService {
     return rec.filePath;
   }
 
-  /** 索引加载：带版本校验的短缓存——侧车只追加，大小变了（录制持续写入）即重载，
-   *  避免预热快照过期把不同目标秒都吸到旧末条（真值错位）。 */
-  private async loadIndex(
-    filePath: string,
-  ): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
-    const sidecar = seekSidecarPath(filePath);
-    const s = await stat(sidecar).catch(() => null);
-    const cached = this.warm.get(filePath);
-    if (cached && s && cached.size === s.size) return cached;
-    const loaded = await loadSeekIndex(filePath);
-    this.warm.set(filePath, { ...loaded, size: s?.size ?? -1 });
-    return loaded;
+  /** 每个文件独立维护增量索引，并发预热共用同一次读取。 */
+  private loadIndex(filePath: string): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
+    let reader = this.warm.get(filePath);
+    if (!reader) {
+      reader = new SeekIndexReader(filePath);
+      this.warm.set(filePath, reader);
+    }
+    return reader.load();
   }
 
   private invalidate(filePath: string): void {
@@ -249,7 +281,6 @@ export class SeekService {
     seqs: SeekEntry[];
     pace: number;
   }> {
-    const { entries, seqs } = await this.loadIndex(filePath);
     const info = seekIndexOf(filePath, existsSync(seekSidecarPath(filePath)));
     if (info.seekIndexState === "building") {
       this.log(
@@ -268,6 +299,10 @@ export class SeekService {
         },
       );
     }
+    const loaded = await this.loadIndex(filePath);
+    const invalid = this.invalidEntries.get(filePath);
+    const entries = invalid ? loaded.entries.filter(entry => !invalid.has(`${entry.b}:${entry.t}`)) : loaded.entries;
+    const seqs = loaded.seqs;
     if (entries.length === 0) {
       // 在录但索引缺失（写入降级/被清理）：后台重建，先明确告知不可用。
       this.log(`reject missing-index rec=${rec.id} second=${second}`);
@@ -307,6 +342,12 @@ export class SeekService {
     const pace = est > 0 ? Math.max(250, Math.min(est * 4, 8000)) : 4000;
     const valid = await validateSeekEntry(filePath, entry);
     if (!valid) {
+      let rejected = this.invalidEntries.get(filePath);
+      if (!rejected) {
+        rejected = new Set();
+        this.invalidEntries.set(filePath, rejected);
+      }
+      rejected.add(`${entry.b}:${entry.t}`);
       this.log(
         `reject invalid-entry rec=${rec.id} second=${second} entry=t${entry.t},b${entry.b}`,
       );
@@ -324,110 +365,105 @@ export class SeekService {
     return { entry, startSecond: entry.t / 1000, seqs, pace };
   }
 
-  /** 预热：零进程准备（读索引进缓存+校验目标点），松手才真正起流。幂等。
-   *  返回吸附后的起播真值：起流对同一请求秒的吸附是确定性的（同一关键帧），
-   *  前端用 startSecond+播放进度即可精确映射源时间轴（fMP4 输出时间轴会被 ffmpeg 归零）。 */
-  async prewarm(
-    rec: Recording,
-    second: number,
-  ): Promise<{ startSecond: number }> {
+  /** pointerdown 只查索引；提交时准备稳定字节快照，续读不会重复前缀或追入新录制内容。 */
+  async prewarm(rec: Recording, second: number, prepareStream = false): Promise<{ startSecond: number; streamToken?: string }> {
     const filePath = this.requireSeekable(rec);
-    const { startSecond } = await this.resolveTarget(rec, filePath, second);
-    this.log(`prewarm rec=${rec.id} second=${second} -> start=${startSecond}`);
-    return { startSecond };
+    if (!prepareStream) {
+      const { startSecond } = await this.resolveTarget(rec, filePath, second);
+      return { startSecond };
+    }
+    const snapshot = await this.prepareSnapshot(rec, second);
+    const token = randomUUID();
+    this.pruneSnapshots();
+    this.snapshots.set(token, snapshot);
+    return { startSecond: snapshot.startSecond, streamToken: token };
   }
 
-  /** 起流：返回 fMP4 流与实际起播秒（关键帧吸附，可能略早于请求秒）。 */
+  private pruneSnapshots(): void {
+    const cutoff = Date.now() - 30 * 60 * 1000;
+    for (const [token, snapshot] of this.snapshots) {
+      if (snapshot.lastUsed < cutoff) this.snapshots.delete(token);
+    }
+    while (this.snapshots.size >= 32) this.snapshots.delete(this.snapshots.keys().next().value!);
+  }
+
+  private clearSnapshots(recordingId: string): void {
+    this.opening.delete(recordingId);
+    for (const [token, snapshot] of this.snapshots) {
+      if (snapshot.recordingId === recordingId) this.snapshots.delete(token);
+    }
+  }
+
+  private async prepareSnapshot(rec: Recording, second: number): Promise<SeekSnapshot> {
+    const filePath = this.requireSeekable(rec);
+    const { entry, startSecond, seqs, pace } = await this.resolveTarget(rec, filePath, second);
+    const tail = await fileSizeSnapshot(filePath);
+    if (tail === null) throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件不可读", { recordingId: rec.id });
+    if (tail <= entry.b + 13) throw new AppError("RECORDING_NOT_AVAILABLE", "该位置暂无可播放内容", { retryable: true, recordingId: rec.id });
+    const prefix = await this.buildPrefix(filePath, entry, seqs);
+    return {
+      recordingId: rec.id, second, startSecond, lastUsed: Date.now(),
+      plan: { filePath, prefix, from: entry.b, to: tail, paceBytesPerMs: pace },
+    };
+  }
+
+  /** 起流/续读：Range 是「前缀+录像区段」中的偏移，任何一次读取都限于同一快照。 */
   async openStream(
     rec: Recording,
     second: number,
-  ): Promise<{ stream: Readable; startSecond: number }> {
+    options: { streamToken?: string; range?: string; signal?: AbortSignal } = {},
+  ): Promise<{ stream: Readable; startSecond: number; total: number; from: number; to: number; partial: boolean }> {
     const filePath = this.requireSeekable(rec);
-    const { entry, startSecond, seqs, pace } = await this.resolveTarget(
-      rec,
-      filePath,
-      second,
-    );
-    const tail = await fileSizeSnapshot(filePath);
-    if (tail === null) {
-      throw new AppError("RECORDING_NOT_AVAILABLE", "录像文件不可读", {
-        details: { recordingId: rec.id },
-      });
-    }
-    if (tail <= entry.b + 13) {
-      throw new AppError("RECORDING_NOT_AVAILABLE", "该位置暂无可播放内容", {
-        retryable: true,
-        details: { recordingId: rec.id },
-      });
-    }
-
-    // 每请求独立限速读流：直通时代无「进程」可省，同秒重开=一条文件读，代价可忽略。
-    // 原「同秒挂靠+重放缓冲」路径是瞬灌/丢字节高危路（重放 burst 灌入+弃流后继续全速灌），
-    // 二轮按根因移除；防抖动由前端状态去重 + 本端 kill-on-dispose 双层覆盖。
-    const existing = this.sessions.get(rec.id);
-    if (existing) this.killSession(rec.id);
-    if (this.sessions.size >= MAX_SEEK_SESSIONS) {
-      this.log(
-        `reject cap rec=${rec.id} second=${second} inflight=${this.sessions.size}`,
-      );
-      throw new AppError(
-        "CONCURRENT_LIMIT_REACHED",
-        "跳播并发已满，请稍后再试",
-        {
-          retryable: true,
-          details: { recordingId: rec.id, limit: MAX_SEEK_SESSIONS },
-        },
-      );
-    }
-
-    const prefix = await this.buildPrefix(filePath, entry, seqs);
-    const proc = this.procFactory({
-      filePath,
-      prefix,
-      from: entry.b,
-      to: tail,
-      paceBytesPerMs: pace,
-    });
-    const sid = ++this.sessionSeq;
-    const session: SeekSession = {
-      recordingId: rec.id,
-      sid,
-      second,
-      startSecond,
-      proc,
-    };
-    this.sessions.set(rec.id, session);
-    const startedAt = Date.now();
-    let firstByteLogged = false;
-    let sentBytes = 0;
-    this.log(
-      `start sid=${sid} rec=${rec.id} second=${second} start=${startSecond} range=${entry.b}-${tail} prefix=${prefix.length}B pace=${Math.round(pace)}B/ms`,
-    );
-    const stream = proc.stdout;
-    stream.on("data", (chunk: Buffer) => {
-      if (!firstByteLogged) {
-        firstByteLogged = true;
-        this.log(`first-byte sid=${sid} +${Date.now() - startedAt}ms`);
+    const ticket = {};
+    this.opening.set(rec.id, ticket);
+    try {
+      const snapshot = options.streamToken ? this.snapshots.get(options.streamToken) : await this.prepareSnapshot(rec, second);
+      if (!snapshot || snapshot.recordingId !== rec.id || snapshot.second !== second || snapshot.plan.filePath !== filePath) {
+        throw new AppError("RECORDING_NOT_AVAILABLE", "回看会话已过期，请重试", { retryable: true, recordingId: rec.id });
       }
-      sentBytes += chunk.length;
-    });
-    void proc.done.then(() => {
-      if (this.sessions.get(rec.id) === session) this.sessions.delete(rec.id);
-      this.log(
-        `end sid=${sid} rec=${rec.id} sent=${sentBytes}B ${Date.now() - startedAt}ms`,
-      );
-    });
-    // 消费端断开（换源/停止/abort）即销流：杜绝「弃流继续全速灌」——瞬灌与旧 overflow 的真正来源。
-    stream.on("close", () => {
-      if (stream.readableEnded) return;
-      if (this.sessions.get(rec.id) === session) {
-        this.log(
-          `dispose sid=${sid} rec=${rec.id} sent=${sentBytes}B（消费端断开销流）`,
-        );
-        this.killSession(rec.id);
+      const plan = snapshot.plan;
+      const total = plan.prefix.length + plan.to - plan.from;
+      // 旧 URL 没有稳定快照，拒绝续读，不能用新的前缀/尾界冒充旧响应的后续字节。
+      if (options.range && !options.streamToken) throw new SeekRangeError(total);
+      const range = seekByteRange(options.range, total);
+      if (options.signal?.aborted || this.opening.get(rec.id) !== ticket) {
+        throw new AppError("RECORDING_NOT_AVAILABLE", "回看请求已取消", { retryable: true, recordingId: rec.id });
       }
-    });
-    return { stream, startSecond };
+      // 所有异步准备之后再检查容量和替换旧流，避免并发起流越过上限或旧请求杀新流。
+      this.requireSeekable(this.services.recordings.get(rec.id) ?? rec);
+      if (!this.sessions.has(rec.id) && this.sessions.size >= MAX_SEEK_SESSIONS) {
+        throw new AppError("CONCURRENT_LIMIT_REACHED", "跳播并发已满，请稍后再试", { retryable: true, recordingId: rec.id });
+      }
+      this.killSession(rec.id);
+      snapshot.lastUsed = Date.now();
+      const prefixEnd = Math.min(plan.prefix.length, range.to);
+      const prefix = range.from < prefixEnd ? plan.prefix.subarray(range.from, prefixEnd) : Buffer.alloc(0);
+      const from = plan.from + Math.max(0, range.from - plan.prefix.length);
+      const to = plan.from + Math.max(0, range.to - plan.prefix.length);
+      const sid = ++this.sessionSeq;
+      const startedAt = Date.now();
+      let fedBytes = 0;
+      this.log(`start sid=${sid} rec=${rec.id} second=${second} start=${snapshot.startSecond} range=${range.from}-${range.to}/${total}`);
+      const proc = this.procFactory({ ...plan, prefix, from, to, onFeed: (bytes) => {
+        if (fedBytes === 0) this.log(`first-byte sid=${sid} +${Date.now() - startedAt}ms`);
+        fedBytes += bytes;
+      } });
+      const session: SeekSession = { recordingId: rec.id, sid, second, startSecond: snapshot.startSecond, proc };
+      this.sessions.set(rec.id, session);
+      const abort = () => {
+        if (this.sessions.get(rec.id) === session) this.killSession(rec.id);
+      };
+      options.signal?.addEventListener('abort', abort, { once: true });
+      void proc.done.then(() => {
+        options.signal?.removeEventListener('abort', abort);
+        if (this.sessions.get(rec.id) === session) this.sessions.delete(rec.id);
+        this.log(`end sid=${sid} rec=${rec.id} fed=${fedBytes}B ${Date.now() - startedAt}ms`);
+      });
+      proc.stdout.once('close', () => { if (!proc.stdout.readableEnded) abort(); });
+      return { stream: proc.stdout, startSecond: snapshot.startSecond, total, ...range, partial: options.range !== undefined };
+    } finally {
+      if (this.opening.get(rec.id) === ticket) this.opening.delete(rec.id);
+    }
   }
 
   private async buildPrefix(
@@ -582,5 +618,9 @@ export class SeekService {
   async shutdown(): Promise<void> {
     for (const id of [...this.sessions.keys()]) this.killSession(id);
     for (const signal of this.scanSignals.values()) signal.aborted = true;
+    this.snapshots.clear();
+    this.warm.clear();
+    this.invalidEntries.clear();
+    this.opening.clear();
   }
 }

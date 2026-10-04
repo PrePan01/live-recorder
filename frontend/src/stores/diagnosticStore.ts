@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import * as diagApi from '../api/diagnostics';
 import type { Diagnostic, DiagnosticDetail } from '../types/diagnostic';
 

@@ -29,7 +29,7 @@ import {
   FIRST_ENABLE_SEGMENT_SECONDS,
   buildPipelinePayload,
   derivePipelineSwitches,
-} from "./pipelineConfigForm";
+} from "../../../utils/pipelineConfigForm";
 
 /** 每个步骤共享左侧总线；启用时从卡片左侧进出，关闭时由总线直通。 */
 function StepCard({

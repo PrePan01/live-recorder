@@ -21,14 +21,15 @@ import { credentialStatus } from "../../utils/credentialStatus";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import type { Platform, Room } from "../../types/room";
-import { triggerStartupLiveCheck } from "./components/startupLiveCheck";
-import { RoomCard, SortableRoomCardItem } from "./components/roomCard";
-import { buildMonitorListColumns } from "./components/listColumns";
+import { RoomCard, SortableRoomCardItem } from "./components/RoomCard";
+import { buildMonitorListColumns } from "../../utils/monitorListColumns";
 import { MonitorToolbar } from "./components/MonitorToolbar";
 import {
   RoomSortableProvider,
   SortableRoomTableRow,
 } from "../../components/RoomSortable";
+
+let startupLiveCheck: Promise<void> | null = null;
 
 type SavedMonitorFilters = {
   filter?: "全部" | "开播中" | "录制中" | "收藏";
@@ -196,6 +197,17 @@ export default function Monitor() {
 
   useEffect(() => {
     let disposed = false;
+    function triggerStartupLiveCheck(): Promise<void> {
+      if (!startupLiveCheck) {
+        const request = checkEnabledRooms().then(() => undefined);
+        startupLiveCheck = request;
+        void request.catch(() => {
+          if (startupLiveCheck === request) startupLiveCheck = null;
+        });
+      }
+      return startupLiveCheck;
+    }
+
     void triggerStartupLiveCheck()
       .then(() => (disposed ? undefined : fetchRooms(true)))
       .catch(() => {
