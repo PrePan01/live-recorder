@@ -10,7 +10,7 @@ import { holdVideoFrame, releaseVideoFrame, waitForVideoFrame } from "../utils/v
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
 const EVENTS = mpegts.Events as unknown as Record<
-  "ERROR",
+  "ERROR" | "LOADING_COMPLETE",
   Parameters<mpegts.Player["on"]>[0]
 >;
 
@@ -210,6 +210,9 @@ export default function VideoPlayer({
         {
           enableStashBuffer: false,
           liveBufferLatencyChasing: true,
+          enableWorker: true,
+          // 观看流无需为长时间戳间隙同步生成成千上万的静音帧。
+          fixAudioTimestampGap: false,
         },
       );
       player = instance;
@@ -230,6 +233,13 @@ export default function VideoPlayer({
       videoRef.current.addEventListener("playing", playingListener);
       instance.on(EVENTS.ERROR, (_t, _detail) => {
         // 旧连接在重试期间的异步错误不能销毁新播放器。
+        if (player !== instance || disposed) return;
+        reportError("live-preview", new Error(`播放器错误 type=${String(_t)} detail=${String(_detail)}`));
+        scheduleReconnect();
+      });
+      // 上游切换用 1012 关闭 WS，mpegts 报加载完成而非 ERROR；及时重连，
+      // 避免等 12 秒看门狗才换掉持有旧编码配置的解码器。
+      instance.on(EVENTS.LOADING_COMPLETE, () => {
         if (player !== instance || disposed) return;
         scheduleReconnect();
       });
@@ -253,8 +263,10 @@ export default function VideoPlayer({
           retry = 0;
           return;
         }
-        if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS)
+        if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+          reportError("live-preview-stall", new Error(`无帧超时 played=${hasPlayed} retry=${retry}`));
           scheduleReconnect();
+        }
       }, 2_000);
     }
 

@@ -1897,7 +1897,7 @@ export class RecorderManager {
     session.engine = engine;
     session.filePath = filePath;
     this.services.rooms.setState(room.id, "recording");
-    if (session.segments === 0) this.preview?.resetRoom(room.id);
+    this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
     let gotData = false;
@@ -1934,6 +1934,10 @@ export class RecorderManager {
         if (session.generation !== generation) return;
         if (session.stopRequested) break;
         switch (event.type) {
+          case "preview_data": {
+            this.preview?.broadcastFrame(room.id, event.chunk);
+            break;
+          }
           case "file_created": {
             startedConfirmed = true;
             this.services.recordings.update(recordingId, {
@@ -1979,7 +1983,8 @@ export class RecorderManager {
               session.gapStartAt = null;
             }
             session.lastDataAt = now;
-            this.preview?.broadcastFrame(room.id, event.chunk);
+            if (!event.previewForwarded)
+              this.preview?.broadcastFrame(room.id, event.chunk);
             break;
           }
           case "stream_format_changed": {

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { describe, expect, it } from "vitest";
 import {
   StreamRecordingEngine,
+  FlvTimestampNormalizer,
   parseM3u8,
   hlsPollIntervalMs,
 } from "../../src/recorder/stream-recorder.js";
@@ -691,5 +692,54 @@ describe("HLS watchdog cleanup", () => {
     await new Promise(r => setTimeout(r, 80));
     expect(events).toContain("completed");
     expect(signal!.aborted).toBe(false);
+  });
+});
+
+describe('recording and preview timelines', () => {
+  const head = Buffer.from([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0]);
+  function media(ts: number): Buffer {
+    const tag = Buffer.alloc(21);
+    tag[0] = 9; tag.writeUIntBE(6, 1, 3);
+    tag.writeUIntBE(ts & 0xffffff, 4, 3); tag[7] = ts >>> 24;
+    tag[11] = 0x17; tag[12] = 1;
+    tag.writeUInt32BE(17, 17);
+    return tag;
+  }
+  const timestamp = (tag: Buffer) => tag.readUIntBE(4, 3) + tag[7]! * 0x1000000;
+
+  it('appends the file without a second FLV header while preview starts a fresh timeline', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-resume-'));
+    const out = path.join(dir, 'a.flv');
+    const original = Buffer.concat([head, media(2_400_000)]);
+    await writeFile(out, original);
+    const input = Buffer.concat([head, media(29), media(69)]);
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody([
+      input.subarray(0, 7), input.subarray(7, 30), input.subarray(30),
+    ])));
+    const previews: Buffer[] = [];
+    const disk: Buffer[] = [];
+    for await (const event of engine.start({ url: 'https://x/live.flv', format: 'flv' }, out, {
+      append: true, timestampOffsetMs: 2_400_000,
+    })) {
+      if (event.type === 'preview_data') previews.push(event.chunk);
+      if (event.type === 'data') {
+        expect(event.previewForwarded).toBe(true);
+        disk.push(event.chunk);
+      }
+    }
+    expect(Buffer.concat(previews)).toEqual(Buffer.concat([head, media(0), media(40)]));
+    expect(Buffer.concat(disk)).toEqual(Buffer.concat([media(2_400_029), media(2_400_069)]));
+    expect(await readFile(out)).toEqual(Buffer.concat([original, ...disk]));
+  });
+
+  it.each([0x01020304, 0x81020304])('preserves all timestamp bits for long recordings (offset=%s)', (offset) => {
+    const normalizer = new FlvTimestampNormalizer({ offsetMs: offset });
+    const parts = normalizer.push(Buffer.concat([head, media(29)]));
+    expect(timestamp(parts[1]!)).toBe(offset + 29);
+    expect(normalizer.lastTimestampMs).toBe(offset + 29);
+    const unsigned = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });
+    const normalized = unsigned.push(Buffer.concat([head, media(offset), media(offset + 40)]));
+    expect(timestamp(normalized[1]!)).toBe(0);
+    expect(timestamp(normalized[2]!)).toBe(40);
   });
 });

@@ -424,7 +424,8 @@ describe('WebSocket preview', () => {
     await c1.closed;
 
     // 录制仍在继续：广播近期媒体数据（非 FLV 头）。
-    server.preview.broadcastFrame(room.id, Buffer.from([0xaa, 0xbb, 0xcc]));
+    const recent = buildVideoTag(1, 64);
+    server.preview.broadcastFrame(room.id, recent);
 
     // 客户端断开后再重开预览：新客户端先收到流头（FLV 签名），再收到近期尾部（接近实时位置的媒体）。
     const c2 = connect(server.url, room.id);
@@ -441,7 +442,7 @@ describe('WebSocket preview', () => {
     const first2 = c2msgs[0]!;
     expect(first2.subarray(0, 3).toString()).toBe('FLV');
     const tail2 = c2msgs[1]!;
-    expect([...tail2]).toEqual([0xaa, 0xbb, 0xcc]);
+    expect(tail2).toEqual(recent);
     c2.ws.close();
     await c2.closed;
     await server.close();
