@@ -10,9 +10,9 @@ describe("回看音频时间戳缺口", () => {
       },
     });
     try {
-      // @ts-expect-error mpegts 的内部 JS 解封装器未公开类型，只在此回归测试中直接喂样本。
-      const { default: Remuxer } =
-        await import("../../node_modules/mpegts.js/src/remux/mp4-remuxer.js");
+      const { default: Remuxer } = await import(
+        "mpegts.js/src/remux/mp4-remuxer.js"
+      );
       const remux = new Remuxer(seekPlaybackConfig);
       // 最小媒体元数据，直接喂样本以隔离 AAC 时间戳缺口处理。
       remux._dtsBase = 0;
