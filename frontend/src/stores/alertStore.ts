@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import { clearAllAlerts, fetchAlerts, markAlertRead, markAllAlertsRead } from '../api/alerts';
 import { checkRoomNow } from '../api/rooms';
 import type { Alert } from '../types/alert';

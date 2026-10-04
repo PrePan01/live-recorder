@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import { EndpointResolver } from '../api/endpoint';
 import { fetchServiceStatus } from '../api/service';
 import type { ServiceStatus } from '../types/service';

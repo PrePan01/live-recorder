@@ -8,6 +8,7 @@ import dayjs from 'dayjs';
 import App from './App';
 import { AppThemeProvider } from './theme';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import ReactMountedMarker from './components/ReactMountedMarker';
 import './styles/tokens.css';
 import './styles/layout.css';
 import './styles/antd-overrides.css';
@@ -22,6 +23,7 @@ console.log('[live-recorder] main.tsx executing, rendering React root...');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <ReactMountedMarker />
     <ConfigProvider locale={zhCN}>
       <AppThemeProvider>
         <AntdApp>
@@ -35,11 +37,3 @@ createRoot(document.getElementById('root')!).render(
     </ConfigProvider>
   </StrictMode>,
 );
-
-// 渲染自检：React 挂载后移除加载提示并写入标记，便于诊断打包 WebView 是否执行前端 JS。
-requestAnimationFrame(() => {
-  document.getElementById('boot-hint')?.remove();
-  document.documentElement.dataset.reactReady = '1';
-  localStorage.setItem('lr-react-mounted', String(Date.now()));
-  console.log('[live-recorder] react mounted, boot-hint removed');
-});

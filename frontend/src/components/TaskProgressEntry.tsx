@@ -105,7 +105,16 @@ export function TaskProgressEntry() {
 
   // 挂载首拉（刷新页面首屏即对）+ 四类源变化 debounce 重拉 + SSE 重连校准。
   useEffect(() => {
-    void refresh();
+    const refreshVisible = () => {
+      if (document.visibilityState !== 'hidden') void refresh();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') return;
+      useTasksStore.getState().pruneGrace(Date.now());
+      refreshVisible();
+    };
+    refreshVisible();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     const unsubs = [
       useRecordingStore.subscribe(() => void scheduleRefresh()),
       usePipelineStore.subscribe(() => void scheduleRefresh()),
@@ -114,15 +123,16 @@ export function TaskProgressEntry() {
     ];
     let wasConnected = useServiceStore.getState().sseConnected;
     const unsubConn = useServiceStore.subscribe((state) => {
-      if (state.sseConnected && !wasConnected) void refresh(); // 重连校准（断线期间不冻结）
+      if (state.sseConnected && !wasConnected) refreshVisible(); // 重连校准（断线期间不冻结）
       wasConnected = state.sseConnected;
     });
     // 真轮询兑底：直调 refresh()、绝不经 debounce（密集事件会无限重置 debounce，
     // 任务变化的时刻恰恰拉不成）。
-    // 零新增事件契约；接口为内存微扫，常开零负担。
-    const poll = setInterval(() => void useTasksStore.getState().refresh(), 1200);
+    // 后台不驱动 React 更新；回到前台立即校准，前台轮询不经 debounce。
+    const poll = setInterval(refreshVisible, 1200);
     return () => {
       clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       for (const unsub of unsubs) unsub();
       unsubConn();
     };

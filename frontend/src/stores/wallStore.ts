@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { Room } from '../types/room';
 

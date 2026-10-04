@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import { bridge } from './bootStore';
 import type { UpdateState } from '../types/update';
 

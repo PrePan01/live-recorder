@@ -71,6 +71,28 @@ export function redactDiagnosticText(
     );
 }
 
+/** Keep code locations from local app stacks; never retain origins or query data. */
+function redactFrontendStack(value: string, sensitiveValues: readonly string[]): string {
+  let stack = value;
+  for (const sensitive of sensitiveValues) {
+    if (sensitive.length > 0) stack = stack.split(sensitive).join("[redacted]");
+  }
+  stack = stack.replace(/(?:https?|tauri):\/\/[^\s"'<>)]*/gi, (frame) => {
+    const location = /:(\d+):(\d+)$/.exec(frame);
+    if (!location) return "[url-redacted]";
+    try {
+      const url = new URL(frame.slice(0, location.index));
+      const local = ["localhost", "127.0.0.1", "tauri.localhost"].includes(url.hostname);
+      const source = /^\/(?:src\/|assets\/|node_modules\/\.vite\/deps\/)[A-Za-z0-9_/-]+\.(?:[jt]sx?)$/.test(url.pathname);
+      if (!local || !source || url.username || url.password) return "[url-redacted]";
+      return `app:${url.pathname}:${location[1]}:${location[2]}`;
+    } catch {
+      return "[url-redacted]";
+    }
+  });
+  return redactDiagnosticText(stack, sensitiveValues);
+}
+
 function publicRoomId(raw: string): string | null {
   try {
     const parts = new URL(raw).pathname.split("/").filter(Boolean);
@@ -125,7 +147,7 @@ export function frontendDiagnosticSummary(
         ),
         ...(string(input.stack)
           ? {
-              stack: redactDiagnosticText(
+              stack: redactFrontendStack(
                 string(input.stack)!,
                 sensitiveValues,
               ),
