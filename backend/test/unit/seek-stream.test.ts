@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -449,5 +449,120 @@ describe('索引冻结自愈（#94 四轮根因面）', () => {
     stream.resume();
     await waitUntil(() => calls.some((c) => !c.killed));
     for (const c of calls) c.stdout.end();
+  });
+});
+
+
+describe('稳定回看快照与 HTTP Range 续读', () => {
+  it('消费端延迟接入时不会被诊断监听提前读掉 FLV 头和首包', async () => {
+    const { services, rec, app, flv } = await setup();
+    const real = new SeekService(services);
+    const { stream } = await real.openStream(services.recordings.get(rec.id)!, 5);
+    await tick(30);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const bytes = Buffer.concat(chunks);
+    expect(bytes.subarray(0, 3).toString('ascii')).toBe('FLV');
+    expect(bytes.subarray(146)).toEqual(flv.subarray(tagLayout(flv)[4]!.offset));
+    await real.shutdown();
+    await app.close();
+  });
+
+  it('完整响应和所有续读区间逐字节一致，录制增长也不改变快照', async () => {
+    const { services, app, rec, filePath } = await setup();
+    services.seek = new SeekService(services);
+    const headers = { host: '127.0.0.1:43120' };
+    const warm = await app.inject({ method: 'POST', url: `/api/v1/recordings/${rec.id}/seek-prewarm`, headers, payload: { second: 5, prepareStream: true } });
+    const token = warm.json().streamToken;
+    expect(token).toBeTypeOf('string');
+    const url = `/api/v1/recordings/${rec.id}/seek-stream?second=5&snapshot=${token}`;
+    const initial = await app.inject({ method: 'GET', url, headers });
+    expect(initial.statusCode).toBe(200);
+    const bytes = initial.rawPayload;
+    expect(Number(initial.headers['content-length'])).toBe(bytes.length);
+    await appendFile(filePath, flvTag(9, 16000, videoPayload(true, false)));
+    const writer = await SeekIndexWriter.open(filePath, bytes.length);
+    writer!.note({ t: 16000, b: buildSampleFlv().length });
+    await writer!.close();
+    // 文件头、前缀内部、跨前缀边界、纯录像区段、尾部范围都必须正确。
+    for (const [range, from, to] of [
+      ['bytes=0-12', 0, 13], ['bytes=4-30', 4, 31],
+      ['bytes=140-160', 140, 161], ['bytes=160-', 160, bytes.length],
+      ['bytes=-25', bytes.length - 25, bytes.length],
+    ] as const) {
+      const response = await app.inject({ method: 'GET', url, headers: { ...headers, range } });
+      expect(response.statusCode).toBe(206);
+      expect(response.rawPayload).toEqual(bytes.subarray(from, to));
+      expect(response.headers['content-range']).toBe(`bytes ${from}-${to - 1}/${bytes.length}`);
+      expect(Number(response.headers['content-length'])).toBe(to - from);
+    }
+    const again = await app.inject({ method: 'GET', url, headers });
+    expect(again.rawPayload).toEqual(bytes);
+    for (const range of ['bytes=999999-', 'bytes=20-10', 'bytes=0-1,5-6', 'bytes=-0']) {
+      const invalid = await app.inject({ method: 'GET', url, headers: { ...headers, range } });
+      expect(invalid.statusCode).toBe(416);
+      expect(invalid.headers['content-range']).toBe(`bytes */${bytes.length}`);
+    }
+    const legacy = await app.inject({ method: 'GET', url: `/api/v1/recordings/${rec.id}/seek-stream?second=5`, headers: { ...headers, range: 'bytes=160-' } });
+    expect(legacy.statusCode).toBe(416);
+    await services.seek.shutdown();
+    await app.close();
+  });
+
+  it('被取消的起流不创建读流，同录像并发起流只保留最新请求', async () => {
+    const { services, rec, calls, app } = await setup();
+    const recording = services.recordings.get(rec.id)!;
+    const controller = new AbortController();
+    controller.abort();
+    await expect(services.seek.openStream(recording, 5, { signal: controller.signal })).rejects.toMatchObject({ retryable: true });
+    expect(calls).toHaveLength(0);
+    const results = await Promise.allSettled([5, 9, 10, 11].map(second => services.seek.openStream(recording, second)));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.plan.from).toBe(tagLayout(buildSampleFlv())[5]!.offset);
+    await services.seek.shutdown();
+    await app.close();
+  });
+
+  it('不同录像同时起流也不能越过全局并发上限', async () => {
+    const { services, calls, rec, filePath, app } = await setup();
+    const room = services.rooms.list()[0]!;
+    const recordings = [services.recordings.get(rec.id)!];
+    for (let i = 1; i < 6; i++) {
+      const item = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: `parallel-${i}`, streamTitle: 't' });
+      services.recordings.update(item.id, { filePath, state: 'recording' });
+      recordings.push(services.recordings.get(item.id)!);
+    }
+    const results = await Promise.allSettled(recordings.map(item => services.seek.openStream(item, 5)));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(MAX_SEEK_SESSIONS);
+    expect(calls).toHaveLength(MAX_SEEK_SESSIONS);
+    await services.seek.shutdown();
+    await app.close();
+  });
+
+  it('停止录制后快照失效，不会被下一次录制继续使用', async () => {
+    const { services, rec, app } = await setup();
+    const item = services.recordings.get(rec.id)!;
+    const warm = await services.seek.prewarm(item, 5, true);
+    services.recordings.update(rec.id, { state: 'completed' });
+    services.events.emit({ type: 'recording:updated', data: services.recordings.get(rec.id)! });
+    services.recordings.update(rec.id, { state: 'recording' });
+    await expect(services.seek.openStream(services.recordings.get(rec.id)!, 5, { streamToken: warm.streamToken! })).rejects.toMatchObject({ retryable: true });
+    await app.close();
+  });
+});
+
+
+describe('损坏索引修复后恢复回看', () => {
+  it('补扫的正确时间戳覆盖旧坏条目，虚构偏移不会持续触发全文件重扫', async () => {
+    const { services, rec, filePath, app } = await setup();
+    const item = services.recordings.get(rec.id)!;
+    const offset = tagLayout(buildSampleFlv())[4]!.offset;
+    await writeFile(seekSidecarPath(filePath), `{"v":1}\n{"t":9999,"b":${offset}}\n{"t":5000,"b":999999}\n`);
+    await expect(services.seek.prewarm(item, 5)).rejects.toMatchObject({ retryable: true });
+    await services.seek.startScan(filePath, rec.id);
+    expect((await services.seek.prewarm(item, 5)).startSecond).toBe(4);
+    expect((await services.seek.prewarm(item, 10)).startSecond).toBe(8);
+    await app.close();
   });
 });

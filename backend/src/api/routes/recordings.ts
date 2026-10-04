@@ -6,6 +6,7 @@ import { open, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
 import { AppError } from "../../types/error.js";
+import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
 import type { RecordingState } from "../../types/index.js";
 import { CsvExportWorkerPool } from "../csv-export-worker-pool.js";
@@ -328,7 +329,7 @@ export function registerRecordingRoutes(
   // 跳播起流：从索引命中关键帧字节偏移直通 FLV 字节流（FLV 头+序列头+标签到已写尾部即止）。
   app.get("/api/v1/recordings/:id/seek-stream", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const q = req.query as { second?: string };
+    const q = req.query as { second?: string; snapshot?: string };
     const second = Number(q.second);
     if (!Number.isInteger(second) || second < 0) {
       throw new AppError("CONFIG_INVALID", "second 必须为非负整数秒");
@@ -340,19 +341,47 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
-    const { stream, startSecond } = await services.seek.openStream(rec, second);
-    reply.header("Content-Type", "video/x-flv");
-    reply.header("Cache-Control", "no-store");
-    // 实际起播秒（关键帧吸附可能略早于请求秒）：前端手柄/时间显示对齐这个真值。
-    reply.header("X-Seek-Start-Second", String(startSecond));
-    reply.header("Access-Control-Expose-Headers", "X-Seek-Start-Second");
-    return reply.send(stream);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const close = () => { if (!reply.raw.writableFinished) abort(); cleanup(); };
+    const cleanup = () => {
+      req.raw.off("aborted", abort);
+      reply.raw.off("close", close);
+      reply.raw.off("finish", cleanup);
+    };
+    req.raw.once("aborted", abort);
+    reply.raw.once("close", close);
+    reply.raw.once("finish", cleanup);
+    try {
+      const result = await services.seek.openStream(rec, second, {
+        signal: controller.signal,
+        ...(q.snapshot ? { streamToken: q.snapshot } : {}),
+        ...(req.headers.range !== undefined ? { range: req.headers.range } : {}),
+      });
+      reply.header("Content-Type", "video/x-flv");
+      reply.header("Cache-Control", "no-store");
+      reply.header("Accept-Ranges", "bytes");
+      reply.header("Content-Length", String(result.to - result.from));
+      reply.header("X-Seek-Start-Second", String(result.startSecond));
+      reply.header("Access-Control-Expose-Headers", "X-Seek-Start-Second, Content-Range, Accept-Ranges");
+      if (result.partial) {
+        reply.code(206);
+        reply.header("Content-Range", `bytes ${result.from}-${result.to - 1}/${result.total}`);
+      }
+      return reply.send(result.stream);
+    } catch (error) {
+      cleanup();
+      if (error instanceof SeekRangeError) {
+        return reply.code(416).header("Content-Range", `bytes */${error.total}`).send();
+      }
+      throw error;
+    }
   });
 
   // 跳播预热：零进程准备（读索引+校验目标点），幂等可反复调。
   app.post("/api/v1/recordings/:id/seek-prewarm", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { second?: unknown };
+    const body = (req.body ?? {}) as { second?: unknown; prepareStream?: unknown };
     const second = Number(body.second);
     if (!Number.isInteger(second) || second < 0) {
       throw new AppError("CONFIG_INVALID", "second 必须为非负整数秒");
@@ -364,8 +393,8 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
-    const { startSecond } = await services.seek.prewarm(rec, second);
-    return reply.status(202).send({ ok: true, startSecond });
+    const result = await services.seek.prewarm(rec, second, body.prepareStream === true);
+    return reply.status(202).send({ ok: true, ...result });
   });
 
   app.post("/api/v1/recordings/:id/verify", async (req, reply) => {

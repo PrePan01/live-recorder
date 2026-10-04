@@ -179,14 +179,118 @@ export async function loadSeekIndex(filePath: string): Promise<{ entries: SeekEn
   return { entries, seqs };
 }
 
+/** 录制期侧车只追加：只读取新增的完整行，并合并并发读取。文件替换/截短时重新加载。 */
+export class SeekIndexReader {
+  private entries: SeekEntry[] = [];
+  private seqs: SeekEntry[] = [];
+  private seen = new Map<number, SeekEntry>();
+  private offset = 0;
+  private version: { dev: bigint; ino: bigint; size: bigint; mtime: bigint } | null = null;
+  private inflight: Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> | null = null;
+
+  constructor(private readonly filePath: string) {}
+
+  load(): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
+    if (this.inflight) return this.inflight;
+    this.inflight = this.read().finally(() => { this.inflight = null; });
+    return this.inflight;
+  }
+
+  private reset(): void {
+    this.entries = [];
+    this.seqs = [];
+    this.seen.clear();
+    this.offset = 0;
+    this.version = null;
+  }
+
+  private async read(): Promise<{ entries: SeekEntry[]; seqs: SeekEntry[] }> {
+    const handle = await open(seekSidecarPath(this.filePath), 'r').catch(() => null);
+    if (!handle) {
+      this.reset();
+      return { entries: this.entries, seqs: this.seqs };
+    }
+    try {
+      const s = await handle.stat({ bigint: true });
+      const previous = this.version;
+      if (previous && (s.dev !== previous.dev || s.ino !== previous.ino || s.size < previous.size ||
+        (s.size === previous.size && s.mtimeNs !== previous.mtime))) this.reset();
+      let sortEntries = false;
+      let sortSeqs = false;
+      const size = Number(s.size);
+      let position = this.offset;
+      let carry: Buffer = Buffer.alloc(0);
+      while (position < size) {
+        const buf = Buffer.alloc(Math.min(64 * 1024, size - position));
+        const { bytesRead } = await handle.read(buf, 0, buf.length, position);
+        if (!bytesRead) break;
+        position += bytesRead;
+        const data = Buffer.concat([carry, buf.subarray(0, bytesRead)]);
+        const end = data.lastIndexOf(10);
+        if (end < 0) {
+          // 正常条目不足百字节；坏掉的无界尾行不能占满内存。
+          if (data.length > 64 * 1024) throw new Error('seek index line too large');
+          carry = data;
+          continue;
+        }
+        for (const line of data.subarray(0, end).toString('utf8').split('\n')) {
+          let obj: Record<string, unknown>;
+          try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+          if (!obj || typeof obj !== 'object') continue;
+          const t = Number(obj.t);
+          const b = Number(obj.b);
+          if (!Number.isFinite(t) || !Number.isFinite(b)) continue;
+          const previousEntry = this.seen.get(b);
+          // 后台补扫追加的真值修正旧条目，不能让最早的坏时间戳永久遮住修复结果。
+          if (previousEntry && (previousEntry.s === 1) === (obj.s === 1)) {
+            if (previousEntry.t !== t) {
+              previousEntry.t = t;
+              if (obj.s !== 1) sortEntries = true;
+            }
+            if (obj.s === 1) previousEntry.k = obj.k === 8 ? 8 : 9;
+            continue;
+          }
+          if (previousEntry) {
+            const list = previousEntry.s === 1 ? this.seqs : this.entries;
+            list.splice(list.indexOf(previousEntry), 1);
+          }
+          if (obj.s === 1) {
+            if (b < (this.seqs[this.seqs.length - 1]?.b ?? -Infinity)) sortSeqs = true;
+            const entry: SeekEntry = { t, b, s: 1, k: obj.k === 8 ? 8 : 9 };
+            this.seqs.push(entry);
+            this.seen.set(b, entry);
+          } else {
+            if (t < (this.entries[this.entries.length - 1]?.t ?? -Infinity)) sortEntries = true;
+            const entry: SeekEntry = { t, b };
+            this.entries.push(entry);
+            this.seen.set(b, entry);
+          }
+        }
+        carry = Buffer.from(data.subarray(end + 1));
+        this.offset = position - carry.length;
+        // 大型旧索引首次读入时给录制、SSE 和其他请求让出事件循环。
+        if (position < size) await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      if (sortEntries) this.entries.sort((a, b) => a.t - b.t);
+      if (sortSeqs) this.seqs.sort((a, b) => a.b - b.b);
+      this.version = { dev: s.dev, ino: s.ino, size: s.size, mtime: s.mtimeNs };
+      return { entries: this.entries, seqs: this.seqs };
+    } finally {
+      await handle.close();
+    }
+  }
+}
+
 /** 目标时间戳的起播条目：最后一个小于等于目标的关键帧。 */
 export function lookupSeekEntry(entries: SeekEntry[], targetMs: number): SeekEntry | null {
-  let best: SeekEntry | null = null;
-  for (const entry of entries) {
-    if (entry.t <= targetMs) best = entry;
-    else break;
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (entries[mid]!.t <= targetMs) low = mid + 1;
+    else high = mid;
   }
-  return best;
+  return entries[low - 1] ?? null;
 }
 
 /** 起播点前面最近的视频/音频序列头（解码器初始化用）。 */

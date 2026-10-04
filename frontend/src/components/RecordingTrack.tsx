@@ -174,7 +174,7 @@ export default function RecordingTrack({
     if (labelRefs.current.start) observer.observe(labelRefs.current.start);
     if (labelRefs.current.end) observer.observe(labelRefs.current.end);
     return () => observer.disconnect();
-  }, [elapsedSeconds, range]);
+  }, []);
   const positionAt = useCallback(
     (clientX: number) => {
       const rail = railRef.current;
@@ -204,19 +204,31 @@ export default function RecordingTrack({
 
   useEffect(() => {
     if (!dragging) return;
-    const move = (event: PointerEvent) => {
-      movedRef.current = true;
+    let frame: number | null = null;
+    let latestX = 0;
+    const paint = () => {
+      frame = null;
       if ("kind" in dragging) {
         if (dragging.kind === "playhead")
-          setPlayheadSecond(positionAt(event.clientX));
-        else setRangeAt(dragging.kind, event.clientX);
+          setPlayheadSecond(positionAt(latestX));
+        else setRangeAt(dragging.kind, latestX);
       } else
         setMarkerPositions((current) => ({
           ...current,
-          [dragging.markerId]: positionAt(event.clientX),
+          [dragging.markerId]: positionAt(latestX),
         }));
     };
+    const cancelFrame = () => {
+      if (frame != null) cancelAnimationFrame(frame);
+      frame = null;
+    };
+    const move = (event: PointerEvent) => {
+      movedRef.current = true;
+      latestX = event.clientX;
+      if (frame == null) frame = requestAnimationFrame(paint);
+    };
     const up = (event: PointerEvent) => {
+      cancelFrame();
       // 手柄或播放指示器松手时提交跳播；贴录制末尾则切回直播。
       if (dragging && "kind" in dragging) {
         // 起播真值按「钳制生效位」提交（左柄不过 end-1、右柄贴右端=回直播），
@@ -232,8 +244,8 @@ export default function RecordingTrack({
         setPlayheadSecond(null);
       }
       if (dragging && !("kind" in dragging)) {
-        const position = markerPositions[dragging.markerId];
-        if (movedRef.current && position !== undefined)
+        const position = positionAt(event.clientX);
+        if (movedRef.current)
           void onMove?.(dragging.markerId, position).finally(() =>
             setMarkerPositions((current) => {
               const next = { ...current };
@@ -251,22 +263,28 @@ export default function RecordingTrack({
       setDragging(null);
     };
     const cancel = () => {
-      if ("kind" in dragging && dragging.kind === "playhead") {
-        setPlayheadSecond(null);
-        setDragging(null);
+      cancelFrame();
+      if (!("kind" in dragging)) {
+        setMarkerPositions((current) => {
+          const next = { ...current };
+          delete next[dragging.markerId];
+          return next;
+        });
       }
+      setPlayheadSecond(null);
+      setDragging(null);
     };
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => {
+      cancelFrame();
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
   }, [
     dragging,
-    markerPositions,
     onMove,
     positionAt,
     setRangeAt,

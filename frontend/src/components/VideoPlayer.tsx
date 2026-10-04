@@ -5,6 +5,8 @@ import { previewWsUrl } from "../api/client";
 import { reportError } from "../utils/errorDiagnostics";
 import { isPlausibleSeekOffset } from "../utils/recordingTimeline";
 import { prepareSeekPlayback } from "../utils/prepareSeekPlayback";
+import { watchSeekPlayback } from "../utils/seekPlaybackHealth";
+import { seekPlaybackConfig } from "../utils/seekPlaybackConfig";
 import { holdVideoFrame, releaseVideoFrame, waitForVideoFrame } from "../utils/videoFrameTransition";
 
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
@@ -34,7 +36,10 @@ export interface VideoPlayerProps {
   /** 回看播到已写尾部 →调用方切回实时。 */
   onSeekTail?: () => void;
   /** 回看首帧渲染（松手→首帧掍表打点），携带代际号防旧代际串打点。 */
-  onSeekFirstFrame?: (generation: number) => void;
+  onSeekFirstFrame?: (generation: number, elapsed: number) => void;
+  /** 失败必须释放父级在途状态；重试重新预热快照，而不是复用已过期的 URL。 */
+  onSeekError?: (generation: number, second: number) => void;
+  onSeekRetry?: () => void;
   /** 实时流首帧（切实时段掍表打点）。 */
   onLiveFirstFrame?: () => void;
 }
@@ -51,6 +56,8 @@ export default function VideoPlayer({
   seek = null,
   onSeekTail,
   onSeekFirstFrame,
+  onSeekError,
+  onSeekRetry,
   onLiveFirstFrame,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -291,28 +298,56 @@ export default function VideoPlayer({
     const gen = seek.generation;
     seekGenRef.current = gen;
     let disposed = false;
-    const stale = () => disposed || seekGenRef.current !== gen;
+    let failed = false;
+    const stale = () => disposed || failed || seekGenRef.current !== gen;
     setState("loading");
     setErrorMsg("");
     const instance = mpegts.createPlayer(
       { type: "flv", url: seek.url, isLive: false },
-      {
-        enableStashBuffer: false,
-        accurateSeek: true,
-        lazyLoadMaxDuration: Math.max(180, seek.second - seek.startSecond + 30),
-      },
+      seekPlaybackConfig,
     );
     instance.attachMediaElement(video);
+    let destroyed = false;
+    const destroySeekPlayer = () => {
+      if (destroyed) return;
+      destroyed = true;
+      try { instance.destroy(); } catch (error) {
+        reportError("jump-seek-destroy", error);
+      }
+    };
     let positioned = false;
     let stopWaitingForFrame: (() => void) | null = null;
+    let mediaStart: number | null = null;
+    const elapsed = () => {
+      if (video.buffered.length) mediaStart ??= video.buffered.start(0);
+      return Math.max(0, video.currentTime - (mediaStart ?? video.currentTime));
+    };
+    const fail = (reason: string) => {
+      if (stale()) return;
+      const second = positioned && hasFrame ? seek.startSecond + elapsed() : seek.second;
+      failed = true;
+      health.stop();
+      stopPreparing();
+      stopWaitingForFrame?.();
+      reportError("jump-seek", new Error(`${reason} gen=${gen} second=${seek.second} start=${seek.startSecond}`));
+      destroySeekPlayer();
+      releaseFrame();
+      setState("error");
+      setErrorMsg("回看加载失败，请重试");
+      onSeekError?.(gen, second);
+    };
+    let hasFrame = false;
+    const health = watchSeekPlayback(video, fail, () => !stale());
     const onPlaying = () => {
       if (stale() || !positioned) return;
       hasEverPlayedRef.current = true;
       setState("playing");
       if (!stopWaitingForFrame) {
         stopWaitingForFrame = waitForVideoFrame(video, () => {
+          hasFrame = true;
+          health.presented();
           releaseFrame();
-          onSeekFirstFrame?.(gen);
+          onSeekFirstFrame?.(gen, elapsed());
         }, () => !stale());
       }
     };
@@ -322,16 +357,7 @@ export default function VideoPlayer({
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("ended", onEnded);
-    instance.on(EVENTS.ERROR, () => {
-      if (stale()) return;
-      // 取证：跳播起流失败必须进诊断包（不只弹 toast），否则复现了也无痕可查。
-      reportError(
-        "jump-seek",
-        new Error(`jump-seek failed gen=${gen} second=${seek.second} start=${seek.startSecond}`),
-      );
-      setState("error");
-      setErrorMsg("跳播起流失败，请重试");
-    });
+    instance.on(EVENTS.ERROR, (_type, detail) => fail(`player error: ${String(detail)}`));
     // 吸附偏移超 GOP 量级=索引错乱信号：不等永不可能的缓冲覆盖，按流起点放行并留诊断。
     const offsetPlausible = isPlausibleSeekOffset(
       seek.second,
@@ -349,12 +375,13 @@ export default function VideoPlayer({
       offsetPlausible ? seek.second - seek.startSecond : 0,
       () => {
         if (stale()) return;
+        elapsed();
         positioned = true;
         // 定位完成后才播放；自动播放被拦时保留原有静音重试。
         void Promise.resolve(instance.play()).catch(() => {
           if (stale()) return;
           video.muted = true;
-          void Promise.resolve(instance.play()).catch(() => undefined);
+          void Promise.resolve(instance.play()).catch(() => fail("autoplay failed"));
         });
       },
       () => !stale(),
@@ -368,10 +395,12 @@ export default function VideoPlayer({
     );
     // 载入延迟到下一帧：StrictMode 双跑 effect 时首帧载入被取消，同一目标只发一次起流。
     const loadFrame = requestAnimationFrame(() => {
-      if (!disposed) instance.load();
+      if (stale()) return;
+      try { instance.load(); } catch (error) { fail(`load failed: ${String(error)}`); }
     });
     return () => {
       disposed = true;
+      health.stop();
       cancelAnimationFrame(loadFrame);
       stopWaitingForFrame?.();
       holdFrame();
@@ -383,9 +412,9 @@ export default function VideoPlayer({
       } catch {
         /* 忽略 */
       }
-      instance.destroy();
+      destroySeekPlayer();
     };
-  }, [seek, onSeekTail, onSeekFirstFrame, holdFrame, releaseFrame]);
+  }, [seek, onSeekTail, onSeekFirstFrame, onSeekError, holdFrame, releaseFrame, reloadToken]);
 
   // 实时首帧回调仅在直播路径生效；effect 依赖保持最小，避免重连风暴。
   const liveFirstFrameRef = useRef(onLiveFirstFrame);
@@ -421,7 +450,10 @@ export default function VideoPlayer({
             showIcon
             message="预览不可用"
             description={errorMsg}
-            action={<Button size="small" onClick={() => setReloadToken((value) => value + 1)}>重试播放器</Button>}
+            action={<Button size="small" onClick={() => {
+              if (seek && onSeekRetry) onSeekRetry();
+              else setReloadToken((value) => value + 1);
+            }}>重试播放器</Button>}
           />
         </div>
       )}

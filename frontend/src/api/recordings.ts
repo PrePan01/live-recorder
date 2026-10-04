@@ -64,8 +64,10 @@ export async function exportRecordingClip(
 export function recordingSeekStreamUrl(
   id: string,
   startSecond: number,
+  streamToken?: string,
 ): string {
-  return `${EndpointResolver.base}/recordings/${id}/seek-stream?second=${Math.max(0, Math.floor(startSecond))}`;
+  const url = `${EndpointResolver.base}/recordings/${id}/seek-stream?second=${Math.max(0, Math.floor(startSecond))}`;
+  return streamToken ? `${url}&snapshot=${encodeURIComponent(streamToken)}` : url;
 }
 
 /** 跳播预热（pointerdown/提交时）：后端零进程准备（开句柄+查索引）；
@@ -73,10 +75,12 @@ export function recordingSeekStreamUrl(
 export async function prewarmRecordingSeek(
   id: string,
   startSecond: number,
-): Promise<{ startSecond?: number } | null> {
-  const { data } = await http.post<{ startSecond?: number } | null>(
+  options: { signal?: AbortSignal; prepareStream?: boolean } = {},
+): Promise<{ startSecond?: number; streamToken?: string } | null> {
+  const { data } = await http.post<{ startSecond?: number; streamToken?: string } | null>(
     `/recordings/${id}/seek-prewarm`,
-    { second: Math.max(0, Math.floor(startSecond)) },
+    { second: Math.max(0, Math.floor(startSecond)), prepareStream: options.prepareStream ?? false },
+    { signal: options.signal },
   );
   return data ?? null;
 }
