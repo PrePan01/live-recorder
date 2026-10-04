@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { stableSlotEntries } from "./slots";
+import { stableSlotEntries } from "./wallSlots";
 
 it("keeps video DOM order stable across repeated swaps and moves to empty slots", () => {
   const a = { id: "a" };

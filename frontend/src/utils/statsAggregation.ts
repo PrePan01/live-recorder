@@ -1,6 +1,6 @@
 // 统计看板纯函数层（task #51 · 评审稿 v2）：指标定义/格式化、TOP10 归并、房间名解析。
 // 保持无 DOM 依赖（cssVar 有 window 守卫），可在 node 环境单测。
-import { formatBytes } from "../../utils/format";
+import { formatBytes } from "./format";
 
 export type StatMetric = "recordings" | "bytes" | "durationMs";
 

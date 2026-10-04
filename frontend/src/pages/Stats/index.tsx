@@ -25,7 +25,7 @@ import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes } from "../../utils/format";
 import type { RecordingsStats, StatsByDay } from "../../types/stats";
-import { EChartCard } from "./EChartCard";
+import { EChartCard } from "./components/EChartCard";
 import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import TagFilterSelect from "../../components/TagFilterSelect";
 import {
@@ -44,7 +44,7 @@ import {
   unmeasuredDurationNote,
   type PieDatum,
   type StatMetric,
-} from "./agg";
+} from "../../utils/statsAggregation";
 
 const PLATFORM_LABEL: Record<string, string> = {
   bilibili: "B站",
