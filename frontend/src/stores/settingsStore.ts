@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import { fetchSettings, updateSettings } from '../api/settings';
 import type { Settings, SettingsInput } from '../types/settings';
 

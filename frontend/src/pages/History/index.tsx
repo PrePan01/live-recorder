@@ -15,7 +15,7 @@ import {
   Typography,
 } from "antd";
 import { ExportOutlined, CopyOutlined } from "@ant-design/icons";
-import { buildRecordingColumns } from "./components/recordingColumns";
+import { buildRecordingColumns } from "../../utils/recordingColumns";
 import PlayerModal from "./components/PlayerModal";
 import PipelineDrawer from "./components/PipelineDrawer";
 import ExportTasksDrawer from "./components/ExportTasksDrawer";

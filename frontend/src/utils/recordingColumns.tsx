@@ -20,31 +20,31 @@ import {
   WarningOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { ApiError } from "../../../types/error";
-import { checkRecordingFile } from "../../../api/recordings";
-import { failurePrimaryText } from "../../../utils/failureReason";
-import { describeError } from "../../../utils/errorMap";
-import { formatBytes, formatDurationMs, formatTime } from "../../../utils/format";
+import { ApiError } from "../types/error";
+import { checkRecordingFile } from "../api/recordings";
+import { failurePrimaryText } from "./failureReason";
+import { describeError } from "./errorMap";
+import { formatBytes, formatDurationMs, formatTime } from "./format";
 import {
   IntegrityTag,
   RecordingStateTag,
-} from "../../../components/StatusTags";
-import { PlatformLogoTag } from "../../../components/PlatformLogo";
+} from "../components/StatusTags";
+import { PlatformLogoTag } from "../components/PlatformLogo";
 import {
   describeEndReason,
   isInterruptedEnd,
-} from "../../../utils/recordingEndReason";
+} from "./recordingEndReason";
 import {
   uploadPhaseLabel,
   uploadPhaseText,
-} from "../../../utils/uploadProgress";
+} from "./uploadProgress";
 import {
   describeUploadError,
   classifyUploadError,
-} from "../../../utils/uploadError";
-import type { Recording } from "../../../types/recording";
-import GapDetail from "./GapDetail";
-import EditableRecordingTitle from "./EditableRecordingTitle";
+} from "./uploadError";
+import type { Recording } from "../types/recording";
+import GapDetail from "../pages/History/components/GapDetail";
+import EditableRecordingTitle from "../pages/History/components/EditableRecordingTitle";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
 
 type MessageApi = ReturnType<typeof import("antd").App.useApp>["message"];

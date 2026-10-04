@@ -8,7 +8,7 @@ import {
   Typography,
 } from "antd";
 import { formatTime } from "../../../utils/format";
-import { EXPORT_STATUS_COLOR } from "./historyUtils";
+import { EXPORT_STATUS_COLOR } from "../../../utils/historyUtils";
 import type { ExportJob } from "../../../types/export";
 
 export default function ExportTasksDrawer({

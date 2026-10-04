@@ -189,13 +189,17 @@ export default function AppLayout() {
               <Suspense
                 fallback={
                   <div
+                    role="status"
+                    aria-label="正在加载页面"
                     style={{
                       minHeight: 180,
                       display: "grid",
                       placeItems: "center",
-                      background: "#fff",
+                      background: "var(--lr-surface)",
                     }}
-                  ></div>
+                  >
+                    <Spin />
+                  </div>
                 }
               >
                 <Outlet />

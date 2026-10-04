@@ -38,6 +38,7 @@ import { fitPreviewBox, fitPreviewBoxByHeight } from "../utils/previewLayout";
 import { ApiError } from "../types/error";
 import VideoPlayer from "./VideoPlayer";
 import { observePreviewProgress } from "../utils/observePreviewProgress";
+import { retrySeekRequest } from "../utils/retrySeekRequest";
 import {
   clearHighlightBuffer,
   disableHighlightBuffer,
@@ -60,16 +61,11 @@ import type { RecordingMarker } from "../types/recording";
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
-/** 弹窗主体左右内边距合计（antd 默认各 24）：视频区宽度 = 弹窗宽度 - 该值。 */
 const MODAL_BODY_PADDING_X = 48;
-/** Ant Modal 在视口两侧至少保留 16px，视频缩放也必须预留这段空间。 */
 const MODAL_VIEWPORT_GUTTER_X = 32;
 const MODAL_CHROME_HEIGHT = 108;
-/** 轨道操作区的可用宽度下限；窄于此时才退回到视口可用宽度。 */
 const RECORDING_TRACK_MIN_WIDTH = 450;
-/** 竖屏拖拽缩放的画面高度下限，避免缩到不可用。 */
 const MIN_VIDEO_HEIGHT = 240;
-/** 秒→mm:ss（跳播真值提示用）。 */
 const formatClock = (value: number) => {
   const total = Math.max(0, Math.floor(value));
   const m = Math.floor(total / 60);
@@ -170,7 +166,6 @@ export default function PreviewModal({
     setTrackNode(node);
   }, []);
   const streamRatioTimerRef = useRef<number | null>(null);
-  // 鼠标事件可能快于显示器刷新率；尺寸状态只在下一帧提交一次最新值。
   const resizeFrameRef = useRef<number | null>(null);
   const pendingResizeRef = useRef<PendingPreviewResize | null>(null);
 
@@ -259,7 +254,10 @@ export default function PreviewModal({
   ]);
   const trackClosing = Boolean(displayedTrack) && !recording;
   const trackElapsedSeconds = displayedTrack
-    ? Math.max(0, Math.floor((now - Date.parse(displayedTrack.startedAt)) / 1000))
+    ? Math.max(
+        0,
+        Math.floor((now - Date.parse(displayedTrack.startedAt)) / 1000),
+      )
     : 0;
 
   useEffect(() => {
@@ -294,7 +292,6 @@ export default function PreviewModal({
     return () => observer.disconnect();
   }, [displayedTrack, trackCollapsed, trackNode]);
 
-  // 模态框尺寸只由初始预览/用户拖拽决定；轨道只从其内部视频区扣除实际高度。
   const maxModalWidth = Math.max(
     MODAL_BODY_PADDING_X + 1,
     viewportWidth - MODAL_VIEWPORT_GUTTER_X,
@@ -306,9 +303,6 @@ export default function PreviewModal({
   const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
   const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
   const occupiedTrackHeight = displayedTrack && trackNode ? trackOccupied : 0;
-  // 不变量设计：内容区总高（视频+轨道预留）不参与轨道收放——弹窗高在轨道生命周期恒定、
-  // 随用户拖拽贴内容；视频渲染高=内容区-占位高（轨道收放被视频吸收、按钮不位移）。
-  // 拖拽上限用视口常量（base-occupied），绝不从用户当前尺寸派生（否则还原拖被自家上限锁死）。
   const reservedVideoCap = Math.max(0, baseVideoHeight - measuredTrackHeight);
   const naturalVideoHeight = portrait
     ? (portraitHeight ?? reservedVideoCap)
@@ -331,7 +325,6 @@ export default function PreviewModal({
         Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
         videoRenderHeight,
       );
-  // 弹窗高度按「内容区+固定 chrome」，不随轨道占位变——底部按钮三态不位移。
   const modalHeight = Math.min(
     maxModalHeight,
     Math.ceil(contentTotalHeight + MODAL_CHROME_HEIGHT),
@@ -347,7 +340,6 @@ export default function PreviewModal({
     videoBox.width,
     Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
   );
-  // 画中画同样按真实比例，以固定宽度为基准，并且不超过窗口高度。
   const pictureBox = fitPreviewBox(
     layoutRatio,
     PICTURE_IN_PICTURE_WIDTH,
@@ -370,8 +362,6 @@ export default function PreviewModal({
     return () => clearTimeout(t);
   }, [recentStop]);
 
-  // 精彩时刻 enable 的代际号：StrictMode 双挂载/轮询重试会再次 enable，
-  // 过期的 unmount DELETE 不得打掉新会话（否则永久 0 秒）。
   const highlightGenRef = useRef(new Map<string, number>());
   const bumpHighlightGen = (id: string) => {
     const next = (highlightGenRef.current.get(id) ?? 0) + 1;
@@ -459,7 +449,6 @@ export default function PreviewModal({
     syncBounds();
     let frame = window.requestAnimationFrame(() => {
       setPreviewPlayerVisible(true);
-      // 逐帧跟随占位区域：下方轨道插入等布局变化只移动不缩放，RO 不报位移。
       const followSlot = () => {
         syncBounds();
         frame = window.requestAnimationFrame(followSlot);
@@ -542,7 +531,6 @@ export default function PreviewModal({
       setMarkers(await fetchRecordingMarkers(activeRecordingId));
   };
 
-  // 导出选区：只弹「录制完成」确认框（后台零动作）；用户点保留后才启动后台导出。
   const handleClipExport = (start: number, end: number) => {
     if (!activeRecordingId) return;
     setPendingClipExport({
@@ -554,7 +542,6 @@ export default function PreviewModal({
     });
   };
 
-  // 跳播：松手才起流，代际号防串流；拖回最右/播到已录尾=切回实时直播。
   const [seekPlayback, setSeekPlayback] = useState<{
     url: string;
     generation: number;
@@ -589,16 +576,20 @@ export default function PreviewModal({
     return observePreviewProgress(
       previewVideo,
       (elapsed) => {
-        if (generation !== seekGenRef.current) return;
-        setDisplayPreview({
-          mode: "history",
-          second: isPlausibleSeekOffset(
-            seekPlayback.second,
-            seekPlayback.startSecond,
-          )
-            ? seekPlayback.startSecond + elapsed
-            : undefined,
-        });
+        if (generation !== requestedPlaybackRef.current?.generation) return;
+        setDisplayPreview((current) =>
+          current.loading
+            ? current
+            : {
+                mode: "history",
+                second: isPlausibleSeekOffset(
+                  seekPlayback.second,
+                  seekPlayback.startSecond,
+                )
+                  ? seekPlayback.startSecond + elapsed
+                  : undefined,
+              },
+        );
       },
       () => previewFrameGenerationRef.current === generation,
     );
@@ -619,12 +610,22 @@ export default function PreviewModal({
       .catch(() => undefined);
   }, [activeRecordingId, room.id, setRecordingSnapshot]);
 
+  const seekRequestRef = useRef<AbortController | null>(null);
+  const seekIntentRef = useRef<AbortController | null>(null);
+  const seekRecoveryRef = useRef(0);
+  const seekFailureSecondRef = useRef<number | null>(null);
+  const seekRecoveryTimerRef = useRef<number | null>(null);
+  const displayPreviewRef = useRef(displayPreview);
+  displayPreviewRef.current = displayPreview;
   const handleSeekIntent = useCallback(
     (second: number) => {
       if (!activeRecordingId) return;
-      void prewarmRecordingSeek(activeRecordingId, second).catch(
-        () => undefined,
-      );
+      seekIntentRef.current?.abort();
+      const controller = new AbortController();
+      seekIntentRef.current = controller;
+      void prewarmRecordingSeek(activeRecordingId, second, {
+        signal: controller.signal,
+      }).catch(() => undefined);
     },
     [activeRecordingId],
   );
@@ -634,28 +635,40 @@ export default function PreviewModal({
   } | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const handleSeekCommit = useCallback(
-    (target: number | "live", indicatorSecond?: number) => {
+    (target: number | "live", indicatorSecond?: number, recovery = false) => {
       // 同目标在途即忽略（状态语义去重，不按时间窗）：双柄同帧/事件重发/内核再请求
       // 都不再产生第二次起流。
       const nowTs = Date.now();
       const lastCommit = lastSeekCommitRef.current;
       if (lastCommit && lastCommit.target === target) {
         if (indicatorSecond != null)
-          setDisplayPreview((current) => ({ ...current, second: indicatorSecond }));
+          setDisplayPreview((current) => ({
+            ...current,
+            second: indicatorSecond,
+          }));
         return;
       }
       lastSeekCommitRef.current = { target, at: nowTs };
       pendingSeekRef.current = null;
+      seekRequestRef.current?.abort();
+      seekIntentRef.current?.abort();
+      if (seekRecoveryTimerRef.current != null)
+        window.clearTimeout(seekRecoveryTimerRef.current);
+      seekRecoveryTimerRef.current = null;
+      if (!recovery) seekRecoveryRef.current = 0;
+      seekFailureSecondRef.current = null;
+      const controller = new AbortController();
+      seekRequestRef.current = controller;
       if (target === "live") {
         seekGenRef.current += 1;
         if (requestedPlaybackRef.current) {
           setDisplayPreview((current) => ({
             ...current,
-            second: indicatorSecond ?? (
-              current.mode === "live" && !current.loading
+            second:
+              indicatorSecond ??
+              (current.mode === "live" && !current.loading
                 ? trackElapsedSeconds
-                : current.second
-            ),
+                : current.second),
             loading: true,
           }));
         } else setDisplayPreview({ mode: "live" });
@@ -671,19 +684,13 @@ export default function PreviewModal({
       const generation = ++seekGenRef.current;
       setDisplayPreview((current) => ({
         ...current,
-        second: indicatorSecond ?? (
-          current.mode === "live" && !current.loading
+        second:
+          indicatorSecond ??
+          (current.mode === "live" && !current.loading
             ? trackElapsedSeconds
-            : current.second
-        ),
+            : current.second),
         loading: true,
       }));
-      if (seekIndexState === "building") {
-        // 索引未就绪：不弹 toast（轨道已有「正在加载」提示），记下拖拽意图，
-        // 就绪后自动落点，用户无需再拖一次。
-        pendingSeekRef.current = target;
-        return;
-      }
       seekMarkRef.current = `lr-seek:pointerup-${generation}`;
       try {
         performance.mark(seekMarkRef.current);
@@ -691,25 +698,41 @@ export default function PreviewModal({
         /* 性能 API 不可用时静默 */
       }
       // 先取得解码起点，再把目标与起点一起交给播放器完成准确定位。
-      void prewarmRecordingSeek(activeRecordingId, target)
+      void retrySeekRequest(
+        () =>
+          prewarmRecordingSeek(activeRecordingId, target, {
+            signal: controller.signal,
+            prepareStream: true,
+          }),
+        controller.signal,
+      )
         .then((res) => {
           if (generation !== seekGenRef.current) return;
           if (res?.startSecond == null || !Number.isFinite(res.startSecond)) {
             throw new Error("回看定位信息缺失，请重试");
           }
           setSeekPlayback({
-            url: recordingSeekStreamUrl(activeRecordingId, target),
+            url: recordingSeekStreamUrl(
+              activeRecordingId,
+              target,
+              res.streamToken,
+            ),
             generation,
             second: target,
             startSecond: res.startSecond,
           });
         })
         .catch((error: unknown) => {
-          if (generation !== seekGenRef.current) return;
+          if (generation !== seekGenRef.current || controller.signal.aborted)
+            return;
           lastSeekCommitRef.current = null;
-          // 索引未就绪类拒绝（可重试）＝同「正在加载」：挂起意图等就绪自动落点，不弹 toast。
-          if (error instanceof ApiError && error.retryable) {
+          if (
+            error instanceof ApiError &&
+            error.retryable &&
+            error.code === "RECORDING_START_FAILED"
+          ) {
             pendingSeekRef.current = target;
+            setDisplayPreview((current) => ({ ...current, loading: false }));
             return;
           }
           setDisplayPreview((current) => ({ ...current, loading: false }));
@@ -722,16 +745,19 @@ export default function PreviewModal({
           );
         });
     },
-    [activeRecordingId, seekIndexState, message, trackElapsedSeconds],
+    [activeRecordingId, message, trackElapsedSeconds],
   );
   const handleSeekTail = useCallback(() => {
+    seekRequestRef.current?.abort();
+    if (seekRecoveryTimerRef.current != null)
+      window.clearTimeout(seekRecoveryTimerRef.current);
+    seekRecoveryTimerRef.current = null;
     lastSeekCommitRef.current = null;
     seekGenRef.current += 1;
     setSeekPlayback(null);
     setDisplayPreview((current) => ({ ...current, loading: true }));
     pendingSeekRef.current = null;
   }, []);
-  // 索引就绪后自动落点：挂起的拖拽意图自动触发回看，无需用户再拖一次。
   const handleSeekCommitRef = useRef(handleSeekCommit);
   useEffect(() => {
     handleSeekCommitRef.current = handleSeekCommit;
@@ -741,34 +767,80 @@ export default function PreviewModal({
     const target = pendingSeekRef.current;
     if (target == null) return;
     pendingSeekRef.current = null;
-    // 自动落点必须绕过「同目标在途去重」（此前那次已被拒非在途）。
     lastSeekCommitRef.current = null;
     handleSeekCommitRef.current(target);
   }, [seekIndexState]);
-  // 录制停止/入口消失即清挂起意图，不让它泄漏到下一次录制。
   useEffect(() => {
-    if (!activeRecordingId) pendingSeekRef.current = null;
+    lastSeekCommitRef.current = null;
+    pendingSeekRef.current = null;
+    seekRecoveryRef.current = 0;
+    seekFailureSecondRef.current = null;
+    setSeekPlayback(null);
+    setDisplayPreview({ mode: "live" });
+    return () => {
+      seekGenRef.current += 1;
+      seekRequestRef.current?.abort();
+      seekIntentRef.current?.abort();
+      if (seekRecoveryTimerRef.current != null)
+        window.clearTimeout(seekRecoveryTimerRef.current);
+      seekRecoveryTimerRef.current = null;
+    };
   }, [activeRecordingId]);
-  const handleSeekFirstFrame = useCallback((generation: number) => {
+  const handleSeekError = useCallback((generation: number, second: number) => {
     if (generation !== seekGenRef.current) return;
     lastSeekCommitRef.current = null;
-    previewFrameGenerationRef.current = generation;
-    const playback = requestedPlaybackRef.current;
-    if (playback?.generation === generation) {
-      setDisplayPreview({ mode: "history", second: playback.second });
-      setSeekActualStart({ generation, second: playback.second });
-    }
-    if (!seekMarkRef.current) return;
-    try {
-      performance.measure(
-        `lr-seek:to-first-frame-${generation}`,
-        seekMarkRef.current,
+    pendingSeekRef.current = null;
+    seekFailureSecondRef.current = second;
+    setDisplayPreview((current) => ({ ...current, loading: false }));
+    // 短暂读取/解码故障最多自动恢复两次，恢复的是当前回看位置，不跳回最初的落点。
+    if (seekRecoveryRef.current >= 2) return;
+    const delay = [500, 1500][seekRecoveryRef.current++];
+    seekRecoveryTimerRef.current = window.setTimeout(() => {
+      seekRecoveryTimerRef.current = null;
+      if (generation !== seekGenRef.current) return;
+      handleSeekCommitRef.current(
+        Math.max(0, Math.floor(second)),
+        undefined,
+        true,
       );
-    } catch {
-      /* 性能 API 不可用时静默 */
-    }
-    seekMarkRef.current = null;
+    }, delay);
   }, []);
+  const handleSeekRetry = useCallback(() => {
+    const playback = requestedPlaybackRef.current;
+    if (!playback) return;
+    lastSeekCommitRef.current = null;
+    handleSeekCommitRef.current(
+      Math.floor(
+        seekFailureSecondRef.current ??
+          displayPreviewRef.current.second ??
+          playback.second,
+      ),
+    );
+  }, []);
+  const handleSeekFirstFrame = useCallback(
+    (generation: number, elapsed: number) => {
+      if (generation !== seekGenRef.current) return;
+      lastSeekCommitRef.current = null;
+      previewFrameGenerationRef.current = generation;
+      const playback = requestedPlaybackRef.current;
+      if (playback?.generation === generation) {
+        const actualSecond = playback.startSecond + elapsed;
+        setDisplayPreview({ mode: "history", second: actualSecond });
+        setSeekActualStart({ generation, second: actualSecond });
+      }
+      if (!seekMarkRef.current) return;
+      try {
+        performance.measure(
+          `lr-seek:to-first-frame-${generation}`,
+          seekMarkRef.current,
+        );
+      } catch {
+        /* 性能 API 不可用时静默 */
+      }
+      seekMarkRef.current = null;
+    },
+    [],
+  );
   const handleLiveFirstFrame = useCallback(() => {
     if (requestedPlaybackRef.current) return;
     if (typeof lastSeekCommitRef.current?.target === "number") return;
@@ -861,7 +933,6 @@ export default function PreviewModal({
   };
 
   const onPictureClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // 阻止原生 video 接收这次点击并切换播放状态；画中画点击仅用于返回弹窗。
     e.preventDefault();
     e.stopPropagation();
     if (!suppressPictureClickRef.current) {
@@ -1033,7 +1104,6 @@ export default function PreviewModal({
                       createRecordingMarker(
                         displayedTrack.id,
                         text,
-                        // 标记落在当前预览位置（播放头真值）；直播中不传=服务端按当前时刻=尾部语义不变。
                         displayPreview.mode === "history" &&
                           displayPreview.second != null
                           ? Math.floor(displayPreview.second)
@@ -1310,6 +1380,8 @@ export default function PreviewModal({
             seek={seekPlayback}
             onSeekTail={handleSeekTail}
             onSeekFirstFrame={handleSeekFirstFrame}
+            onSeekError={handleSeekError}
+            onSeekRetry={handleSeekRetry}
             onLiveFirstFrame={handleLiveFirstFrame}
           />
           {!pictureInPicture && (

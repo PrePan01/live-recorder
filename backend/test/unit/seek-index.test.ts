@@ -1,9 +1,10 @@
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   SeekIndexWriter,
+  SeekIndexReader,
   beginSeekScan,
   finishSeekScan,
   loadSeekIndex,
@@ -215,5 +216,57 @@ describe('seek-index 索引层', () => {
     await expect(stat(seekSidecarPath(nextPath))).resolves.toBeTruthy();
     await removeSeekIndexSidecar(nextPath);
     await expect(stat(seekSidecarPath(nextPath))).rejects.toThrow();
+  });
+});
+
+
+describe('增量读取长录制索引', () => {
+  it('追加半行不会丢条目，补全后读取，乱序和重复追加保持正确吸附', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'seek-incremental-'));
+    const file = await writeSample(dir);
+    const sidecar = seekSidecarPath(file);
+    await mkdir(path.dirname(sidecar), { recursive: true });
+    await writeFile(sidecar, '{"v":1}\n{"t":8000,"b":500}\n{"t":12000,"b":');
+    const reader = new SeekIndexReader(file);
+    const first = reader.load();
+    expect(reader.load()).toBe(first); // 并发共用同次读取
+    expect((await first).entries).toEqual([{ t: 8000, b: 500 }]);
+    await appendFile(sidecar, '700}\n{"t":4000,"b":300}\n{"t":4000,"b":300}\n');
+    const result = await reader.load();
+    expect(result.entries.map(e => e.t)).toEqual([4000, 8000, 12000]);
+    expect(lookupSeekEntry(result.entries, 10000)).toEqual({ t: 8000, b: 500 });
+    expect((await reader.load()).entries).toBe(result.entries);
+  });
+
+  it('侧车截短、替换和删除后不沿用旧的索引缓存', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'seek-replace-'));
+    const file = await writeSample(dir);
+    const sidecar = seekSidecarPath(file);
+    await mkdir(path.dirname(sidecar), { recursive: true });
+    await writeFile(sidecar, '{"v":1}\n{"t":8000,"b":500}\n{"t":12000,"b":700}\n');
+    const reader = new SeekIndexReader(file);
+    expect((await reader.load()).entries).toHaveLength(2);
+    await writeFile(sidecar, '{"v":1}\n{"t":4000,"b":300}\n');
+    expect((await reader.load()).entries).toEqual([{ t: 4000, b: 300 }]);
+    await writeFile(sidecar + '.replacement', '{"v":1}\n{"t":6000,"b":400}\n');
+    await rename(sidecar + '.replacement', sidecar);
+    expect((await reader.load()).entries).toEqual([{ t: 6000, b: 400 }]);
+    await removeSeekIndexSidecar(file);
+    expect((await reader.load()).entries).toEqual([]);
+  });
+
+  it('24 小时索引追加后仍命中新尾部；时间相同的条目保留最后一个', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'seek-long-'));
+    const file = await writeSample(dir);
+    const sidecar = seekSidecarPath(file);
+    await mkdir(path.dirname(sidecar), { recursive: true });
+    await writeFile(sidecar, '{"v":1}\n' + Array.from({ length: 43200 }, (_, i) => JSON.stringify({ t: i * 2000, b: i * 1000 + 13 })).join('\n') + '\n');
+    const reader = new SeekIndexReader(file);
+    const result = await reader.load();
+    expect(lookupSeekEntry(result.entries, 86399500)?.t).toBe(86398000);
+    await appendFile(sidecar, '{"t":86400000,"b":43200013}\n{"t":86400000,"b":43200113}\n');
+    const grown = await reader.load();
+    expect(lookupSeekEntry(grown.entries, 86400000)?.b).toBe(43200113);
+    expect(grown.entries).toHaveLength(43202);
   });
 });

@@ -1,12 +1,9 @@
-// 图表卡片容器（task #51）：antd Card（全局孟菲斯描边）+ echarts 实例生命周期。
-// - init 一次、dispose 兜底；ResizeObserver 只观察自身容器并在卸载时断开；
-// - option 变化仅 setOption（指标切换/数据刷新 0 请求由父层保证）；
-// - empty → clear() + 空态；loading → 轻量浮层，不卸载图表容器（避免反复 init/dispose）。
-import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
-import { Card, Empty, Spin } from 'antd';
-import type { EChartsOption } from 'echarts';
-import { echarts, type ChartInstance } from './echarts';
+// 图表卡片组件
+import { useEffect, useRef } from "react";
+import type { ReactNode } from "react";
+import { Card, Empty, Spin } from "antd";
+import type { EChartsOption } from "echarts";
+import { echarts, type ChartInstance } from "../../../utils/echarts";
 
 interface Props {
   title: ReactNode;
@@ -26,7 +23,7 @@ export function EChartCard({
   option,
   loading = false,
   empty = false,
-  emptyText = '该区间暂无数据',
+  emptyText = "该区间暂无数据",
   height = 300,
   chartName,
 }: Props) {
@@ -68,7 +65,10 @@ export function EChartCard({
         <div ref={elRef} className="lr-chart__canvas" />
         {empty ? (
           <div className="lr-chart__overlay">
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} />
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={emptyText}
+            />
           </div>
         ) : null}
         {loading ? (

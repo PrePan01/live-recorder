@@ -169,7 +169,7 @@ fn show_floating_recorder_window(app: &AppHandle, room_id: String, button_size: 
         return Ok(state);
     }
     let (width, height) = floating_recorder_window_size(state.button_size);
-    let mut builder = WebviewWindowBuilder::new(app, FLOATING_RECORDER_WINDOW, WebviewUrl::App("floating-recorder.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, FLOATING_RECORDER_WINDOW, WebviewUrl::App("src/window-entries/floating-recorder/floating-recorder.html".into()))
         .title("快速录制")
         .inner_size(width, height)
         .min_inner_size(width, height)
@@ -321,7 +321,7 @@ fn show_douyin_auth_windows(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("无法加载抖音登录页面: {e}"))?;
     auth_window
         .add_child(
-            WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("douyin-auth.html".into())),
+            WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("src/window-entries/platform-auth/douyin-auth.html".into())),
             LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
             LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
         )
@@ -358,7 +358,7 @@ fn show_bilibili_auth_windows(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("无法加载B站登录页面: {e}"))?;
     auth_window
         .add_child(
-            WebviewBuilder::new(BILIBILI_CONTROLS_WEBVIEW, WebviewUrl::App("bilibili-auth.html".into())),
+            WebviewBuilder::new(BILIBILI_CONTROLS_WEBVIEW, WebviewUrl::App("src/window-entries/platform-auth/bilibili-auth.html".into())),
             LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
             LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
         )

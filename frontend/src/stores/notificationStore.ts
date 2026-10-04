@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import * as notifyApi from '../api/notification';
 import type { NotificationPreference, NotificationPreferenceInput } from '../types/notification';
 

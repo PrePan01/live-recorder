@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create } from './createStore';
+import { shallow } from 'zustand/vanilla/shallow';
 import { fetchTasks } from '../api/tasks';
 import type { TaskItem } from '../types/tasks';
 
@@ -10,7 +11,7 @@ import type { TaskItem } from '../types/tasks';
  *   （宽限期内仍计数；同刻完成的一批一起减）；
  * - 后端「完成即离在途扫描」——消失的任务由前端留 5 秒展示宽限（后端不存已读）；
  * - 数据 = GET /api/v1/tasks 聚合 + 听现有 SSE（debounce 800ms 重拉）
- *   + 1.5s 真轮询兜底，不新增事件契约；SSE 断线角标不冻结、重连校准。
+ *   + 1.2s 前台真轮询兜底，不新增事件契约；SSE 断线角标不冻结、重连校准。
  *
  * ⚠ 反饥饿：debounce 重拉在密集事件段会被无限重置
  * （任务正在变化的时刻恰恰拉不成）——轮询必须**直调 refresh()**（真轮询），
@@ -39,6 +40,10 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pruneTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
 let rerun = false;
+
+function isVisible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+}
 
 function schedulePrune(
   set: (partial: Partial<TasksState>) => void,
@@ -88,8 +93,9 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       }
       const now = Date.now();
       const nextIds = new Set(items.map((item) => item.id));
-      const prevActive = get().active;
-      const grace = { ...get().grace };
+      const previous = get();
+      const prevActive = previous.active;
+      const grace = { ...previous.grace };
 
       // 消失的在途任务进入 5 秒展示宽限（重现（如失败重试）即归位）。
       for (const item of prevActive) {
@@ -99,7 +105,17 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       for (const item of items) {
         delete grace[item.id];
       }
-      set({ active: items, grace });
+      // TaskItem 是扁平 DTO。相同响应保留快照，尤其空任务轮询不能持续
+      // 向 useSyncExternalStore 发布同步更新（后台 WebKit 可能延迟调度）。
+      const activeChanged = items.length !== prevActive.length ||
+        items.some((item, index) => !shallow(item, prevActive[index]));
+      const graceChanged = !shallow(grace, previous.grace);
+      if (activeChanged || graceChanged) {
+        set({
+          active: activeChanged ? items : prevActive,
+          grace: graceChanged ? grace : previous.grace,
+        });
+      }
 
       // 宽限到期统一移除（同刻消失的一批一起减、角标同步归零）。
       schedulePrune(set, get, grace, now);
@@ -113,10 +129,11 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   },
 
   scheduleRefresh() {
+    if (!isVisible()) return Promise.resolve();
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
-      void get().refresh();
+      if (isVisible()) void get().refresh();
     }, REFRESH_DEBOUNCE_MS);
     return Promise.resolve();
   },

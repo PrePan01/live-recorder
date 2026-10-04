@@ -1156,8 +1156,8 @@ describe("RecorderManager", () => {
     expect(services.recordings.list({ roomId: room.id }).items).toHaveLength(1);
     expect(services.manager.isRoomActive(room.id)).toBe(true);
     expect(services.rooms.get(room.id)!.monitorState).toBe("recording");
-    // 续录不再清空预览头缓冲：续录段跳过 FLV 头，清了之后中途加入的预览就永远等不到初始化段。
-    expect(preview.resets.filter((id) => id === room.id)).toHaveLength(1);
+    // 每个上游有独立观看头和时间线；续录必须丢弃上一段的编码配置。
+    expect(preview.resets.filter((id) => id === room.id).length).toBeGreaterThanOrEqual(2);
 
     // 中途不能出现"已完成"后又回到录制中——那会让用户在录制过程中收到一次"录制完成"提示。
     const firstCompleted = states.indexOf("completed");

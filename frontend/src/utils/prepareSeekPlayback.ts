@@ -19,6 +19,11 @@ export function prepareSeekPlayback(
   const finish = (fallback: boolean) => {
     if (ready || !isCurrent()) return;
     ready = true;
+    if (hopping) {
+      hopping = false;
+      video.playbackRate = 1;
+      video.pause();
+    }
     if (fallback) onFallback?.();
     onReady();
   };

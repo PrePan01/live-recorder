@@ -9,15 +9,15 @@ import {
   StarOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
-import { ApiError } from "../../../types/error";
-import { describeError } from "../../../utils/errorMap";
-import { formatRelative } from "../../../utils/format";
-import { PlatformLogoTag } from "../../../components/PlatformLogo";
-import RoomAvatar from "./RoomAvatar";
-import { MonitorStateTag } from "../../../components/StatusTags";
-import LiveStatusTag from "../../../components/LiveStatusTag";
-import RecordingStopIcon from "../../../components/RecordingStopIcon";
-import type { Room } from "../../../types/room";
+import { ApiError } from "../types/error";
+import { describeError } from "./errorMap";
+import { formatRelative } from "./format";
+import { PlatformLogoTag } from "../components/PlatformLogo";
+import RoomAvatar from "../pages/Monitor/components/RoomAvatar";
+import { MonitorStateTag } from "../components/StatusTags";
+import LiveStatusTag from "../components/LiveStatusTag";
+import RecordingStopIcon from "../components/RecordingStopIcon";
+import type { Room } from "../types/room";
 
 type MessageApi = ReturnType<typeof App.useApp>["message"];
 

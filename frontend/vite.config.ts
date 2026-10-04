@@ -26,9 +26,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        'floating-recorder': fileURLToPath(new URL('./floating-recorder.html', import.meta.url)),
-        'douyin-auth': fileURLToPath(new URL('./douyin-auth.html', import.meta.url)),
-        'bilibili-auth': fileURLToPath(new URL('./bilibili-auth.html', import.meta.url)),
+        'floating-recorder': fileURLToPath(new URL('./src/window-entries/floating-recorder/floating-recorder.html', import.meta.url)),
+        'douyin-auth': fileURLToPath(new URL('./src/window-entries/platform-auth/douyin-auth.html', import.meta.url)),
+        'bilibili-auth': fileURLToPath(new URL('./src/window-entries/platform-auth/bilibili-auth.html', import.meta.url)),
       },
     },
   },

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   boundedDiagnosticLog,
   createDiagnosticBundle,
+  frontendDiagnosticSummary,
   performanceDiagnosticSummary,
   redactDiagnosticText,
   roomDiagnosticSnapshots,
@@ -21,6 +22,28 @@ describe("diagnostic bundle privacy boundary", () => {
     expect(value).not.toContain("alice@example.test");
     expect(value).not.toContain("/Users/alice");
     expect(value).not.toContain("custom-name");
+  });
+
+  it("retains app stack locations without origins, queries or external URLs", () => {
+    const exported = JSON.stringify(frontendDiagnosticSummary([{
+      source: 'window.unhandledrejection',
+      stack: [
+        'refresh@http://localhost:5173/src/stores/tasksStore.ts?t=123:102:7',
+        'forceStoreRerender@http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=abc:42:5',
+        'at refresh (http://tauri.localhost/assets/index-Ab_12.js:9:10)',
+        'refresh@tauri://localhost/assets/main-Test.js:11:12',
+        'private@http://localhost:5173/src/privateValue.ts:1:2',
+        'secret@https://example.test/private/name.js?token=abc:12:3',
+        'bad@http://localhost:5173/Users/alice/private.js:1:2',
+      ].join('\n'),
+    }], ['privateValue']));
+    expect(exported).toContain('app:/src/stores/tasksStore.ts:102:7');
+    expect(exported).toContain('app:/node_modules/.vite/deps/react-dom_client.js:42:5');
+    expect(exported).toContain('app:/assets/index-Ab_12.js:9:10');
+    expect(exported).toContain('app:/assets/main-Test.js:11:12');
+    for (const value of ['localhost', '127.0.0.1', '?t=', '?v=', 'example.test', 'alice', 'token=abc', 'privateValue']) {
+      expect(exported).not.toContain(value);
+    }
   });
 
   it("keeps only public room identifiers and support-safe fields", () => {

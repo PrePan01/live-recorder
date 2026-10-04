@@ -1,4 +1,4 @@
-import type { Room } from "../../../types/room";
+import type { Room } from "../types/room";
 
 function guessPlatform(url: string): Room["platform"] | null {
   if (/live\.douyin\.com|douyin\.com/.test(url)) return "douyin";

@@ -55,6 +55,7 @@ export class FakeRecordingEngine implements RecordingEngine {
       // 写文件时文件头已在上面单独落盘（续录时由上一段写过），首帧只追加标签、不重复写头，与真实引擎一致；
       // 纯预览（无 outputPath）没有单独的落盘动作，文件头必须随首帧发出，否则预览无法初始化。
       const chunk = i === 0 ? (outputPath ? flv.subarray(13) : flv) : flv.subarray(9);
+      if (outputPath && i === 0) yield { type: 'preview_data', chunk: flv.subarray(0, 13) };
       yield { type: 'data', chunk };
       if (outputPath) await appendFile(outputPath, chunk);
       written += chunk.length;

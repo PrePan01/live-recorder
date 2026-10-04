@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from './createStore';
 import type { UploadJob } from '../api/openlist';
 
 function latest(current: UploadJob | undefined, incoming: UploadJob): UploadJob {

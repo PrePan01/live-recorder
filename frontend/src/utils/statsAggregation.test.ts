@@ -14,7 +14,7 @@ import {
   toPieData,
   unmeasuredBytesNote,
   unmeasuredDurationNote,
-} from './agg';
+} from './statsAggregation';
 
 const row = (recordings: number, bytes: number, durationMs: number) => ({ recordings, bytes, durationMs });
 
