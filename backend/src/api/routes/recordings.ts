@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { open, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
+import { renameRecordingWithBuffer, removeRecordingBuffer } from "../../recorder/buffered-writer.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
@@ -579,7 +580,7 @@ export function registerRecordingRoutes(
       const nextName = sanitizeFileBase(title) + ext;
       const nextPath = join(dir, nextName);
       try {
-        await rename(rec.filePath, nextPath);
+        await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
         await moveMarkerSidecar(rec.filePath, nextPath);
         await moveSeekIndexSidecar(rec.filePath, nextPath);
         services.recordings.update(id, {
@@ -625,6 +626,7 @@ export function registerRecordingRoutes(
       await unlink(rec.filePath).catch(() => undefined);
       await removeMarkerSidecar(rec.filePath);
       await removeSeekIndexSidecar(rec.filePath);
+      await removeRecordingBuffer(services.recordingBufferDirectory, rec.filePath);
     }
     services.recordingMarkers.removeForRecording(id);
     services.recordings.remove(id);
@@ -939,7 +941,7 @@ async function renameRecordingFile(
     `${sanitizeFileBase(base)}${ext}`,
   );
   try {
-    await rename(rec.filePath, nextPath);
+    await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
     services.recordings.update(rec.id, {
       streamTitle: base.trim(),
       filePath: nextPath,

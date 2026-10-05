@@ -776,3 +776,20 @@ describe("DouyinAdapter", () => {
     });
   });
 });
+
+describe('recording recovery source', () => {
+  it('resolves live status and quality from one enter request', async () => {
+    let calls = 0;
+    const adapter = new DouyinAdapter(mockFetcher(() => { calls++; return livePayload(); }));
+    const result = await adapter.resolveRecordingSource('https://live.douyin.com/123456', '720p', 'sessionid=x');
+    expect(result.status).toBe('live');
+    if (result.status === 'live') expect(result.stream.actualQuality).toBe('720p');
+    expect(calls).toBe(1);
+  });
+  it('preserves authorization requirements without making an anonymous request', async () => {
+    const fetcher = vi.fn(mockFetcher(() => livePayload()));
+    const adapter = new DouyinAdapter(fetcher);
+    expect((await adapter.resolveRecordingSource('https://live.douyin.com/123456', 'original')).status).toBe('restricted');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});

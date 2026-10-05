@@ -66,7 +66,10 @@ export function failureText(code: ErrorCode, fallbackMessage?: string): string {
 }
 
 /** 中断根因简称（"网络中断"这类），用于重试中的告警与最终失败说明。 */
-export function causeLabel(code: ErrorCode): string {
+export function causeLabel(code: ErrorCode, details?: Record<string, unknown>): string {
+  if (details?.trigger === "media_stall") return "直播媒体进度停滞";
+  if (details?.trigger === "upstream_idle" || details?.trigger === "playlist_stall") return "直播源暂时无数据";
+  if (details?.trigger === "request_error" || details?.trigger === "read_error") return "直播连接异常";
   return CAUSE_LABEL[code] ?? "录制异常";
 }
 
@@ -121,7 +124,7 @@ export function withReasonCategory(err: ErrorObject): ErrorObject {
     ...err,
     details: {
       ...(err.details ?? {}),
-      reasonCategory: failureCategory(err.code),
+      reasonCategory: err.details?.reasonCategory ?? failureCategory(err.code),
     },
   };
 }
@@ -131,7 +134,7 @@ export function reconnectExhausted(
   cause: ErrorObject,
   attempts: number,
 ): AppError {
-  const label = causeLabel(cause.code);
+  const label = causeLabel(cause.code, cause.details);
   return new AppError(
     "STREAM_DISCONNECTED_RECONNECT_EXHAUSTED",
     `${label}，软件自动重试 ${attempts} 次仍未恢复，录制已停止`,
@@ -164,7 +167,7 @@ export function humanizeFailure(err: ErrorObject): AppError {
     details: {
       ...(err.details ?? {}),
       technicalMessage: err.message,
-      reasonCategory: failureCategory(err.code),
+      reasonCategory: err.details?.reasonCategory ?? failureCategory(err.code),
     },
   });
 }

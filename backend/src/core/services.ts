@@ -1,47 +1,55 @@
-import type { PlatformAdapter, Quality } from '../platform/adapter.js';
-import { VerificationQueue } from './verification-queue.js';
-import type { RecordingEngine } from '../recorder/engine.js';
-import type { DiskGuard } from '../storage/disk-guard.js';
-import type { Mailer } from '../mail/mailer.js';
-import type { SecretStore } from '../security/secret-store.js';
-import type { Clock } from './clock.js';
-import { SystemClock } from './clock.js';
-import { AppEventBus } from './events.js';
-import { MemorySecretStore } from '../security/memory-store.js';
-import { KeytarSecretStore } from '../security/keychain-store.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY } from '../security/keys.js';
-import { FakePlatformAdapter } from '../platform/fake-adapter.js';
-import { BilibiliAdapter } from '../platform/bilibili.js';
-import { DouyinAdapter } from '../platform/douyin.js';
-import { FakeRecordingEngine } from '../recorder/fake-engine.js';
-import { StreamRecordingEngine } from '../recorder/stream-recorder.js';
-import { FakeDiskGuard } from '../storage/disk-guard.js';
-import { FakeMailer } from '../mail/mailer.js';
-import { SmtpMailer } from '../mail/smtp-mailer.js';
-import { openDatabase, type DB } from '../db/connection.js';
-import { ensureCriticalColumns, runMigrations } from '../db/migrations/index.js';
-import { RoomRepository } from '../db/repositories/room.repo.js';
-import { RecordingRepository } from '../db/repositories/recording.repo.js';
-import { RecordingMarkerRepository } from '../db/repositories/recording-marker.repo.js';
-import { SettingsRepository } from '../db/repositories/settings.repo.js';
-import { AlertRepository } from '../db/repositories/alert.repo.js';
-import { TagRepository } from '../db/repositories/tag.repo.js';
-import { DiagnosticRepository } from '../db/repositories/diagnostic.repo.js';
-import { ScheduleRepository } from '../db/repositories/schedule.repo.js';
-import { LiveEventRepository } from '../db/repositories/live-event.repo.js';
-import { PredictionCalibrationRepository } from '../db/repositories/prediction-calibration.repo.js';
-import os from 'node:os';
-import path from 'node:path';
-import { Notifier } from './notifier.js';
-import { RecorderManager } from './recorder-manager.js';
-import { Scheduler } from './scheduler.js';
-import { PipelineManager } from './pipeline-manager.js';
-import { UploadManager } from './upload-manager.js';
-import { ExportManager } from './export-manager.js';
-import { SeekService } from './seek-service.js';
-import { notificationPreference } from '../api/routes/notifications.js';
+import type { PlatformAdapter, Quality } from "../platform/adapter.js";
+import { VerificationQueue } from "./verification-queue.js";
+import type { RecordingEngine } from "../recorder/engine.js";
+import type { DiskGuard } from "../storage/disk-guard.js";
+import type { Mailer } from "../mail/mailer.js";
+import type { SecretStore } from "../security/secret-store.js";
+import type { Clock } from "./clock.js";
+import { SystemClock } from "./clock.js";
+import { AppEventBus } from "./events.js";
+import { MemorySecretStore } from "../security/memory-store.js";
+import { KeytarSecretStore } from "../security/keychain-store.js";
+import {
+  MAIL_PASSWORD_KEY,
+  DOUYIN_COOKIE_KEY,
+  BILIBILI_COOKIE_KEY,
+} from "../security/keys.js";
+import { FakePlatformAdapter } from "../platform/fake-adapter.js";
+import { BilibiliAdapter } from "../platform/bilibili.js";
+import { DouyinAdapter } from "../platform/douyin.js";
+import { FakeRecordingEngine } from "../recorder/fake-engine.js";
+import { StreamRecordingEngine } from "../recorder/stream-recorder.js";
+import { FakeDiskGuard } from "../storage/disk-guard.js";
+import { FakeMailer } from "../mail/mailer.js";
+import { SmtpMailer } from "../mail/smtp-mailer.js";
+import { openDatabase, type DB } from "../db/connection.js";
+import {
+  ensureCriticalColumns,
+  runMigrations,
+} from "../db/migrations/index.js";
+import { RoomRepository } from "../db/repositories/room.repo.js";
+import { RecordingRepository } from "../db/repositories/recording.repo.js";
+import { RecordingMarkerRepository } from "../db/repositories/recording-marker.repo.js";
+import { SettingsRepository } from "../db/repositories/settings.repo.js";
+import { AlertRepository } from "../db/repositories/alert.repo.js";
+import { TagRepository } from "../db/repositories/tag.repo.js";
+import { DiagnosticRepository } from "../db/repositories/diagnostic.repo.js";
+import { ScheduleRepository } from "../db/repositories/schedule.repo.js";
+import { LiveEventRepository } from "../db/repositories/live-event.repo.js";
+import { PredictionCalibrationRepository } from "../db/repositories/prediction-calibration.repo.js";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { Notifier } from "./notifier.js";
+import { RecorderManager } from "./recorder-manager.js";
+import { Scheduler } from "./scheduler.js";
+import { PipelineManager } from "./pipeline-manager.js";
+import { UploadManager } from "./upload-manager.js";
+import { ExportManager } from "./export-manager.js";
+import { SeekService } from "./seek-service.js";
+import { notificationPreference } from "../api/routes/notifications.js";
 
-export type AdapterMode = 'fake' | 'real';
+export type AdapterMode = "fake" | "real";
 
 export interface Services {
   resetting?: boolean;
@@ -57,7 +65,7 @@ export interface Services {
   predictionCalibration: PredictionCalibrationRepository;
   settings: SettingsRepository;
   alerts: AlertRepository;
-  verificationQueue: import('./verification-queue.js').VerificationQueue;
+  verificationQueue: import("./verification-queue.js").VerificationQueue;
   tags: TagRepository;
   diagnostics: DiagnosticRepository;
   schedules: ScheduleRepository;
@@ -74,10 +82,11 @@ export interface Services {
   exporter: ExportManager;
   /** 跳播服务（正在录的这条：索引状态/预热/起流）。 */
   seek: SeekService;
-  adapterFor(platform: 'bilibili' | 'douyin'): PlatformAdapter;
+  adapterFor(platform: "bilibili" | "douyin"): PlatformAdapter;
   engineFor(): RecordingEngine;
+  recordingBufferDirectory: string;
   /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
-  platformCookie(platform: 'bilibili' | 'douyin'): Promise<string | undefined>;
+  platformCookie(platform: "bilibili" | "douyin"): Promise<string | undefined>;
 }
 
 export interface BuildOptions {
@@ -88,18 +97,29 @@ export interface BuildOptions {
 
 export function productionDataDir(): string {
   const home = os.homedir();
-  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'live-recorder');
-  if (process.platform === 'win32') return path.join(process.env.APPDATA || home, 'live-recorder');
-  return path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'live-recorder');
+  if (process.platform === "darwin")
+    return path.join(home, "Library", "Application Support", "live-recorder");
+  if (process.platform === "win32")
+    return path.join(process.env.APPDATA || home, "live-recorder");
+  return path.join(
+    process.env.XDG_DATA_HOME || path.join(home, ".local", "share"),
+    "live-recorder",
+  );
 }
 
 /** #224 P0 深度防御：开发环境（mode=development）下数据/状态路径不得指向生产数据目录，否则启动即拒。 */
-export function assertDevelopmentPathIsIsolated(target: string, label: string, mode: 'development' | 'production'): void {
-  if (mode === 'production') return;
+export function assertDevelopmentPathIsIsolated(
+  target: string,
+  label: string,
+  mode: "development" | "production",
+): void {
+  if (mode === "production") return;
   const targetAbs = path.resolve(target);
   const prodAbs = path.resolve(productionDataDir());
   if (targetAbs === prodAbs || targetAbs.startsWith(prodAbs + path.sep)) {
-    throw new Error(`${label}指向生产数据目录：${target}（开发环境必须使用独立数据目录）`);
+    throw new Error(
+      `${label}指向生产数据目录：${target}（开发环境必须使用独立数据目录）`,
+    );
   }
 }
 
@@ -108,7 +128,11 @@ export function defaultDataDir(): string {
   // 否则退回系统默认应用数据目录。dev 覆盖不得指向生产目录（#224 P0 防呆）。
   const override = process.env.LIVE_RECORDER_DATA_DIR;
   if (override && override.length > 0) {
-    assertDevelopmentPathIsIsolated(override, '开发环境数据目录', 'development');
+    assertDevelopmentPathIsIsolated(
+      override,
+      "开发环境数据目录",
+      "development",
+    );
     return override;
   }
   return productionDataDir();
@@ -119,19 +143,38 @@ export function defaultDataDir(): string {
  * 引擎、keytar SecretStore 与 nodemailer Mailer。
  */
 export function buildServices(opts: BuildOptions = {}): Services {
-  const mode: AdapterMode = opts.mode ?? (process.env.RECORDING_ADAPTER === 'real' ? 'real' : 'fake');
-  const dbPath = opts.dbPath ?? process.env.LIVE_RECORDER_DB ?? path.join(defaultDataDir(), 'live-recorder.db');
+  const mode: AdapterMode =
+    opts.mode ?? (process.env.RECORDING_ADAPTER === "real" ? "real" : "fake");
+  const dbPath =
+    opts.dbPath ??
+    process.env.LIVE_RECORDER_DB ??
+    path.join(defaultDataDir(), "live-recorder.db");
   const db = openDatabase(dbPath);
-  try { runMigrations(db); ensureCriticalColumns(db); } catch (error) { db.close(); throw error; }
+  try {
+    runMigrations(db);
+    ensureCriticalColumns(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   const clock = opts.clock ?? new SystemClock();
   const fakeEngine = new FakeRecordingEngine(clock);
 
-  const adapters = mode === 'real'
-    ? { bilibili: new BilibiliAdapter() as PlatformAdapter, douyin: new DouyinAdapter() as PlatformAdapter }
-    : { bilibili: new FakePlatformAdapter('bilibili') as PlatformAdapter, douyin: new FakePlatformAdapter('douyin') as PlatformAdapter };
+  const adapters =
+    mode === "real"
+      ? {
+          bilibili: new BilibiliAdapter() as PlatformAdapter,
+          douyin: new DouyinAdapter() as PlatformAdapter,
+        }
+      : {
+          bilibili: new FakePlatformAdapter("bilibili") as PlatformAdapter,
+          douyin: new FakePlatformAdapter("douyin") as PlatformAdapter,
+        };
 
-  const useKeychain = mode === 'real';
-  const secretStore: SecretStore = useKeychain ? new KeytarSecretStore() : new MemorySecretStore();
+  const useKeychain = mode === "real";
+  const secretStore: SecretStore = useKeychain
+    ? new KeytarSecretStore()
+    : new MemorySecretStore();
 
   const tags = new TagRepository(db);
 
@@ -149,7 +192,8 @@ export function buildServices(opts: BuildOptions = {}): Services {
     predictionCalibration: new PredictionCalibrationRepository(db),
     settings: new SettingsRepository(db),
     alerts: new AlertRepository(db),
-    verificationQueue: undefined as unknown as import('./verification-queue.js').VerificationQueue,
+    verificationQueue:
+      undefined as unknown as import("./verification-queue.js").VerificationQueue,
     diagnostics: new DiagnosticRepository(db),
     schedules: new ScheduleRepository(db),
     statsCache: undefined,
@@ -157,11 +201,39 @@ export function buildServices(opts: BuildOptions = {}): Services {
     diskGuard: new FakeDiskGuard(),
     mailer: undefined as unknown as Mailer,
     adapterFor: (platform) => adapters[platform],
-    engineFor: () => (mode === 'real' ? new StreamRecordingEngine() : fakeEngine),
+    recordingBufferDirectory:
+      mode === "real"
+        ? path.join(
+            process.platform === "darwin"
+              ? path.join(os.homedir(), "Library", "Caches")
+              : process.platform === "win32"
+                ? process.env.LOCALAPPDATA || os.tmpdir()
+                : path.join(os.homedir(), ".cache"),
+            "live-recorder",
+            "recording-buffer",
+            createHash("sha256")
+              .update(path.resolve(dbPath))
+              .digest("hex")
+              .slice(0, 16),
+          )
+        : path.join(
+            dbPath === ":memory:"
+              ? os.tmpdir()
+              : path.dirname(path.resolve(dbPath)),
+            "recording-buffer",
+          ),
+    engineFor: () =>
+      mode === "real"
+        ? new StreamRecordingEngine(fetch, undefined, {
+            directory: services.recordingBufferDirectory,
+          })
+        : fakeEngine,
     platformCookie: async (platform) => {
-      if (platform === 'douyin') return (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined;
+      if (platform === "douyin")
+        return (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined;
       // B站未登录时服务端只提供 720p 及以下档位，登录 Cookie（SESSDATA）是获取蓝光/原画的唯一途径。
-      if (platform === 'bilibili') return (await secretStore.get(BILIBILI_COOKIE_KEY)) ?? undefined;
+      if (platform === "bilibili")
+        return (await secretStore.get(BILIBILI_COOKIE_KEY)) ?? undefined;
       return undefined;
     },
     notifier: undefined as unknown as Notifier,

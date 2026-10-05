@@ -5,6 +5,7 @@ import type {
   LiveStatusResult,
   PlatformAdapter,
   StreamUrlResult,
+  RecordingSourceResult,
 } from "./adapter.js";
 
 const UA =
@@ -691,6 +692,24 @@ export class DouyinAdapter implements PlatformAdapter {
         });
       throw new AppError("PLATFORM_CHANGED", "平台接口有变动，请稍后重试", {});
     }
+    return this.streamFromRoomInfo(data, roomId, quality, cookie);
+  }
+
+  async resolveRecordingSource(roomUrl: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult> {
+    const roomId = this.parseRoomId(roomUrl);
+    if (!roomId) return { status: "error", error: new AppError("ROOM_LINK_INVALID", "无效的直播间链接", {}).toObject() };
+    if (!cookie) return { status: "restricted", error: new AppError("PLATFORM_ACCESS_RESTRICTED", "平台访问受限，请检查抖音授权", { retryable: false }).toObject() };
+    try {
+      const data = await this.fetchRoomInfoWithRetry(roomId, cookie, "interactive");
+      if (isNotLiveResponse(data) || (data.status_code === 0 && data.data?.data?.[0]?.status !== undefined && data.data.data[0].status !== 2)) return { status: "offline" };
+      return { status: "live", stream: this.streamFromRoomInfo(data, roomId, quality, cookie) };
+    } catch (error) {
+      const cause = error instanceof AppError ? error : new AppError("NETWORK_UNAVAILABLE", "平台请求失败", { retryable: true });
+      return { status: cause.code === "PLATFORM_ACCESS_RESTRICTED" || cause.code === "DOUYIN_COOKIE_EXPIRED" ? "restricted" : "error", error: cause.toObject() };
+    }
+  }
+
+  private streamFromRoomInfo(data: DouyinEnterResponse, roomId: string, quality: Quality, cookie?: string): StreamUrlResult {
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
       // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
