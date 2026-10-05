@@ -404,7 +404,7 @@ jobs:
 
       - name: Recover CDN installers with native AWS command
         if: inputs.resume_version != '' && inputs.native_upload && steps.publication.outputs.published != 'true'
-        timeout-minutes: 10
+        timeout-minutes: 22
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}

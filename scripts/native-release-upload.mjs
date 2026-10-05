@@ -48,7 +48,25 @@ async function main() {
       const child = spawn('aws', ['--debug', '--endpoint-url', process.env.QINIU_ENDPOINT,
         's3', 'cp', scratch, `s3://${process.env.QINIU_BUCKET}/`, '--recursive',
         '--cache-control', 'public, max-age=31536000, immutable'], {
-        stdio: ['ignore', 'inherit', 'pipe'], timeout: 8 * 60 * 1000,
+        stdio: ['ignore', 'pipe', 'pipe'], timeout: 20 * 60 * 1000,
+      });
+      let lastProgress = Date.now();
+      let lastAmount = '';
+      let forceKill;
+      const idle = setInterval(() => {
+        if (Date.now() - lastProgress <= 3 * 60 * 1000) return;
+        console.error('Native upload stopped: no byte progress for 3 minutes');
+        clearInterval(idle);
+        child.kill('SIGTERM');
+        forceKill = setTimeout(() => child.kill('SIGKILL'), 10000);
+      }, 15000);
+      child.stdout.on('data', chunk => {
+        const output = chunk.toString();
+        process.stdout.write(output.replace(/\r/g, '\n'));
+        for (const match of output.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
+          const amount = `${match[1]} ${match[2]}`;
+          if (amount !== lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
+        }
       });
       const statuses = new Map();
       const errors = new Set();
@@ -64,8 +82,9 @@ async function main() {
           for (const match of line.matchAll(/<Code>([A-Za-z0-9]+)<\/Code>/g)) errors.add(match[1]);
         }
       });
-      child.on('error', reject);
+      child.on('error', error => { clearInterval(idle); clearTimeout(forceKill); reject(error); });
       child.on('close', (code, signal) => {
+        clearInterval(idle); clearTimeout(forceKill);
         console.log(`Native AWS exit: ${code}; signal: ${signal || 'none'}`);
         console.log(`AWS HTTP status counts: ${JSON.stringify(Object.fromEntries(statuses))}`);
         console.log(`AWS error types: ${[...errors].join(', ') || 'none captured'}`);
