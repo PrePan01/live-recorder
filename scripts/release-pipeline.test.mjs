@@ -290,7 +290,7 @@ test('checks can be reused only from the exact trusted release run with all plat
 test('release snapshot avoids repeated reads and refreshes only when requested', () => {
   const remote = new ReleaseRemote('unused', state.version);
   let reads = 0;
-  remote.api = () => { reads++; return { draft: true, assets: [] }; };
+  remote.api = () => { reads++; return [{ tag_name: remote.tag, draft: true, assets: [] }]; };
   try {
     remote.release(); remote.release(); remote.isDraft(); remote.readAsset('missing');
     assert.equal(reads, 1);
@@ -299,13 +299,12 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
   } finally { remote.close(); }
 });
 
-test('draft hidden from the by-tag endpoint is found in the release list and reused', () => {
+test('draft lookup uses the release list without a redundant by-tag request', () => {
   const remote = new ReleaseRemote('unused', state.version);
   const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
   const reads = [];
   remote.api = (path) => {
     reads.push(path);
-    if (path === 'releases/tags/v1.2.3') return null;
     if (path === 'releases?per_page=100&page=1') return [draft];
     throw new Error(`Unexpected API access: ${path}`);
   };
@@ -313,11 +312,11 @@ test('draft hidden from the by-tag endpoint is found in the release list and reu
     assert.equal(remote.release(), draft);
     assert.equal(remote.isDraft(), true);
     assert.equal(remote.readAsset('release-state.json'), null);
-    assert.equal(reads.length, 2);
+    assert.equal(reads.length, 1);
     // Existing drafts must not be recreated or mistaken for published releases.
     remote.ensureDraft(state.commit);
     assert.equal(remote.release(), draft);
-    assert.equal(reads.length, 4);
+    assert.equal(reads.length, 2);
   } finally { remote.close(); }
 });
 
@@ -328,7 +327,6 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
   const reads = [];
   remote.api = (path) => {
     reads.push(path);
-    if (path === 'releases/tags/v1.2.3') return null;
     if (path === 'releases?per_page=100&page=1') {
       return visible ? Array.from({ length: 100 }, (_, i) => ({ tag_name: `other-${i}` })) : [];
     }
@@ -339,7 +337,7 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
     assert.equal(remote.release(), null);
     visible = true;
     assert.equal(remote.release(), null);
-    assert.equal(reads.length, 2);
+    assert.equal(reads.length, 1);
     assert.equal(remote.release(true), draft);
     assert(reads.includes('releases?per_page=100&page=2'));
   } finally { remote.close(); }
@@ -347,12 +345,68 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
 
 test('invalid release-list responses cannot be cached as a missing draft', () => {
   const remote = new ReleaseRemote('unused', state.version);
-  remote.api = (path) => path.startsWith('releases/tags/') ? null : { message: 'Not Found' };
+  remote.api = () => ({ message: 'Not Found' });
   try {
     assert.throws(() => remote.release(), /Unable to list releases/);
     assert.equal(remote.releaseSnapshot, undefined);
   } finally { remote.close(); }
 });
+
+test('published releases also use the list and retain snapshot caching', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  const published = { tag_name: remote.tag, draft: false, assets: [] };
+  let calls = 0;
+  remote.api = path => {
+    assert.equal(path, 'releases?per_page=100&page=1');
+    calls++;
+    return [published];
+  };
+  try {
+    assert.equal(remote.release(), published);
+    assert.equal(remote.release(), published);
+    assert.equal(calls, 1);
+  } finally { remote.close(); }
+});
+
+for (const missing of [true, false]) {
+  test(`CLI ${missing ? '404 probes remain quiet' : 'permission errors remain fatal'}`, () => {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+      import { tmpdir } from 'node:os';
+      import { join } from 'node:path';
+      import { ReleaseRemote } from './scripts/release-pipeline.mjs';
+      const directory = mkdtempSync(join(tmpdir(), 'lr-cli-probes-'));
+      const missing = ${missing};
+      for (const name of ['gh', 'aws']) {
+        const file = join(directory, name);
+        const message = name === 'gh'
+          ? (missing ? 'gh: Not Found (HTTP 404)' : 'gh: Forbidden (HTTP 403)')
+          : (missing ? 'An error occurred (404) when calling the HeadObject operation: Not Found'
+                     : 'An error occurred (AccessDenied) when calling the HeadObject operation: Forbidden');
+        writeFileSync(file, '#!' + process.execPath + '\\nprocess.stderr.write(' + JSON.stringify(message + '\\n') + ');process.exit(1);');
+        chmodSync(file, 0o755);
+      }
+      process.env.PATH = directory + ':' + process.env.PATH;
+      process.env.GITHUB_REPOSITORY = 'fixture/repository';
+      process.env.QINIU_ENDPOINT = 'https://fixture.invalid';
+      process.env.QINIU_BUCKET = 'fixture';
+      const remote = new ReleaseRemote(directory, '1.2.3');
+      try {
+        if (missing) {
+          assert.equal(remote.api('git/ref/tags/v1.2.3'), null);
+          assert.equal(remote.objectHead('app.dmg'), null);
+        } else {
+          assert.throws(() => remote.api('git/ref/tags/v1.2.3'), /HTTP 403/);
+          assert.throws(() => remote.objectHead('app.dmg'), /AccessDenied/);
+        }
+      } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+    `], { encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  });
+}
 
 
 test('failed CDN verification or a changed tag blocks publication', async () => {

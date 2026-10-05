@@ -384,19 +384,19 @@ export class ReleaseRemote {
   }
   release(refresh = false) {
     if (refresh || this.releaseSnapshot === undefined) {
-      let release = this.api(`releases/tags/${this.tag}`);
-      if (!release) {
-        for (let page = 1; ; page++) {
-          const releases = this.api(`releases?per_page=100&page=${page}`);
-          if (!Array.isArray(releases))
-            throw new Error(
-              "Unable to list releases while checking for a draft",
-            );
-          release =
-            releases.find((candidate) => candidate.tag_name === this.tag) ??
-            null;
-          if (release || releases.length < 100) break;
-        }
+      // The release list covers both drafts and published releases. Looking up
+      // a draft through the published-by-tag endpoint adds an expected 404.
+      let release = null;
+      for (let page = 1; ; page++) {
+        const releases = this.api(`releases?per_page=100&page=${page}`);
+        if (!Array.isArray(releases))
+          throw new Error(
+            "Unable to list releases while checking for a draft",
+          );
+        release =
+          releases.find((candidate) => candidate.tag_name === this.tag) ??
+          null;
+        if (release || releases.length < 100) break;
       }
       this.releaseSnapshot = release;
     }
