@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertReleaseIdentity, publishRelease, ReleaseRemote, checksMatchJournal, prepareReleaseFiles, syncRelease, verifyFrozenFiles } from './release-pipeline.mjs';
+import { assertReleaseIdentity, publishRelease, ReleaseRemote, checksMatchJournal, prepareReleaseFiles, syncRelease, verifyFrozenFiles, asyncCommand } from './release-pipeline.mjs';
 
 import { pubkey, signature } from './test-fixtures/signatures.mjs';
 
@@ -42,6 +42,7 @@ class FakeRemote {
     if (this.objects.has(key)) assert.equal(this.objects.get(key), digest);
     else this.objects.set(key, digest);
   }
+  async ensureObjects(entries) { for (const [key, name, digest] of entries) await this.ensureObject(key, name, digest); }
   verifyStaged() { this.event('verify'); }
   verifyPointers() { this.event('verify-pointers'); }
   reportStatus(status) { this.status = status; }
@@ -161,7 +162,7 @@ test('validation builds on another branch do not reserve tags or publish', async
   assert.equal(result.stdout, 'should_release=true\nreuse_release=false\nreuse_checks=false\n');
 });
 
-test('both destinations transfer concurrently with a two-file limit per destination', async () => {
+test('AWS batch overlaps GitHub uploads with bounded GitHub concurrency', async () => {
   const remote = new FakeRemote();
   const active = { github: 0, cdn: 0 };
   const peak = { github: 0, cdn: 0 };
@@ -182,7 +183,7 @@ test('both destinations transfer concurrently with a two-file limit per destinat
     remote.draft = false;
   };
   await publishRelease(state, remote);
-  assert.deepEqual(peak, { github: 2, cdn: 2 });
+  assert.deepEqual(peak, { github: 2, cdn: 1 });
   assert(destinationsOverlap);
 });
 
@@ -203,31 +204,42 @@ test('failed transfer drains other uploads before rejecting and never activates 
   assert(!remote.objects.has('latest.json'));
 });
 
-test('CDN uploads use multipart CLI settings, preserve metadata, and skip matching objects', async () => {
+test('CDN uploads use one recursive AWS batch, native progress and transfer defaults', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'lr-transfer-test-'));
   const calls = [];
   const remote = new ReleaseRemote(directory, state.version, async (...args) => calls.push(args));
   try {
+    writeFileSync(join(directory, 'app.dmg'), 'mac bytes');
+    writeFileSync(join(directory, 'latest.json'), '{}');
     remote.objectHead = () => null;
-    await remote.ensureObject('app.dmg', 'app.dmg', 'mac-hash');
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
     const [program, args, options] = calls[0];
     assert.equal(program, 'aws');
-    assert.deepEqual(args.slice(2, 4), ['s3', 'cp']);
-    assert(args.includes('sha256=mac-hash'));
+    assert.equal(args[args.indexOf('s3') + 1], 'cp');
+    assert(args.includes('--cli-connect-timeout'));
+    assert(args.includes('--cli-read-timeout'));
+    assert(!args.includes('--only-show-errors'));
+    assert.equal(options.timeout, 300000);
+    assert(args.includes('--recursive'));
+    assert.equal(options.liveOutput, true);
+    const staging = args[args.indexOf('cp') + 1];
+    assert.equal(readFileSync(join(staging, 'app.dmg'), 'utf8'), 'mac bytes');
+    assert.equal(readFileSync(join(staging, 'releases/v1.2.3/latest.json'), 'utf8'), '{}');
+    assert.throws(() => readFileSync(join(staging, 'latest.json')));
+    const metadata = JSON.parse(args[args.indexOf('--metadata') + 1]);
+    assert.match(metadata['release-set-sha256'], /^[a-f0-9]{64}$/);
     assert(args.includes('public, max-age=31536000, immutable'));
     // Explicit --profile can disable environment credentials; use only the
     // isolated config file and environment-selected default profile instead.
     assert(!args.includes('--profile'));
     assert.equal(options.env.AWS_PROFILE, 'default');
     const config = readFileSync(options.env.AWS_CONFIG_FILE, 'utf8');
-    assert.match(config, /multipart_threshold = 16MB/);
-    assert.match(config, /multipart_chunksize = 16MB/);
-    assert.match(config, /max_concurrent_requests = 4/);
-    assert.match(config, /preferred_transfer_client = classic/);
-    remote.objectHead = () => ({ Metadata: { sha256: 'mac-hash' } });
-    await remote.ensureObject('app.dmg', 'app.dmg', 'mac-hash');
+    assert(!/multipart_|max_concurrent_requests|preferred_transfer_client/.test(config));
+    remote.objectHead = () => ({ Metadata: metadata });
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
     assert.equal(calls.length, 1);
-    await assert.rejects(remote.ensureObject('app.dmg', 'app.dmg', 'changed-hash'), /Refusing to overwrite/);
+    remote.objectHead = () => ({ Metadata: { sha256: 'mac-hash' } });
+    await assert.rejects(remote.ensureObjects([['app.dmg', 'app.dmg', 'changed-hash']]), /Refusing to overwrite/);
     assert.equal(calls.length, 1);
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });
@@ -416,4 +428,61 @@ test('server GitHub digests are checked again before publication', async () => {
   remote.release = () => ({ draft: true, assets: [{ name: 'app.dmg', digest: 'sha256:wrong' }] });
   try { await assert.rejects(remote.verifyStaged(state), /GitHub asset verification failed/); }
   finally { remote.close(); }
+});
+
+
+test('upload subprocesses stop on timeout and close interactive input', async () => {
+  await assert.rejects(asyncCommand(process.execPath, ['-e', 'setTimeout(()=>{},10000)'], { timeout: 50, label: 'timeout fixture' }), /timed out/);
+  const result = await asyncCommand(process.execPath, ['-e', 'process.stdin.resume();process.stdin.on("end",()=>console.log("closed"))'], { timeout: 2000, label: 'stdin fixture' });
+  assert.match(result, /closed/);
+});
+
+test('uncertain CDN upload is checked before retry, preserving a completed object', async () => {
+  let calls = 0;
+  let heads = 0;
+  const directory = mkdtempSync(join(tmpdir(), 'lr-batch-retry-'));
+  writeFileSync(join(directory, 'app.dmg'), 'fixture');
+  const remote = new ReleaseRemote(directory, state.version, async () => { calls++; throw new Error('upload connection interrupted'); });
+  remote.objectHead = () => ++heads === 1 ? null : { Metadata: { sha256: 'mac-hash' } };
+  try {
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash']]);
+    assert.equal(calls, 1);
+    assert.equal(heads, 2);
+  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('a partially completed AWS batch retries only missing files', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-partial-batch-'));
+  const uploaded = new Map();
+  const batches = [];
+  for (const name of ['app.dmg', 'app.exe']) writeFileSync(join(directory, name), name);
+  const remote = new ReleaseRemote(directory, state.version, async (program, args) => {
+    const staging = args[args.indexOf('cp') + 1];
+    const metadata = JSON.parse(args[args.indexOf('--metadata') + 1]);
+    const names = ['app.dmg', 'app.exe'].filter(name => {
+      try { readFileSync(join(staging, name)); return true; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
+    });
+    batches.push(names);
+    uploaded.set(names[0], { Metadata: metadata });
+    if (batches.length === 1) throw new Error('connection interrupted after first file');
+  });
+  remote.objectHead = key => uploaded.get(key) ?? null;
+  remote.readObject = () => { throw new Error('completed batch files should not be downloaded again'); };
+  try {
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']]);
+    assert.deepEqual(batches, [['app.dmg', 'app.exe'], ['app.exe']]);
+    assert.equal(uploaded.size, 2);
+  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('native upload progress is visible even when the subprocess fails', () => {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { asyncCommand } from './scripts/release-pipeline.mjs';
+    try {
+      await asyncCommand(process.execPath, ['-e', 'process.stdout.write("Completed 8 MiB/64 MiB\\r");process.exit(1)'], { liveOutput: true });
+    } catch { process.exitCode = 1; }
+  `], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Completed 8 MiB\/64 MiB\n/);
 });
