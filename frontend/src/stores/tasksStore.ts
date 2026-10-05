@@ -1,22 +1,9 @@
-import { create } from './createStore';
-import { shallow } from 'zustand/vanilla/shallow';
-import { fetchTasks } from '../api/tasks';
-import type { TaskItem } from '../types/tasks';
+import { create } from "./createStore";
+import { shallow } from "zustand/vanilla/shallow";
+import { fetchTasks } from "../api/tasks";
+import type { TaskItem } from "../types/tasks";
+import type { Recording } from "../types/recording";
 
-/**
- * 任务进度聚合 store。
- *
- * 展示口径：
- * - 角标 = 在途清单长度；完成任务展示宽限 5 秒后，弹窗与角标同步消失
- *   （宽限期内仍计数；同刻完成的一批一起减）；
- * - 后端「完成即离在途扫描」——消失的任务由前端留 5 秒展示宽限（后端不存已读）；
- * - 数据 = GET /api/v1/tasks 聚合 + 听现有 SSE（debounce 800ms 重拉）
- *   + 1.2s 前台真轮询兜底，不新增事件契约；SSE 断线角标不冻结、重连校准。
- *
- * ⚠ 反饥饿：debounce 重拉在密集事件段会被无限重置
- * （任务正在变化的时刻恰恰拉不成）——轮询必须**直调 refresh()**（真轮询），
- * 绝不能与 debounce 共用一个入口；debounce 只负责 SSE 突发的合并降频。
- */
 export const TASK_DISPLAY_GRACE_MS = 5_000;
 const REFRESH_DEBOUNCE_MS = 800;
 
@@ -28,12 +15,10 @@ interface GraceEntry {
 interface TasksState {
   active: TaskItem[];
   grace: Record<string, GraceEntry>;
-  /** SSE 触发源 → debounce 800ms 后重拉（同一拍多次事件只拉一次）。 */
   scheduleRefresh: () => Promise<void>;
-  /** 立即重拉（挂载/轮询/重连校准用；在途护栏防竞写）。 */
   refresh: () => Promise<void>;
-  /** 到期宽限项移除（定时器调用）。 */
   pruneGrace: (now: number) => void;
+  settleRecording: (recording: Recording) => void;
 }
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -42,7 +27,31 @@ let inFlight = false;
 let rerun = false;
 
 function isVisible(): boolean {
-  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+  return (
+    typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+}
+
+function isTerminalTask(item: TaskItem): boolean {
+  return [
+    "completed",
+    "failed",
+    "partial",
+    "cancelled",
+    "unavailable",
+  ].includes(item.state);
+}
+
+function terminalItem(item: TaskItem): TaskItem {
+  return item.state === "completed"
+    ? {
+        ...item,
+        progressPercent: 100,
+        error: null,
+        step: null,
+        etaSeconds: null,
+      }
+    : { ...item, etaSeconds: null };
 }
 
 function schedulePrune(
@@ -54,22 +63,28 @@ function schedulePrune(
   if (pruneTimer) return;
   const entries = Object.values(grace);
   if (entries.length === 0) return;
-  const earliest = entries.reduce((min, entry) => Math.min(min, entry.expiresAt), now + TASK_DISPLAY_GRACE_MS);
-  pruneTimer = setTimeout(() => {
-    pruneTimer = null;
-    const state = get();
-    const live = { ...state.grace };
-    let changed = false;
-    const current = Date.now();
-    for (const [id, entry] of Object.entries(live)) {
-      if (entry.expiresAt <= current) {
-        delete live[id];
-        changed = true;
+  const earliest = entries.reduce(
+    (min, entry) => Math.min(min, entry.expiresAt),
+    now + TASK_DISPLAY_GRACE_MS,
+  );
+  pruneTimer = setTimeout(
+    () => {
+      pruneTimer = null;
+      const state = get();
+      const live = { ...state.grace };
+      let changed = false;
+      const current = Date.now();
+      for (const [id, entry] of Object.entries(live)) {
+        if (entry.expiresAt <= current) {
+          delete live[id];
+          changed = true;
+        }
       }
-    }
-    if (changed) set({ grace: live });
-    schedulePrune(set, get, live, current);
-  }, Math.max(0, earliest - now) + 30);
+      if (changed) set({ grace: live });
+      schedulePrune(set, get, live, current);
+    },
+    Math.max(0, earliest - now) + 30,
+  );
 }
 
 export const useTasksStore = create<TasksState>((set, get) => ({
@@ -77,7 +92,6 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   grace: {},
 
   async refresh() {
-    // 在途护栏：并发触发只补拉一次，避免双 fetch 竞写。
     if (inFlight) {
       rerun = true;
       return;
@@ -86,28 +100,48 @@ export const useTasksStore = create<TasksState>((set, get) => ({
     try {
       let items: TaskItem[];
       try {
-        items = await fetchTasks();
+        items = await fetchTasks(get().active.map((item) => item.id));
       } catch {
         // 拉取失败不冻结既有展示（断线不冻结；下一次触发再校准）。
         return;
       }
       const now = Date.now();
-      const nextIds = new Set(items.map((item) => item.id));
+      const terminal = new Map(
+        items
+          .filter(isTerminalTask)
+          .map((item) => [item.id, terminalItem(item)]),
+      );
+      items = items.filter((item) => !isTerminalTask(item));
       const previous = get();
       const prevActive = previous.active;
       const grace = { ...previous.grace };
+      // 请求返回前 SSE 已确认结束时，不让旧的在途响应把卡片拉回 99%。
+      items = items.filter(
+        (item) =>
+          !grace[item.id] ||
+          grace[item.id]!.item.state === "unavailable" ||
+          Date.parse(item.updatedAt) >
+            Date.parse(grace[item.id]!.item.updatedAt),
+      );
+      const nextIds = new Set(items.map((item) => item.id));
 
-      // 消失的在途任务进入 5 秒展示宽限（重现（如失败重试）即归位）。
       for (const item of prevActive) {
         if (nextIds.has(item.id)) continue;
-        grace[item.id] = { item, expiresAt: now + TASK_DISPLAY_GRACE_MS };
+        if (grace[item.id]) continue;
+        grace[item.id] = {
+          item: terminal.get(item.id) ?? {
+            ...item,
+            state: "unavailable",
+            etaSeconds: null,
+          },
+          expiresAt: now + TASK_DISPLAY_GRACE_MS,
+        };
       }
       for (const item of items) {
         delete grace[item.id];
       }
-      // TaskItem 是扁平 DTO。相同响应保留快照，尤其空任务轮询不能持续
-      // 向 useSyncExternalStore 发布同步更新（后台 WebKit 可能延迟调度）。
-      const activeChanged = items.length !== prevActive.length ||
+      const activeChanged =
+        items.length !== prevActive.length ||
         items.some((item, index) => !shallow(item, prevActive[index]));
       const graceChanged = !shallow(grace, previous.grace);
       if (activeChanged || graceChanged) {
@@ -138,6 +172,49 @@ export const useTasksStore = create<TasksState>((set, get) => ({
     return Promise.resolve();
   },
 
+  settleRecording(rec) {
+    if (
+      rec.state !== "failed" &&
+      (rec.state !== "completed" ||
+        rec.pipelineStatus === "queued" ||
+        rec.pipelineStatus === "running")
+    )
+      return;
+    const current = get();
+    const matches = current.active.filter(
+      (item) =>
+        (item.kind === "clip" && item.id === rec.id) ||
+        (item.kind === "pipeline" && item.recordingId === rec.id),
+    );
+    if (!matches.length) return;
+    const now = Date.now();
+    const grace = { ...current.grace };
+    for (const item of matches) {
+      const state =
+        rec.state === "failed" || rec.pipelineStatus === "failed"
+          ? "failed"
+          : rec.pipelineStatus === "partial"
+            ? "partial"
+            : "completed";
+      grace[item.id] = {
+        item: terminalItem({
+          ...item,
+          title: rec.streamTitle,
+          state,
+          error:
+            state === "failed"
+              ? (rec.failureReason?.message ?? "后处理失败")
+              : null,
+          updatedAt: new Date(now).toISOString(),
+        }),
+        expiresAt: now + TASK_DISPLAY_GRACE_MS,
+      };
+    }
+    const ids = new Set(matches.map((item) => item.id));
+    set({ active: current.active.filter((item) => !ids.has(item.id)), grace });
+    schedulePrune(set, get, grace, now);
+  },
+
   pruneGrace(now) {
     const grace = { ...get().grace };
     let changed = false;
@@ -152,10 +229,12 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   },
 }));
 
-/** 当前展示清单 = 在途 + 宽限期（角标数 = 清单长度，宽限期内仍计数）。 */
 export function selectVisibleTasks(state: {
   active: TaskItem[];
   grace: Record<string, GraceEntry>;
 }): TaskItem[] {
-  return [...state.active, ...Object.values(state.grace).map((entry) => entry.item)];
+  return [
+    ...state.active,
+    ...Object.values(state.grace).map((entry) => entry.item),
+  ];
 }
