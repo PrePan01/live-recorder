@@ -609,6 +609,11 @@ describe('OpenList 成功后删除本地源文件', () => {
     await services.secretStore.set('openlist.token', 'tok');
   }
 
+  async function waitForUploadCompletion(services: Services, jobId: string): Promise<void> {
+    // ok 先于异步本地清理落库；泵释放槽位后，删除/保留断言才覆盖完整流程。
+    await waitFor(() => services.uploader.uploadRepo.get(jobId)?.status === 'ok' && !services.uploader.busy);
+  }
+
   it('only deletes files for automatic uploads after a confirmed successful put', async () => {
     const services = newServices();
     services.uploader = new UploadManager(services, { async put() { /* confirmed */ } });
@@ -616,7 +621,7 @@ describe('OpenList 成功后删除本地源文件', () => {
     await configure(services, true);
 
     const job = await services.uploader.enqueue(rec.id, { automatic: true });
-    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await waitForUploadCompletion(services, job!.id);
     await expect(access(file)).rejects.toThrow();
     expect(services.recordings.get(rec.id)?.filePath).toBeNull();
   });
@@ -628,7 +633,7 @@ describe('OpenList 成功后删除本地源文件', () => {
     await configure(services, true);
 
     const job = await services.uploader.enqueue(rec.id);
-    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await waitForUploadCompletion(services, job!.id);
     await expect(access(file)).resolves.toBeUndefined();
     expect(services.recordings.get(rec.id)?.filePath).toBe(file);
   });
@@ -651,7 +656,7 @@ describe('OpenList 成功后删除本地源文件', () => {
     const res = await inj({ method: 'POST', url: `/api/v1/recordings/${rec.id}/upload` });
     expect(res.statusCode).toBe(200);
     expect(res.json().upload.idempotencyKey).toBe(`rec_${rec.id}`);
-    await waitFor(() => services.uploader.uploadRepo.get(res.json().upload.id)?.status === 'ok');
+    await waitForUploadCompletion(services, res.json().upload.id);
     await app.close();
   });
 
@@ -695,7 +700,7 @@ describe('OpenList 成功后删除本地源文件', () => {
     await putStarted;
     await configure(services, false);
     complete();
-    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await waitForUploadCompletion(services, job!.id);
     await expect(access(file)).resolves.toBeUndefined();
   });
 
@@ -720,7 +725,7 @@ describe('OpenList 成功后删除本地源文件', () => {
     await configure(services, true);
 
     const job = await services.uploader.enqueue(rec.id, { automatic: true });
-    await waitFor(() => services.uploader.uploadRepo.get(job!.id)?.status === 'ok');
+    await waitForUploadCompletion(services, job!.id);
     await expect(access(source)).rejects.toThrow();
     await expect(access(output)).rejects.toThrow();
     await expect(access(cover)).resolves.toBeUndefined();

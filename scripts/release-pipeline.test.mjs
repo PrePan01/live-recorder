@@ -288,6 +288,61 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
   } finally { remote.close(); }
 });
 
+test('draft hidden from the by-tag endpoint is found in the release list and reused', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
+  const reads = [];
+  remote.api = (path) => {
+    reads.push(path);
+    if (path === 'releases/tags/v1.2.3') return null;
+    if (path === 'releases?per_page=100&page=1') return [draft];
+    throw new Error(`Unexpected API access: ${path}`);
+  };
+  try {
+    assert.equal(remote.release(), draft);
+    assert.equal(remote.isDraft(), true);
+    assert.equal(remote.readAsset('release-state.json'), null);
+    assert.equal(reads.length, 2);
+    // Existing drafts must not be recreated or mistaken for published releases.
+    remote.ensureDraft(state.commit);
+    assert.equal(remote.release(), draft);
+    assert.equal(reads.length, 4);
+  } finally { remote.close(); }
+});
+
+test('draft lookup paginates and refreshes after a cached missing release', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
+  let visible = false;
+  const reads = [];
+  remote.api = (path) => {
+    reads.push(path);
+    if (path === 'releases/tags/v1.2.3') return null;
+    if (path === 'releases?per_page=100&page=1') {
+      return visible ? Array.from({ length: 100 }, (_, i) => ({ tag_name: `other-${i}` })) : [];
+    }
+    if (path === 'releases?per_page=100&page=2') return [draft];
+    throw new Error(`Unexpected API access: ${path}`);
+  };
+  try {
+    assert.equal(remote.release(), null);
+    visible = true;
+    assert.equal(remote.release(), null);
+    assert.equal(reads.length, 2);
+    assert.equal(remote.release(true), draft);
+    assert(reads.includes('releases?per_page=100&page=2'));
+  } finally { remote.close(); }
+});
+
+test('invalid release-list responses cannot be cached as a missing draft', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  remote.api = (path) => path.startsWith('releases/tags/') ? null : { message: 'Not Found' };
+  try {
+    assert.throws(() => remote.release(), /Unable to list releases/);
+    assert.equal(remote.releaseSnapshot, undefined);
+  } finally { remote.close(); }
+});
+
 
 test('failed CDN verification or a changed tag blocks publication', async () => {
   for (const failure of ['cdn', 'tag']) {
