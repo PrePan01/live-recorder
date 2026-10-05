@@ -19,6 +19,11 @@ function normalizeRecording(rec: Recording): Recording {
 
 const TERMINAL_STATES = new Set<Recording["state"]>(["completed", "failed"]);
 
+function clipWorkFinished(rec: Recording): boolean {
+  return rec.state === "failed" ||
+    (rec.state === "completed" && rec.pipelineStatus !== "queued" && rec.pipelineStatus !== "running");
+}
+
 /**
  * SSE 是增量流，历史页列表不会包含所有录制。单独记录经 SSE 观察到的状态，
  * 才能区分「本次运行中由未完成变为完成」和「启动后首次收到的历史记录更新」
@@ -185,10 +190,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set((s) => {
       const previous = s.items.find((item) => item.id === rec.id);
       const previousEventState = eventStateByRecordingId.get(rec.id);
+      const previousSnapshot = s.recordingSnapshots[rec.id];
+      const continuingClipPipeline = rec.id in s.clipExports &&
+        rec.state === "processing" &&
+        (rec.pipelineStatus === "queued" || rec.pipelineStatus === "running");
       if (
         (TERMINAL_STATES.has(previousEventState ?? "pending") ||
           (previous && TERMINAL_STATES.has(previous.state))) &&
-        !TERMINAL_STATES.has(rec.state)
+        !TERMINAL_STATES.has(rec.state) && !continuingClipPipeline
       )
         return {};
       eventStateByRecordingId.set(rec.id, rec.state);
@@ -224,7 +233,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         rec.endReason === "clip_export";
       const clipTerminal =
         isClipExport &&
-        (rec.state === "completed" || rec.state === "failed") &&
+        clipWorkFinished(rec) &&
         (trackedClipExport ||
           (previousEventState !== undefined &&
             !TERMINAL_STATES.has(previousEventState)));
@@ -232,6 +241,9 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       if (clipTerminal) {
         clipExports = { ...s.clipExports };
         delete clipExports[rec.id];
+      } else if (isClipExport && !clipWorkFinished(rec)) {
+        // SSE 可能先于保存请求响应到达；贯穿导出和后处理保留本次任务。
+        clipExports = { ...s.clipExports, [rec.id]: s.clipExports[rec.id] ?? rec.id };
       }
       return {
         items,
@@ -249,7 +261,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
             : s.pendingConfirm,
         clipExports,
         clipDoneQueue:
-          clipTerminal && previousEventState !== rec.state
+          clipTerminal && (previousEventState !== rec.state ||
+            (trackedClipExport && (!previousSnapshot || !clipWorkFinished(previousSnapshot))))
             ? [...s.clipDoneQueue, normalizeRecording(rec)]
             : s.clipDoneQueue,
         recordingSnapshots: {
@@ -284,7 +297,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set((s) => {
       const snapshot = s.recordingSnapshots[clipRecordingId];
       // 很短的片段可能在响应返回前已经通过 SSE 完成并发出通知。
-      if (snapshot && TERMINAL_STATES.has(snapshot.state)) return {};
+      if (snapshot && clipWorkFinished(snapshot)) return {};
       return {
         clipExports: { ...s.clipExports, [clipRecordingId]: sourceRecordingId },
       };

@@ -469,7 +469,7 @@ export default function PreviewModal({
     seconds = Math.max(1, Math.min(Math.floor(seconds), highlightMaxSeconds));
     setExporting(true);
     void exportHighlight(room.id, seconds)
-      .then(() => message.success(`${formatSeconds(seconds)}精彩时刻录制完成`))
+      .then(() => message.success(`${formatSeconds(seconds)}精彩时刻录制完成`, 5))
       .catch((e) =>
         message.error(
           e instanceof ApiError

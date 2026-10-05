@@ -602,12 +602,15 @@ describe("RecorderManager", () => {
     services.settings.save(baseSettings(dir));
     const preview = new FakePreview();
     services.manager.preview = preview;
-    services.engineFor = () => ({
-      async *start(): AsyncGenerator<never, void> {
-        await new Promise(() => {});
-      },
-      stop: async () => {},
-    });
+    services.engineFor = () => {
+      let finish: (() => void) | undefined;
+      return {
+        async *start(): AsyncGenerator<never, void> {
+          await new Promise<void>(resolve => { finish = resolve; });
+        },
+        stop: async () => { finish?.(); },
+      };
+    };
     // 一直开播：连续失败超过旧次数额度，仍应保持恢复。
     (services.adapterFor("bilibili") as FakePlatformAdapter).setScript([]);
     const room = services.rooms.create({

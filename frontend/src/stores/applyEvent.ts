@@ -1,59 +1,63 @@
-import type { ServerEvent } from '../types/events';
-import { useRoomStore } from './roomStore';
-import { useRecordingStore } from './recordingStore';
-import { useAlertStore } from './alertStore';
-import { useSettingsStore } from './settingsStore';
-import { useServiceStore } from './serviceStore';
-import { useDiagnosticStore } from './diagnosticStore';
-import { useNotificationStore } from './notificationStore';
-import { useUploadStore } from './uploadStore';
-import { usePipelineStore } from './pipelineStore';
+import type { ServerEvent } from "../types/events";
+import { useRoomStore } from "./roomStore";
+import { useRecordingStore } from "./recordingStore";
+import { useAlertStore } from "./alertStore";
+import { useSettingsStore } from "./settingsStore";
+import { useServiceStore } from "./serviceStore";
+import { useDiagnosticStore } from "./diagnosticStore";
+import { useNotificationStore } from "./notificationStore";
+import { useUploadStore } from "./uploadStore";
+import { usePipelineStore } from "./pipelineStore";
+import { useTasksStore } from "./tasksStore";
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
-    case 'desktop:notification':
+    case "desktop:notification":
       // 由 SSE 接收层直接交给原生通知桥接；无需写入应用状态。
       break;
-    case 'room:updated':
+    case "room:updated":
       // DELETE broadcasts the final disabled room after removeRoom has already
       // removed it locally. Do not resurrect that stale event into the list.
       if (
-        e.room.monitorState === 'disabled' &&
+        e.room.monitorState === "disabled" &&
         !useRoomStore.getState().rooms.some((room) => room.id === e.room.id)
       ) {
         break;
       }
       useRoomStore.getState().upsertRoom(e.room);
       break;
-    case 'recording:updated':
+    case "recording:updated":
+      useTasksStore.getState().settleRecording(e.recording);
       useRecordingStore.getState().upsertRecordingFromEvent(e.recording);
       break;
-    case 'pipeline:updated':
+    case "pipeline:updated":
       usePipelineStore.getState().upsert(e.pipeline);
       break;
-    case 'recording:deleted':
+    case "recording:deleted":
       useRecordingStore.getState().removeRecordingFromEvent(e.recordingId);
       break;
-    case 'alert:created':
-    case 'alert:updated':
+    case "alert:created":
+    case "alert:updated":
       useAlertStore.getState().upsertAlert(e.alert);
       break;
-    case 'settings:updated':
+    case "settings:updated":
       useSettingsStore.getState().setSettings(e.settings);
-      if (e.settings.notifications) useNotificationStore.getState().setPreferences(e.settings.notifications);
+      if (e.settings.notifications)
+        useNotificationStore
+          .getState()
+          .setPreferences(e.settings.notifications);
       break;
-    case 'service:status':
+    case "service:status":
       useServiceStore.getState().patchStatus(e.serviceStatus);
       break;
-    case 'disk:space':
+    case "disk:space":
       useServiceStore.getState().patchStatus({ disk: e.disk });
       break;
-    case 'diagnostic:updated':
+    case "diagnostic:updated":
       useDiagnosticStore.getState().upsert(e.diagnostic);
       break;
-    case 'upload:updated':
+    case "upload:updated":
       useUploadStore.getState().upsert(e.upload);
-      // #191：历史表「上传状态」列实时刷新——按 recordingId 更新对应录制的快照。
       useRecordingStore.getState().patchRecordingUpload(e.upload.recordingId, {
         status: e.upload.status,
         progress: e.upload.progress,

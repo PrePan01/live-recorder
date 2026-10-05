@@ -32,6 +32,16 @@ function stageText(task: TaskItem): string {
 function stateText(task: TaskItem): string {
   if (task.error) return task.error;
   switch (task.state) {
+    case 'completed':
+      return '完成';
+    case 'failed':
+      return '失败';
+    case 'partial':
+      return '部分完成';
+    case 'cancelled':
+      return '已取消';
+    case 'unavailable':
+      return '任务已移除';
     case 'queued':
       return '排队中';
     case 'exporting':

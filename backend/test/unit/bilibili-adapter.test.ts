@@ -358,3 +358,18 @@ describe('BilibiliAdapter', () => {
   });
 
 });
+
+describe('recording recovery source', () => {
+  it('resolves status and stream in one play request without fetching metadata', async () => {
+    const calls: string[] = [];
+    const adapter = new BilibiliAdapter(mockFetcher(url => { calls.push(url); return livePayload(); }));
+    const result = await adapter.resolveRecordingSource('https://live.bilibili.com/123', 'original');
+    expect(result.status).toBe('live');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('getRoomPlayInfo');
+  });
+  it('reports explicit offline without trying to select a stream', async () => {
+    const adapter = new BilibiliAdapter(mockFetcher(() => ({ code: 0, data: { live_status: 0 } })));
+    expect(await adapter.resolveRecordingSource('https://live.bilibili.com/123', 'original')).toEqual({ status: 'offline' });
+  });
+});

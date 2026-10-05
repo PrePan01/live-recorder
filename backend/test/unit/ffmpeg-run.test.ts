@@ -2,6 +2,7 @@ import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { Readable } from 'node:stream';
 import { runFfmpegTracked } from '../../src/recorder/ffmpeg-run.js';
 
 /** 假 ffmpeg 用 shell 脚本模拟，Windows 无此机制（被测逻辑本身跨平台）。 */
@@ -58,6 +59,35 @@ exit 0
       const res = await runFfmpegTracked([], { stallMs: 3_000 });
       expect(res.ok).toBe(false);
       expect(res.stalled).toBe(false);
+    });
+  });
+
+  it('有界 stdin 完整馈送；进程提前结束不把 EPIPE 当成导出失败', async () => {
+    await withFakeFfmpeg('#!/bin/sh\ncat >/dev/null\necho progress=end\nexit 0\n', async () => {
+      const result = await runFfmpegTracked([], { input: () => Readable.from([Buffer.alloc(128 * 1024)]) });
+      expect(result.ok).toBe(true);
+    });
+    await withFakeFfmpeg('#!/bin/sh\nexit 0\n', async () => {
+      const result = await runFfmpegTracked([], { input: () => Readable.from([Buffer.alloc(4 * 1024 * 1024)]) });
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  it('输入读取错误终止进程，取消销毁输入并回收子进程', async () => {
+    await withFakeFfmpeg('#!/bin/sh\nexec cat >/dev/null\n', async () => {
+      const failed = await runFfmpegTracked([], {
+        input: () => Readable.from((async function* () { yield Buffer.alloc(4); throw new Error('disk read failed'); })()),
+      });
+      expect(failed.ok).toBe(false);
+      expect(failed.stderr).toContain('disk read failed');
+    });
+    await withFakeFfmpeg('#!/bin/sh\nexec sleep 30\n', async () => {
+      const abort = new AbortController();
+      const input = new Readable({ read() {} });
+      const result = runFfmpegTracked([], { signal: abort.signal, input: () => input });
+      abort.abort();
+      expect((await result).ok).toBe(false);
+      expect(input.destroyed).toBe(true);
     });
   });
 });

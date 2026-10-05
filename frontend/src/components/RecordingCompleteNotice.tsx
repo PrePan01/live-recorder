@@ -35,13 +35,11 @@ export default function RecordingCompleteNotice() {
     setFileName(current.replace(/\.[^.]+$/, ""));
   }, [pendingConfirm]);
 
-  // 确认框弹出即撤掉同录制的「录制完成」通知，两条提示不同时占屏。
   useEffect(() => {
     if (pendingConfirm)
       notification.destroy(`rec-complete-${pendingConfirm.id}`);
   }, [pendingConfirm, notification]);
 
-  // 录制完成（非待确认保留）→ 通知「已保存 + 打开录像文件」。
   useEffect(() => {
     if (completed?.filePath && !seenRef.current.has(completed.id)) {
       const latest = completed;
@@ -51,7 +49,7 @@ export default function RecordingCompleteNotice() {
         key: `rec-complete-${latest.id}`,
         message: "录制完成",
         description: `已保存：${name}`,
-        duration: 0,
+        duration: 5,
         btn: (
           <span>
             <a
@@ -74,12 +72,25 @@ export default function RecordingCompleteNotice() {
   useEffect(() => {
     if (!clipDoneQueue.length) return;
     for (const rec of clipDoneQueue) {
-      if (rec.state === "completed") {
+      if (
+        rec.state === "completed" &&
+        (rec.pipelineStatus === "failed" || rec.pipelineStatus === "partial")
+      ) {
+        notification.warning({
+          key: `clip-done-${rec.id}`,
+          message:
+            rec.pipelineStatus === "failed"
+              ? "片段后处理失败"
+              : "片段后处理部分完成",
+          description: `${rec.streamTitle}：请查看后处理详情`,
+          duration: 5,
+        });
+      } else if (rec.state === "completed") {
         notification.success({
           key: `clip-done-${rec.id}`,
           message: "片段已保存",
           description: rec.streamTitle,
-          duration: 0,
+          duration: 5,
           btn: (
             <span>
               <a
@@ -101,7 +112,7 @@ export default function RecordingCompleteNotice() {
           key: `clip-done-${rec.id}`,
           message: "片段导出失败",
           description: `${rec.streamTitle}：${failurePrimaryText(rec.failureReason)}`,
-          duration: 0,
+          duration: 5,
         });
       }
     }

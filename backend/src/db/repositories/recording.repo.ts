@@ -97,6 +97,7 @@ export function rowToRecording(row: RecordingRow): Recording {
 }
 
 export interface RecordingListQuery {
+  title?: string | undefined;
   page?: number | undefined;
   pageSize?: number | undefined;
   roomId?: string | undefined;
@@ -159,6 +160,10 @@ export class RecordingRepository {
     const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
     const where: string[] = [];
     const params: (string | number)[] = [];
+    if (query.title?.trim()) {
+      where.push('instr(lower(stream_title), lower(?)) > 0');
+      params.push(query.title.trim());
+    }
     if (query.roomId) {
       where.push('room_id = ?');
       params.push(query.roomId);
@@ -202,6 +207,10 @@ export class RecordingRepository {
   listExportPage(query: Omit<RecordingListQuery, 'page' | 'pageSize' | 'groupBy'>, cursor?: RecordingExportCursor, pageSize = 500): Recording[] {
     const where: string[] = [];
     const params: (string | number)[] = [];
+    if (query.title?.trim()) {
+      where.push('instr(lower(stream_title), lower(?)) > 0');
+      params.push(query.title.trim());
+    }
     if (query.roomId) { where.push('room_id = ?'); params.push(query.roomId); }
     if (query.state) { where.push('state = ?'); params.push(query.state); }
     if (query.sessionId) { where.push('stream_session_id = ?'); params.push(query.sessionId); }

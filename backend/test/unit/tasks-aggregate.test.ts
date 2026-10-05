@@ -83,6 +83,15 @@ describe('GET /api/v1/tasks（四类在途聚合）', () => {
     services.recordings.update(clip.id, { state: 'completed' });
     const after = await inj({ method: 'GET', url: '/api/v1/tasks' });
     expect(after.json().tasks).toHaveLength(0);
+    // 携带已观察 id 时返回真实终态，让前端展示完成，而不是冻结最后一次进度。
+    const settled = await inj({ method: 'GET', url: `/api/v1/tasks?ids=${[clip.id, run.id, job!.id, exportJob.id].join(',')}` });
+    expect(settled.json().tasks).toHaveLength(4);
+    for (const task of settled.json().tasks) {
+      expect(task.state).toBe('completed');
+      expect(task.progressPercent).toBe(100);
+      expect(task.etaSeconds).toBeNull();
+      expect(task.step).toBeNull();
+    }
     await app.close();
   });
 
@@ -102,6 +111,24 @@ describe('GET /api/v1/tasks（四类在途聚合）', () => {
     services.uploader.uploadRepo.update(job!.id, { status: 'failed' });
     const after = await inj({ method: 'GET', url: '/api/v1/tasks' });
     expect(after.json().tasks).toHaveLength(0);
+    const failed = await inj({ method: 'GET', url: `/api/v1/tasks?ids=${job!.id}` });
+    expect(failed.json().tasks[0]).toMatchObject({ state: 'failed', progressPercent: 10, error: '网络中断，请检查网络后重试' });
+    await app.close();
+  });
+
+  it('后处理排队交接不报完成，部分完成及删除不伪报成功', async () => {
+    const { services, mk } = await seed();
+    const clip = mk('待后处理', { origin: 'clip' });
+    services.recordings.update(clip.id, { state: 'completed', pipelineStatus: 'queued' });
+    const rec = mk('部分成功');
+    const run = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: {} });
+    services.pipeline.repo.setRunStatus(run.id, 'partial');
+    const { app } = buildApp(services);
+    const inj = host(app);
+    const response = await inj({ method: 'GET', url: `/api/v1/tasks?ids=${clip.id},${run.id},rec_missing` });
+    expect(response.json().tasks).toHaveLength(1);
+    expect(response.json().tasks[0]).toMatchObject({ id: run.id, state: 'partial' });
+    expect(response.json().tasks[0].progressPercent).not.toBe(100);
     await app.close();
   });
 });

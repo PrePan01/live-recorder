@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectVisibleTasks, TASK_DISPLAY_GRACE_MS, useTasksStore } from './tasksStore';
 import type { TaskItem } from '../types/tasks';
+import type { Recording } from '../types/recording';
 
 vi.mock('../api/tasks', () => ({
   fetchTasks: vi.fn(),
@@ -30,6 +31,7 @@ describe('任务进度聚合 store（#103）', () => {
   });
 
   afterEach(() => {
+    vi.runOnlyPendingTimers();
     vi.useRealTimers();
   });
 
@@ -45,6 +47,59 @@ describe('任务进度聚合 store（#103）', () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it('按服务端真实终态显示完成 100%，宽限到期消失', async () => {
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('done', { progressPercent: 99 })]);
+    await useTasksStore.getState().refresh();
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('done', { state: 'completed', progressPercent: 99, step: 'compress', etaSeconds: 10 })]);
+    await useTasksStore.getState().refresh();
+    expect(fetchTasks).toHaveBeenLastCalledWith(['done']);
+    expect(useTasksStore.getState().active).toEqual([]);
+    expect(selectVisibleTasks(useTasksStore.getState())[0]).toMatchObject({ state: 'completed', progressPercent: 100, step: null, etaSeconds: null });
+    await vi.advanceTimersByTimeAsync(TASK_DISPLAY_GRACE_MS + 100);
+    expect(selectVisibleTasks(useTasksStore.getState())).toEqual([]);
+  });
+
+  it.each(['failed', 'partial', 'cancelled'])('终态 %s 保持实际结果，不能强置成功 100%', async state => {
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('ended', { progressPercent: 45 })]);
+    await useTasksStore.getState().refresh();
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('ended', { state, progressPercent: 45 })]);
+    await useTasksStore.getState().refresh();
+    expect(selectVisibleTasks(useTasksStore.getState())[0]).toMatchObject({ state, progressPercent: 45 });
+  });
+
+  it('任务消失或删除不能推断为成功', async () => {
+    vi.mocked(fetchTasks).mockResolvedValueOnce([task('removed', { progressPercent: 99 })]);
+    await useTasksStore.getState().refresh();
+    vi.mocked(fetchTasks).mockResolvedValueOnce([]);
+    await useTasksStore.getState().refresh();
+    expect(selectVisibleTasks(useTasksStore.getState())[0]?.state).toBe('unavailable');
+  });
+
+  it('保存完成事件立即结算导出及普通视频后处理，后处理交接不能结算', () => {
+    const clip = task('clip', { kind: 'clip', progressPercent: 99 });
+    const pipeline = task('run', { kind: 'pipeline', recordingId: 'normal', progressPercent: 99 });
+    useTasksStore.setState({ active: [clip, pipeline] });
+    useTasksStore.getState().settleRecording({ id: 'clip', state: 'completed', pipelineStatus: 'queued' } as Recording);
+    expect(useTasksStore.getState().active).toHaveLength(2);
+    useTasksStore.getState().settleRecording({ id: 'clip', streamTitle: '片段', state: 'completed', pipelineStatus: 'ok' } as Recording);
+    useTasksStore.getState().settleRecording({ id: 'normal', streamTitle: '视频', state: 'completed', pipelineStatus: 'ok' } as Recording);
+    expect(useTasksStore.getState().active).toEqual([]);
+    expect(selectVisibleTasks(useTasksStore.getState()).map(item => [item.state, item.progressPercent])).toEqual([['completed', 100], ['completed', 100]]);
+  });
+
+  it('完成事件先于旧轮询响应时，卡片不能退回 99% 进行中', async () => {
+    const old = task('race', { progressPercent: 99 });
+    useTasksStore.setState({ active: [old] });
+    let resolve!: (items: TaskItem[]) => void;
+    vi.mocked(fetchTasks).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const refresh = useTasksStore.getState().refresh();
+    useTasksStore.getState().settleRecording({ id: 'race', streamTitle: '完成片段', state: 'completed', pipelineStatus: 'not_required' } as Recording);
+    resolve([old]);
+    await refresh;
+    expect(useTasksStore.getState().active).toEqual([]);
+    expect(selectVisibleTasks(useTasksStore.getState())[0]).toMatchObject({ state: 'completed', progressPercent: 100 });
   });
 
   it('相同任务响应保留引用，进度变化仍通知且保留完成宽限', async () => {

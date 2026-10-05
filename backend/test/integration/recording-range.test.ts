@@ -6,6 +6,33 @@ import { buildApp } from '../../src/api/server.js';
 import { buildServices } from '../../src/core/services.js';
 
 describe('recording HTTP range playback', () => {
+  it('opens only the completed recording file through the existing open endpoint, retaining default directory behavior', async () => {
+    const services = buildServices({ dbPath: ':memory:' });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/123', displayName: 'external playback' });
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-open-video-'));
+    const file = path.join(dir, '录像 & 中文 空格.mp4');
+    await writeFile(file, Buffer.from('fixture'));
+    const recording = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: null, streamTitle: '录像' });
+    services.recordings.update(recording.id, { state: 'completed', filePath: file });
+    const { app } = buildApp(services);
+    const base = { method: 'POST' as const, url: `/api/v1/recordings/${recording.id}/open`, headers: { host: '127.0.0.1:43120' } };
+    const play = { ...base, url: `/api/v1/recordings/${recording.id}/play` };
+    expect((await app.inject(play)).statusCode).toBe(200);
+    expect((await app.inject({ ...base, payload: { target: 'file' } })).statusCode).toBe(200);
+    expect((await app.inject(base)).statusCode).toBe(200);
+    expect((await app.inject({ ...base, payload: { target: '/arbitrary/path' } })).statusCode).toBeGreaterThanOrEqual(400);
+    services.recordings.update(recording.id, { state: 'processing' });
+    expect((await app.inject(play)).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await app.inject({ ...base, payload: { target: 'file' } })).statusCode).toBeGreaterThanOrEqual(400);
+    services.recordings.update(recording.id, { state: 'completed', filePath: dir });
+    expect((await app.inject({ ...base, payload: { target: 'file' } })).statusCode).toBe(404);
+    services.recordings.update(recording.id, { filePath: file });
+    await unlink(file);
+    expect((await app.inject(play)).statusCode).toBe(404);
+    expect((await app.inject({ ...base, payload: { target: 'file' } })).statusCode).toBe(404);
+    await app.close();
+  });
+
   it('supports single, open-ended and suffix ranges while retaining full reads', async () => {
     const services = buildServices({ dbPath: ':memory:' });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/123', displayName: 'range' });

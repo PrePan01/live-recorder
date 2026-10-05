@@ -5,6 +5,8 @@ import path from 'node:path';
 import { availableParallelism } from 'node:os';
 import { discardTemp, finalizeMp4, runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
 import { uniqueTargetPath } from '../storage/file-organizer.js';
+import { encodingWorkQueue } from './media-work-queue.js';
+export { exportClipFile } from './clip-export.js';
 import { checkFileIntegrity } from './integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
 
@@ -53,23 +55,6 @@ export async function segmentFile(inputPath: string, outputDir: string, baseName
     .filter((f) => f.startsWith(`${baseName}_seg_`) && f.endsWith('.ts'))
     .sort();
   return { segments: files.map((f) => path.join(outputDir, f)), pattern };
-}
-
-/** Re-encode a precise timeline selection. Copying FLV packets would snap to a preceding keyframe. */
-export async function exportClipFile(
-  inputPath: string,
-  outputPath: string,
-  startSecond: number,
-  endSecond: number,
-  options: { onProgress?: (info: { outTimeMs: number; speed: number | null }) => void } = {},
-): Promise<{ ok: boolean; sizeBytes: number; stderr: string }> {
-  const res = await runFfmpeg([
-    '-y', '-ss', String(startSecond), '-i', inputPath, '-t', String(endSecond - startSecond),
-    '-map', '0:v?', '-map', '0:a?', '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-c:a', 'aac',
-    '-avoid_negative_ts', 'make_zero', outputPath,
-  ], options.onProgress ? { onProgress: options.onProgress } : {});
-  const out = await stat(outputPath).catch(() => null);
-  return { ok: res.ok && Boolean(out && out.size > 0), sizeBytes: out?.size ?? 0, stderr: res.stderr };
 }
 
 export interface AudioExportResult {
@@ -199,7 +184,11 @@ export async function compressOrRemux(
   const outPath = await unusedPath(preferredPath);
   const tempPath = `${outPath}.part`;
   await discardTemp(tempPath);
-  const res = await runFfmpeg(['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath], options);
+  const res = await encodingWorkQueue.run(
+    () => runFfmpeg(['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath], options),
+    options.signal,
+    () => options.onProgress?.({ outTimeMs: 0, speed: null }),
+  ).catch(() => ({ ok: false, code: null, stderr: 'Media job cancelled' }));
   if (!res.ok) {
     await discardTemp(tempPath);
     return null;

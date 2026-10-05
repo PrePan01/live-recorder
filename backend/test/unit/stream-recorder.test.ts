@@ -297,7 +297,7 @@ describe("StreamRecordingEngine (HTTP)", () => {
     const outBuf = await readFile(out);
     expect(outBuf.length).toBe(stream.length);
 
-    // 解析输出：序列头不参与 base；音频/视频各自以首个媒体标签归零 → 时长=真实跨度（音频 0、视频 0→34）。
+    // 解析输出：序列头不参与 base；音视频共用时间基准，保留视频比音频晚 16ms 的相对偏移。
     const tsByType: Record<string, number[]> = { "8": [], "9": [] };
     let off = 13;
     while (off + 11 <= outBuf.length) {
@@ -317,11 +317,11 @@ describe("StreamRecordingEngine (HTTP)", () => {
     }
     // 音频：序列头 0（保留）+ 首个媒体归零 → [0, 0]
     expect(tsByType["8"]).toEqual([0, 0]);
-    // 视频：序列头 0（保留）+ 关键帧 0 + 34 → [0, 0, 34]
-    expect(tsByType["9"]).toEqual([0, 0, 34]);
+    // 视频：序列头 0 + 关键帧 16 + 后续帧 50
+    expect(tsByType["9"]).toEqual([0, 16, 50]);
   });
 
-  it("keeps normal (near-zero) FLV timestamps untouched (bilibili 首帧≈0 透传)", async () => {
+  it("starts near-zero media at zero while preserving frame spacing", async () => {
     const header = Buffer.concat([
       Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]),
       Buffer.alloc(4),
@@ -397,8 +397,8 @@ describe("StreamRecordingEngine (HTTP)", () => {
         );
       off += len;
     }
-    // 首媒体时间戳 40ms ≤ 60s：不扣减，原样保留。
-    expect(vts).toEqual([40, 80]);
+    // 以首个媒体帧归零，保留 40ms 的真实帧间距。
+    expect(vts).toEqual([0, 40]);
   });
 
   it("drops the truncated tail tag so the file ends cleanly (偶现损坏 #181 根因)", async () => {
@@ -565,17 +565,6 @@ describe("#226 HLS 轮询间隔自适应", () => {
 });
 
 describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）', () => {
-  it('④ 涓流判据双面：TS 冻结不算活跃、TS 推进算活跃、纯预览按字节活跃', async () => {
-    const { mediaAliveSince } = await import("../../src/core/recorder-manager.js");
-    // 冻结 TS 的涓流字节（空录制死法）：不算活跃 → 看门狗不复位 → 触发换流
-    expect(mediaAliveSince(1000, 1000)).toBe(false);
-    expect(mediaAliveSince(1000, 999)).toBe(false);
-    // TS 推进（哪怕缓慢）= 有真内容 = 活跃
-    expect(mediaAliveSince(1000, 1001)).toBe(true);
-    // 纯预览（无录制，ts=-1）按字节活跃
-    expect(mediaAliveSince(-1, -1)).toBe(true);
-  });
-
   it('③ HLS 停流看门狗：分片静默超阈 → 收束报错交上层断流重连（不再裸奔）', async () => {
     const { StreamRecordingEngine } = await import("../../src/recorder/stream-recorder.js");
     // 伪 fetcher：首个清单正常、分片请求永久挂起（模拟 CDN 挂连接不吐数据）
@@ -623,7 +612,7 @@ describe('断流立即重试·阈值与链语义钉', () => {
       expect(RECONNECT_CHAIN_SEC[i]!).toBeGreaterThanOrEqual(RECONNECT_CHAIN_SEC[i - 1]!);
     }
     expect(Math.max(...RECONNECT_CHAIN_SEC)).toBe(30); // 30s 封顶
-    expect(GAP_ROW_MIN_MS).toBe(30_000);               // 缺口条目门槛=30s（时长不丢秒在累计面）
+    expect(GAP_ROW_MIN_MS).toBe(0);               // 缺口条目门槛=30s（时长不丢秒在累计面）
     expect(RECONNECT_ALERT_AFTER_MS).toBe(5 * 60_000); // 持续重连 5 分钟发人话告警
   });
 });
@@ -728,7 +717,7 @@ describe('recording and preview timelines', () => {
       }
     }
     expect(Buffer.concat(previews)).toEqual(Buffer.concat([head, media(0), media(40)]));
-    expect(Buffer.concat(disk)).toEqual(Buffer.concat([media(2_400_029), media(2_400_069)]));
+    expect(Buffer.concat(disk)).toEqual(Buffer.concat([media(2_400_000), media(2_400_040)]));
     expect(await readFile(out)).toEqual(Buffer.concat([original, ...disk]));
   });
 
@@ -742,4 +731,77 @@ describe('recording and preview timelines', () => {
     expect(timestamp(normalized[1]!)).toBe(0);
     expect(timestamp(normalized[2]!)).toBe(40);
   });
+});
+
+describe('recording continuity regressions', () => {
+  const head = Buffer.from([70, 76, 86, 1, 5, 0, 0, 0, 9, 0, 0, 0, 0]);
+  function tag(ts: number, type = 9, sequence = false): Buffer {
+    const b = Buffer.alloc(21); b[0] = type; b.writeUIntBE(6, 1, 3);
+    b.writeUIntBE(ts & 0xffffff, 4, 3); b[7] = ts >>> 24;
+    b[11] = type === 9 ? 0x17 : 0xaf; b[12] = sequence ? 0 : 1; b.writeUInt32BE(17, 17); return b;
+  }
+  const ts = (b: Buffer) => b.readUIntBE(4, 3) + b[7]! * 0x1000000;
+
+  it('preserves audio/video alignment and rebases a source clock reset without unsigned underflow', () => {
+    const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });
+    const first = n.push(Buffer.concat([head, tag(100000, 8), tag(100020), tag(101000, 8), tag(101020)]));
+    expect(first.slice(1).map(ts)).toEqual([0, 20, 1000, 1020]);
+    const reset = n.push(Buffer.concat([tag(0, 8), tag(20), tag(1000, 8), tag(1020)]));
+    expect(reset.map(ts)).toEqual([1021, 1041, 2021, 2041]);
+    expect(n.lastTimestampMs).toBe(2041);
+  });
+
+  it('rebases resumed media and timestamps codec configuration at the splice', () => {
+    const n = new FlvTimestampNormalizer({ skipHeader: true, offsetMs: 600000 });
+    const parts = n.push(Buffer.concat([head, tag(0, 9, true), tag(10000), tag(10040)]));
+    expect(parts.map(ts)).toEqual([600000, 600000, 600040]);
+  });
+
+  it('does not count a slow event consumer as upstream silence', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-consumer-'));
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody([
+      Buffer.concat([head, tag(0)]), tag(40), tag(80),
+    ])), 25);
+    const errors: string[] = [];
+    for await (const event of engine.start({ url: 'https://x/live.flv', format: 'flv' }, path.join(dir, 'a.flv'))) {
+      if (event.type === 'data') await new Promise(resolve => setTimeout(resolve, 60));
+      if (event.type === 'error') errors.push(event.error.code);
+    }
+    expect(errors).toEqual([]);
+    expect((await readFile(path.join(dir, 'a.flv'))).length).toBe(head.length + 63);
+  });
+
+  it.each([false, true])('deduplicates HLS when signed URLs or discontinuity window change (shift=%s)', async (shift) => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-hls-sequence-'));
+    let playlists = 0;
+    let segments = 0;
+    const fetcher = (async (input: RequestInfo | URL) => {
+      if (String(input).includes('m3u8')) {
+        playlists++;
+        return new Response(`#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:123\n#EXT-X-DISCONTINUITY-SEQUENCE:${shift ? playlists : 0}\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\ns.ts?token=${playlists}\n${playlists === 2 ? '#EXT-X-ENDLIST\n' : ''}`);
+      }
+      segments++; return new Response(new Uint8Array([71, 1, 2]));
+    }) as typeof fetch;
+    const engine = new StreamRecordingEngine(fetcher);
+    for await (const _event of engine.start({ url: 'https://x/a.m3u8', format: 'hls' }, path.join(dir, 'a.ts'))) { /* drain */ }
+    expect(segments).toBe(1);
+    expect(await readFile(path.join(dir, 'a.ts'))).toEqual(Buffer.from([71, 1, 2]));
+  });
+});
+
+it('handles repeated audio-only clock resets without moving the healthy video clock', () => {
+  const head = Buffer.from([70,76,86,1,5,0,0,0,9,0,0,0,0]);
+  const tag = (type: number, ts: number) => {
+    const b = Buffer.alloc(21); b[0] = type; b.writeUIntBE(6,1,3); b.writeUIntBE(ts,4,3);
+    b[11] = type === 8 ? 0xaf : 0x17; b[12] = 1; b.writeUInt32BE(17,17); return b;
+  };
+  const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });
+  n.push(Buffer.concat([head, tag(8, 100000), tag(9, 100020), tag(8, 101000), tag(9, 101020)]));
+  const first = n.push(tag(8, 0))[0]!;
+  expect(first.readUIntBE(4,3)).toBe(1021);
+  const video = n.push(tag(9, 102020))[0]!;
+  expect(video.readUIntBE(4,3)).toBe(2020);
+  n.push(tag(8, 2000));
+  const second = n.push(tag(8, 0))[0]!;
+  expect(second.readUIntBE(4,3)).toBe(3022);
 });

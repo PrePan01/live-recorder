@@ -19,16 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     outputs:
       should_release: ${{ steps.release.outputs.should_release }}
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
+      reuse_release: ${{ steps.release.outputs.reuse_release }}
+      reuse_checks: ${{ steps.release.outputs.reuse_checks }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -42,6 +43,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
+          if [ "$PUBLISH_RELEASE" = "true" ] && [ "$GITHUB_REF" != "refs/heads/release" ]; then
+            echo "::error::Official publication is only allowed from the release branch."
+            exit 1
+          fi
           version="$(node scripts/check-release-version.mjs)"
           tag="v${version}"
           # Fail before the expensive platform builds when this release has no
@@ -53,37 +58,19 @@ jobs:
           if [ "$PUBLISH_RELEASE" != "true" ]; then
             echo "Validation build only; skip tag and release checks."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "reuse_release=false" >> "$GITHUB_OUTPUT"
+            echo "reuse_checks=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # A previously interrupted publishing job can leave a draft behind.
-          # Resume that draft instead of treating the version as published.
-          existing_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .draft 2>/dev/null || true)"
-          if [ "$existing_draft" = "false" ]; then
-            echo "Release ${tag} already exists; nothing to publish."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$existing_draft" = "true" ]; then
-            echo "Draft release ${tag} already exists; resuming publication."
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if git show-ref --verify --quiet "refs/tags/${tag}"; then
-            echo "::error::Tag ${tag} exists without a GitHub Release. Resolve it manually before publishing."
-            exit 1
-          fi
-
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          node scripts/release-pipeline.mjs preflight release-assets "$version" >> "$GITHUB_OUTPUT"
 
   # Run repository-wide checks once on Linux. The platform build jobs below
   # should spend their time on platform-specific packaging rather than
   # repeating the same backend/frontend test suite on macOS and Windows.
   quality:
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
+    if: needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.reuse_checks != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -109,36 +96,23 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      - name: Install dependencies
-        run: npm run install:ci
-
-      - name: Compile backend
-        run: npm --prefix backend run build
-
-      - name: Verify backend
-        run: npm --prefix backend test
-
-      - name: Lint frontend
-        run: npm --prefix frontend run lint
-
-      - name: Build frontend
-        run: npm --prefix frontend run build
-
-      - name: Verify frontend
-        run: npm --prefix frontend test
+      - name: Verify repository quality
+        run: node scripts/check-quality.mjs
 
   build:
     # Run platform packaging in parallel with the Linux quality gate. The
     # release job still waits for both, so a quality failure can never publish.
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
+    if: needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.reuse_release != 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-15
             artifact: live-recorder-macos-${{ needs.prepare.outputs.version }}
-            files: release/*.dmg
+            files: |
+              release/*.dmg
+              release/*.dmg.sig
           - os: windows-latest
             artifact: live-recorder-windows-${{ needs.prepare.outputs.version }}
             files: |
@@ -221,10 +195,8 @@ jobs:
           # needs the backend compiled for the platform-specific package.
           LR_SKIP_BACKEND_BUILD: '1'
           LR_SKIP_BACKEND_RESTORE: '1'
+          LR_REQUIRE_SIGNATURE: '1'
         run: npm run package
-
-      - name: Verify installation payload
-        run: node scripts/check-installation.mjs
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
@@ -240,7 +212,7 @@ jobs:
     # Native checks are independent of the Linux JS test suite and can run in
     # parallel with it to keep release wall-clock time down.
     needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
+    if: needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.reuse_checks != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -275,13 +247,24 @@ jobs:
 
   release:
     needs: [prepare, quality, build, native-test]
-    if: needs.prepare.outputs.should_release == 'true' && (github.event_name == 'push' || inputs.publish)
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/release' &&
+          needs.prepare.result == 'success' &&
+          (needs.quality.result == 'success' ||
+           (needs.prepare.outputs.reuse_checks == 'true' && needs.quality.result == 'skipped')) &&
+          (needs.native-test.result == 'success' ||
+           (needs.prepare.outputs.reuse_checks == 'true' && needs.native-test.result == 'skipped')) &&
+          (needs.build.result == 'success' ||
+           (needs.prepare.outputs.reuse_release == 'true' && needs.build.result == 'skipped')) &&
+          needs.prepare.outputs.should_release == 'true' &&
+          (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
       # 对象存储加速（#28）：清单内安装包 URL 指向 CDN 域名（HTTPS，匿名可读）；
-      # 完整性由清单 HTTPS 内的 SHA256 保证；CDN 不可达时客户端回退 GitHub。
+      # 客户端安装前核验完整 SHA256 和更新签名；CDN 不可达时回退 GitHub。
       UPDATE_BASE_URL: https://cdn.live-rec.bspartner.top
       QINIU_AK: ${{ secrets.QINIU_AK }}
       QINIU_SK: ${{ secrets.QINIU_SK }}
@@ -291,7 +274,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Re-read here: a failed-job rerun may retain prepare outputs from before
+      # publication. Do not restore/upload large installers merely to fix CDN.
+      - name: Inspect current publication state
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/release-pipeline.mjs status release-assets "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Restore frozen release assets
+        if: needs.prepare.outputs.reuse_release == 'true' || steps.publication.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          ALREADY_PUBLISHED: ${{ steps.publication.outputs.published }}
+        shell: bash
+        run: |
+          if [ "$ALREADY_PUBLISHED" = "true" ]; then
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets --pattern latest.json --pattern releases.json --pattern release-state.json
+          else
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          fi
+
       - name: Download installers
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.published != 'true'
         uses: actions/download-artifact@v8
         with:
           pattern: live-recorder-*-${{ needs.prepare.outputs.version }}
@@ -302,6 +309,7 @@ jobs:
       # Normalize the staging names first, so latest.json records the exact
       # public URL that will be served by the release.
       - name: Normalize release asset names
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.published != 'true'
         shell: bash
         run: |
           shopt -s nullglob
@@ -313,98 +321,27 @@ jobs:
             fi
           done
 
-      - name: Generate update manifest
+      # GitHub publication is the formal release commit point.
+      - name: Verify staged assets and publish GitHub Release
+        if: steps.publication.outputs.published != 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/generate-update-manifest.mjs release-assets "$RELEASE_VERSION" release-notes.json
-
-      - name: Generate checksums
-        working-directory: release-assets
-        run: sha256sum -- * > SHA256SUMS.txt
-
-      # 上传安装包 + 清单到对象存储（bucket，经 S3 API 签名上传）；客户端从 CDN 域名匿名下载（#28）。
-      # latest.json 不再作为 GitHub Release 附件，因此 CDN 是发布成功的前置条件；
-      # 缺少凭据或上传失败时停止，避免发布一个客户端无法发现的版本。
-      - name: Publish installers to object storage
-        env:
+          PREPARE_RELEASE_ASSETS: ${{ needs.prepare.outputs.reuse_release != 'true' }}
           AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
           AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1
           AWS_EC2_METADATA_DISABLED: 'true'
-        run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-            echo "::error::QINIU_AK and QINIU_SK must be configured before publishing a release."
-            exit 1
-          fi
+        run: node scripts/release-pipeline.mjs publish release-assets "$RELEASE_VERSION"
 
-          retry() {
-            local attempt=1 max_attempts=4 delay=2
-            until "$@"; do
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "::error::Command failed after ${attempt} attempts: $*"
-                return 1
-              fi
-              echo "Command failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s: $*"
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          # 安装包文件名含版本号 → 内容不可变，长缓存（immutable）以利 CDN 加速。
-          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/ "s3://$QINIU_BUCKET/" --recursive \
-            --exclude "latest.json" \
-            --exclude "releases.json" \
-            --cache-control "public, max-age=31536000, immutable"
-          # #43：latest.json 是「指针」，必须短缓存/回源校验，否则发版后 CDN 仍返回旧版本。
-          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/latest.json "s3://$QINIU_BUCKET/latest.json" \
-            --cache-control "no-cache, no-store, must-revalidate, max-age=0"
-          retry aws --endpoint-url "$QINIU_ENDPOINT" s3 cp release-assets/releases.json "s3://$QINIU_BUCKET/releases.json" \
-            --cache-control "no-cache, no-store, must-revalidate, max-age=0"
-
-      - name: Create GitHub Release
+      # This phase may fail after publication. Reruns restore only three small
+      # frozen manifests and skip builds, tests, hashing and installer uploads.
+      - name: Synchronize CDN version indexes (release is already published)
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          # GitHub's Releases API occasionally returns transient 5xx errors.
-          # Keep each phase idempotent: a retry can resume after the draft has
-          # been created, or after only some assets were uploaded.
-          retry() {
-            local attempt=1 max_attempts=5 delay=2
-            until "$@"; do
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "::error::Command failed after ${attempt} attempts: $*"
-                return 1
-              fi
-              echo "Command failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s: $*"
-              sleep "$delay"
-              attempt=$((attempt + 1))
-              delay=$((delay * 2))
-            done
-          }
-
-          ensure_draft_release() {
-            # A failed create request may still have reached GitHub. Check on
-            # every attempt so a retry resumes that draft instead of receiving
-            # an "already exists" error forever.
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              return 0
-            fi
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "$RELEASE_TAG" \
-              --generate-notes \
-              --draft
-          }
-
-          retry ensure_draft_release
-
-          retry gh release upload "$RELEASE_TAG" \
-            release-assets/*_aarch64.dmg \
-            release-assets/*_x64-setup.exe \
-            release-assets/releases.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-          retry gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
+          AWS_DEFAULT_REGION: cn-south-1
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: node scripts/release-pipeline.mjs sync release-assets "$RELEASE_VERSION"

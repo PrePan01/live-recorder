@@ -128,6 +128,48 @@ describe("terminal state transitions via SSE", () => {
 });
 
 describe("clip export prompt and background export", () => {
+  it("等待后处理完成才通知，校验与后处理进度事件不会提前或重复通知", () => {
+    const clip = recording({ id: "clip-pipeline-wait", origin: "clip", endReason: "clip_export" });
+    const store = useRecordingStore.getState();
+    store.upsertRecordingFromEvent({ ...clip, state: "processing" });
+    store.upsertRecordingFromEvent({ ...clip, pipelineStatus: "queued" });
+    expect(useRecordingStore.getState().clipDoneQueue).toEqual([]);
+    // 请求响应晚于导出交接，不能把待后处理片段当成已结束。
+    store.beginClipExport("source", clip.id);
+    expect(useRecordingStore.getState().clipExports[clip.id]).toBe("source");
+    store.upsertRecordingFromEvent({ ...clip, state: "processing", pipelineStatus: "queued" });
+    store.upsertRecordingFromEvent({ ...clip, state: "processing", pipelineStatus: "running" });
+    expect(useRecordingStore.getState().recordingSnapshots[clip.id]?.pipelineStatus).toBe("running");
+    expect(useRecordingStore.getState().clipDoneQueue).toEqual([]);
+    const done = { ...clip, pipelineStatus: "ok" as const };
+    store.upsertRecordingFromEvent(done);
+    expect(useRecordingStore.getState().clipDoneQueue).toEqual([done]);
+    expect(useRecordingStore.getState().clipExports).toEqual({});
+    store.clearClipDoneQueue();
+    store.upsertRecordingFromEvent(done);
+    expect(useRecordingStore.getState().clipDoneQueue).toEqual([]);
+  });
+
+  it("无需后处理时立即通知；不同片段的后处理互不影响", () => {
+    const store = useRecordingStore.getState();
+    const pending = recording({ id: "clip-still-running", origin: "clip", state: "processing", pipelineStatus: "running" });
+    const ready = recording({ id: "clip-no-pipeline", origin: "clip", pipelineStatus: "not_required" });
+    store.upsertRecordingFromEvent(pending);
+    store.beginClipExport("source", ready.id);
+    store.upsertRecordingFromEvent(ready);
+    expect(useRecordingStore.getState().clipDoneQueue).toEqual([ready]);
+    expect(Object.keys(useRecordingStore.getState().clipExports)).toEqual([pending.id]);
+  });
+
+  it.each(["failed", "partial"] as const)("后处理 %s 作为独立结果入队，不与成功混淆", pipelineStatus => {
+    const store = useRecordingStore.getState();
+    const clip = recording({ id: `clip-pipeline-${pipelineStatus}`, origin: "clip" });
+    store.upsertRecordingFromEvent({ ...clip, state: "processing", pipelineStatus: "running" });
+    store.upsertRecordingFromEvent({ ...clip, pipelineStatus });
+    expect(useRecordingStore.getState().clipDoneQueue[0]?.pipelineStatus).toBe(pipelineStatus);
+    expect(useRecordingStore.getState().clipExports).toEqual({});
+  });
+
   it("片段完成 SSE 早于保存响应时，只发片段通知", () => {
     const clip = recording({ id: "clip-before-response", origin: "clip", endReason: "clip_export" });
     const store = useRecordingStore.getState();

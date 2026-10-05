@@ -1,3 +1,4 @@
+import { hasPendingRecordingBuffer } from '../recorder/buffered-writer.js';
 import { mkdir, stat, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
@@ -60,6 +61,12 @@ export class PipelineManager {
 
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
   enqueue(recordingId: string, attempt = 0, force = false): void {
+    const recording = this.services.recordings.get(recordingId);
+    if (recording?.filePath && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, recording.filePath)) {
+      this.services.recordings.update(recordingId, { pipelineStatus: 'failed' });
+      this.log('buffer-pending', recordingId);
+      return;
+    }
     const config = this.pipelineConfig();
     // 手动启动/继续（force）按用户意图直接跑管线；自动路径保留「未启用=not_required+触发上传」原语义。
     if (!config.enabled && !force) {
@@ -82,7 +89,7 @@ export class PipelineManager {
   /** 重试：为失败/部分成功的录制重新入队（新 run，快照当前配置）。 */
   retry(recordingId: string, force = false): { ok: boolean; run: PipelineRun | null } {
     const rec = this.services.recordings.get(recordingId);
-    if (!rec || !rec.filePath) return { ok: false, run: null };
+    if (!rec || !rec.filePath || hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath)) return { ok: false, run: null };
     const existing = this.pipelineRepo.runForRecording(recordingId);
     if (existing && (existing.status === 'queued' || existing.status === 'running')) return { ok: false, run: null };
     this.enqueue(recordingId, (existing?.configSnapshot.attempt as number ?? 0) + 1, force);
@@ -494,6 +501,7 @@ export class PipelineManager {
   async quickMediaCheck(filePath: string): Promise<{ ok: boolean; reason?: string }> {
     const st = await stat(filePath).catch(() => null);
     if (!st || st.size === 0) return { ok: false, reason: '文件为空或不存在' };
+    if (hasPendingRecordingBuffer(this.services.recordingBufferDirectory, filePath)) return { ok: false, reason: '暂存内容尚未补写，请恢复存储设备后重启应用' };
     return { ok: true };
   }
 
@@ -502,7 +510,7 @@ export class PipelineManager {
     const run = this.pipelineRepo.getRun(runId);
     if (!run || run.status === 'ok' || run.status === 'failed') return false;
     const rec = this.services.recordings.get(run.recordingId);
-    if (!rec || !rec.filePath) return false;
+    if (!rec || !rec.filePath || hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath)) return false;
     if (this.running.has(run.recordingId) || this.queue.some((entry) => entry.recordingId === run.recordingId)) return false;
     const entry: QueueEntry = { recordingId: run.recordingId, attempt: (run.configSnapshot.attempt as number | undefined) ?? 0 };
     // Recovery must share the normal FIFO and concurrency ceiling: a restart

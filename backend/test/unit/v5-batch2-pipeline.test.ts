@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
@@ -1155,12 +1155,14 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
     let signalWasAbortedWhileWaiting = false;
     const client = new RealWebDavClient({ uploadIdleTimeoutMs: 5, responseTimeoutMs: 200 });
     const orig = globalThis.fetch;
+    // 保留真实文件 I/O，只在请求体读完后推进超时，避免 5ms 被磁盘调度耗尽。
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     globalThis.fetch = (async (_url, init) => {
       if (init?.method === 'MKCOL') return new Response('', { status: 201 });
       if (init?.body) {
         for await (const _chunk of init.body as unknown as AsyncIterable<Buffer>) { /* consume upload stream */ }
       }
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await vi.advanceTimersByTimeAsync(30);
       signalWasAbortedWhileWaiting = init?.signal?.aborted ?? false;
       return new Response('', { status: 201 });
     }) as typeof fetch;
@@ -1168,6 +1170,7 @@ describe('V5 Batch2 OpenList upload (#116)', () => {
       await client.put('https://dav.example.com/dav/slow-ack.flv', file, 'u', 'tok', () => undefined);
     } finally {
       globalThis.fetch = orig;
+      vi.useRealTimers();
     }
     expect(signalWasAbortedWhileWaiting).toBe(false);
   });
