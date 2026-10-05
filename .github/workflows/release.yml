@@ -96,6 +96,13 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
+      - name: Install media test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+          ffprobe -version
+
       - name: Verify repository quality
         run: node scripts/check-quality.mjs
 
