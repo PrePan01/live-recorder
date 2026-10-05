@@ -69,6 +69,8 @@ export function runFfmpegTracked(
       else options.signal.addEventListener("abort", onAbort, { once: true });
     }
     let stderr = "";
+    // 输入出错会关闭 stdin；子进程可能在 kill 前已按 EOF 成功退出，不能只信退出码。
+    let inputFailed = false;
     let stalled = false;
     let settled = false;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +83,7 @@ export function runFfmpegTracked(
       if (killTimer !== undefined) clearTimeout(killTimer);
       options.signal?.removeEventListener("abort", onAbort);
       input?.destroy();
-      resolve({ ok: code === 0 && !stalled && !options.signal?.aborted, code, stalled, stderr });
+      resolve({ ok: code === 0 && !inputFailed && !stalled && !options.signal?.aborted, code, stalled, stderr });
     };
 
     const armStall = (): void => {
@@ -135,11 +137,13 @@ export function runFfmpegTracked(
         void pipeline(input, child.stdin).catch((error: NodeJS.ErrnoException) => {
           // FFmpeg 在 -t 边界停止消费属正常情况；源读取故障则必须终止任务。
           if (error.code !== "EPIPE" && error.code !== "ERR_STREAM_PREMATURE_CLOSE" && !settled) {
+            inputFailed = true;
             stderr = (stderr + `\ninput: ${error.message}`).slice(-64 * 1024);
             child.kill("SIGKILL");
           }
         });
       } catch (error) {
+        inputFailed = true;
         stderr += `\ninput: ${String(error)}`;
         child.kill("SIGKILL");
       }

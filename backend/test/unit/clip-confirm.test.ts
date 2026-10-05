@@ -445,11 +445,13 @@ describe('片段完成后与正常保存录像同链（校验+管线自动入队
       services.events.emit({ type: 'recording:updated', data: services.recordings.get(id)! });
     });
     const started = await services.manager.exportClip(source.id, 0, 2, '后处理等待');
-    await waitFor(() => services.recordings.get(started.clip.id)?.pipelineStatus === 'queued');
+    await waitFor(() => events.some(rec => rec.id === started.clip.id && rec.progressPercent === null));
     const clipEvents = events.filter(rec => rec.id === started.clip.id);
     expect(clipEvents.length).toBeGreaterThan(1);
     expect(clipEvents.every(rec => rec.state !== 'completed' || rec.pipelineStatus === 'queued')).toBe(true);
-    expect(clipEvents.at(-1)).toMatchObject({ state: 'processing', pipelineStatus: 'queued', progressPercent: null });
+    // 校验可能在交接后再次发事件（缺少 ffprobe 时尤其快），其事件不带导出进度。
+    expect(clipEvents.find(rec => rec.progressPercent === null)).toMatchObject({ state: 'processing', pipelineStatus: 'queued', progressPercent: null });
+    expect(clipEvents.at(-1)).toMatchObject({ state: 'processing', pipelineStatus: 'queued' });
   });
 
   it('成功完成：自动入完整性校验队列+自动进管线，不依赖手动批量重校验', async () => {
