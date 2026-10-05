@@ -11,9 +11,12 @@ import {
   readSync,
   closeSync,
   appendFileSync,
+  mkdirSync,
+  linkSync,
+  copyFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { verifyInstallerSignature } from "./verify-installer-signatures.mjs";
@@ -78,26 +81,26 @@ export async function publishRelease(state, remote, { sync = true } = {}) {
       );
     await remote.uploadState(state);
   }
-  // Stage both destinations concurrently, with at most two files per service.
+  // Run one AWS batch concurrently with bounded GitHub asset uploads.
   // Drain all in-flight transfers on failure before cleaning up local resources.
   const entries = Object.entries(state.files);
+  console.log("Release phase: uploading frozen assets to GitHub and CDN");
   const uploads = await Promise.allSettled([
-    transferFiles(entries, async ([name, digest]) => {
-      const key = ["latest.json", "releases.json", "SHA256SUMS.txt"].includes(
-        name,
-      )
-        ? `releases/v${state.version}/${name}`
-        : name;
-      await remote.ensureObject(key, name, digest);
-    }),
+    remote.ensureObjects(entries.map(([name, digest]) => [
+      ["latest.json", "releases.json", "SHA256SUMS.txt"].includes(name)
+        ? `releases/v${state.version}/${name}` : name,
+      name, digest,
+    ])),
     transferFiles(entries, ([name, digest]) =>
       remote.ensureAsset(name, digest),
     ),
   ]);
   const failure = uploads.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;
+  console.log("Release phase: verifying uploaded assets");
   await remote.verifyStaged(state);
   remote.assertTag(state.commit);
+  console.log("Release phase: publishing GitHub Release");
   remote.publishGitHub(state.commit);
   remote.reportStatus?.("published_mirror_pending");
   if (sync) await syncRelease(state, remote);
@@ -265,6 +268,8 @@ function command(program, args) {
     return execFileSync(program, args, {
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60000,
     });
   } catch (error) {
     throw new Error(
@@ -272,24 +277,39 @@ function command(program, args) {
     );
   }
 }
-function asyncCommand(program, args, options = {}) {
+export function asyncCommand(program, args, options = {}) {
+  const { label = program, timeout = 300000, liveOutput = false, ...execution } = options;
   return new Promise((resolve, reject) => {
-    execFile(
-      program,
-      args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...options },
+    const started = Date.now();
+    let progress = "waiting for output";
+    const heartbeat = setInterval(() => {
+      console.log(`[${label}] ${Math.round((Date.now() - started) / 1000)}s: ${progress}`);
+    }, 15000);
+    const child = execFile(
+      program, args,
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout, ...execution },
       (error, stdout, stderr) => {
-        if (error)
-          reject(
-            new Error(
-              `${program} ${args[0]} failed: ${stderr || error.message}`,
-            ),
-          );
-        else resolve(stdout);
+        clearInterval(heartbeat);
+        if (error) reject(new Error(
+          error.killed ? `${label} timed out after ${Math.round(timeout / 1000)}s`
+            : `${label} failed: ${stderr || error.message}`,
+        ));
+        else {
+          console.log(`[${label}] completed in ${Math.round((Date.now() - started) / 1000)}s`);
+          resolve(stdout);
+        }
       },
     );
+    // These commands are non-interactive. Never leave an input pipe open.
+    child.stdin?.end();
+    for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk) => {
+      if (liveOutput) process.stdout.write(chunk.toString().replace(/\r/g, "\n"));
+      const lines = chunk.toString().trim().split(/[\r\n]+/);
+      progress = lines.at(-1) || progress;
+    });
   });
 }
+
 async function retryTransfer(fn) {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -297,11 +317,12 @@ async function retryTransfer(fn) {
     } catch (error) {
       if (
         attempt === 3 ||
-        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify/.test(
+        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify|upload budget exceeded/.test(
           error.message,
         )
       )
         throw error;
+      console.warn(`Transfer failed; retry ${attempt + 2}/4 in ${2 ** attempt}s: ${error.message}`);
       await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
     }
   }
@@ -333,13 +354,10 @@ export class ReleaseRemote {
     this.repo = process.env.GITHUB_REPOSITORY;
     this.scratch = mkdtempSync(join(tmpdir(), "lr-publish-"));
     this.runAsync = runAsync;
-    // Use an isolated CLI profile: each of the two CDN transfers has at most
-    // four multipart requests, for eight total. Never change the user's config.
+    // Keep the same AWS transfer defaults used by the previous working flow.
+    // Only isolate configuration; do not force a transfer engine/chunk size.
     this.transferConfig = join(this.scratch, "aws-config");
-    writeFileSync(
-      this.transferConfig,
-      "[default]\nregion = cn-south-1\ns3 =\n    preferred_transfer_client = classic\n    multipart_threshold = 16MB\n    multipart_chunksize = 16MB\n    max_concurrent_requests = 4\n",
-    );
+    writeFileSync(this.transferConfig, "[default]\nregion = cn-south-1\n");
   }
   close() {
     rmSync(this.scratch, { recursive: true, force: true });
@@ -457,6 +475,8 @@ export class ReleaseRemote {
     );
   }
   async ensureAsset(name, digest) {
+    const started = Date.now();
+    const budget = 8 * 60 * 1000;
     let refresh = false;
     await retryTransfer(async () => {
       const release = this.release(refresh);
@@ -473,6 +493,8 @@ export class ReleaseRemote {
         throw new Error(
           `Published release is missing ${name}; refusing to modify it`,
         );
+      const remaining = budget - (Date.now() - started);
+      if (remaining <= 0) throw new Error(`GitHub upload budget exceeded: ${name}`);
       await this.runAsync("gh", [
         "release",
         "upload",
@@ -480,7 +502,7 @@ export class ReleaseRemote {
         join(this.directory, name),
         "--repo",
         this.repo,
-      ]);
+      ], { label: `GitHub ${name}`, timeout: Math.min(300000, remaining) });
       // Update this phase's snapshot without another full Release request.
       const current = this.release();
       if (!current.assets.some((asset) => asset.name === name))
@@ -511,47 +533,53 @@ export class ReleaseRemote {
     retry(() => this.aws(["get-object", "--key", key, file]));
     return readFileSync(file);
   }
-  async ensureObject(key, name, digest) {
-    const head = this.objectHead(key);
-    if (head) {
-      const actual =
-        head.Metadata?.sha256 || hashBytes(this.readObject(key, head));
-      if (actual !== digest)
-        throw new Error(`Refusing to overwrite CDN object ${key}`);
-      return;
-    }
-    console.log(`Uploading CDN object: ${key}`);
-    await retryTransfer(() =>
-      this.runAsync(
-        "aws",
-        [
-          "--endpoint-url",
-          process.env.QINIU_ENDPOINT,
-          "s3",
-          "cp",
-          join(this.directory, name),
-          `s3://${process.env.QINIU_BUCKET}/${key}`,
-          "--metadata",
-          `sha256=${digest}`,
-          "--cache-control",
-          "public, max-age=31536000, immutable",
-          "--content-type",
-          name.endsWith(".json")
-            ? "application/json"
-            : "application/octet-stream",
-          "--only-show-errors",
-        ],
-        {
-          env: {
-            ...process.env,
-            AWS_CONFIG_FILE: this.transferConfig,
-            AWS_PROFILE: "default",
-            AWS_DEFAULT_PROFILE: "default",
-          },
-        },
-      ),
-    );
+  async ensureObjects(entries) {
+    // One native AWS recursive transfer, as in the previous working workflow.
+    // Stage only missing immutable objects, keeping public version indexes out
+    // of the batch. Hard links avoid rereading/copying large installers.
+    const fingerprint = hashBytes(JSON.stringify([...entries].sort()));
+    const staging = join(this.scratch, "cdn-upload");
+    const started = Date.now();
+    const budget = 8 * 60 * 1000;
+    await retryTransfer(async () => {
+      rmSync(staging, { recursive: true, force: true });
+      mkdirSync(staging, { recursive: true });
+      let pending = 0;
+      for (const [key, name, digest] of entries) {
+        const head = this.objectHead(key);
+        if (head) {
+          if (head.Metadata?.["release-set-sha256"] === fingerprint) continue;
+          const actual = head.Metadata?.sha256 || hashBytes(this.readObject(key, head));
+          if (actual !== digest) throw new Error(`Refusing to overwrite CDN object ${key}`);
+          continue;
+        }
+        const target = join(staging, key);
+        mkdirSync(dirname(target), { recursive: true });
+        try { linkSync(join(this.directory, name), target); }
+        catch (error) {
+          if (error.code !== "EXDEV") throw error;
+          copyFileSync(join(this.directory, name), target);
+        }
+        pending++;
+      }
+      if (!pending) return;
+      const remaining = budget - (Date.now() - started);
+      if (remaining <= 0) throw new Error("CDN upload budget exceeded");
+      console.log(`Uploading ${pending} CDN objects in one AWS recursive batch`);
+      await this.runAsync("aws", [
+        "--endpoint-url", process.env.QINIU_ENDPOINT,
+        "--cli-connect-timeout", "10", "--cli-read-timeout", "60",
+        "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
+        "--metadata", JSON.stringify({ "release-set-sha256": fingerprint }),
+        "--cache-control", "public, max-age=31536000, immutable",
+      ], {
+        label: "CDN batch upload", liveOutput: true, timeout: Math.min(300000, remaining),
+        env: { ...process.env, AWS_CONFIG_FILE: this.transferConfig,
+          AWS_PROFILE: "default", AWS_DEFAULT_PROFILE: "default", AWS_MAX_ATTEMPTS: "3" },
+      });
+    });
   }
+
   reportStatus(status) {
     console.log(`Release status: ${status}`);
     if (process.env.GITHUB_STEP_SUMMARY)
@@ -715,6 +743,7 @@ export class ReleaseRemote {
 
 async function main() {
   const [mode, directory, version] = process.argv.slice(2);
+  const sourceCommit = process.env.RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA;
   const publishing = process.env.PUBLISH_RELEASE === "true";
   if (mode === "status") {
     if (process.env.GITHUB_REF !== "refs/heads/release")
@@ -723,7 +752,7 @@ async function main() {
       );
     const remote = new ReleaseRemote(directory, version);
     try {
-      remote.assertTag(process.env.GITHUB_SHA);
+      remote.assertTag(sourceCommit);
       const release = remote.release();
       const published = release?.draft === false;
       if (published) {
@@ -733,7 +762,7 @@ async function main() {
         const saved = JSON.parse(journal);
         if (
           saved.version !== version ||
-          saved.commit !== process.env.GITHUB_SHA ||
+          saved.commit !== sourceCommit ||
           !Object.keys(saved.files).every((name) =>
             release.assets.some((asset) => asset.name === name),
           )
@@ -758,7 +787,7 @@ async function main() {
     if (publishing) {
       const remote = new ReleaseRemote(directory, version);
       try {
-        remote.assertTag(process.env.GITHUB_SHA);
+        remote.assertTag(sourceCommit);
         const release = remote.release();
         // Legacy published versions remain a no-op. New releases with a journal
         // can resume the final pointer update after GitHub publication.
@@ -771,7 +800,7 @@ async function main() {
         if (release?.assets.some((a) => a.name === STATE)) {
           const saved = JSON.parse(remote.readAsset(STATE));
           if (
-            saved.commit !== process.env.GITHUB_SHA ||
+            saved.commit !== sourceCommit ||
             saved.version !== version
           )
             throw new Error(
@@ -785,7 +814,7 @@ async function main() {
             throw new Error("Published release has missing frozen assets");
           if (reuseRelease)
             reuseChecks =
-              published || remote.canReuseChecks(saved, process.env.GITHUB_SHA);
+              published || remote.canReuseChecks(saved, sourceCommit);
         }
       } finally {
         remote.close();
@@ -815,7 +844,7 @@ async function main() {
   }
   if (mode === "sync") {
     const saved = JSON.parse(readFileSync(join(directory, STATE)));
-    if (saved.version !== version || saved.commit !== process.env.GITHUB_SHA)
+    if (saved.version !== version || saved.commit !== sourceCommit)
       throw new Error("Synchronization identity mismatch");
     for (const name of ["latest.json", "releases.json"]) {
       if (hashBytes(readFileSync(join(directory, name))) !== saved.files[name])
@@ -845,7 +874,7 @@ async function main() {
   }
   const state = {
     version,
-    commit: process.env.GITHUB_SHA,
+    commit: sourceCommit,
     files,
     runId: Number(process.env.GITHUB_RUN_ID),
     runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
