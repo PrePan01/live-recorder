@@ -81,17 +81,18 @@ export function buildRecordingColumns(
   } = deps;
   return [
     {
-      title: "房间",
+      title: "直播间",
       dataIndex: "roomId",
-      width: 140,
+      width: 200,
       ellipsis: true,
-      render: (_id: string, r) => roomLabel(r),
-    },
-    {
-      title: "平台",
-      dataIndex: "platform",
-      width: 60,
-      render: (p) => <PlatformLogoTag platform={p} />,
+      render: (_id: string, r) => (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+          <PlatformLogoTag platform={r.platform} />
+          <Typography.Text ellipsis style={{ flex: 1, minWidth: 0 }}>
+            {roomLabel(r)}
+          </Typography.Text>
+        </div>
+      ),
     },
     {
       title: "标题",
@@ -116,6 +117,15 @@ export function buildRecordingColumns(
           />
         </div>
       ),
+    },
+    { title: "开始", dataIndex: "startedAt", width: 120, render: formatTime },
+    { title: "结束", dataIndex: "endedAt", width: 120, render: formatTime },
+    {
+      title: "时长",
+      width: 85,
+      render: (_, r) =>
+        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
+        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "清晰度",
@@ -156,15 +166,6 @@ export function buildRecordingColumns(
           ) : null}
         </Space>
       ),
-    },
-    { title: "开始", dataIndex: "startedAt", width: 120, render: formatTime },
-    { title: "结束", dataIndex: "endedAt", width: 120, render: formatTime },
-    {
-      title: "时长",
-      width: 85,
-      render: (_, r) =>
-        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
-        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "状态",

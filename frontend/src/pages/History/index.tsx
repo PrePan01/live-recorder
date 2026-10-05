@@ -54,6 +54,8 @@ export default function History() {
     (s) => s.requestTwoFactorPrompt,
   );
   const [grouped, setGrouped] = useState(false);
+  const [titleInput, setTitleInput] = useState("");
+  const [titleSearch, setTitleSearch] = useState("");
   // 支持 /history?roomId= 深链（设置页告警「查看」入口落点，仅初始化读取一次）。
   const [roomId, setRoomId] = useState<string | undefined>(
     () =>
@@ -96,15 +98,17 @@ export default function History() {
   }, [items]);
 
   useEffect(() => {
-    // 显式传全量筛选（roomId/dateFrom/dateTo 用 undefined 表示清除），
+    // 显式传全量筛选（title/roomId/dateFrom/dateTo 用 undefined 表示清除），
     // 覆盖 store 合并的旧 query，避免清除筛选后残留上次筛选参数。
     const q: {
       page: number;
+      title?: string;
       roomId?: string;
       dateFrom?: string;
       dateTo?: string;
     } = {
       page: 1,
+      title: titleSearch || undefined,
       roomId,
       dateFrom: dateRange
         ? dateRange[0].startOf("day").toISOString()
@@ -115,7 +119,7 @@ export default function History() {
       message.error("历史列表加载失败，请稍后重试"),
     );
     if (rooms.length === 0) void fetchRooms();
-  }, [fetchHistory, roomId, dateRange]);
+  }, [fetchHistory, titleSearch, roomId, dateRange]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -364,10 +368,22 @@ export default function History() {
         </Space>
       </Space>
       <Space className="lr-filter-bar" wrap>
+        <Input.Search
+          allowClear
+          aria-label="搜索录制标题"
+          placeholder="搜索录制标题"
+          style={{ width: 240 }}
+          value={titleInput}
+          onChange={(event) => {
+            setTitleInput(event.target.value);
+            if (!event.target.value) setTitleSearch("");
+          }}
+          onSearch={(value) => setTitleSearch(value.trim())}
+        />
         <Select
           allowClear
-          aria-label="按房间筛选"
-          placeholder="按房间筛选"
+          aria-label="按直播间筛选"
+          placeholder="按直播间筛选"
           style={{ width: 200 }}
           value={roomId}
           onChange={setRoomId}

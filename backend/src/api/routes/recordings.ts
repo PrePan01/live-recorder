@@ -282,6 +282,7 @@ export function registerRecordingRoutes(
       }
     }
     const rawResult = services.recordings.list({
+      title: q.title,
       page,
       pageSize,
       roomId: q.roomId,
