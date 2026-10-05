@@ -350,6 +350,25 @@ describe('RoomRepository', () => {
 });
 
 describe('RecordingRepository', () => {
+  it('searches literal title substrings before pagination and combines filters', () => {
+    const recs = new RecordingRepository(freshDb());
+    const create = (roomId: string, streamTitle: string) => recs.create({
+      roomId, roomName: roomId, platform: 'bilibili', streamSessionId: null, streamTitle,
+    });
+    const a = create('room-a', '周末 Live 100%_精彩');
+    const b = create('room-a', '周末 live 回放');
+    create('room-b', '周末 LIVE 直播');
+    create('room-a', '日常闲聊');
+    const first = recs.list({ title: '  LIVE  ', roomId: 'room-a', pageSize: 1 });
+    const second = recs.list({ title: 'LIVE', roomId: 'room-a', pageSize: 1, page: 2 });
+    expect(first.total).toBe(2);
+    expect(second.total).toBe(2);
+    expect(new Set([...first.items, ...second.items].map((r) => r.id))).toEqual(new Set([a.id, b.id]));
+    expect(recs.list({ title: '%_' }).items.map((r) => r.id)).toEqual([a.id]);
+    expect(recs.list({ title: '不存在' }).total).toBe(0);
+    expect(recs.list({ title: '  ' }).total).toBe(4);
+  });
+
   it('paginates, filters and dedups by session', async () => {
     const db = freshDb();
     const rooms = new RoomRepository(db);

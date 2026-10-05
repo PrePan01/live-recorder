@@ -1,46 +1,47 @@
 #!/usr/bin/env node
-// 在本地复现 release.yml 的 build job，避免提交后才发现验证阶段失败。
-// 用法：node scripts/verify-release.mjs
 
-import { spawnSync } from 'node:child_process';
-import process from 'node:process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from "node:child_process";
+import process from "node:process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const isWindows = process.platform === 'win32';
-const npm = isWindows ? 'npm.cmd' : 'npm';
+const isWindows = process.platform === "win32";
+const npm = isWindows ? "npm.cmd" : "npm";
 
-function run(label, command, args, cwd = root) {
+function run(label, command, args, cwd = root, env = process.env) {
   console.log(`\n[verify-release] ${label}`);
   const result = spawnSync(command, args, {
     cwd,
-    stdio: 'inherit',
-    shell: false,
+    stdio: "inherit",
+    shell: isWindows && command === npm,
     windowsHide: false,
+    env,
   });
   if (result.error || result.status !== 0) {
-    const reason = result.error?.message ?? `exit code ${result.status ?? 'unknown'}`;
+    const reason =
+      result.error?.message ?? `exit code ${result.status ?? "unknown"}`;
     throw new Error(`${label} failed: ${reason}`);
   }
 }
 
 try {
-  // 显式带上 --include=dev：外部环境若带 NODE_ENV=production，npm ci 会跳过 devDependencies，
-  // 紧接着的 tsc/vitest 就会 command not found。
-  run('Install backend dependencies', npm, ['--prefix', 'backend', 'ci', '--include=dev']);
-  run('Install frontend dependencies', npm, ['--prefix', 'frontend', 'ci', '--include=dev']);
-  run('Compile backend', npm, ['--prefix', 'backend', 'run', 'build']);
-  run('Verify backend', npm, ['--prefix', 'backend', 'test']);
-  run('Verify frontend', npm, ['--prefix', 'frontend', 'test']);
-  run('Build installer', npm, ['run', 'package']);
-  run(
-    'Verify native service lifecycle',
-    'cargo',
-    ['test', '--manifest-path', path.join(root, 'frontend', 'src-tauri', 'Cargo.toml'), '--lib'],
-  );
-  run('Verify installation payload', 'node', [path.join(root, 'scripts', 'check-installation.mjs')]);
-  console.log('\n[verify-release] All release checks passed.');
+  run("Verify repository quality", process.execPath, [
+    "scripts/check-quality.mjs",
+    "--build-in-installer",
+  ]);
+  run("Build and verify installer", npm, ["run", "package"], root, {
+    ...process.env,
+    LR_SKIP_BACKEND_BUILD: "1",
+  });
+  run("Verify native service lifecycle", "cargo", [
+    "test",
+    "--locked",
+    "--manifest-path",
+    path.join(root, "frontend", "src-tauri", "Cargo.toml"),
+    "--lib",
+  ]);
+  console.log("\n[verify-release] All release checks passed.");
 } catch (error) {
   console.error(`\n[verify-release] ${error.message}`);
   process.exitCode = 1;

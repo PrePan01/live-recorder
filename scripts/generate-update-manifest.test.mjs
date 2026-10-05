@@ -11,11 +11,8 @@ import { checkReleaseNotes } from './check-release-notes.mjs';
 
 const execFile = promisify(execFileCallback);
 
-// tauri build 产出的 `.sig` 内容会被原样写进清单；这里只需要一个合法占位值。
-const SIGNATURE =
-  'dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIGxpdmUtcmVjb3JkZXIK';
-const writeSignature = (dir, filename) =>
-  writeFile(join(dir, `${filename}.sig`), `${SIGNATURE}\n`);
+import { pubkey, signature, writeSignature } from './test-fixtures/signatures.mjs';
+const SIGNATURE = signature('abcd');
 
 test('release manifest requires both platforms and describes real bytes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'lr-manifest-'));
@@ -24,18 +21,21 @@ test('release manifest requires both platforms and describes real bytes', async 
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['修复安装问题'] }] }));
     // Release assets must already use GitHub's public, space-free names.
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
-    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /windows/);
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
+    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /windows/);
     await assert.rejects(readFile(join(dir, 'latest.json')));
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeSignature(dir, 'Live.Recorder_0.5.112_x64-setup.exe');
-    const result = await generateUpdateManifest(dir, '0.5.112', undefined, notes);
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
+    const result = await generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey);
     assert.equal(result.platforms['macos-aarch64'].size, 3);
     assert.equal(result.platforms['windows-x86_64'].sha256, createHash('sha256').update('abcd').digest('hex'));
     assert.match(result.platforms['macos-aarch64'].url, /v0.5.112\/Live\.Recorder/);
-    await assert.rejects(generateUpdateManifest(dir, '0.5.113', undefined, notes), /macos/);
+    await assert.rejects(generateUpdateManifest(dir, '0.5.113', undefined, notes, pubkey), /Missing release notes/);
+    await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.114', publishedAt: '2026-09-13', notes: ['Fix'] }] }));
     await writeFile(join(dir, 'Live Recorder_0.5.114_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live Recorder_0.5.114_x64-setup.exe'), 'abcd');
-    await assert.rejects(generateUpdateManifest(dir, '0.5.114', undefined, notes), /must not contain whitespace/);
+    await assert.rejects(generateUpdateManifest(dir, '0.5.114', undefined, notes, pubkey), /must not contain whitespace/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -47,7 +47,8 @@ test('manifest points asset urls at the mirror base when provided (#28)', async 
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeSignature(dir, 'Live.Recorder_0.5.112_x64-setup.exe');
-    const result = await generateUpdateManifest(dir, '0.5.112', 'https://live-recorder.s3.cn-south-1.qiniucs.com/', notes);
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
+    const result = await generateUpdateManifest(dir, '0.5.112', 'https://live-recorder.s3.cn-south-1.qiniucs.com/', notes, pubkey);
     assert.equal(
       result.platforms['macos-aarch64'].url,
       'https://live-recorder.s3.cn-south-1.qiniucs.com/Live.Recorder_0.5.112_aarch64.dmg',
@@ -66,15 +67,18 @@ test('windows installer must carry an updater signature', async () => {
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['签名校验'] }] }));
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
     // 漏签名的发版必须在生成清单时就失败，而不是发一个校验不过的更新出去。
-    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /Missing updater signature/);
+    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /Missing updater signature/);
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe.sig'), '  \n');
-    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /Empty updater signature/);
+    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /Empty updater signature/);
     await writeSignature(dir, 'Live.Recorder_0.5.112_x64-setup.exe');
-    const manifest = await generateUpdateManifest(dir, '0.5.112', undefined, notes);
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
+    const manifest = await generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey);
     assert.equal(manifest.platforms['windows-x86_64'].signature, SIGNATURE);
-    // macOS 走 DMG 手动安装，没有 updater 产物，清单不应出现空的 signature 字段。
-    assert.equal('signature' in manifest.platforms['macos-aarch64'], false);
+    assert.equal(manifest.platforms['macos-aarch64'].signature, signature('abc'));
+    await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'tampered');
+    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /signature verification failed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -85,13 +89,14 @@ test('release requires matching, well-formed notes and publishes the complete hi
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeSignature(dir, 'Live.Recorder_0.5.112_x64-setup.exe');
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.111', publishedAt: '2026-09-12', notes: ['旧版本'] }] }));
-    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes), /Missing release notes/);
+    await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /Missing release notes/);
     await writeFile(notes, JSON.stringify({ releases: [
       { version: '0.5.112', publishedAt: '2026-09-13', notes: ['新功能'] },
       { version: '0.5.111', publishedAt: '2026-09-12', notes: ['旧版本'] },
     ] }));
-    await generateUpdateManifest(dir, '0.5.112', undefined, notes);
+    await generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey);
     assert.deepEqual(JSON.parse(await readFile(join(dir, 'latest.json'), 'utf8')).notes, ['新功能']);
     assert.equal(JSON.parse(await readFile(join(dir, 'releases.json'), 'utf8')).releases.length, 2);
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -115,8 +120,9 @@ test('CLI treats its third argument as the release notes path', async () => {
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeSignature(dir, 'Live.Recorder_0.5.112_x64-setup.exe');
+    await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['命令行参数校验'] }] }));
-    await execFile(process.execPath, ['scripts/generate-update-manifest.mjs', dir, '0.5.112', notes], { cwd: process.cwd() });
-    assert.equal(JSON.parse(await readFile(join(dir, 'latest.json'), 'utf8')).version, '0.5.112');
+    await writeFile(notes, JSON.stringify({ releases: [] }));
+    await assert.rejects(execFile(process.execPath, ['scripts/generate-update-manifest.mjs', dir, '0.5.112', notes], { cwd: process.cwd() }), /Missing release notes/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

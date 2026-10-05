@@ -305,6 +305,10 @@ describe('Scheduler', () => {
     services.settings.save(baseSettings());
     const r1 = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'B' });
     const r2 = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/2', displayName: 'D' });
+    // 本例只测轮询间隔；默认脚本第二次变为 live 会启动录制并混入额外事件/计时器。
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([
+      { status: 'offline' }, { status: 'offline' },
+    ]);
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
       { status: 'offline' }, { status: 'offline' }, { status: 'offline' }, { status: 'offline' },
       { status: 'offline' }, { status: 'offline' }, { status: 'offline' }, { status: 'offline' },
@@ -316,18 +320,19 @@ describe('Scheduler', () => {
     });
 
     services.scheduler.start();
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 2 && seen.filter((id) => id === r2.id).length === 2);
+    // room:updated 先于本轮检测收尾；两平台都重新挂好计时器后才能推进时钟。
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 2 && seen.filter((id) => id === r2.id).length === 2 && clock.pendingTimers() === 2);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 4);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 4 && clock.pendingTimers() === 2);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 6);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 6 && clock.pendingTimers() === 2);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 60_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 8);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 8 && seen.filter((id) => id === r2.id).length === 4 && clock.pendingTimers() === 2);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(4);
 
     services.scheduler.stop();

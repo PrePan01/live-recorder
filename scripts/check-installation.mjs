@@ -17,6 +17,7 @@ const expected = JSON.parse(
 ).version;
 let temporary;
 let uninstaller;
+let mounted = false;
 function run(command, args, timeout = 60000) {
   const result = spawnSync(command, args, {
     stdio: 'inherit',
@@ -57,12 +58,14 @@ try {
     if (!existsSync(uninstaller)) throw new Error('NSIS installer did not create an uninstaller');
     resources = findResources(temporary);
   } else if (process.platform === 'darwin') {
-    resources = path.join(
-      release,
-      'Live Recorder.app',
-      'Contents',
-      'Resources',
-    );
+    const dmg = readdirSync(release).filter((name) => name.includes(`_${expected}_`) && name.endsWith('.dmg'));
+    if (dmg.length !== 1) throw new Error('Expected one final DMG installer');
+    temporary = mkdtempSync(path.join(tmpdir(), 'lr-dmg-verify-'));
+    run('hdiutil', ['attach', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', temporary, path.join(release, dmg[0])]);
+    mounted = true;
+    const app = path.join(temporary, 'Live Recorder.app');
+    run('codesign', ['--verify', '--deep', '--strict', app]);
+    resources = path.join(app, 'Contents', 'Resources');
   } else {
     throw new Error('installation validation supports macOS and Windows');
   }
@@ -94,6 +97,7 @@ try {
       console.warn(`NSIS uninstall cleanup failed: ${error.message}`);
     }
   }
+  if (mounted) run('hdiutil', ['detach', temporary]);
   if (temporary)
     rmSync(temporary, { recursive: true, force: true, maxRetries: 5 });
 }

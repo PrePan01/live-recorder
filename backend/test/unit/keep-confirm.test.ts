@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
@@ -330,12 +330,15 @@ describe('#220 录制完成「询问是否保留」', () => {
     services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/103', displayName: '撞名' });
     services.rooms.setLiveStatus(room.id, 'live');
+    let finishExport!: () => void;
+    const exportGate = new Promise<void>((resolve) => { finishExport = resolve; });
     const buffer = {
       availableSeconds: () => 30,
       exportTo: async (output: string) => {
         // 真实 HighlightBuffer 会自建目录；假实现镜像该行为（否则 planned filePath 目录不存在）。
         await (await import('node:fs/promises')).mkdir((await import('node:path')).dirname(output), { recursive: true });
         await writeFile(output, 'FLV-BODY');
+        await exportGate; // Create the collision before export completion triggers rename.
         return { bytes: 8, actualSeconds: 8 };
       },
     };
@@ -348,7 +351,8 @@ describe('#220 录制完成「询问是否保留」', () => {
     await mkdir(path.dirname(original), { recursive: true });
     const taken = path.join(path.dirname(original), 'taken.flv');
     await writeFile(taken, 'OTHER-RECORDING');
-    await sleep(30);
+    finishExport();
+    await vi.waitFor(() => expect(services.recordings.get(recordingId)!.streamTitle).toBe('taken'));
 
     const rec = services.recordings.get(recordingId)!;
     // 另一条录像的文件内容未被顶掉、本记录 filePath 未变（仅标题更新）——POSIX 下旧实现会静默覆盖。

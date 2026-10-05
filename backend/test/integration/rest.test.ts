@@ -1139,6 +1139,29 @@ describe("REST contract v1.1 (fake stack)", () => {
     }
   });
 
+  it("filters recording titles through the list API", async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const create = (streamTitle: string) => services.recordings.create({
+      roomId: "title-search-room", roomName: "标题搜索", platform: "bilibili",
+      streamSessionId: null, streamTitle,
+    });
+    const match = create("周末 Live 回放");
+    create("日常闲聊");
+    try {
+      const result = await app.inject({
+        method: "GET",
+        url: "/api/v1/recordings?title=live&pageSize=1",
+        headers: { host: "127.0.0.1:43120" },
+      });
+      expect(result.statusCode).toBe(200);
+      expect(result.json().total).toBe(1);
+      expect(result.json().items[0].id).toBe(match.id);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("recordings pagination + open, alerts flow", async () => {
     const services = newServices();
     const { app } = buildApp(services);

@@ -1,7 +1,7 @@
 import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
 import { AppError } from '../types/error.js';
 import type { ErrorObject, Quality } from '../types/index.js';
-import type { LiveStatusResult, PlatformAdapter, StreamUrlResult } from './adapter.js';
+import type { LiveStatusResult, PlatformAdapter, StreamUrlResult, RecordingSourceResult } from './adapter.js';
 
 /** 目标清晰度 → B站 qn（原画 10000 / 蓝光 400 / 高清 150 / 流畅 80）。 */
 const BILI_QN: Record<Quality, number> = { original: 10000, '1080p': 400, '720p': 150, '360p': 80 };
@@ -319,6 +319,23 @@ export class BilibiliAdapter implements PlatformAdapter {
       if (isNetworkError(err)) throw new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
       throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }
+    return this.streamFromPlayInfo(data, roomId, quality);
+  }
+
+  async resolveRecordingSource(roomUrl: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult> {
+    const roomId = this.parseRoomId(roomUrl);
+    if (!roomId) return { status: 'error', error: new AppError('ROOM_LINK_INVALID', '无效的直播间链接', {}).toObject() };
+    try {
+      const data = await this.fetchPlayInfo(roomId, cookie, BILI_QN[quality], 'interactive');
+      if (data.code === 0 && data.data && data.data.live_status !== undefined && data.data.live_status !== 1) return { status: 'offline' };
+      return { status: 'live', stream: this.streamFromPlayInfo(data, roomId, quality) };
+    } catch (error) {
+      const cause = error instanceof AppError ? error : new AppError('NETWORK_UNAVAILABLE', '平台请求失败', { retryable: true });
+      return { status: cause.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: cause.toObject() };
+    }
+  }
+
+  private streamFromPlayInfo(data: BiliPlayResponse, roomId: number, quality: Quality): StreamUrlResult {
     if (data.code !== 0 || !data.data) {
       throw new AppError('PLATFORM_CHANGED', '平台接口有变动，请稍后重试', {});
     }

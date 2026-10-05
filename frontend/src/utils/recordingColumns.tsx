@@ -21,7 +21,7 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../types/error";
-import { checkRecordingFile } from "../api/recordings";
+import { playRecording } from "../api/recordings";
 import { failurePrimaryText } from "./failureReason";
 import { describeError } from "./errorMap";
 import { formatBytes, formatDurationMs, formatTime } from "./format";
@@ -59,7 +59,6 @@ export interface RecordingColumnsDeps {
   handleUploadErrorDetail: (recording: Recording) => void;
   setRenaming: Dispatch<SetStateAction<Recording | null>>;
   setRenameValue: Dispatch<SetStateAction<string>>;
-  setPlaying: Dispatch<SetStateAction<Recording | null>>;
   setPipelineRec: Dispatch<SetStateAction<Recording | null>>;
   retryUploadFor: (recordingId: string) => Promise<void>;
 }
@@ -77,23 +76,23 @@ export function buildRecordingColumns(
     handleUploadErrorDetail,
     setRenaming,
     setRenameValue,
-    setPlaying,
     setPipelineRec,
     retryUploadFor,
   } = deps;
   return [
     {
-      title: "房间",
+      title: "直播间",
       dataIndex: "roomId",
-      width: 140,
+      width: 200,
       ellipsis: true,
-      render: (_id: string, r) => roomLabel(r),
-    },
-    {
-      title: "平台",
-      dataIndex: "platform",
-      width: 60,
-      render: (p) => <PlatformLogoTag platform={p} />,
+      render: (_id: string, r) => (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+          <PlatformLogoTag platform={r.platform} />
+          <Typography.Text ellipsis style={{ flex: 1, minWidth: 0 }}>
+            {roomLabel(r)}
+          </Typography.Text>
+        </div>
+      ),
     },
     {
       title: "标题",
@@ -118,6 +117,15 @@ export function buildRecordingColumns(
           />
         </div>
       ),
+    },
+    { title: "开始", dataIndex: "startedAt", width: 120, render: formatTime },
+    { title: "结束", dataIndex: "endedAt", width: 120, render: formatTime },
+    {
+      title: "时长",
+      width: 85,
+      render: (_, r) =>
+        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
+        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "清晰度",
@@ -158,15 +166,6 @@ export function buildRecordingColumns(
           ) : null}
         </Space>
       ),
-    },
-    { title: "开始", dataIndex: "startedAt", width: 120, render: formatTime },
-    { title: "结束", dataIndex: "endedAt", width: 120, render: formatTime },
-    {
-      title: "时长",
-      width: 85,
-      render: (_, r) =>
-        // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
-        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
     },
     {
       title: "状态",
@@ -374,15 +373,14 @@ export function buildRecordingColumns(
             disabled={r.state !== "completed" || !r.filePath}
             onClick={async () => {
               try {
-                await checkRecordingFile(r.id);
-                setPlaying(r);
+                await playRecording(r.id);
               } catch (e) {
                 message.error(
                   e instanceof ApiError && e.status === 404
-                    ? "录像文件已删除"
+                    ? e.code === "RESOURCE_NOT_FOUND" ? "录像文件已删除或不可访问" : "播放接口不可用，请更新或重启本地服务"
                     : e instanceof ApiError
                       ? describeError(e.code, e.message)
-                      : "无法播放录像，请稍后重试",
+                      : "无法打开系统默认播放器，请检查文件关联",
                 );
               }
             }}

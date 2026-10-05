@@ -177,10 +177,15 @@ fn signature_valid(pubkey: &str, path: &Path, signature: &str) -> Result<(), Str
     let public_key =
         minisign_verify::PublicKey::decode(&decode(pubkey, "公钥")?).map_err(|e| format!("更新公钥无法解析：{e}"))?;
     let signature = minisign_verify::Signature::decode(&decode(signature, "签名")?).map_err(|e| format!("更新签名无法解析：{e}"))?;
-    let bytes = fs::read(path).map_err(|e| format!("无法读取安装包：{e}"))?;
-    public_key
-        .verify(&bytes, &signature, true)
-        .map_err(|e| e.to_string())
+    let mut file = File::open(path).map_err(|e| format!("无法读取安装包：{e}"))?;
+    let mut verifier = public_key.verify_stream(&signature).map_err(|e| e.to_string())?;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 { break; }
+        verifier.update(&buffer[..count]);
+    }
+    verifier.finalize().map_err(|e| e.to_string())
 }
 fn installer(dir: &Path, update: &Update) -> PathBuf {
     dir.join(format!("{}-{}", update.version, update.asset.filename))
@@ -783,21 +788,12 @@ fn download(app: AppHandle) -> Result<Snapshot, String> {
         }
     }
 }
-/// 签名校验只告警不拦截：CI 已保证清单必带签名，这里失败通常意味着本地缓存异常，
-/// 不值得因此让用户卡在无法更新的状态（完整性另有清单 SHA256 兜底）。
-fn warn_if_untrusted(app: &AppHandle, path: &Path, asset: &Asset) {
-    let Some(pubkey) = configured_pubkey(app) else {
-        log::warn!("配置缺少 plugins.updater.pubkey，跳过安装包来源校验");
-        return;
-    };
-    match asset.signature.as_deref() {
-        Some(signature) => {
-            if let Err(error) = signature_valid(&pubkey, path, signature) {
-                log::warn!("更新安装包签名校验未通过：{error}");
-            }
-        }
-        None => log::warn!("更新清单未提供安装包签名，跳过来源校验"),
-    }
+/// Missing or invalid signatures must block installation on every platform.
+fn verify_trusted(pubkey: Option<&str>, path: &Path, asset: &Asset) -> Result<(), String> {
+    let pubkey = pubkey.ok_or("配置缺少更新公钥，无法验证安装包来源")?;
+    let signature = asset.signature.as_deref().ok_or("更新清单缺少安装包签名")?;
+    signature_valid(pubkey, path, signature)
+        .map_err(|error| format!("安装包来源校验失败，请重新下载：{error}"))
 }
 
 /// 安装已下载的安装包。
@@ -816,7 +812,9 @@ fn install(app: AppHandle) -> Result<(), String> {
     }
     let update = snapshot.update.ok_or("安装包信息缺失")?;
     let path = installer(&cache(&app)?, &update);
-    if let Err(error) = verified(&path, &update.asset) {
+    let pubkey = configured_pubkey(&app);
+    if let Err(error) = verified(&path, &update.asset)
+        .and_then(|_| verify_trusted(pubkey.as_deref(), &path, &update.asset)) {
         publish(&app, |s| {
             s.phase = "available".into();
             s.downloaded = 0;
@@ -824,7 +822,6 @@ fn install(app: AppHandle) -> Result<(), String> {
         });
         return Err(error);
     }
-    warn_if_untrusted(&app, &path, &update.asset);
     install_platform(&app, &path)
 }
 
@@ -891,6 +888,25 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use base64::Engine;
+    #[test]
+    fn installer_signatures_block_missing_keys_signatures_and_tampered_bytes() {
+        let dir = std::env::temp_dir().join(format!("lr-signature-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("installer");
+        fs::write(&path, b"test").unwrap();
+        let encode = |text: &str| base64::engine::general_purpose::STANDARD.encode(text);
+        let key = encode("untrusted comment: test key\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n");
+        let sig = encode("untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1556193335\tfile:test\ny/rUw2y8/hOUYjZU71eHp/Wo1KZ40fGy2VJEDl34XMJM+TX48Ss/17u3IvIfbVR1FkZZSNCisQbuQY+bHwhEBg==");
+        let mut installer = asset();
+        assert!(verify_trusted(None, &path, &installer).is_err());
+        assert!(verify_trusted(Some(&key), &path, &installer).is_err());
+        installer.signature = Some(sig);
+        assert!(verify_trusted(Some(&key), &path, &installer).is_ok());
+        assert!(verify_trusted(Some("invalid key"), &path, &installer).is_err());
+        fs::write(&path, b"tampered").unwrap();
+        assert!(verify_trusted(Some(&key), &path, &installer).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
     fn asset() -> Asset {
         Asset {
             filename: "Live.Recorder_0.5.112_x64-setup.exe".into(),

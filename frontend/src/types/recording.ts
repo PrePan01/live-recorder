@@ -110,6 +110,7 @@ export interface Recording {
 }
 
 export interface RecordingQuery {
+  title?: string;
   page?: number;
   pageSize?: number;
   roomId?: string;

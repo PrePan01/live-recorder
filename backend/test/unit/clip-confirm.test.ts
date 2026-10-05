@@ -239,7 +239,10 @@ describe('片段导出（保存命名→后台导出）', () => {
     );
     // 单条失败不影响他条，失败条半成品照清。
     expect(failed.failureReason?.message).toBe('片段导出失败');
-    await expect(stat(failed.filePath!)).rejects.toThrow();
+    // failed 状态先落库，异步删除随后完成。
+    await vi.waitFor(async () => {
+      await expect(stat(failed.filePath!)).rejects.toMatchObject({ code: 'ENOENT' });
+    }, { timeout: 5_000, interval: 5 });
   });
 
   it('同选区防重复提交，不同选区可并行；全局上限防风暴', async () => {
@@ -301,7 +304,9 @@ describe('片段导出（保存命名→后台导出）', () => {
     // 主行只留人话文案，技术原文进 details（不上主行）。
     expect(clip.failureReason?.message).toBe('片段导出失败');
     expect(String(clip.failureReason?.details?.reason)).toContain('boom');
-    await expect(stat(clip.filePath!)).rejects.toThrow();
+    await vi.waitFor(async () => {
+      await expect(stat(clip.filePath!)).rejects.toMatchObject({ code: 'ENOENT' });
+    }, { timeout: 5_000, interval: 5 });
   });
 
   it('进度：整数百分比变化才发、≥500ms 间隔，终态置 null', async () => {
@@ -341,7 +346,7 @@ describe('片段导出（保存命名→后台导出）', () => {
     expect(services.manager.clipExportProgress(started.clip.id)).toBeNull();
     // 终态事件显式置 null（历史行退出「导出中」显示）。
     const doneEvent = clipEvents.find(
-      (e) => (e.data as Recording).state === 'completed',
+      (e) => (e.data as Recording).state === 'completed' && (e.data as Recording).progressPercent === null,
     )!;
     expect((doneEvent.data as Recording).progressPercent).toBeNull();
     // 完成后同链跟进的校验/管线事件不再携带导出进度字段。
@@ -386,9 +391,69 @@ describe('片段导出（保存命名→后台导出）', () => {
       services.manager.exportClip(source.id, 0, 2, '坏/名'),
     ).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
   });
+
+  it('删除导出中的片段：透传取消，晚到的成功结果不得恢复记录或进入后处理', async () => {
+    const { services, source } = await startRecording();
+    let release!: () => void;
+    let signal!: AbortSignal;
+    exportClipFileMock.mockImplementation(async (_in: string, out: string, _s: number, _e: number, opts: {
+      signal: AbortSignal;
+      onProgress: (info: { outTimeMs: number; speed: number | null }) => void;
+    }) => {
+      signal = opts.signal;
+      opts.onProgress({ outTimeMs: 1000, speed: null });
+      await new Promise<void>(resolve => { release = resolve; });
+      await writeFile(out, Buffer.alloc(1024));
+      return { ok: true, sizeBytes: 1024, stderr: '' };
+    });
+    const pipeline = vi.spyOn(services.pipeline, 'enqueue');
+    const started = await services.manager.exportClip(source.id, 0, 2, '删除中的片段');
+    await waitFor(() => Boolean(release));
+    expect(services.manager.clipExportProgress(started.clip.id)).toBe(50);
+    services.manager.cancelClipExport(started.clip.id);
+    services.recordings.remove(started.clip.id);
+    expect(signal.aborted).toBe(true);
+    release();
+    // 已上报的进度只会在任务 finally 中清除；等待晚到写盘及清理真正结束。
+    await waitFor(() => services.manager.clipExportProgress(started.clip.id) === null);
+    expect(services.recordings.get(started.clip.id)).toBeNull();
+    expect(pipeline).not.toHaveBeenCalledWith(started.clip.id);
+    await expect(stat(started.clip.filePath!)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('导出异常收敛为失败并释放同选区占位', async () => {
+    const { services, source } = await startRecording();
+    exportClipFileMock.mockRejectedValue(new Error('input read failed'));
+    const first = await services.manager.exportClip(source.id, 0, 2, '异常片段');
+    await waitFor(() => services.recordings.get(first.clip.id)?.state === 'failed');
+    mockExportOk(1024);
+    const second = await services.manager.exportClip(source.id, 0, 2, '重试片段');
+    await waitFor(() => services.recordings.get(second.clip.id)?.state === 'completed');
+  });
 });
 
 describe('片段完成后与正常保存录像同链（校验+管线自动入队）', () => {
+  it('导出交接时不能发出可误报保存成功的终态，直到后处理真正完成', async () => {
+    const { services, source } = await startRecording();
+    mockExportOk(4096);
+    const events: Recording[] = [];
+    services.events.on(event => {
+      if (event.type === 'recording:updated') events.push(event.data);
+    });
+    vi.spyOn(services.pipeline, 'enqueue').mockImplementation(id => {
+      services.recordings.update(id, { state: 'processing', pipelineStatus: 'queued' });
+      services.events.emit({ type: 'recording:updated', data: services.recordings.get(id)! });
+    });
+    const started = await services.manager.exportClip(source.id, 0, 2, '后处理等待');
+    await waitFor(() => events.some(rec => rec.id === started.clip.id && rec.progressPercent === null));
+    const clipEvents = events.filter(rec => rec.id === started.clip.id);
+    expect(clipEvents.length).toBeGreaterThan(1);
+    expect(clipEvents.every(rec => rec.state !== 'completed' || rec.pipelineStatus === 'queued')).toBe(true);
+    // 校验可能在交接后再次发事件（缺少 ffprobe 时尤其快），其事件不带导出进度。
+    expect(clipEvents.find(rec => rec.progressPercent === null)).toMatchObject({ state: 'processing', pipelineStatus: 'queued', progressPercent: null });
+    expect(clipEvents.at(-1)).toMatchObject({ state: 'processing', pipelineStatus: 'queued' });
+  });
+
   it('成功完成：自动入完整性校验队列+自动进管线，不依赖手动批量重校验', async () => {
     const { services, source } = await startRecording();
     mockExportOk(4096);

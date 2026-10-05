@@ -1,5 +1,7 @@
 import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
+import { recoverRecordingBuffer, listRecordingBufferTargets } from "../recorder/buffered-writer.js";
+import { removeSeekIndexSidecar } from "../storage/seek-index.js";
 import type { Services } from "./services.js";
 
 export async function recoverStaleRecordings(
@@ -22,8 +24,28 @@ export async function recoverStaleRecordings(
       },
     });
   }
+  // Finished/failed records may also retain a spool after a manual stop or
+  // exhausted storage recovery. Validate the manifest against the repository.
+  const activeIds = new Set(stale.map(rec => rec.id));
+  for (const entry of await listRecordingBufferTargets(services.recordingBufferDirectory)) {
+    const rec = services.recordings.get(entry.recordingId);
+    if (!rec || rec.filePath !== entry.target || activeIds.has(rec.id)) continue;
+    try {
+      const bytes = await recoverRecordingBuffer(services.recordingBufferDirectory, entry.target);
+      await removeSeekIndexSidecar(entry.target);
+      services.recordings.update(rec.id, { fileSizeBytes: (await stat(entry.target)).size });
+      if (rec.state !== "awaiting_confirmation") services.manager.resumeRecoveredProcessing(rec.id);
+      console.log(`[recording-recovery] ${rec.id} replayedBytes=${bytes}`);
+    } catch (error) { console.warn(`[recording-recovery] ${rec.id} buffer retained: ${(error as Error).message}`); }
+  }
   for (const rec of stale) {
     if (!services.db.open) break;
+    if (rec.filePath) {
+      try {
+        const bytes = await recoverRecordingBuffer(services.recordingBufferDirectory, rec.filePath);
+        if (bytes) { await removeSeekIndexSidecar(rec.filePath); console.log(`[recording-recovery] ${rec.id} replayedBytes=${bytes}`); }
+      } catch (error) { console.warn(`[recording-recovery] ${rec.id} buffer retained: ${(error as Error).message}`); }
+    }
     const st = rec.filePath ? await stat(rec.filePath).catch(() => null) : null;
     if (!services.db.open) break;
     if (st && st.size > 0) {

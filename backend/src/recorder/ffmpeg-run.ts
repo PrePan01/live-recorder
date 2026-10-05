@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { rename, unlink } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { resolveBin } from "../utils/ffmpeg.js";
 import { checkFileIntegrity } from "./integrity.js";
 
@@ -28,6 +30,8 @@ export interface FfmpegRunOptions {
   killGraceMs?: number;
   /** 取消信号：触发即强杀子进程（删除联动/看门狗收割用，真正立即停）。 */
   signal?: AbortSignal;
+  /** 有界媒体输入；工厂仅在进程启动后调用，重试不会复用已消费的读流。 */
+  input?: () => Readable;
 }
 
 const PROGRESS_LINE =
@@ -48,10 +52,12 @@ export function runFfmpegTracked(
     const child = spawn(
       resolveBin("ffmpeg"),
       ["-nostats", "-progress", "pipe:1", ...args],
-      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+      { windowsHide: true, stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"] },
     );
     const untrack = trackFfmpeg(child);
+    let input: Readable | undefined;
     const onAbort = () => {
+      input?.destroy();
       try {
         child.kill("SIGKILL");
       } catch {
@@ -63,6 +69,8 @@ export function runFfmpegTracked(
       else options.signal.addEventListener("abort", onAbort, { once: true });
     }
     let stderr = "";
+    // 输入出错会关闭 stdin；子进程可能在 kill 前已按 EOF 成功退出，不能只信退出码。
+    let inputFailed = false;
     let stalled = false;
     let settled = false;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -74,7 +82,8 @@ export function runFfmpegTracked(
       if (stallTimer !== undefined) clearTimeout(stallTimer);
       if (killTimer !== undefined) clearTimeout(killTimer);
       options.signal?.removeEventListener("abort", onAbort);
-      resolve({ ok: code === 0 && !stalled, code, stalled, stderr });
+      input?.destroy();
+      resolve({ ok: code === 0 && !inputFailed && !stalled && !options.signal?.aborted, code, stalled, stderr });
     };
 
     const armStall = (): void => {
@@ -88,7 +97,7 @@ export function runFfmpegTracked(
 
     let buffered = "";
     let lastSpeed: number | null = null;
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       buffered += chunk.toString();
       const lines = buffered.split("\n");
       buffered = lines.pop() ?? "";
@@ -109,8 +118,8 @@ export function runFfmpegTracked(
         }
       }
     });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+    child.stderr!.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-64 * 1024);
     });
     child.on("error", () => {
       untrack();
@@ -122,6 +131,23 @@ export function runFfmpegTracked(
     });
 
     armStall();
+    if (options.input && child.stdin && !options.signal?.aborted) {
+      try {
+        input = options.input();
+        void pipeline(input, child.stdin).catch((error: NodeJS.ErrnoException) => {
+          // FFmpeg 在 -t 边界停止消费属正常情况；源读取故障则必须终止任务。
+          if (error.code !== "EPIPE" && error.code !== "ERR_STREAM_PREMATURE_CLOSE" && !settled) {
+            inputFailed = true;
+            stderr = (stderr + `\ninput: ${error.message}`).slice(-64 * 1024);
+            child.kill("SIGKILL");
+          }
+        });
+      } catch (error) {
+        inputFailed = true;
+        stderr += `\ninput: ${String(error)}`;
+        child.kill("SIGKILL");
+      }
+    }
   });
 }
 
