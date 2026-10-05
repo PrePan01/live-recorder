@@ -13,10 +13,6 @@ on:
         description: Resume an existing frozen release without rebuilding (for example 1.2.5)
         type: string
         default: ''
-      native_upload:
-        description: Use native AWS upload diagnostics for recovery
-        type: boolean
-        default: false
 
 concurrency:
   group: release-branch
@@ -401,18 +397,6 @@ jobs:
               mv -- "$asset" "release-assets/$normalized"
             fi
           done
-
-      - name: Recover CDN installers with native AWS command
-        if: inputs.resume_version != '' && inputs.native_upload && steps.publication.outputs.published != 'true'
-        timeout-minutes: 22
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
-          AWS_DEFAULT_REGION: cn-south-1
-          AWS_EC2_METADATA_DISABLED: 'true'
-        run: node release-tools/scripts/native-release-upload.mjs release-assets "$RELEASE_VERSION"
 
       # GitHub publication is the formal release commit point.
       - name: Verify staged assets and publish GitHub Release

@@ -216,25 +216,24 @@ test('CDN uploads use one recursive AWS batch, native progress and transfer defa
     const [program, args, options] = calls[0];
     assert.equal(program, 'aws');
     assert.equal(args[args.indexOf('s3') + 1], 'cp');
-    assert(args.includes('--cli-connect-timeout'));
-    assert(args.includes('--cli-read-timeout'));
+    assert(!args.includes('--cli-connect-timeout'));
+    assert(!args.includes('--cli-read-timeout'));
+    assert(!args.includes('--metadata'));
     assert(!args.includes('--only-show-errors'));
-    assert.equal(options.timeout, 300000);
+    assert(options.timeout > 19 * 60 * 1000);
+    assert.equal(options.idleTimeout, 180000);
     assert(args.includes('--recursive'));
     assert.equal(options.liveOutput, true);
     const staging = args[args.indexOf('cp') + 1];
     assert.equal(readFileSync(join(staging, 'app.dmg'), 'utf8'), 'mac bytes');
     assert.equal(readFileSync(join(staging, 'releases/v1.2.3/latest.json'), 'utf8'), '{}');
     assert.throws(() => readFileSync(join(staging, 'latest.json')));
-    const metadata = JSON.parse(args[args.indexOf('--metadata') + 1]);
-    assert.match(metadata['release-set-sha256'], /^[a-f0-9]{64}$/);
     assert(args.includes('public, max-age=31536000, immutable'));
-    // Explicit --profile can disable environment credentials; use only the
-    // isolated config file and environment-selected default profile instead.
     assert(!args.includes('--profile'));
-    assert.equal(options.env.AWS_PROFILE, 'default');
-    const config = readFileSync(options.env.AWS_CONFIG_FILE, 'utf8');
-    assert(!/multipart_|max_concurrent_requests|preferred_transfer_client/.test(config));
+    assert.equal(options.env, undefined);
+    const metadata = { 'release-set-sha256': createHash('sha256').update(JSON.stringify([
+      ['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash'],
+    ].sort())).digest('hex') };
     remote.objectHead = () => ({ Metadata: metadata });
     await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
     assert.equal(calls.length, 1);
@@ -458,7 +457,7 @@ test('a partially completed AWS batch retries only missing files', async () => {
   for (const name of ['app.dmg', 'app.exe']) writeFileSync(join(directory, name), name);
   const remote = new ReleaseRemote(directory, state.version, async (program, args) => {
     const staging = args[args.indexOf('cp') + 1];
-    const metadata = JSON.parse(args[args.indexOf('--metadata') + 1]);
+    const metadata = { 'release-set-sha256': createHash('sha256').update(JSON.stringify([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']].sort())).digest('hex') };
     const names = ['app.dmg', 'app.exe'].filter(name => {
       try { readFileSync(join(staging, name)); return true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
@@ -485,4 +484,10 @@ test('native upload progress is visible even when the subprocess fails', () => {
   `], { encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /Completed 8 MiB\/64 MiB\n/);
+});
+
+test('active byte progress extends the idle window while stalled uploads stop', async () => {
+  const result = await asyncCommand(process.execPath, ['-e', 'let n=0;const timer=setInterval(()=>{console.log(`Completed ${++n}.0 MiB/9.0 MiB`);if(n===5){clearInterval(timer)}},150)'], { timeout: 3000, idleTimeout: 500 });
+  assert.match(result, /Completed 5.0 MiB/);
+  await assert.rejects(asyncCommand(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeout: 2000, idleTimeout: 80 }), /no upload progress/);
 });
