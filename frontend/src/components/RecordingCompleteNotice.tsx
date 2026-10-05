@@ -74,7 +74,14 @@ export default function RecordingCompleteNotice() {
   useEffect(() => {
     if (!clipDoneQueue.length) return;
     for (const rec of clipDoneQueue) {
-      if (rec.state === "completed") {
+      if (rec.state === "completed" && (rec.pipelineStatus === "failed" || rec.pipelineStatus === "partial")) {
+        notification.warning({
+          key: `clip-done-${rec.id}`,
+          message: rec.pipelineStatus === "failed" ? "片段后处理失败" : "片段后处理部分完成",
+          description: `${rec.streamTitle}：请查看后处理详情`,
+          duration: 0,
+        });
+      } else if (rec.state === "completed") {
         notification.success({
           key: `clip-done-${rec.id}`,
           message: "片段已保存",

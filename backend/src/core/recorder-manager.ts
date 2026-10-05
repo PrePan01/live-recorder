@@ -231,6 +231,7 @@ export class RecorderManager {
   private clipProgress = new Map<string, number>();
   /** 片段导出取消信号（删除联动：导出任务立即真停）。 */
   private clipExportAborts = new Map<string, AbortController>();
+  private clipExportJobs = new Map<string, Promise<void>>();
   /** Prevent manual and scheduler starts from both passing the async preflight. */
   private starting = new Set<string>();
   private backgroundTasks = 0;
@@ -238,7 +239,7 @@ export class RecorderManager {
   private shuttingDown = false;
 
   get busy(): boolean {
-    return this.active.size > 0 || this.backgroundTasks > 0;
+    return this.active.size > 0 || this.backgroundTasks > 0 || this.clipExportJobs.size > 0;
   }
 
   async resetIdleState(): Promise<void> {
@@ -260,6 +261,8 @@ export class RecorderManager {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     const pending: Promise<void>[] = [];
+    for (const abort of this.clipExportAborts.values()) abort.abort();
+    pending.push(...this.clipExportJobs.values());
     for (const session of [...this.active.values()]) {
       session.wakeReconnect?.();
       pending.push(
@@ -2567,7 +2570,7 @@ export class RecorderManager {
         (this.services.clock.now() - Date.parse(source.startedAt)) / 1000,
       ),
     );
-    if (startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
+    if (!Number.isFinite(startSecond) || !Number.isFinite(endSecond) || startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
       throw new AppError(
         "CONFIG_INVALID",
         "选区必须在当前已录制时长内，且至少为 1 秒",
@@ -2612,7 +2615,7 @@ export class RecorderManager {
     this.clipExports.set(selectionKey, clip.id);
     const abort = new AbortController();
     this.clipExportAborts.set(clip.id, abort);
-    void (async () => {
+    const job = (async () => {
       const selectionMs = (endSecond - startSecond) * 1000;
       // 进度节流：整数百分比变化才发、间隔 ≥500ms（onProgress 是高频回调，直接进 SSE 会刷屏）。
       let lastPct = -1;
@@ -2624,8 +2627,9 @@ export class RecorderManager {
           startSecond,
           endSecond,
           {
-            ...(abort.signal.aborted ? {} : { signal: abort.signal }),
+            signal: abort.signal,
             onProgress: ({ outTimeMs }) => {
+              if (abort.signal.aborted || this.shuttingDown) return;
               const pct = Math.max(
                 0,
                 Math.min(99, Math.floor((outTimeMs / selectionMs) * 100)),
@@ -2649,7 +2653,11 @@ export class RecorderManager {
             },
           },
         );
-        const current = this.services.recordings.get(clip.id) ?? pending;
+        const current = this.services.recordings.get(clip.id);
+        if (abort.signal.aborted || this.shuttingDown || !current) {
+          await unlink(outputPath).catch(() => undefined);
+          return;
+        }
         const currentPath = current.filePath ?? outputPath;
         if (!result.ok) {
           // 失败：主行只留「片段导出失败」，技术原因进 details；半成品即刻清理。
@@ -2673,7 +2681,8 @@ export class RecorderManager {
           await unlink(currentPath).catch(() => undefined);
           return;
         }
-        const { landed, finalTitle } = await withClipFinalizeLock(async () => {
+        const finalized = await withClipFinalizeLock(async () => {
+          if (abort.signal.aborted || !this.services.recordings.get(clip.id)) return null;
           const wanted = sanitizeRenameBase(current.streamTitle);
           const { targetPath, base } = await uniqueTargetPath(
             file.dir,
@@ -2693,8 +2702,15 @@ export class RecorderManager {
           }
           return { landed: targetPath, finalTitle: base };
         });
-        const done = this.services.recordings.update(clip.id, {
+        if (!finalized || abort.signal.aborted || this.shuttingDown || !this.services.recordings.get(clip.id)) {
+          await unlink(finalized?.landed ?? currentPath).catch(() => undefined);
+          return;
+        }
+        const { landed, finalTitle } = finalized;
+        this.services.recordings.update(clip.id, {
           state: "completed",
+          // 导出结束只是后处理的交接点，校验队列也会发事件，先标记等待后处理。
+          pipelineStatus: "queued",
           endReason: "clip_export",
           endedAt: new Date(
             Date.parse(source.startedAt) + endSecond * 1000,
@@ -2704,20 +2720,35 @@ export class RecorderManager {
           ...(finalTitle !== undefined ? { streamTitle: finalTitle } : {}),
         });
         this.clipProgress.delete(clip.id);
-        // 完成即终态、不进确认链：用户点「保存」时已确认命名（不双弹）。
-        this.services.events.emit({
-          type: "recording:updated",
-          data: { ...done, progressPercent: null },
-        });
         // 校验与后处理与正常保存录像完全同链：自动入完整性校验队列 + 按配置自动进管线
         // （未启用管线时的 not_required+自动上传同语义），不依赖手动批量重校验。
         this.finishSegmentProcessing(clip.id);
+        // 使用入队后的真实状态：启用管线时仍在 processing，未启用时 not_required。
+        this.services.events.emit({
+          type: "recording:updated",
+          data: { ...this.services.recordings.get(clip.id)!, progressPercent: null },
+        });
+      } catch (error) {
+        await unlink(outputPath).catch(() => undefined);
+        if (!abort.signal.aborted && !this.shuttingDown && this.services.recordings.get(clip.id)) {
+          const failed = this.services.recordings.update(clip.id, {
+            state: "failed",
+            failureReason: new AppError("RECORDING_FILE_CORRUPTED", "片段导出失败", {
+              recordingId: clip.id,
+              details: { reason: String(error).slice(-200) },
+            }).toObject(),
+          });
+          this.services.events.emit({ type: "recording:updated", data: { ...failed, progressPercent: null } });
+        }
       } finally {
         // 解除在途占位；源录制全程不碰（导出不停录）。
         this.clipExports.delete(selectionKey);
         this.clipExportAborts.delete(clip.id);
+        this.clipExportJobs.delete(clip.id);
+        this.clipProgress.delete(clip.id);
       }
     })();
+    this.clipExportJobs.set(clip.id, job);
     this.services.events.emit({ type: "recording:updated", data: pending });
     return {
       source: this.services.recordings.get(recordingId)!,
