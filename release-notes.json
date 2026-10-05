@@ -1,7 +1,7 @@
 {
   "releases": [
     {
-      "version": "1.2.4",
+      "version": "1.2.5",
       "publishedAt": "2026-10-05",
       "notes": [
         "优化：录制中导出选区速度大幅优化",
