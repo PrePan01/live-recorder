@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { open, stat } from "node:fs/promises";
@@ -21,6 +20,7 @@ import {
   removeSeekIndexSidecar,
 } from "../../storage/seek-index.js";
 import { compositeClipProgress } from "../../core/task-progress.js";
+import { openSystemPath } from "../../utils/open-system-path.js";
 
 const STATES: RecordingState[] = [
   "pending",
@@ -437,8 +437,7 @@ export function registerRecordingRoutes(
     return reply.send({ accepted, requested: ids.length, skippedActive });
   });
 
-  app.post("/api/v1/recordings/:id/open", async (req, reply) => {
-    const { id } = req.params as { id: string };
+  const openRecordingTarget = async (id: string, target: "file" | "directory"): Promise<void> => {
     const rec = services.recordings.get(id);
     if (!rec || !rec.filePath) {
       throw new AppError("RESOURCE_NOT_FOUND", "录制记录不存在或文件缺失", {
@@ -446,17 +445,37 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
-    const dir = dirname(rec.filePath);
-    if (process.env.VITEST !== "true") {
-      const command =
-        process.platform === "darwin"
-          ? "open"
-          : process.platform === "win32"
-            ? "explorer"
-            : "xdg-open";
-      const child = spawn(command, [dir], { detached: true, stdio: "ignore" });
-      child.unref();
+    if (target === "file" && rec.state !== "completed") {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录像尚未完成，暂时无法播放", { recordingId: id });
     }
+    const targetPath = target === "file" ? rec.filePath : dirname(rec.filePath);
+    if (target === "file") {
+      const info = await stat(targetPath).catch(() => null);
+      if (!info?.isFile()) {
+        throw new AppError("RESOURCE_NOT_FOUND", "录像文件已删除或不可访问", { recordingId: id });
+      }
+    }
+    if (process.env.VITEST !== "true") {
+      await openSystemPath(targetPath).catch(() => {
+        throw new AppError("SERVICE_UNAVAILABLE", "无法打开系统默认应用，请检查文件关联", { recordingId: id });
+      });
+    }
+  };
+
+  app.post("/api/v1/recordings/:id/open", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { target = "directory" } = (req.body ?? {}) as { target?: "file" | "directory" };
+    if (target !== "file" && target !== "directory") {
+      throw new AppError("CONFIG_INVALID", "打开目标无效", { recordingId: id });
+    }
+    await openRecordingTarget(id, target);
+    return reply.send({ ok: true });
+  });
+
+  // 播放使用独立语义，旧后端不支持时明确报错，不能悄悄降级为打开目录。
+  app.post("/api/v1/recordings/:id/play", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await openRecordingTarget(id, "file");
     return reply.send({ ok: true });
   });
 
@@ -493,17 +512,9 @@ export function registerRecordingRoutes(
         });
       });
       if (process.env.VITEST !== "true") {
-        const command =
-          process.platform === "darwin"
-            ? "open"
-            : process.platform === "win32"
-              ? "explorer"
-              : "xdg-open";
-        const child = spawn(command, [targetPath], {
-          detached: true,
-          stdio: "ignore",
+        await openSystemPath(targetPath).catch(() => {
+          throw new AppError("SERVICE_UNAVAILABLE", "无法打开系统默认应用，请检查文件关联", { recordingId: id });
         });
-        child.unref();
       }
       return reply.send({ ok: true });
     },

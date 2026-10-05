@@ -16,7 +16,6 @@ import {
 } from "antd";
 import { ExportOutlined, CopyOutlined } from "@ant-design/icons";
 import { buildRecordingColumns } from "../../utils/recordingColumns";
-import PlayerModal from "./components/PlayerModal";
 import PipelineDrawer from "./components/PipelineDrawer";
 import ExportTasksDrawer from "./components/ExportTasksDrawer";
 import dayjs from "dayjs";
@@ -66,7 +65,6 @@ export default function History() {
   const [renaming, setRenaming] = useState<Recording | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
-  const [playing, setPlaying] = useState<Recording | null>(null);
   const [pipelineRec, setPipelineRec] = useState<Recording | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportDir, setExportDir] = useState("");
@@ -324,7 +322,6 @@ export default function History() {
         handleUploadErrorDetail,
         setRenaming,
         setRenameValue,
-        setPlaying,
         setPipelineRec,
         retryUploadFor,
       }),
@@ -466,7 +463,6 @@ export default function History() {
           }}
         />
       )}
-      <PlayerModal playing={playing} onClose={() => setPlaying(null)} />
       <PipelineDrawer
         pipelineRec={pipelineRec}
         onClose={() => setPipelineRec(null)}

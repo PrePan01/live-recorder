@@ -16,10 +16,6 @@ export function previewWsUrl(roomId: string): string {
   return `${wsBase}/ws/preview/${roomId}`;
 }
 
-export function recordingFileUrl(recordingId: string): string {
-  return `${EndpointResolver.base}/recordings/${recordingId}/file`;
-}
-
 export const http = axios.create({ baseURL: API_BASE, timeout: 10000 });
 
 http.interceptors.request.use((config) => {
