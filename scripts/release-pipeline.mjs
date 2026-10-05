@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
-import { execFile, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { verifyInstallerSignature } from "./verify-installer-signatures.mjs";
 import {
@@ -278,34 +278,48 @@ function command(program, args) {
   }
 }
 export function asyncCommand(program, args, options = {}) {
-  const { label = program, timeout = 300000, liveOutput = false, ...execution } = options;
+  const { label = program, timeout = 300000, liveOutput = false, idleTimeout = 0, ...execution } = options;
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    let progress = "waiting for output";
+    let lastProgress = started, lastAmount = '', progress = 'waiting for output';
+    let stdout = '', stderr = '', stopped, forceKill, settled = false;
+    const child = spawn(program, args, { ...execution, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stop = reason => {
+      if (stopped) return;
+      stopped = reason;
+      child.kill('SIGTERM');
+      forceKill = setTimeout(() => child.kill('SIGKILL'), 10000);
+    };
+    const deadline = setTimeout(() => stop(`${label} timed out after ${Math.round(timeout / 1000)}s`), timeout);
     const heartbeat = setInterval(() => {
       console.log(`[${label}] ${Math.round((Date.now() - started) / 1000)}s: ${progress}`);
     }, 15000);
-    const child = execFile(
-      program, args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout, ...execution },
-      (error, stdout, stderr) => {
-        clearInterval(heartbeat);
-        if (error) reject(new Error(
-          error.killed ? `${label} timed out after ${Math.round(timeout / 1000)}s`
-            : `${label} failed: ${stderr || error.message}`,
-        ));
-        else {
-          console.log(`[${label}] completed in ${Math.round((Date.now() - started) / 1000)}s`);
-          resolve(stdout);
-        }
-      },
-    );
-    // These commands are non-interactive. Never leave an input pipe open.
-    child.stdin?.end();
-    for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk) => {
-      if (liveOutput) process.stdout.write(chunk.toString().replace(/\r/g, "\n"));
-      const lines = chunk.toString().trim().split(/[\r\n]+/);
-      progress = lines.at(-1) || progress;
+    const idle = idleTimeout ? setInterval(() => {
+      if (Date.now() - lastProgress > idleTimeout) stop(`${label}: no upload progress for ${Math.round(idleTimeout / 1000)}s`);
+    }, Math.min(15000, idleTimeout / 2)) : undefined;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline); clearTimeout(forceKill); clearInterval(heartbeat); clearInterval(idle);
+      if (error) reject(error);
+      else { console.log(`[${label}] completed in ${Math.round((Date.now() - started) / 1000)}s`); resolve(stdout); }
+    };
+    for (const [stream, isError] of [[child.stdout, false], [child.stderr, true]]) stream.on('data', chunk => {
+      const output = chunk.toString();
+      if (isError) stderr += output; else stdout += output;
+      if (stdout.length + stderr.length > 16 * 1024 * 1024) stop(`${label}: output limit exceeded`);
+      if (liveOutput) process.stdout.write(output.replace(/\r/g, '\n'));
+      progress = output.trim().split(/[\r\n]+/).at(-1) || progress;
+      for (const match of output.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
+        const amount = `${match[1]} ${match[2]}`;
+        if (amount !== lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
+      }
+    });
+    child.on('error', error => finish(error));
+    child.on('close', (code, signal) => {
+      if (stopped) finish(new Error(stopped));
+      else if (code !== 0 || signal) finish(new Error(`${label} failed: ${stderr || signal || code}`));
+      else finish();
     });
   });
 }
@@ -354,10 +368,6 @@ export class ReleaseRemote {
     this.repo = process.env.GITHUB_REPOSITORY;
     this.scratch = mkdtempSync(join(tmpdir(), "lr-publish-"));
     this.runAsync = runAsync;
-    // Keep the same AWS transfer defaults used by the previous working flow.
-    // Only isolate configuration; do not force a transfer engine/chunk size.
-    this.transferConfig = join(this.scratch, "aws-config");
-    writeFileSync(this.transferConfig, "[default]\nregion = cn-south-1\n");
   }
   close() {
     rmSync(this.scratch, { recursive: true, force: true });
@@ -540,7 +550,7 @@ export class ReleaseRemote {
     const fingerprint = hashBytes(JSON.stringify([...entries].sort()));
     const staging = join(this.scratch, "cdn-upload");
     const started = Date.now();
-    const budget = 8 * 60 * 1000;
+    const budget = 20 * 60 * 1000;
     await retryTransfer(async () => {
       rmSync(staging, { recursive: true, force: true });
       mkdirSync(staging, { recursive: true });
@@ -568,14 +578,10 @@ export class ReleaseRemote {
       console.log(`Uploading ${pending} CDN objects in one AWS recursive batch`);
       await this.runAsync("aws", [
         "--endpoint-url", process.env.QINIU_ENDPOINT,
-        "--cli-connect-timeout", "10", "--cli-read-timeout", "60",
         "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
-        "--metadata", JSON.stringify({ "release-set-sha256": fingerprint }),
         "--cache-control", "public, max-age=31536000, immutable",
       ], {
-        label: "CDN batch upload", liveOutput: true, timeout: Math.min(300000, remaining),
-        env: { ...process.env, AWS_CONFIG_FILE: this.transferConfig,
-          AWS_PROFILE: "default", AWS_DEFAULT_PROFILE: "default", AWS_MAX_ATTEMPTS: "3" },
+        label: "CDN batch upload", liveOutput: true, timeout: remaining, idleTimeout: 180000,
       });
     });
   }
