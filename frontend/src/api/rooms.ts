@@ -1,4 +1,4 @@
-import { http } from "./client";
+import { baseUrl, http } from "./client";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
 
 export async function fetchRooms(): Promise<Room[]> {
@@ -78,16 +78,27 @@ export async function checkEnabledRooms(): Promise<{
   return data;
 }
 
-export async function startRoomRecording(id: string, origin?: "floating"): Promise<void> {
-  await http.post(`/rooms/${id}/start-recording`, origin ? { origin } : undefined);
+export async function startRoomRecording(
+  id: string,
+  origin?: "floating",
+): Promise<void> {
+  await http.post(
+    `/rooms/${id}/start-recording`,
+    origin ? { origin } : undefined,
+  );
 }
 
 export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }
 
-export async function stopAllRecordings(): Promise<{ stopped: string[]; failed: string[] }> {
-  const { data } = await http.post<{ stopped: string[]; failed: string[] }>("/rooms/stop-recording-all");
+export async function stopAllRecordings(): Promise<{
+  stopped: string[];
+  failed: string[];
+}> {
+  const { data } = await http.post<{ stopped: string[]; failed: string[] }>(
+    "/rooms/stop-recording-all",
+  );
   return data;
 }
 
@@ -149,6 +160,12 @@ export interface RoomStats {
 }
 
 export interface RoomInsight {
+  sorting?: {
+    lastRecordedAt: string | null;
+    lastLiveAt: string | null;
+    totalDurationMs: number;
+    totalRecordings: number;
+  };
   totalRecordings: number;
   totalBytes: number;
   successRate: number;
@@ -200,14 +217,56 @@ export interface RoomInsight {
 export async function fetchRoomInsights(
   roomIds: string[],
 ): Promise<Record<string, RoomInsight>> {
-  const { data } = await http.post<{ insights: Record<string, RoomInsight> }>(
-    "/rooms/insights/batch",
-    { roomIds },
+  const ids = [...new Set(roomIds)];
+  const batches = Array.from(
+    { length: Math.ceil(ids.length / 100) },
+    (_, index) => ids.slice(index * 100, (index + 1) * 100),
   );
-  return data.insights;
+  const responses = await Promise.all(
+    batches.map(async (batch) => {
+      const { data } = await http.post<{
+        insights: Record<string, RoomInsight>;
+      }>("/rooms/insights/batch", { roomIds: batch });
+      return data.insights;
+    }),
+  );
+  return Object.assign({}, ...responses);
 }
 
 export async function fetchRoomStats(id: string): Promise<RoomStats> {
   const { data } = await http.get<RoomStats>(`/rooms/${id}/stats`);
   return data;
+}
+
+export function liveCoverSrc(roomId: string, coverUrl: string): string {
+  return `${baseUrl()}/rooms/${encodeURIComponent(roomId)}/cover?v=${encodeURIComponent(coverUrl)}`;
+}
+
+export async function saveLiveCover(
+  room: Room,
+): Promise<"saved" | "cancelled" | "downloaded"> {
+  const { data } = await http.post<{
+    saved: boolean;
+    reason: "cancelled" | "no-dialog" | null;
+  }>(`/rooms/${encodeURIComponent(room.id)}/cover/save`, undefined, {
+    timeout: 0,
+  });
+  if (data.saved) return "saved";
+  if (data.reason !== "no-dialog") return "cancelled";
+  const response = await http.get<Blob>(
+    `/rooms/${encodeURIComponent(room.id)}/cover?download=1`,
+    { responseType: "blob" },
+  );
+  const disposition = response.headers["content-disposition"] as
+    string | undefined;
+  const filename = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const url = URL.createObjectURL(response.data);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename
+    ? decodeURIComponent(filename)
+    : `${room.displayName}-直播封面`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return "downloaded";
 }

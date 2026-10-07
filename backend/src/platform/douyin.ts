@@ -37,6 +37,7 @@ interface DouyinEnterData {
     id?: string;
     status?: number;
     title?: string;
+    cover?: DouyinImage;
     user?: {
       nickname?: string;
       avatar_thumb?: DouyinImage;
@@ -588,6 +589,7 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
+    const liveCoverUrl = preferredAvatarUrl(entry.cover);
     const entryAvatar = preferredAvatarUrl(
       entry.user?.avatar_larger,
       entry.user?.avatar_large,
@@ -636,6 +638,7 @@ export class DouyinAdapter implements PlatformAdapter {
     }
     return {
       status: "live",
+      ...(liveCoverUrl ? { liveCoverUrl } : {}),
       ...base,
       streamSessionId: entry.id ?? roomId,
       availableQualities: Object.keys(flv)

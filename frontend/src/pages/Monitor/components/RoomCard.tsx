@@ -1,8 +1,6 @@
-import { memo, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { memo } from "react";
 import {
   Button,
-  Col,
   Card,
   Popover,
   Popconfirm,
@@ -21,6 +19,8 @@ import {
 } from "@ant-design/icons";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import RecordingStopIcon from "../../../components/RecordingStopIcon";
+import RoomWarningMarquee, { type RoomWarning } from "./RoomWarningMarquee";
+import RoomCover from "./RoomCover";
 import RoomAvatar from "./RoomAvatar";
 import RoomStats from "./RoomStats";
 import RoomHealth from "./RoomHealth";
@@ -40,29 +40,17 @@ export function SortableRoomCardItem({
 }) {
   const sortable = useRoomSortableItem(roomId, "card");
   return (
-    <Col
-      xs={24}
-      sm={12}
-      lg={8}
-      xxl={6}
+    <div
+      data-room-id={roomId}
       ref={sortable.setNodeRef}
       style={sortable.style}
-      className={`lr-sortable-card ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
+      className={`lr-sortable-card ${sortable.disabled ? "lr-sortable-card--disabled" : ""} ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
       {...sortable.listeners}
     >
       {children}
-    </Col>
+    </div>
   );
 }
-
-const EXPANDED_CARD_ACTION_WIDTH = 96;
-const compactActionTooltipStyles = {
-  container: {
-    display: "flex",
-    justifyContent: "center",
-    textAlign: "center" as const,
-  },
-};
 
 const QUALITY_ORDER = ["original", "1080p", "720p", "360p"];
 const qualityRank = (q: string) => QUALITY_ORDER.indexOf(q);
@@ -79,27 +67,6 @@ function bestQuality(qualities: string[]): string | null {
   return best;
 }
 
-function useCompactRoomCardActions(actionCount: number) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  const expandedWidth =
-    actionCount * EXPANDED_CARD_ACTION_WIDTH + (actionCount - 1) * 2;
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const update = () => {
-      setCompact(element.clientWidth < expandedWidth);
-    };
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    update();
-    return () => observer.disconnect();
-  }, [expandedWidth]);
-
-  return { ref, compact };
-}
-
 export const RoomCard = memo(function RoomCard({
   room,
   onWatch,
@@ -114,6 +81,8 @@ export const RoomCard = memo(function RoomCard({
   recentlyStopped,
   autoRecordEnabled,
   insight,
+  insightsLoading,
+  insightsFailed,
   qualityPreference,
   bilibiliAuthorized,
   floatingEnabled,
@@ -132,12 +101,13 @@ export const RoomCard = memo(function RoomCard({
   recentlyStopped?: boolean;
   autoRecordEnabled: boolean;
   insight?: RoomInsight;
+  insightsLoading?: boolean;
+  insightsFailed?: boolean;
   qualityPreference: Quality | null;
   bilibiliAuthorized: boolean;
   floatingEnabled: boolean;
   floatingReady: boolean;
 }) {
-  const navigate = useNavigate();
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
@@ -148,13 +118,44 @@ export const RoomCard = memo(function RoomCard({
     qualityPreference !== null &&
     qualityRank(bestAvailable) > qualityRank(qualityPreference);
   const offerBilibiliLogin = qualityShortfall && !bilibiliAuthorized;
-  const actionCount = onAir || recording ? 4 : 2;
-  const { ref, compact } = useCompactRoomCardActions(actionCount);
+  const warnings: RoomWarning[] = [];
+  if (room.lastError) {
+    const needsAuthorization =
+      room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ||
+      (room.platform === "douyin" &&
+        room.lastError.code === "DOUYIN_COOKIE_EXPIRED");
+    warnings.push(
+      needsAuthorization
+        ? {
+            text: `平台访问受限，请`,
+            action: {
+              label: "检查授权",
+              to: `/settings#${room.platform}-cookie`,
+            },
+          }
+        : { text: room.lastError.message },
+    );
+  }
+  if (qualityShortfall && bestAvailable) {
+    warnings.push({
+      text: `当前最高可观看、录制 ${qualityLabel(bestAvailable)}${offerBilibiliLogin ? "，" : ""}`,
+      ...(offerBilibiliLogin
+        ? {
+            action: { label: "登录B站", to: "/settings#bilibili-cookie" },
+            suffix: "可尝试获取更高画质",
+          }
+        : {}),
+    });
+  }
   return (
-    <div ref={ref} className="lr-room-card__container">
+    <div className="lr-room-card__container">
       <Card
         className={`lr-room-card ${onAir ? "lr-room-card--live" : "lr-room-card--offline"} ${layout === "list" ? "lr-room-card--list" : ""}`}
-        styles={{ body: { padding: 14 } }}
+        cover={
+          warnings.length > 0 ? (
+            <RoomWarningMarquee messages={warnings} />
+          ) : undefined
+        }
         title={
           <>
             <div className="lr-room-card__corner">
@@ -206,7 +207,7 @@ export const RoomCard = memo(function RoomCard({
               {room.titleFallbackUsed ? (
                 <Tooltip title="显示名为回退/占位来源，平台接口未返回正式标题">
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    （回退标题）
+                    回退
                   </Typography.Text>
                 </Tooltip>
               ) : null}
@@ -225,7 +226,7 @@ export const RoomCard = memo(function RoomCard({
               >
                 <Button
                   type="text"
-                  aria-label="启用录制按钮"
+                  aria-label={floatingEnabled ? "关闭录制按钮" : "启用录制按钮"}
                   className={`lr-floating-recorder-toggle ${floatingEnabled ? "lr-floating-recorder-toggle--enabled" : ""}`}
                   disabled={!floatingReady}
                   onClick={() => onEnableFloating(room)}
@@ -242,7 +243,7 @@ export const RoomCard = memo(function RoomCard({
             <Button
               type="text"
               size="small"
-              aria-label="收藏"
+              aria-label={room.favorited ? "取消收藏" : "收藏"}
               icon={
                 room.favorited ? (
                   <StarFilled style={{ color: "#faad14" }} />
@@ -255,26 +256,37 @@ export const RoomCard = memo(function RoomCard({
           </Space>
         }
       >
+        {onAir && layout === "card" ? (
+          <>
+            <RoomCover
+              key={`${room.id}:${room.liveCoverUrl ?? ""}`}
+              room={room}
+            />
+          </>
+        ) : null}
         <Space className="lr-room-card__status" style={{ marginBottom: 10 }}>
-          <LiveStatusTag
-            status={room.lastLiveStatus}
-            streamTitle={room.currentStreamTitle}
-          />
+          <LiveStatusTag status={room.lastLiveStatus} />
           {autoRecordEnabled ? (
             <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-              自动录
+              自动录制
             </Tag>
           ) : null}
-          <LivePredictionBadge insight={insight} hidden={onAir || recording} />
-          {room.tags.length > 0 ? (
-            <Space size={[4, 4]} wrap>
-              {room.tags.map((t) => (
-                <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-                  {t.name}
-                </Tag>
-              ))}
-            </Space>
-          ) : null}
+          {onAir ? (
+            <LiveStatusTag
+              status="live"
+              streamTitle={
+                room.currentStreamTitle?.trim() || "直播标题暂未获取"
+              }
+              titleOnly
+            />
+          ) : (
+            <LivePredictionBadge insight={insight} hidden={recording} />
+          )}
+          {room.tags.map((t) => (
+            <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
+              {t.name}
+            </Tag>
+          ))}
         </Space>
         <div
           className="lr-room-card__stats"
@@ -291,85 +303,28 @@ export const RoomCard = memo(function RoomCard({
           />
         </div>
         <div className="lr-room-card__health" style={{ marginBottom: 10 }}>
-          <RoomHealth insight={insight} />
+          <RoomHealth
+            insight={insight}
+            loading={insightsLoading}
+            failed={insightsFailed}
+          />
         </div>
-        {qualityShortfall && bestAvailable ? (
-          <Typography.Paragraph
-            className="lr-room-card__quality"
-            type="warning"
-            style={{ marginBottom: 10, marginTop: 0, fontSize: 12 }}
-          >
-            {offerBilibiliLogin ? (
-              <Typography.Link
-                className="lr-room-card__error-link"
-                underline
-                style={{ fontSize: "inherit" }}
-                onClick={() => navigate("/settings#bilibili-cookie")}
-              >
-                登录B站
-              </Typography.Link>
-            ) : null}
-            前最高只能观看、录制 {qualityLabel(bestAvailable)}
-          </Typography.Paragraph>
-        ) : null}
-        {room.lastError ? (
-          <Typography.Paragraph
-            className="lr-room-card__error"
-            type="danger"
-            style={{ marginBottom: 10, marginTop: 0 }}
-          >
-            {room.platform === "douyin" &&
-            (room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ||
-              room.lastError.code === "DOUYIN_COOKIE_EXPIRED") ? (
-              <>
-                平台访问受限，请检查{" "}
-                <Typography.Link
-                  className="lr-room-card__error-link"
-                  underline
-                  onClick={() => navigate("/settings#douyin-cookie")}
-                >
-                  抖音授权
-                </Typography.Link>
-              </>
-            ) : room.platform === "bilibili" &&
-              room.lastError.code === "PLATFORM_ACCESS_RESTRICTED" ? (
-              <>
-                平台访问受限，请检查{" "}
-                <Typography.Link
-                  className="lr-room-card__error-link"
-                  underline
-                  onClick={() => navigate("/settings#bilibili-cookie")}
-                >
-                  B站授权
-                </Typography.Link>
-              </>
-            ) : (
-              room.lastError.message
-            )}
-          </Typography.Paragraph>
-        ) : null}
         <div
-          className={`lr-room-card__actions ${compact ? "lr-room-card__actions--compact" : ""} ${(onAir || recording) && layout === "card" ? "lr-room-card__actions--live" : ""}`}
+          className={`lr-room-card__actions ${(onAir || recording) && layout === "card" ? "lr-room-card__actions--live" : ""}`}
         >
-          <Tooltip
-            title={compact ? "检测" : undefined}
-            styles={compactActionTooltipStyles}
-          >
+          <Tooltip title="立即检测">
             <Button
               size="middle"
-              aria-label="检测"
+              aria-label="立即检测"
               icon={<ReloadOutlined />}
               loading={acting && actingAction === "check"}
               disabled={acting || room.monitorState === "checking" || recording}
               onClick={() => onCheck(room)}
             >
-              <span className="lr-room-card__action-label">检测</span>
+              <span className="lr-room-card__action-label">立即检测</span>
             </Button>
           </Tooltip>
-          <Tooltip
-            title={compact ? "打开直播间" : undefined}
-            styles={compactActionTooltipStyles}
-          >
+          <Tooltip title="打开直播间">
             <Button
               size="middle"
               aria-label="打开直播间"
@@ -382,10 +337,7 @@ export const RoomCard = memo(function RoomCard({
             </Button>
           </Tooltip>
           {onAir || recording ? (
-            <Tooltip
-              title={compact ? "观看" : undefined}
-              styles={compactActionTooltipStyles}
-            >
+            <Tooltip title="观看直播">
               <Button
                 size="middle"
                 type="default"
@@ -403,10 +355,7 @@ export const RoomCard = memo(function RoomCard({
               title="确定停止当前录制？"
               onConfirm={() => onStop(room)}
             >
-              <Tooltip
-                title={compact ? "停止录制" : undefined}
-                styles={compactActionTooltipStyles}
-              >
+              <Tooltip title="停止录制">
                 <Button
                   size="middle"
                   danger
@@ -415,25 +364,22 @@ export const RoomCard = memo(function RoomCard({
                   loading={acting && actingAction === "stop"}
                   icon={<RecordingStopIcon />}
                 >
-                  <span className="lr-room-card__action-label">停止</span>
+                  <span className="lr-room-card__action-label">停止录制</span>
                 </Button>
               </Tooltip>
             </Popconfirm>
           ) : onAir ? (
-            <Tooltip
-              title={compact ? "录制" : undefined}
-              styles={compactActionTooltipStyles}
-            >
+            <Tooltip title="开始录制">
               <Button
                 size="middle"
                 type="primary"
-                aria-label="录制"
+                aria-label="开始录制"
                 icon={<VideoCameraAddOutlined />}
                 loading={acting && actingAction === "record"}
                 disabled={acting || recentlyStopped || !onAir}
                 onClick={() => onRecord(room)}
               >
-                <span className="lr-room-card__action-label">录制</span>
+                <span className="lr-room-card__action-label">开始录制</span>
               </Button>
             </Tooltip>
           ) : null}

@@ -947,6 +947,7 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
         ON recording_markers(recording_id, position_seconds, created_at);
     `,
   },
+  { version: 45, up: (db) => ensureColumn(db, "rooms", "live_cover_url", "live_cover_url TEXT") },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

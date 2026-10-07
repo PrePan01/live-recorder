@@ -7,7 +7,11 @@ import { isPlausibleSeekOffset } from "../utils/recordingTimeline";
 import { prepareSeekPlayback } from "../utils/prepareSeekPlayback";
 import { watchSeekPlayback } from "../utils/seekPlaybackHealth";
 import { seekPlaybackConfig } from "../utils/seekPlaybackConfig";
-import { holdVideoFrame, releaseVideoFrame, waitForVideoFrame } from "../utils/videoFrameTransition";
+import {
+  holdVideoFrame,
+  releaseVideoFrame,
+  waitForVideoFrame,
+} from "../utils/videoFrameTransition";
 
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
@@ -19,6 +23,9 @@ const EVENTS = mpegts.Events as unknown as Record<
 export interface VideoPlayerProps {
   roomId: string;
   muted?: boolean;
+  /** Hover cover: silent, no controls/retries, bounded buffers. */
+  thumbnail?: boolean;
+  onPreviewError?: () => void;
   /** 平台：douyin 无 Cookie 受限时加载超时给明确提示 */
   platform?: "bilibili" | "douyin";
   /** 竖屏墙：不写死宽高比，画面撑满容器高度并按真实比例显示。 */
@@ -32,7 +39,12 @@ export interface VideoPlayerProps {
   /** 预览切流期间保留最后一帧，直到新源真正呈现画面。 */
   preserveFrameOnSwitch?: boolean;
   /** 跳播回看源：携带目标时间和解码关键帧时间；空=实时直播。 */
-  seek?: { url: string; generation: number; second: number; startSecond: number } | null;
+  seek?: {
+    url: string;
+    generation: number;
+    second: number;
+    startSecond: number;
+  } | null;
   /** 回看播到已写尾部 →调用方切回实时。 */
   onSeekTail?: () => void;
   /** 回看首帧渲染（松手→首帧掍表打点），携带代际号防旧代际串打点。 */
@@ -47,6 +59,8 @@ export interface VideoPlayerProps {
 export default function VideoPlayer({
   roomId,
   muted = true,
+  thumbnail = false,
+  onPreviewError,
   platform,
   fill = false,
   onVideoElementChange,
@@ -61,6 +75,8 @@ export default function VideoPlayer({
   onLiveFirstFrame,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewErrorRef = useRef(onPreviewError);
+  previewErrorRef.current = onPreviewError;
   const transitionRef = useRef<HTMLCanvasElement>(null);
   const holdFrame = useCallback(() => {
     if (preserveFrameOnSwitch && videoRef.current && transitionRef.current)
@@ -87,8 +103,7 @@ export default function VideoPlayer({
   const [errorMsg, setErrorMsg] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
 
-  // 记录用户通过原生控件调整的音量。流切换时必须先静音才能通过浏览器的
-  // 自动播放策略，进入 playing 后再恢复这个偏好。
+  // 记录音量
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -106,7 +121,7 @@ export default function VideoPlayer({
       video.removeEventListener("volumechange", rememberAudioPreference);
   }, []);
 
-  // 上报流的真实宽高比：元数据就绪时、以及流内分辨率变化（video 的 resize 事件）时都会触发。
+  // 真实宽高比
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !onStreamAspectRatio) return;
@@ -125,7 +140,6 @@ export default function VideoPlayer({
   }, [onStreamAspectRatio]);
 
   useEffect(() => {
-    // 复用 video，但直播与回看只能由一个播放器持有。
     if (seek) return;
     if (currentRoomIdRef.current !== roomId) {
       currentRoomIdRef.current = roomId;
@@ -137,6 +151,7 @@ export default function VideoPlayer({
     if (!mpegts.isSupported()) {
       setState("error");
       setErrorMsg("当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看");
+      if (thumbnail) previewErrorRef.current?.();
       return;
     }
     let player: mpegts.Player | null = null;
@@ -178,8 +193,6 @@ export default function VideoPlayer({
       const current = player;
       if (current) holdFrame();
       player = null;
-      // mpegts may emit ERROR inside appendMediaSegment, then continue using its
-      // controllers. Let that stack finish before destroying those controllers.
       if (deferred) queueMicrotask(() => current?.destroy());
       else current?.destroy();
     };
@@ -190,6 +203,11 @@ export default function VideoPlayer({
       if (watchdogTimer) {
         clearInterval(watchdogTimer);
         watchdogTimer = null;
+      }
+      if (thumbnail) {
+        setState("error");
+        previewErrorRef.current?.();
+        return;
       }
       if (retry >= RETRY_DELAYS_MS.length) {
         setState("error");
@@ -213,13 +231,24 @@ export default function VideoPlayer({
       lastProgressAt = Date.now();
       hasPlayed = false;
       const instance = mpegts.createPlayer(
-        { type: "flv", url: previewWsUrl(roomId), isLive: true },
+        {
+          type: "flv",
+          url: previewWsUrl(roomId),
+          isLive: true,
+          ...(thumbnail ? { hasAudio: false } : {}),
+        },
         {
           enableStashBuffer: false,
           liveBufferLatencyChasing: true,
-          enableWorker: true,
-          // 观看流无需为长时间戳间隙同步生成成千上万的静音帧。
+          enableWorker: !thumbnail,
           fixAudioTimestampGap: false,
+          ...(thumbnail
+            ? {
+                autoCleanupSourceBuffer: true,
+                autoCleanupMaxBackwardDuration: 10,
+                autoCleanupMinBackwardDuration: 5,
+              }
+            : {}),
         },
       );
       player = instance;
@@ -231,37 +260,36 @@ export default function VideoPlayer({
         lastProgressAt = Date.now();
         retry = 0;
         if (!stopWaitingForFrame) {
-          stopWaitingForFrame = waitForVideoFrame(videoRef.current!, () => {
-            releaseFrame();
-            liveFirstFrameRef.current?.();
-          }, () => !disposed && player === instance);
+          stopWaitingForFrame = waitForVideoFrame(
+            videoRef.current!,
+            () => {
+              releaseFrame();
+              liveFirstFrameRef.current?.();
+            },
+            () => !disposed && player === instance,
+          );
         }
       };
       videoRef.current.addEventListener("playing", playingListener);
       instance.on(EVENTS.ERROR, (_t, _detail) => {
-        // 旧连接在重试期间的异步错误不能销毁新播放器。
         if (player !== instance || disposed) return;
-        reportError("live-preview", new Error(`播放器错误 type=${String(_t)} detail=${String(_detail)}`));
+        reportError(
+          "live-preview",
+          new Error(`播放器错误 type=${String(_t)} detail=${String(_detail)}`),
+        );
         scheduleReconnect();
       });
-      // 上游切换用 1012 关闭 WS，mpegts 报加载完成而非 ERROR；及时重连，
-      // 避免等 12 秒看门狗才换掉持有旧编码配置的解码器。
       instance.on(EVENTS.LOADING_COMPLETE, () => {
         if (player !== instance || disposed) return;
         scheduleReconnect();
       });
-      // 切换纯预览/录制流后，play() 已不在原始点击手势中。先静音启动，
-      // 避免用户此前取消静音时被浏览器拦截自动播放而卡在 0 秒。
       startMutedForAutoplay();
       instance.load();
-      // A synchronous load error may already have scheduled a reconnect.
       if (player !== instance || disposed) return;
       void Promise.resolve(instance.play()).catch(() => undefined);
-      // WS 仍连接但无新帧时 mpegts.js 不一定报错。持续检测媒体时间，主动重建连接，避免永久卡帧。
       watchdogTimer = setInterval(() => {
         const video = videoRef.current;
         if (!video || player !== instance) return;
-        // 已经正常播放后尊重用户主动暂停；首次加载尚无帧时 video.paused=true，仍必须执行无帧超时恢复。
         if (video.paused && hasPlayed) return;
         if (video.currentTime > lastMediaTime + 0.01) {
           hasPlayed = true;
@@ -271,7 +299,10 @@ export default function VideoPlayer({
           return;
         }
         if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
-          reportError("live-preview-stall", new Error(`无帧超时 played=${hasPlayed} retry=${retry}`));
+          reportError(
+            "live-preview-stall",
+            new Error(`无帧超时 played=${hasPlayed} retry=${retry}`),
+          );
           scheduleReconnect();
         }
       }, 2_000);
@@ -284,13 +315,8 @@ export default function VideoPlayer({
       if (watchdogTimer) clearInterval(watchdogTimer);
       destroyPlayer();
     };
-    // 回看模式复用同一个 video 元素，实时路径让位（卸掉 mpegts）；
-    // 退出回看时本 effect 重跑重建直播流。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, platform, reloadToken, !!seek]);
+  }, [roomId, platform, reloadToken, !!seek, thumbnail]);
 
-  // 回看跳播：走 mpegts 同管道（FLV 流；原生 src 在 WKWebView 播不了流式 fMP4）。
-  // 代际号防串流：旧代际的迟到事件一律丢弃。
   const seekGenRef = useRef(0);
   useEffect(() => {
     const video = videoRef.current;
@@ -311,7 +337,9 @@ export default function VideoPlayer({
     const destroySeekPlayer = () => {
       if (destroyed) return;
       destroyed = true;
-      try { instance.destroy(); } catch (error) {
+      try {
+        instance.destroy();
+      } catch (error) {
         reportError("jump-seek-destroy", error);
       }
     };
@@ -324,12 +352,18 @@ export default function VideoPlayer({
     };
     const fail = (reason: string) => {
       if (stale()) return;
-      const second = positioned && hasFrame ? seek.startSecond + elapsed() : seek.second;
+      const second =
+        positioned && hasFrame ? seek.startSecond + elapsed() : seek.second;
       failed = true;
       health.stop();
       stopPreparing();
       stopWaitingForFrame?.();
-      reportError("jump-seek", new Error(`${reason} gen=${gen} second=${seek.second} start=${seek.startSecond}`));
+      reportError(
+        "jump-seek",
+        new Error(
+          `${reason} gen=${gen} second=${seek.second} start=${seek.startSecond}`,
+        ),
+      );
       destroySeekPlayer();
       releaseFrame();
       setState("error");
@@ -343,12 +377,16 @@ export default function VideoPlayer({
       hasEverPlayedRef.current = true;
       setState("playing");
       if (!stopWaitingForFrame) {
-        stopWaitingForFrame = waitForVideoFrame(video, () => {
-          hasFrame = true;
-          health.presented();
-          releaseFrame();
-          onSeekFirstFrame?.(gen, elapsed());
-        }, () => !stale());
+        stopWaitingForFrame = waitForVideoFrame(
+          video,
+          () => {
+            hasFrame = true;
+            health.presented();
+            releaseFrame();
+            onSeekFirstFrame?.(gen, elapsed());
+          },
+          () => !stale(),
+        );
       }
     };
     const onEnded = () => {
@@ -357,7 +395,9 @@ export default function VideoPlayer({
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("ended", onEnded);
-    instance.on(EVENTS.ERROR, (_type, detail) => fail(`player error: ${String(detail)}`));
+    instance.on(EVENTS.ERROR, (_type, detail) =>
+      fail(`player error: ${String(detail)}`),
+    );
     // 吸附偏移超 GOP 量级=索引错乱信号：不等永不可能的缓冲覆盖，按流起点放行并留诊断。
     const offsetPlausible = isPlausibleSeekOffset(
       seek.second,
@@ -381,7 +421,9 @@ export default function VideoPlayer({
         void Promise.resolve(instance.play()).catch(() => {
           if (stale()) return;
           video.muted = true;
-          void Promise.resolve(instance.play()).catch(() => fail("autoplay failed"));
+          void Promise.resolve(instance.play()).catch(() =>
+            fail("autoplay failed"),
+          );
         });
       },
       () => !stale(),
@@ -396,7 +438,11 @@ export default function VideoPlayer({
     // 载入延迟到下一帧：StrictMode 双跑 effect 时首帧载入被取消，同一目标只发一次起流。
     const loadFrame = requestAnimationFrame(() => {
       if (stale()) return;
-      try { instance.load(); } catch (error) { fail(`load failed: ${String(error)}`); }
+      try {
+        instance.load();
+      } catch (error) {
+        fail(`load failed: ${String(error)}`);
+      }
     });
     return () => {
       disposed = true;
@@ -414,9 +460,16 @@ export default function VideoPlayer({
       }
       destroySeekPlayer();
     };
-  }, [seek, onSeekTail, onSeekFirstFrame, onSeekError, holdFrame, releaseFrame, reloadToken]);
+  }, [
+    seek,
+    onSeekTail,
+    onSeekFirstFrame,
+    onSeekError,
+    holdFrame,
+    releaseFrame,
+    reloadToken,
+  ]);
 
-  // 实时首帧回调仅在直播路径生效；effect 依赖保持最小，避免重连风暴。
   const liveFirstFrameRef = useRef(onLiveFirstFrame);
   liveFirstFrameRef.current = onLiveFirstFrame;
 
@@ -429,7 +482,7 @@ export default function VideoPlayer({
         ...(fill ? { height: "100%" } : null),
       }}
     >
-      {state === "loading" && !hasEverPlayedRef.current && (
+      {!thumbnail && state === "loading" && !hasEverPlayedRef.current && (
         <div
           style={{
             position: "absolute",
@@ -443,17 +496,24 @@ export default function VideoPlayer({
           <Spin description="连接预览流…" />
         </div>
       )}
-      {state === "error" && (
+      {!thumbnail && state === "error" && (
         <div style={{ padding: 24 }}>
           <Alert
             type="error"
             showIcon
             message="预览不可用"
             description={errorMsg}
-            action={<Button size="small" onClick={() => {
-              if (seek && onSeekRetry) onSeekRetry();
-              else setReloadToken((value) => value + 1);
-            }}>重试播放器</Button>}
+            action={
+              <Button
+                size="small"
+                onClick={() => {
+                  if (seek && onSeekRetry) onSeekRetry();
+                  else setReloadToken((value) => value + 1);
+                }}
+              >
+                重试播放器
+              </Button>
+            }
           />
         </div>
       )}
@@ -464,16 +524,19 @@ export default function VideoPlayer({
       )}
       <video
         ref={attachVideoRef}
-        controls
-        muted={muted}
+        controls={!thumbnail}
+        muted={thumbnail || muted}
+        playsInline
         autoPlay={!seek}
         onCanPlay={() =>
-          !seek && setState((current) => (current === "loading" ? "playing" : current))
+          !seek &&
+          setState((current) => (current === "loading" ? "playing" : current))
         }
-        onPlaying={() => { if (!seek) setState("playing"); }}
+        onPlaying={() => {
+          if (!seek) setState("playing");
+        }}
         style={{
           width: "100%",
-          // 竖屏墙不预设比例：占满格子，画面按流自己的宽高比留边显示。
           ...(fill
             ? { height: "100%", objectFit: "contain" as const }
             : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }),
@@ -493,7 +556,8 @@ export default function VideoPlayer({
             background: "#000",
             pointerEvents: "none",
             display: "none",
-            visibility: state === "error" || state === "ended" ? "hidden" : "visible",
+            visibility:
+              state === "error" || state === "ended" ? "hidden" : "visible",
           }}
         />
       )}

@@ -25,6 +25,7 @@ function normalizeRoom(room: Room): Room {
     autoRecord: room.autoRecord ?? null,
     liveNotificationEnabled: room.liveNotificationEnabled ?? false,
     lastLiveStatus: room.lastLiveStatus ?? null,
+    liveCoverUrl: room.liveCoverUrl ?? null,
     currentStreamTitle: room.currentStreamTitle ?? null,
     availableQualities: room.availableQualities ?? [],
     activeRecording: room.activeRecording ?? null,

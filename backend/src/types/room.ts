@@ -25,6 +25,7 @@ export interface Room {
   url: string;
   displayName: string;
   /** 主播头像 CDN 地址（平台检测周期顺带写入，历史房间可能为 null；UI 需兑底）。 */
+  liveCoverUrl?: string | null;
   avatarUrl: string | null;
   enabled: boolean;
   favorited: boolean;

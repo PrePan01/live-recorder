@@ -7,12 +7,13 @@ import {
 } from "../../../hooks/useDisplayClock";
 
 function agoValue(iso: string | null, now: number): string {
-  if (!iso) return "—";
+  if (!iso) return "尚未检测";
   const diff = Math.max(dayjs(now).diff(dayjs(iso), "second"), 0);
-  if (diff < 60) return `${diff}s`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
+  if (diff < 10) return "刚刚";
+  if (diff < 60) return `${diff} 秒前`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  return `${Math.floor(diff / 86400)} 天前`;
 }
 
 function durationValue(startedAt: string | null, now: number): string {
@@ -113,34 +114,22 @@ export default function RoomStats({
           ? "checking"
           : "default";
   const duration = durationValue(startedAt, now);
-  const [lastDuration, setLastDuration] = useState(duration);
-
-  useEffect(() => {
-    if (!recording) return;
-    setLastDuration((previous) =>
-      previous === duration ? previous : duration,
-    );
-  }, [recording, duration]);
-
   return (
-    <div ref={ref} style={{ display: "flex", gap: 8, width: "100%" }}>
+    <div ref={ref} className="lr-room-stats">
       <StatCard
         label="最近检测"
         value={agoValue(lastCheckedAt, now)}
         tone={tone}
       />
-      <div
-        className={`lr-stat lr-stat--duration${recording ? " lr-stat--duration-visible" : ""}`}
-        aria-hidden={!recording}
-      >
-        <div className="lr-stat__label lr-stat__recording-label">
-          {recording ? (
+      {recording ? (
+        <div className="lr-stat lr-stat--duration lr-stat--duration-visible">
+          <div className="lr-stat__label lr-stat__recording-label">
             <span className="lr-stat__recording-dot" aria-hidden="true" />
-          ) : null}
-          {recording ? "正在录制" : "已录制"}
+            {state === "reconnecting" ? "重连中 · 录制时长" : "录制时长"}
+          </div>
+          <RollingDuration value={duration} />
         </div>
-        <RollingDuration value={recording ? duration : lastDuration} />
-      </div>
+      ) : null}
     </div>
   );
 }

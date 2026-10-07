@@ -9,6 +9,7 @@ interface RoomRow {
   url: string;
   display_name: string;
   avatar_url: string | null;
+  live_cover_url: string | null;
   enabled: number;
   favorited: number;
   auto_record: number | null;
@@ -55,6 +56,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     url: row.url,
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
+    liveCoverUrl: row.live_cover_url ?? null,
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
@@ -121,6 +123,7 @@ export class RoomRepository {
       url: input.url,
       displayName: input.displayName,
       avatarUrl: null,
+      liveCoverUrl: null,
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
@@ -173,12 +176,13 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, live_cover_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
           next.displayName,
           next.avatarUrl,
+          next.liveCoverUrl ?? null,
           next.enabled ? 1 : 0,
           next.favorited ? 1 : 0,
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
@@ -246,6 +250,7 @@ export class RoomRepository {
     this.db
       .prepare(`UPDATE rooms
         SET last_live_status = ?,
+            live_cover_url = CASE WHEN ? = 'live' THEN live_cover_url ELSE NULL END,
             live_started_at = CASE
               WHEN ? = 'offline' THEN NULL
               WHEN ? = 'live' THEN COALESCE(live_started_at, ?)
@@ -254,7 +259,7 @@ export class RoomRepository {
             auto_record_stopped_session = CASE WHEN ? = 'offline' THEN NULL ELSE auto_record_stopped_session END,
             updated_at = ?
         WHERE id = ?`)
-      .run(status, status, status, liveStartedAt ?? null, status, nowIso(), id);
+      .run(status, status, status, status, liveStartedAt ?? null, status, nowIso(), id);
   }
 
   /** 记录「本开播周期内已被用户手动停止」：调度器自动录制在本场内跳过（下播由 setLiveStatus 清空）。 */

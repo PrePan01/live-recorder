@@ -217,6 +217,7 @@ export class Scheduler {
           retryable: false,
         },
       ).toObject();
+      this.services.rooms.setLiveStatus(room.id, "restricted");
       // 正在录制的房间保留录制状态；lastError 足以让卡片显示 Cookie 已失效。
       if (this.manager.isRoomActive(room.id))
         this.services.rooms.setLastError(room.id, error);
@@ -399,11 +400,18 @@ export class Scheduler {
     const detectedName = status.displayName?.trim();
     const detectedAvatar = status.avatarUrl?.trim() || null;
     // 名称仅填补空（保留用户自定义）；头像仅平台给出新值时更新，缺失/失败不清空已有值（兼容历史+静默降级）。
-    const patch: Partial<Pick<Room, "displayName" | "avatarUrl">> = {};
+    const patch: Partial<Pick<Room, "displayName" | "avatarUrl" | "liveCoverUrl">> = {};
     if (detectedName && !room.displayName.trim())
       patch.displayName = detectedName;
     if (detectedAvatar && detectedAvatar !== room.avatarUrl)
       patch.avatarUrl = detectedAvatar;
+    if (status.status === "offline" || status.status === "restricted") {
+      if (room.liveCoverUrl) patch.liveCoverUrl = null;
+    } else if (status.status === "live") {
+      const cover = status.liveCoverUrl?.trim();
+      if (cover && cover !== room.liveCoverUrl) patch.liveCoverUrl = cover;
+      else if (!cover && room.lastLiveStatus !== "live" && room.liveCoverUrl) patch.liveCoverUrl = null;
+    }
     const checkedRoom =
       Object.keys(patch).length > 0
         ? this.services.rooms.update(room.id, patch)
@@ -447,14 +455,6 @@ export class Scheduler {
       if (status.status === "offline") this.recordTodayForecast(room.id);
     }
     if (status.status === "live") {
-      if (this.manager.isRoomActive(room.id)) {
-        this.services.rooms.setState(room.id, "recording", {
-          lastCheckedAt: this.services.clock.iso(),
-          lastError: null,
-        });
-        this.emitRoom(room.id);
-        return;
-      }
       if (room.lastLiveStatus !== "live" && status.platformStartedAt) {
         this.services.liveEvents.record(room.id, this.services.clock.iso(), {
           source: "platform",
@@ -472,6 +472,21 @@ export class Scheduler {
           source: "initial_live",
           lowerBoundAt: room.lastCheckedAt ?? room.createdAt,
         });
+      } else if (room.lastLiveStatus === "restricted" && !room.liveStartedAt) {
+        // Authorization recovery confirms live, not the actual opening time.
+        // Keep the observation unbounded and do not duplicate a known live cycle.
+        this.services.liveEvents.record(room.id, checkedAt, {
+          source: "initial_live",
+          lowerBoundAt: null,
+        });
+      }
+      if (this.manager.isRoomActive(room.id)) {
+        this.services.rooms.setState(room.id, "recording", {
+          lastCheckedAt: this.services.clock.iso(),
+          lastError: null,
+        });
+        this.emitRoom(room.id);
+        return;
       }
       const shouldNotifyLiveStarted =
         room.lastLiveStatus === "offline" &&
@@ -541,7 +556,10 @@ export class Scheduler {
       return;
     }
     if (status.status === "offline") {
-      if (this.manager.isRoomActive(room.id)) return;
+      if (this.manager.isRoomActive(room.id)) {
+        this.emitRoom(room.id);
+        return;
+      }
       this.services.rooms.setState(room.id, "idle", {
         lastCheckedAt: this.services.clock.iso(),
         lastError: null,

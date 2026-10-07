@@ -444,7 +444,12 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
     // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：启动 preview-only 拉流
     // （#163：预览=纯观看，不触发录制、不生成录制文件），让预览有数据流。异步执行不阻塞 upgrade。
     if (!isRecording && isLive) {
-      void services.manager.ensurePreviewStream(room.id);
+      void services.manager.ensurePreviewStream(room.id).then(() => {
+        // Hover previews can leave while platform URL resolution is still pending.
+        // The earlier empty-room callback cannot stop a stream that did not exist yet.
+        if (!preview.hasClients(room.id))
+          return services.manager.stopPreviewStream(room.id);
+      }).catch(() => undefined);
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       preview.addClient(roomId, ws);
