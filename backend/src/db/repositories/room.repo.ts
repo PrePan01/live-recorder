@@ -10,6 +10,7 @@ interface RoomRow {
   display_name: string;
   avatar_url: string | null;
   live_cover_url: string | null;
+  danmaku_enabled: number | null;
   enabled: number;
   favorited: number;
   auto_record: number | null;
@@ -57,6 +58,7 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
     liveCoverUrl: row.live_cover_url ?? null,
+    danmakuEnabled: row.danmaku_enabled === null || row.danmaku_enabled === undefined ? null : Boolean(row.danmaku_enabled),
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
@@ -166,7 +168,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'danmakuEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -176,7 +178,7 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, live_cover_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, live_cover_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, danmaku_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
@@ -188,6 +190,7 @@ export class RoomRepository {
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
           next.liveNotificationEnabled ? 1 : 0,
           next.uploadEnabled === null ? null : next.uploadEnabled ? 1 : 0,
+          next.danmakuEnabled === null || next.danmakuEnabled === undefined ? null : next.danmakuEnabled ? 1 : 0,
           next.titleSource ?? null,
           next.titleUpdatedAt ?? null,
           next.titleFallbackUsed ? 1 : 0,

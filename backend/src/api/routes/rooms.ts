@@ -350,7 +350,7 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null;
+      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
     };
     const patch: {
       url?: string;
@@ -358,7 +358,7 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null;
+      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
     } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
@@ -392,6 +392,17 @@ export function registerRoomRoutes(
         );
       }
       patch.liveNotificationEnabled = body.liveNotificationEnabled;
+    }
+    if (body.danmakuEnabled !== undefined) {
+      // null=恢复继承全局；布尔=单独覆盖（与 autoRecord 同语义）。
+      if (body.danmakuEnabled !== null && typeof body.danmakuEnabled !== "boolean") {
+        throw new AppError(
+          "ROOM_LINK_INVALID",
+          "danmakuEnabled 必须为布尔值或 null",
+          { roomId: id },
+        );
+      }
+      patch.danmakuEnabled = body.danmakuEnabled;
     }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。

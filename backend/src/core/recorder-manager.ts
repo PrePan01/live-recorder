@@ -1417,6 +1417,20 @@ export class RecorderManager {
     previewSession.engine.setRecordingActive?.(true);
     previewSession.recording = sharedRecording;
     this.active.set(room.id, session);
+    // 弹幕采集随录制启动（异步起、失败只降级弹幕自身，不阻塞录制路径）。
+    {
+      const startedWallMs = Date.now();
+      this.services.danmaku.startForRecording(
+        recording.id,
+        filePath,
+        room,
+        () =>
+          Math.max(
+            sharedRecording.normalizer.lastTimestampMs,
+            Date.now() - startedWallMs - (sharedRecording.session.missingMs ?? 0),
+          ),
+      );
+    }
     this.services.recordings.update(recording.id, {
       state: "recording",
       filePath,
@@ -1901,6 +1915,16 @@ export class RecorderManager {
               state: "recording",
               filePath: event.filePath,
             });
+            {
+              const startedWallMs = Date.now();
+              this.services.danmaku.startForRecording(
+                recordingId,
+                event.filePath,
+                room,
+                // 媒体时钟=墙钟流逝-累计缺失（timestampOffsetMs 只在分段边界推进、健康单段恒 0，不能当活时钟）。
+                () => Math.max(0, Date.now() - startedWallMs - (session.missingMs ?? 0)),
+              );
+            }
             this.services.events.emit({
               type: "recording:updated",
               data: this.services.recordings.get(recordingId)!,
@@ -2455,6 +2479,7 @@ export class RecorderManager {
     err: AppError,
     preservePreview = false,
   ): Promise<void> {
+    void this.services.danmaku.stopForRecording(recordingId);
     const session = this.active.get(room.id);
     const size = session?.size ?? 0;
     // 失败原因落库统一富化（reasonCategory）+落日志（[record] 同 [verify] 款，诊断盲区教训）。
@@ -2962,6 +2987,7 @@ export class RecorderManager {
       failure?: ErrorObject | null;
     } = {},
   ): Promise<void> {
+    void this.services.danmaku.stopForRecording(recordingId);
     // 退出中：只放掉会话，不改库、不发通知、不起后处理——状态交给下次启动的恢复流程统一收口。
     if (this.shuttingDown) {
       this.active.get(room.id)?.resolveDone?.();

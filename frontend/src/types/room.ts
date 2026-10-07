@@ -67,4 +67,5 @@ export interface RoomUpdateInput {
   autoRecord?: boolean | null;
   liveNotificationEnabled?: boolean;
   uploadEnabled?: boolean | null;
+  danmakuEnabled?: boolean | null;
 }

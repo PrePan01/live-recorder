@@ -11,6 +11,7 @@ import {
   Typography,
 } from "antd";
 import {
+  CommentOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -61,6 +62,7 @@ export interface RecordingColumnsDeps {
   setRenameValue: Dispatch<SetStateAction<string>>;
   setPipelineRec: Dispatch<SetStateAction<Recording | null>>;
   retryUploadFor: (recordingId: string) => Promise<void>;
+  openDanmakuPlayer: (r: Recording) => void;
 }
 
 export function buildRecordingColumns(
@@ -391,6 +393,17 @@ export function buildRecordingColumns(
           >
             播放
           </Button>
+          <Tooltip title={r.hasDanmaku ? "弹幕回看" : "该录像没有弹幕数据"}>
+            <Button
+              size="small"
+              type="link"
+              icon={<CommentOutlined />}
+              disabled={r.state !== "completed" || !r.filePath || !r.hasDanmaku}
+              onClick={() => deps.openDanmakuPlayer(r)}
+            >
+              弹幕
+            </Button>
+          </Tooltip>
           <Button
             size="small"
             type="link"

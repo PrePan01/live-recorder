@@ -41,6 +41,8 @@ export interface Settings {
   quality: Quality;
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
+  /** 弹幕采集全局开关；房间可单独覆盖（danmakuEnabled null=跟随全局）。 */
+  danmaku: { enabled: boolean };
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
@@ -79,6 +81,7 @@ export interface SettingsInput {
   quality?: Quality;
   recordingFormat?: RecordingFormat;
   autoRecord?: boolean;
+  danmaku?: { enabled: boolean };
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;

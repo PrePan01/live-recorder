@@ -5,6 +5,7 @@ import { open, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
 import { renameRecordingWithBuffer, removeRecordingBuffer } from "../../recorder/buffered-writer.js";
+import { DanmakuStore } from "../../danmaku/store.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
@@ -231,6 +232,13 @@ export function registerRecordingRoutes(
     );
     return reply.status(201).send(result);
   });
+  async function hasDanmakuRows(filePath: string | null | undefined): Promise<boolean> {
+    if (!filePath) return false;
+    const { stat } = await import("node:fs/promises");
+    const info = await stat(DanmakuStore.sidecarPathFor(filePath)).catch(() => null);
+    return Boolean(info && info.size > 0);
+  }
+
   app.get("/api/v1/recordings", async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const page = Number(q.page ?? "1");
@@ -294,8 +302,10 @@ export function registerRecordingRoutes(
     });
     const result = {
       ...rawResult,
-      items: rawResult.items.map((item) => ({
+      items: await Promise.all(rawResult.items.map(async (item) => ({
         ...item,
+        // 弹幕记账：sidecar 存在且非空=该录像有弹幕（列表入口灰/亮的依据）。
+        hasDanmaku: await hasDanmakuRows(item.filePath),
         verifyQueuePosition: services.verificationQueue.positionOf(item.id),
         progressPercent:
           item.origin === "clip" && item.state === "processing"
@@ -313,8 +323,28 @@ export function registerRecordingRoutes(
             : services.manager.clipExportProgress(item.id),
         // 跳播索引状态：仅录制中的 FLV 行携带（ready/building/missing）。
         ...(services.seek.seekInfo(item) ?? {}),
-      })),
+      }))),
     };
+    return reply.send(result);
+  });
+
+  app.get("/api/v1/recordings/:id/danmaku", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", { recordingId: id });
+    const q = req.query as Record<string, string | undefined>;
+    const fromMs = Math.max(0, Number(q.fromMs ?? 0) || 0);
+    // 缺省窗=全量（裸参不带 toMs 时按上界过滤会恒空——默认取最大值兜底）。
+    const toMs = q.toMs === undefined ? Number.MAX_SAFE_INTEGER : Math.max(fromMs, Number(q.toMs) || fromMs);
+    const limit = q.limit ? Number(q.limit) : undefined;
+    const includeUnmappable = q.includeUnmappable === "1";
+    const result = await services.danmaku.readRange(
+      id,
+      rec.filePath ?? "",
+      fromMs,
+      toMs,
+      { ...(limit ? { limit } : {}), includeUnmappable },
+    );
     return reply.send(result);
   });
 
@@ -631,6 +661,7 @@ export function registerRecordingRoutes(
     }
     await services.manager.cancelHighlightExport(id);
     await services.manager.stopActiveSessionForDeletion(id);
+    await services.danmaku.removeSidecar(rec.filePath);
     services.pipeline.cancel(id, "录制已删除");
     services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
@@ -772,6 +803,7 @@ export function registerRecordingRoutes(
       }
       await services.manager.cancelHighlightExport(id);
       await services.manager.stopActiveSessionForDeletion(id);
+      await services.danmaku.removeSidecar(rec.filePath);
       services.pipeline.cancel(id, "录制已删除");
       services.manager.cancelClipExport(id);
       if (rec.filePath) {

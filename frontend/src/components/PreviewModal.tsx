@@ -14,7 +14,10 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Popover,
+  Slider,
   Space,
+  Switch,
   Tooltip,
   Typography,
 } from "antd";
@@ -22,11 +25,25 @@ import {
   ClearOutlined,
   CloseOutlined,
   ClockCircleOutlined,
+  CommentOutlined,
   CompressOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import RecordingStopIcon from "./RecordingStopIcon";
 import RecordingTrack from "./RecordingTrack";
+import { DanmakuLayer } from "./DanmakuLayer";
+import { fetchDanmaku } from "../api/danmaku";
+import {
+  DANMUKU_DENSITY_OPTIONS,
+  loadDanmakuPref,
+  saveDanmakuPref,
+} from "../utils/danmakuPrefs";
+import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
+import {
+  danmakuStateText,
+  selectDanmakuStatus,
+  useDanmakuStore,
+} from "../stores/danmakuStore";
 import type { Room } from "../types/room";
 import { useRoomStore } from "../stores/roomStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -562,6 +579,62 @@ export default function PreviewModal({
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
   );
+  // 弹幕显示：三设置与回看播放器共偏好；关闭显示不停止采集（拉取照旧）。
+  const [danmakuVisible, setDanmakuVisible] = useState(() =>
+    loadDanmakuPref("visible", true),
+  );
+  const [danmakuOpacity, setDanmakuOpacity] = useState(() =>
+    loadDanmakuPref("opacity", 0.9),
+  );
+  const [danmakuDensity, setDanmakuDensity] = useState(() =>
+    loadDanmakuPref("density", 40),
+  );
+  const [danmakuMessages, setDanmakuMessages] = useState<DanmakuMessage[]>([]);
+  const [danmakuGaps, setDanmakuGaps] = useState<DanmakuGap[]>([]);
+  const danmakuStatus = useDanmakuStore((s) =>
+    selectDanmakuStatus(s, activeRecordingId),
+  );
+  const danmakuAnchorRef = useRef<number | null>(null);
+  const getDanmakuTimeMs = useCallback((): number => {
+    if (seekPlayback) {
+      const current = previewVideo?.currentTime ?? 0;
+      if (danmakuAnchorRef.current == null) danmakuAnchorRef.current = current;
+      return (
+        seekPlayback.startSecond +
+        (current - danmakuAnchorRef.current)
+      ) * 1000;
+    }
+    const startedAt = live.activeRecording?.startedAt;
+    return startedAt ? Math.max(0, Date.now() - Date.parse(startedAt)) : 0;
+  }, [seekPlayback, previewVideo, live.activeRecording?.startedAt]);
+  useEffect(() => {
+    danmakuAnchorRef.current = null;
+  }, [seekPlayback?.generation]);
+  useEffect(() => {
+    if (!activeRecordingId) return undefined;
+    let cancelled = false;
+    const load = () => {
+      const nowMs = getDanmakuTimeMs();
+      void fetchDanmaku(activeRecordingId, {
+        fromMs: Math.max(0, nowMs - 60_000),
+        toMs: nowMs + 600_000,
+        limit: 2000,
+      })
+        .then((data) => {
+          if (cancelled) return;
+          setDanmakuMessages(data.messages);
+          setDanmakuGaps(data.gaps ?? []);
+          if (data.status) useDanmakuStore.getState().applyStatus(data.status);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeRecordingId, getDanmakuTimeMs, seekPlayback?.generation]);
   const previewFrameGenerationRef = useRef<number | null>(null);
   const requestedPlaybackRef = useRef(seekPlayback);
   requestedPlaybackRef.current = seekPlayback;
@@ -1056,19 +1129,114 @@ export default function PreviewModal({
             }}
           >
             <div
-              ref={setPreviewPlayerSlot}
               style={{
                 position: "relative",
-                background: "#000",
-                overflow: "hidden",
                 margin: "0 auto",
                 width: videoBox.width,
                 height: videoBox.height,
                 flexShrink: 1,
                 minHeight: 0,
-                willChange: "width, height",
               }}
-            />
+            >
+              <div
+                ref={setPreviewPlayerSlot}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "#000",
+                  overflow: "hidden",
+                  willChange: "width, height",
+                }}
+              />
+              {danmakuVisible ? (
+                <DanmakuLayer
+                  messages={danmakuMessages}
+                  gaps={danmakuGaps}
+                  getTimeMs={getDanmakuTimeMs}
+                  maxBullets={danmakuDensity}
+                  opacity={danmakuOpacity}
+                  resetKey={seekPlayback?.generation ?? "live"}
+                />
+              ) : null}
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                content={
+                  <div style={{ width: 220 }}>
+                    <Space direction="vertical" style={{ width: "100%" }}>
+                      {danmakuStatus ? (
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>
+                          {danmakuStateText(danmakuStatus.state)}
+                        </div>
+                      ) : null}
+                      <Space>
+                        <span style={{ fontSize: 12 }}>显示弹幕</span>
+                        <Switch
+                          size="small"
+                          checked={danmakuVisible}
+                          onChange={(v) => {
+                            setDanmakuVisible(v);
+                            saveDanmakuPref("visible", v);
+                          }}
+                        />
+                      </Space>
+                      <div>
+                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                          透明度
+                        </div>
+                        <Slider
+                          min={0.2}
+                          max={1}
+                          step={0.1}
+                          value={danmakuOpacity}
+                          onChange={(v) => {
+                            setDanmakuOpacity(v as number);
+                            saveDanmakuPref("opacity", v);
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                          同屏密度
+                        </div>
+                        <Slider
+                          min={0}
+                          max={DANMUKU_DENSITY_OPTIONS.length - 1}
+                          step={1}
+                          value={DANMUKU_DENSITY_OPTIONS.indexOf(
+                            danmakuDensity,
+                          )}
+                          onChange={(v) => {
+                            const d =
+                              DANMUKU_DENSITY_OPTIONS[v as number] ?? 40;
+                            setDanmakuDensity(d);
+                            saveDanmakuPref("density", d);
+                          }}
+                        />
+                      </div>
+                    </Space>
+                  </div>
+                }
+              >
+                <Button
+                  type="text"
+                  aria-label="弹幕设置"
+                  icon={
+                    <CommentOutlined
+                      style={{ color: "rgba(255,255,255,0.85)", fontSize: 16 }}
+                    />
+                  }
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    height: 28,
+                    width: 28,
+                    padding: 0,
+                  }}
+                />
+              </Popover>
+            </div>
             {displayedTrack ? (
               <div
                 ref={trackRevealRef}

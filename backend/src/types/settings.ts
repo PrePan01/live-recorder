@@ -72,6 +72,8 @@ export interface AppSettings {
   highlightEnabled?: boolean;
   /** V5 OpenList 上传配置。 */
   openlist?: OpenListConfig;
+  /** 弹幕采集总开关（默认关）；房间可用 danmakuEnabled 单独覆盖。 */
+  danmaku?: { enabled: boolean };
 }
 
 export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';

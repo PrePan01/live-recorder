@@ -32,6 +32,7 @@ export type DisplayNameDraft = { id: string; value: string } | null;
 export interface RoomColumnsDeps {
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
   setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
+  setDanmakuEnabled: (id: string, value: boolean | null) => Promise<void>;
   setLiveNotification: (id: string, value: boolean) => Promise<void>;
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   editingDisplayName: DisplayNameDraft;
@@ -47,6 +48,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
   const {
     favoriteRoom,
     setAutoRecord,
+    setDanmakuEnabled,
     setLiveNotification,
     toggleRoom,
     editingDisplayName,
@@ -99,6 +101,44 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
           style={{ width: 100 }}
           onChange={(val) =>
             void setAutoRecord(room.id, val === "inherit" ? null : val === "on")
+              .then(() =>
+                message.success(
+                  val === "inherit"
+                    ? "已恢复跟随全局"
+                    : `已${val === "on" ? "开启" : "关闭"}`,
+                ),
+              )
+              .catch((e) =>
+                message.error(
+                  e instanceof ApiError
+                    ? describeError(e.code, e.message)
+                    : "操作失败",
+                ),
+              )
+          }
+          options={[
+            { value: "inherit", label: "跟随全局" },
+            { value: "on", label: "开启" },
+            { value: "off", label: "关闭" },
+          ]}
+        />
+      ),
+    },
+    {
+      title: "弹幕采集",
+      dataIndex: "danmakuEnabled",
+      width: 120,
+      render: (v: boolean | null, room) => (
+        <Select
+          aria-label={`弹幕采集 ${room.displayName}`}
+          size="small"
+          value={v === null || v === undefined ? "inherit" : v ? "on" : "off"}
+          style={{ width: 100 }}
+          onChange={(val) =>
+            void setDanmakuEnabled(
+              room.id,
+              val === "inherit" ? null : val === "on",
+            )
               .then(() =>
                 message.success(
                   val === "inherit"

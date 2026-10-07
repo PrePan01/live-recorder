@@ -65,6 +65,7 @@ interface RoomState {
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
   setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
+  setDanmakuEnabled: (id: string, value: boolean | null) => Promise<void>;
   setLiveNotification: (id: string, value: boolean) => Promise<void>;
   checkRoomNow: (id: string) => Promise<void>;
   startRoomRecording: (id: string) => Promise<void>;
@@ -148,6 +149,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     invalidateRoomsRequest();
     get().upsertRoom(
       normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
+    );
+  },
+  async setDanmakuEnabled(id, value) {
+    invalidateRoomsRequest();
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.updateRoom(id, { danmakuEnabled: value })),
     );
   },
   async setLiveNotification(id, value) {

@@ -1,5 +1,6 @@
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
+import { DanmakuManager } from "../danmaku/manager.js";
 import type { RecordingEngine } from "../recorder/engine.js";
 import type { DiskGuard } from "../storage/disk-guard.js";
 import type { Mailer } from "../mail/mailer.js";
@@ -76,6 +77,7 @@ export interface Services {
   mailer: Mailer;
   notifier: Notifier;
   manager: RecorderManager;
+  danmaku: DanmakuManager;
   scheduler: Scheduler;
   pipeline: PipelineManager;
   uploader: UploadManager;
@@ -238,6 +240,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     },
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
+    danmaku: undefined as unknown as DanmakuManager,
     scheduler: undefined as unknown as Scheduler,
     pipeline: undefined as unknown as PipelineManager,
     uploader: undefined as unknown as UploadManager,
@@ -257,6 +260,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     () => notificationPreference(services).dedupeWindowMinutes * 60 * 1000,
   );
   services.manager = new RecorderManager(services, services.notifier);
+  services.danmaku = new DanmakuManager(services);
   services.scheduler = new Scheduler(services, services.manager);
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);

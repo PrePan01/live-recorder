@@ -155,6 +155,7 @@ export default function SettingsPage() {
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
         autoRecord: settings.autoRecord ?? false,
+        danmaku: { enabled: settings.danmaku?.enabled ?? false },
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
         preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,

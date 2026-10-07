@@ -274,6 +274,19 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
             >
               <Switch aria-label="检测到开播自动录制" />
             </Form.Item>
+            <Form.Item
+              label="录制弹幕"
+              name={["danmaku", "enabled"]}
+              valuePropName="checked"
+            >
+              <Switch aria-label="录制弹幕" />
+            </Form.Item>
+            <Typography.Paragraph
+              className="lr-settings-section__hint"
+              type="secondary"
+            >
+              开启后随录制采集弹幕（仅文字弹幕）；房间可在列表中单独覆盖此开关。
+            </Typography.Paragraph>
             <Typography.Title className="lr-settings-section__title" level={5}>
               检测频率
             </Typography.Title>

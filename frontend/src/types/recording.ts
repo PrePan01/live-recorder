@@ -97,6 +97,8 @@ export interface Recording {
   systemSleepInterrupted?: boolean;
   /** 片段导出进行中的进度百分比（0-100）；无后台导出或终态时为空。 */
   progressPercent?: number | null;
+  hasDanmaku?: boolean;
+  danmakuCount?: number;
   /** 跳播定位索引状态：ready=可跳播、building=建立中（入口显式禁用）、missing=未建（兕底回扫）。 */
   seekIndexState?: "ready" | "building" | "missing";
   /** 索引建立进度（0-100，可选展示用）。 */

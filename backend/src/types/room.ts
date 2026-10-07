@@ -33,6 +33,8 @@ export interface Room {
   autoRecord: boolean | null;
   /** 是否在该直播间离线转开播时发送桌面提醒；默认关闭。 */
   liveNotificationEnabled: boolean;
+  /** 弹幕采集覆盖：未设置(null/undefined)=继承全局 settings.danmaku.enabled；false=该房间不采。 */
+  danmakuEnabled?: boolean | null;
   /** 最近一次检测的直播状态：live/offline/restricted，未检测过为 null。 */
   lastLiveStatus: LiveStatus | null;
   /** 当前已确认开播周期的本地起点；下播后清空。自动录制去重只在此周期内生效。 */

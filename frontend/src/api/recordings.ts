@@ -60,6 +60,11 @@ export async function exportRecordingClip(
   return data;
 }
 
+/** 完成态文件播放地址（Range 支持）；必须走 EndpointResolver.base 绝对地址。 */
+export function recordingFileUrl(id: string): string {
+  return `${EndpointResolver.base}/recordings/${id}/file`;
+}
+
 /** 跳播起流地址：GET 流式 fMP4，从目标点前关键帧起切；每次请求即一个新代际。 */
 export function recordingSeekStreamUrl(
   id: string,

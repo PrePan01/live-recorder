@@ -9,6 +9,7 @@ import { useNotificationStore } from "./notificationStore";
 import { useUploadStore } from "./uploadStore";
 import { usePipelineStore } from "./pipelineStore";
 import { useTasksStore } from "./tasksStore";
+import { useDanmakuStore } from "./danmakuStore";
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -65,6 +66,9 @@ export function applyServerEvent(e: ServerEvent) {
         error: e.upload.error,
         updatedAt: e.upload.updatedAt,
       });
+      break;
+    case "danmaku:status":
+      useDanmakuStore.getState().applyStatus(e.status);
       break;
   }
 }

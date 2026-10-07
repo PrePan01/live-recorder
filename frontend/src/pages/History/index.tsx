@@ -17,6 +17,7 @@ import {
 import { ExportOutlined, CopyOutlined } from "@ant-design/icons";
 import { buildRecordingColumns } from "../../utils/recordingColumns";
 import PipelineDrawer from "./components/PipelineDrawer";
+import { DanmakuPlayerModal } from "../../components/DanmakuPlayerModal";
 import ExportTasksDrawer from "./components/ExportTasksDrawer";
 import dayjs from "dayjs";
 import { useRecordingStore } from "../../stores/recordingStore";
@@ -65,6 +66,7 @@ export default function History() {
     null,
   );
   const [renaming, setRenaming] = useState<Recording | null>(null);
+  const [danmakuRec, setDanmakuRec] = useState<Recording | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [pipelineRec, setPipelineRec] = useState<Recording | null>(null);
@@ -328,6 +330,7 @@ export default function History() {
         setRenameValue,
         setPipelineRec,
         retryUploadFor,
+        openDanmakuPlayer: (r) => setDanmakuRec(r),
       }),
     [
       roomLabel,
@@ -483,6 +486,14 @@ export default function History() {
         pipelineRec={pipelineRec}
         onClose={() => setPipelineRec(null)}
       />
+      {danmakuRec ? (
+        <DanmakuPlayerModal
+          recordingId={danmakuRec.id}
+          title={danmakuRec.streamTitle || danmakuRec.roomName}
+          filePath={danmakuRec.filePath ?? undefined}
+          onClose={() => setDanmakuRec(null)}
+        />
+      ) : null}
       <Modal
         title="重命名录制"
         open={renaming !== null}

@@ -948,6 +948,7 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     `,
   },
   { version: 45, up: (db) => ensureColumn(db, "rooms", "live_cover_url", "live_cover_url TEXT") },
+  { version: 46, up: (db) => ensureColumn(db, "rooms", "danmaku_enabled", "danmaku_enabled INTEGER") },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

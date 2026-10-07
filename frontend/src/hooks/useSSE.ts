@@ -10,6 +10,7 @@ import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
 import type { UploadJob } from '../api/openlist';
 import type { PipelineArtifact, PipelineRun } from '../types/pipeline';
+import type { DanmakuStatus } from '../types/danmaku';
 import { applyServerEvent } from '../stores/applyEvent';
 import { bridge, useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
@@ -53,6 +54,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, diagnostic: payload as unknown as Diagnostic };
     case 'upload:updated':
       return { type, upload: payload as unknown as UploadJob };
+    case 'danmaku:status':
+      return { type, status: payload as unknown as DanmakuStatus };
   }
 }
 
