@@ -25,6 +25,7 @@ interface RecordingRow {
   integrity_last_attempt: string | null;
   integrity_error: string | null;
   gap_count: number | null;
+  system_sleep_interrupted?: number;
   pipeline_status: string | null;
   metadata: string | null;
   cover_path: string | null;
@@ -82,6 +83,7 @@ export function rowToRecording(row: RecordingRow): Recording {
   if (row.integrity_last_attempt) rec.integrityLastAttempt = row.integrity_last_attempt;
   if (row.integrity_error) rec.integrityError = row.integrity_error;
   if (row.gap_count != null) rec.gapCount = row.gap_count;
+  if (row.system_sleep_interrupted) rec.systemSleepInterrupted = true;
   if (row.pipeline_status) rec.pipelineStatus = row.pipeline_status as PipelineStatus;
   const metadata = parseMetadata(row.metadata);
   if (metadata) rec.metadata = metadata;
@@ -151,7 +153,7 @@ export class RecordingRepository {
   }
 
   get(id: string): Recording | null {
-    const row = this.db.prepare('SELECT * FROM recordings WHERE id = ?').get(id) as RecordingRow | undefined;
+    const row = this.db.prepare("SELECT *, EXISTS(SELECT 1 FROM recording_gaps WHERE recording_id = recordings.id AND kind = 'system_sleep') AS system_sleep_interrupted FROM recordings WHERE id = ?").get(id) as RecordingRow | undefined;
     return row ? rowToRecording(row) : null;
   }
 
@@ -186,7 +188,7 @@ export class RecordingRepository {
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = (this.db.prepare(`SELECT COUNT(*) AS c FROM recordings ${whereSql}`).get(...params) as { c: number }).c;
-    const sql = `SELECT * FROM recordings ${whereSql} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`;
+    const sql = `SELECT *, EXISTS(SELECT 1 FROM recording_gaps WHERE recording_id = recordings.id AND kind = 'system_sleep') AS system_sleep_interrupted FROM recordings ${whereSql} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`;
     const rows = this.db.prepare(sql).all(...params, pageSize, (page - 1) * pageSize) as RecordingRow[];
     if (query.groupBy === 'session') {
       // 同场直播多段（重连续录）合并为一组，取每组最新状态代表
@@ -319,6 +321,14 @@ export class RecordingRepository {
       .prepare('SELECT id, started_at AS startedAt, ended_at AS endedAt, missing_ms AS missingMs, kind, evidence FROM recording_gaps WHERE recording_id = ? ORDER BY started_at')
       .all(recordingId) as Array<{ id: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence: string | null }>;
     return rows;
+  }
+
+  markSystemSleepGaps(startedAt: string, endedAt: string): string[] {
+    const rows = this.db.prepare(`SELECT DISTINCT recording_id AS id FROM recording_gaps
+      WHERE started_at < ? AND ended_at > ?`).all(endedAt, startedAt) as Array<{ id: string }>;
+    this.db.prepare(`UPDATE recording_gaps SET kind = 'system_sleep'
+      WHERE started_at < ? AND ended_at > ?`).run(endedAt, startedAt);
+    return rows.map(row => row.id);
   }
 
   update(id: string, patch: Partial<{ state: RecordingState; endedAt: string; startedAt: string; filePath: string | null; fileSizeBytes: number; failureReason: ErrorObject | null; retryCount: number; streamTitle: string; integrity: string; integrityState: string | null; integrityAttempts: number; integrityLastAttempt: string; integrityError: string | null; gapCount: number;

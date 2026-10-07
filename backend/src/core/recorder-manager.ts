@@ -166,6 +166,8 @@ interface ActiveSession {
   segments: number;
   /** 续录时间偏移：本段媒体时间戳接在上一段结尾之后，保证拼接处播放连续。 */
   timestampOffsetMs: number;
+  /** 已写入录像的媒体位置，用于历史页标注中断发生在录像何处。 */
+  mediaPositionMs?: number;
   hlsCursor?: import("../recorder/engine.js").HlsCursor;
   /** 最后一次收到数据的时刻；中断造成的缺失时长从它算起。 */
   lastDataAt: number;
@@ -338,6 +340,66 @@ export class RecorderManager {
 
   isRoomStarting(roomId: string): boolean {
     return this.starting.has(roomId);
+  }
+
+  shouldPreventSystemSleep(): boolean {
+    return !this.shuttingDown && this.settings().preventSleepWhileRecording !== false &&
+      (this.active.size > 0 || this.starting.size > 0);
+  }
+
+  private systemSleepIntervals: Array<{ startedAt: number; endedAt: number }> = [];
+
+  /** 只以原生系统睡眠通知归因，不能把长时间网络中断猜成系统休眠。 */
+  recordSystemSleep(startedAt: number, endedAt: number): void {
+    const existing = this.systemSleepIntervals.find(interval => interval.startedAt === startedAt);
+    if (existing) existing.endedAt = endedAt;
+    else this.systemSleepIntervals.push({ startedAt, endedAt });
+    this.systemSleepIntervals = this.systemSleepIntervals.slice(-64);
+    const changed = this.services.recordings.markSystemSleepGaps(
+      new Date(startedAt).toISOString(), new Date(endedAt).toISOString(),
+    );
+    for (const session of this.active.values()) {
+      if (Date.parse(session.startedAt) >= endedAt) continue;
+      if (session.lastDataAt < endedAt) {
+        session.gapStartAt ??= session.lastDataAt;
+      } else if (!changed.includes(session.recordingId) && session.gapStartAt === null) {
+        // 唤醒后媒体先到、原生通知稍后送达时，补记确实发生过的睡眠，避免共享预览支路漏记。
+        const missingMs = endedAt - Math.max(startedAt, Date.parse(session.startedAt));
+        if (missingMs > 0) {
+          this.services.recordings.insertGap({ recordingId: session.recordingId,
+            startedAt: new Date(startedAt).toISOString(), endedAt: new Date(endedAt).toISOString(),
+            missingMs, kind: "system_sleep" });
+          session.missingMs += missingMs;
+          this.services.recordings.update(session.recordingId, { missingMs: session.missingMs });
+          changed.push(session.recordingId);
+        }
+      }
+    }
+    for (const id of changed) {
+      const recording = this.services.recordings.get(id);
+      if (recording) this.services.events.emit({ type: "recording:updated", data: recording });
+    }
+  }
+
+  private isSystemSleepGap(startedAt: number, endedAt: number): boolean {
+    return this.systemSleepIntervals.some(interval => interval.startedAt < endedAt && interval.endedAt > startedAt);
+  }
+
+  private settleRecordingGap(session: ActiveSession, now: number): void {
+    if (session.gapStartAt === null) return;
+    const gapMs = Math.max(0, now - session.gapStartAt);
+    session.missingMs += gapMs;
+    if (gapMs >= GAP_ROW_MIN_MS) {
+      this.services.recordings.insertGap({
+        recordingId: session.recordingId,
+        startedAt: new Date(session.gapStartAt).toISOString(), endedAt: new Date(now).toISOString(),
+        missingMs: gapMs,
+        kind: this.isSystemSleepGap(session.gapStartAt, now) ? "system_sleep" : "stream_disconnect",
+        evidence: JSON.stringify({ gapStartAt: session.gapStartAt, size: session.size,
+          cause: session.gapCause, mediaPositionMs: session.mediaPositionMs }),
+      });
+    }
+    session.gapStartAt = null;
   }
 
   /** 新建录制会话：续录/缺失时长相关的状态集中在这里初始化。 */
@@ -1193,11 +1255,13 @@ export class RecorderManager {
     const tags = recording.pendingTags.splice(0);
     const timestamp = recording.normalizer.lastTimestampMs;
     // Upstream arrival and durable file progress are separate facts.
+    this.settleRecordingGap(recording.session, receivedAt);
     recording.session.lastDataAt = receivedAt;
     if (!data.length) return;
     await recording.bufferedWriter.write(data, () => {
       recording.session.size += data.length;
       recording.session.timestampOffsetMs = timestamp;
+      recording.session.mediaPositionMs = timestamp;
       for (const info of tags) recording.seekWriter?.note(info.seqHeader
         ? { t: info.ts, b: info.fileOffset, s: 1, k: info.tagType }
         : { t: info.ts, b: info.fileOffset });
@@ -1830,30 +1894,11 @@ export class RecorderManager {
             }
             session.size += event.chunk.length;
             const now = event.receivedAt ?? this.services.clock.now();
-            // 恢复后拿到第一份数据：把中断期间的缺失时长结算到本次录制上。
-            if (session.gapStartAt !== null && (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls")) {
-              const gapMs = Math.max(0, now - session.gapStartAt);
-              session.missingMs += gapMs;
-              if (gapMs < GAP_ROW_MIN_MS) {
-                console.log(`[recording ${new Date().toISOString()}] short-gap ${gapMs}ms（不记条目，时长已累计）`);
-              } else {
-              // 中断事件存证：先存证据再定归因（kind 为当前可判的粗归因，数据层留给后续细分）。
-              this.services.recordings.insertGap({
-                recordingId: session.recordingId,
-                startedAt: new Date(session.gapStartAt).toISOString(),
-                endedAt: new Date(now).toISOString(),
-                missingMs: gapMs,
-                kind: this.shuttingDown
-                  ? "service_restart"
-                  : "stream_disconnect",
-                evidence: JSON.stringify({
-                  gapStartAt: session.gapStartAt,
-                  size: session.size,
-                  cause: session.gapCause,
-                }),
-              });
-              }
-              session.gapStartAt = null;
+            if (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls") {
+              this.settleRecordingGap(session, now);
+            }
+            if (event.mediaTimestampMs !== undefined) {
+              session.mediaPositionMs = event.mediaTimestampMs;
             }
             session.lastDataAt = now;
             if (!event.previewForwarded)
@@ -1985,6 +2030,7 @@ export class RecorderManager {
     // 本段写到哪：下一段时间戳从这里接着走，拼接处不会跳回开头。
     if (endTimestampMs > session.timestampOffsetMs)
       session.timestampOffsetMs = endTimestampMs;
+    if (endTimestampMs > 0) session.mediaPositionMs = endTimestampMs;
     // 缺失时长从"最后一次收到数据"算起，恢复拿到数据时结算。
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
@@ -2803,6 +2849,7 @@ export class RecorderManager {
     }
     if (endTimestampMs > session.timestampOffsetMs)
       session.timestampOffsetMs = endTimestampMs;
+    if (endTimestampMs > 0) session.mediaPositionMs = endTimestampMs;
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
     const effective =
@@ -2921,9 +2968,22 @@ export class RecorderManager {
       return;
     }
     const session = this.active.get(room.id);
+    const endedAtMs = this.services.clock.now();
+    const tailMs = tailSilenceMs(session, endedAtMs);
+    // 末尾未恢复的缺失也要存证，否则主表累计值会大于历史页中断明细之和。
+    if (session && tailMs > 0) {
+      this.services.recordings.insertGap({
+        recordingId,
+        startedAt: new Date(endedAtMs - tailMs).toISOString(),
+        endedAt: new Date(endedAtMs).toISOString(),
+        missingMs: tailMs,
+        kind: this.isSystemSleepGap(endedAtMs - tailMs, endedAtMs) ? "system_sleep" : "recording_tail",
+        evidence: JSON.stringify({ mediaPositionMs: session.mediaPositionMs }),
+      });
+    }
     const rec = this.services.recordings.update(recordingId, {
       state: "completed",
-      endedAt: this.services.clock.iso(),
+      endedAt: new Date(endedAtMs).toISOString(),
       fileSizeBytes: size,
       // 结束原因与缺失时长随录制落库：历史页据此标注"中途缺失 N 秒"，去重据此判断能否续录。
       endReason:
@@ -2931,10 +2991,7 @@ export class RecorderManager {
         (endReason === "stream_lost" ? "interrupted" : "natural"),
       // 收尾时若已经静默很久（断网后连接没断、或重连期间），把这段也算进缺失：
       // 否则用户点了停止只会看到一条"手动停止"，完全不知道最后一段没录进去。
-      missingMs: Math.round(
-        (session?.missingMs ?? 0) +
-          tailSilenceMs(session, this.services.clock.now()),
-      ),
+      missingMs: Math.round((session?.missingMs ?? 0) + tailMs),
       failureReason: options.failure ?? null,
     });
     // 中断收尾要用 4004（stream_lost）告知观看端：这不是正常结束，流是断的。

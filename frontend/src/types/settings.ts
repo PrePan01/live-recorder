@@ -55,6 +55,7 @@ export interface Settings {
   notifications?: NotificationPreference;
   /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
   highlightEnabled?: boolean;
 }
@@ -88,6 +89,7 @@ export interface SettingsInput {
   floatingRecorderSize?: number;
   /** #220/#221：录制完成后询问是否保留 */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
   highlightEnabled?: boolean;
 }

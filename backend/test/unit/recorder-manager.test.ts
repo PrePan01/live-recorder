@@ -909,6 +909,12 @@ describe("RecorderManager", () => {
     const after = services.recordings.get(rec.id)!;
     expect(after.endReason).toBe("stopped");
     expect(after.missingMs).toBeGreaterThanOrEqual(5_000);
+    const gaps = services.recordings.listGaps(rec.id);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.kind).toBe("recording_tail");
+    expect(gaps[0]!.missingMs).toBe(after.missingMs);
+    expect(gaps[0]!.endedAt).toBe(after.endedAt);
+    expect(after.gapCount).toBe(1);
   });
 
   it("does not invent a gap on a normal manual stop right after data", async () => {
@@ -935,6 +941,7 @@ describe("RecorderManager", () => {
 
     // 正常停止不该冒出"中途缺失"：阈值以内一律算 0。
     expect(services.recordings.get(rec.id)!.missingMs).toBe(0);
+    expect(services.recordings.listGaps(rec.id)).toEqual([]);
   });
 
   it("starts the recording even when disk space is low, but still warns (磁盘不足不再阻止录制)", async () => {
@@ -1741,7 +1748,7 @@ describe('#116 路2 三钉（FakePlatformAdapter=纯触发逻辑面）', () => {
 
 describe("shared preview watchdog lifecycle", () => {
   async function setup(firstDelayMs = 0) {
-    const clock = new FakeClock();
+    const clock = new FakeClock(Date.now());
     const dir = await mkdtemp(path.join(tmpdir(), "lr-shared-watchdog-"));
     const services = buildServices({ dbPath: ":memory:", clock });
     services.settings.save({ ...baseSettings(dir), mail: { ...baseSettings(dir).mail, enabled: false } });
@@ -1809,6 +1816,41 @@ describe("shared preview watchdog lifecycle", () => {
     clock.advance(6001);
     expect(stops()).toBe(count);
   });
+
+  it("stores the actual media position for a silent tail", async () => {
+    const { clock, services, room, send } = await setup();
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    clock.advance(5000);
+    await send(3723);
+    clock.advance(5000);
+    await services.manager.stopRecording(room.id);
+    const gaps = services.recordings.listGaps(rec.id);
+    expect(gaps).toHaveLength(1);
+    expect(JSON.parse(gaps[0]!.evidence!).mediaPositionMs).toBe(3723);
+    await services.manager.stopPreviewStream(room.id);
+  });
+
+  it.each([false, true])("records shared-preview sleep once when native notification is late=%s", async late => {
+    const { clock, services, room, send } = await setup();
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    clock.advance(1000); await send(1000);
+    const startedAt = clock.now();
+    clock.advance(3000);
+    const endedAt = clock.now();
+    if (!late) services.manager.recordSystemSleep(startedAt, endedAt);
+    await send(2000);
+    if (late) services.manager.recordSystemSleep(startedAt, endedAt);
+    services.manager.recordSystemSleep(startedAt, endedAt); // Retries must not double-count.
+    await services.manager.stopRecording(room.id);
+    const after = services.recordings.get(rec.id)!;
+    expect(after.missingMs).toBe(3000);
+    expect(after.systemSleepInterrupted).toBe(true);
+    expect(services.recordings.listGaps(rec.id)).toHaveLength(1);
+    expect(services.recordings.listGaps(rec.id)[0]!.kind).toBe("system_sleep");
+    await services.manager.stopPreviewStream(room.id);
+  });
 });
 
 describe("persistent network recovery", () => {
@@ -1849,6 +1891,8 @@ describe("persistent network recovery", () => {
       expect(after.filePath).toBe(file);
       expect(after.endReason).toBe("stopped");
       expect(after.missingMs).toBeGreaterThan(0);
+      const recoveredGap = services.recordings.listGaps(rec.id).find(gap => gap.kind === "stream_disconnect")!;
+      expect(JSON.parse(recoveredGap.evidence!).mediaPositionMs).toBe(500);
       expect((await readFile(file)).toString("latin1").split("FLV")).toHaveLength(2);
     } finally { timers.mockRestore(); random.mockRestore(); await services.manager.shutdown(); }
   });

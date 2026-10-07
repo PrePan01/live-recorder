@@ -30,6 +30,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.confirmAfterComplete !== undefined && typeof s.confirmAfterComplete !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'confirmAfterComplete 必须为布尔值');
   }
+  if (s.preventSleepWhileRecording !== undefined && typeof s.preventSleepWhileRecording !== 'boolean') {
+    throw new AppError('CONFIG_INVALID', '录制中防止系统休眠必须为布尔值');
+  }
   if (s.highlightBufferSeconds !== undefined && (!Number.isInteger(s.highlightBufferSeconds) || s.highlightBufferSeconds < 5 || s.highlightBufferSeconds > 600)) {
     throw new AppError('CONFIG_INVALID', '精彩时刻缓存时长需为 5 秒至 10 分钟');
   }

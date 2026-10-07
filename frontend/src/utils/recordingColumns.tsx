@@ -341,7 +341,7 @@ export function buildRecordingColumns(
           r.missingMs && r.missingMs >= 1000
             ? Math.round(r.missingMs / 1000)
             : 0;
-        if (!f && missingSeconds === 0) return "-";
+        if (!f && missingSeconds === 0 && !r.systemSleepInterrupted) return "-";
         return (
           <Space direction="vertical" size={0}>
             {f ? (
@@ -349,10 +349,14 @@ export function buildRecordingColumns(
                 {failurePrimaryText(f)}
               </Typography.Text>
             ) : null}
+            {r.systemSleepInterrupted && f?.code !== "SYSTEM_SLEEP_INTERRUPTED" ? (
+              <Typography.Text type="warning">系统休眠，录制中断</Typography.Text>
+            ) : null}
             {missingSeconds > 0 ? (
               <GapDetail
                 recordingId={r.id}
-                missingSeconds={missingSeconds}
+                recordingStartedAt={r.startedAt}
+                missingMs={r.missingMs ?? 0}
                 gapCount={r.gapCount}
               />
             ) : null}

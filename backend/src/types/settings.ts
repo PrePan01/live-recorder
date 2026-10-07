@@ -65,6 +65,7 @@ export interface AppSettings {
   namingRule?: string;
   /** 录制完成后是否询问保留：默认关；开启后完成进入待确认态并挂起管线/上传，保留则恢复、不保留则删除。 */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   /** 普通观看的精彩时刻缓存上限（秒），默认 5 分钟。 */
   highlightBufferSeconds?: number;
   /** 精彩时刻总开关；关闭时普通观看不写入回溯缓存。 */
@@ -169,6 +170,7 @@ export interface SettingsView {
   namingRule: string;
   /** 录制完成后是否询问保留。 */
   confirmAfterComplete: boolean;
+  preventSleepWhileRecording: boolean;
   highlightBufferSeconds: number;
   highlightEnabled: boolean;
 }

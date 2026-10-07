@@ -227,6 +227,13 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
           >
             <Switch aria-label="录制完成后询问是否保留" />
           </Form.Item>
+          <Form.Item
+            label="录制中防止系统休眠"
+            name="preventSleepWhileRecording"
+            valuePropName="checked"
+          >
+            <Switch aria-label="录制中防止系统休眠" />
+          </Form.Item>
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item

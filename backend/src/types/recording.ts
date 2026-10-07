@@ -52,6 +52,7 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ErrorObject | null;
   retryCount: number;
+  systemSleepInterrupted?: boolean;
   createdAt: string;
   origin?: RecordingOrigin;
   quality?: Quality;

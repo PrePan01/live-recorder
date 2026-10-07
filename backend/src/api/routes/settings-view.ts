@@ -30,6 +30,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     pipeline: settings.pipeline ?? structuredClone(DEFAULT_SETTINGS.pipeline),
     namingRule: settings.namingRule ?? DEFAULT_SETTINGS.namingRule,
     confirmAfterComplete: settings.confirmAfterComplete ?? false,
+    preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
     highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
     highlightEnabled: settings.highlightEnabled ?? true,
   };
