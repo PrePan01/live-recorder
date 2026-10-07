@@ -47,6 +47,7 @@ import { HighlightBuffer } from "../recorder/highlight-buffer.js";
 import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
+import { DownloadSpeed } from "./download-speed.js";
 import {
   PerformanceDiagnostics,
   type PerformanceTrace,
@@ -148,6 +149,7 @@ function validateClipName(raw: string, recordingId: string): string {
 }
 
 interface ActiveSession {
+  downloadSpeed: DownloadSpeed;
   recordingId: string;
   roomId: string;
   streamSessionId: string | null;
@@ -412,6 +414,7 @@ export class RecorderManager {
   ): ActiveSession {
     const now = this.services.clock.now();
     return {
+      downloadSpeed: new DownloadSpeed(),
       recordingId,
       roomId,
       streamSessionId,
@@ -437,6 +440,15 @@ export class RecorderManager {
 
   activeRoomIds(): string[] {
     return [...this.active.keys()];
+  }
+
+  recordingDownloadBytesPerSecond(): number {
+    const now = this.services.clock.now();
+    let speed = 0;
+    for (const session of this.active.values()) {
+      speed += session.downloadSpeed.bytesPerSecond(now);
+    }
+    return speed;
   }
 
   /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
@@ -1049,6 +1061,9 @@ export class RecorderManager {
         startupTrace,
       };
       this.previewSessions.set(roomId, session);
+      engine.setDownloadObserver?.((bytes) => {
+        session.recording?.session.downloadSpeed.add(bytes, this.services.clock.now());
+      });
       session.done = (async () => {
         let streamError: ErrorObject | null = null;
         let gotData = false;
@@ -1076,6 +1091,8 @@ export class RecorderManager {
               }
               const sharedRecording = session.recording;
               if (sharedRecording) {
+                if (!engine.setDownloadObserver)
+                  sharedRecording.session.downloadSpeed.add(event.chunk.length, this.services.clock.now());
                 try {
                   await this.appendSharedPreviewRecording(
                     sharedRecording,
@@ -1829,6 +1846,10 @@ export class RecorderManager {
     const engine = this.services.engineFor();
     const generation = session.generation;
     session.engine = engine;
+    engine.setDownloadObserver?.((bytes) => {
+      if (session.generation === generation && !session.stopRequested)
+        session.downloadSpeed.add(bytes, this.services.clock.now());
+    });
     session.filePath = filePath;
     this.services.rooms.setState(room.id, "recording");
     this.preview?.resetRoom(room.id);
@@ -1887,6 +1908,8 @@ export class RecorderManager {
             break;
           }
           case "data": {
+            if (!engine.setDownloadObserver)
+              session.downloadSpeed.add(event.chunk.length, this.services.clock.now());
             if (!gotData && (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls")) {
               gotData = true;
               clearTimeout2(this.services, pendingTimeout);

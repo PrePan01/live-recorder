@@ -38,6 +38,7 @@ beforeEach(() => {
     query: {},
     completionNotice: null,
     pendingConfirm: null,
+    pendingConfirmQueue: [],
     pendingClipExport: null,
     clipExports: {},
     clipDoneQueue: [],
@@ -124,6 +125,71 @@ describe("terminal state transitions via SSE", () => {
     expect(useRecordingStore.getState().pendingConfirm?.id).toBe(
       "rec-awaiting",
     );
+  });
+});
+
+describe("recording keep confirmation queue", () => {
+  it("queues every room stopped in one batch, including recordings outside the history page", () => {
+    const store = useRecordingStore.getState();
+    const records = [1, 2, 3].map(id => recording({ id: `batch-confirm-${id}`, roomId: `room-${id}`, state: "awaiting_confirmation" }));
+    for (const rec of records) store.upsertRecordingFromEvent(rec);
+    expect(useRecordingStore.getState().pendingConfirmQueue).toEqual(records);
+    for (const rec of records) {
+      expect(useRecordingStore.getState().pendingConfirm?.id).toBe(rec.id);
+      store.clearPendingConfirm(rec.id);
+    }
+    expect(useRecordingStore.getState().pendingConfirm).toBeNull();
+    expect(useRecordingStore.getState().pendingConfirmQueue).toEqual([]);
+  });
+
+  it("updates duplicate events without replacing the current prompt or adding duplicates", () => {
+    const store = useRecordingStore.getState();
+    const first = recording({ id: "queue-duplicate-1", state: "awaiting_confirmation" });
+    const second = recording({ id: "queue-duplicate-2", state: "awaiting_confirmation" });
+    store.upsertRecordingFromEvent(first);
+    store.upsertRecordingFromEvent(second);
+    store.upsertRecordingFromEvent({ ...second, fileSizeBytes: 2048 });
+    store.upsertRecordingFromEvent(first);
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe(first.id);
+    expect(useRecordingStore.getState().pendingConfirmQueue.map(rec => rec.id)).toEqual([first.id, second.id]);
+    expect(useRecordingStore.getState().pendingConfirmQueue[1]?.fileSizeBytes).toBe(2048);
+    store.clearPendingConfirm(first.id);
+    // SSE 重放已关闭的提示不能再次入队。
+    store.upsertRecordingFromEvent(first);
+    expect(useRecordingStore.getState().pendingConfirmQueue.map(rec => rec.id)).toEqual([second.id]);
+  });
+
+  it("does not clear the next prompt when a keep response arrives after its completion SSE", () => {
+    const store = useRecordingStore.getState();
+    const first = recording({ id: "queue-response-1", state: "awaiting_confirmation" });
+    const second = recording({ id: "queue-response-2", state: "awaiting_confirmation" });
+    store.upsertRecordingFromEvent(first);
+    store.upsertRecordingFromEvent(second);
+    store.upsertRecordingFromEvent({ ...first, state: "completed" });
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe(second.id);
+    store.clearPendingConfirm(first.id);
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe(second.id);
+  });
+
+  it("removes deleted or failed confirmations and advances to the next room", () => {
+    const store = useRecordingStore.getState();
+    const records = [1, 2, 3].map(id => recording({ id: `queue-invalid-${id}`, state: "awaiting_confirmation" }));
+    for (const rec of records) store.upsertRecordingFromEvent(rec);
+    store.upsertRecordingFromEvent({ ...records[1]!, state: "failed" });
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe(records[0]!.id);
+    store.removeRecordingFromEvent(records[0]!.id);
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe(records[2]!.id);
+    store.removeRecordingFromEvent(records[2]!.id);
+    expect(useRecordingStore.getState().pendingConfirm).toBeNull();
+  });
+
+  it("advances one prompt at a time when closing without an explicit recording id", () => {
+    const store = useRecordingStore.getState();
+    for (const id of ["queue-close-1", "queue-close-2"]) {
+      store.upsertRecordingFromEvent(recording({ id, state: "awaiting_confirmation" }));
+    }
+    store.clearPendingConfirm();
+    expect(useRecordingStore.getState().pendingConfirm?.id).toBe("queue-close-2");
   });
 });
 

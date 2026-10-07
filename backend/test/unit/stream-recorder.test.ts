@@ -38,6 +38,33 @@ function mockFetch(
 }
 
 describe("StreamRecordingEngine (HTTP)", () => {
+  it("samples raw network chunks before FLV normalization, including incomplete data", async () => {
+    const flv = buildMinimalFlv();
+    const chunks = [flv.subarray(0, 5), flv.subarray(5), Buffer.from([9, 0, 0])];
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(chunks)));
+    const received: number[] = [];
+    engine.setDownloadObserver(bytes => received.push(bytes));
+    for await (const _event of engine.start({ url: "https://example.test/live.flv", format: "flv" }, null)) {
+      // Drain the stream; sampling must include bytes that never become complete FLV tags.
+    }
+    expect(received).toEqual(chunks.map(chunk => chunk.length));
+  });
+
+  it("samples HLS playlist and segment downloads without recounting staged data", async () => {
+    const playlist = "#EXTM3U\n#EXTINF:1,\nsegment.ts\n#EXT-X-ENDLIST\n";
+    const segment = Buffer.alloc(188, 0x47);
+    const fetcher = (async (url: string | URL | Request) => new Response(
+      String(url).endsWith("segment.ts") ? segment : playlist,
+    )) as typeof fetch;
+    const engine = new StreamRecordingEngine(fetcher);
+    let received = 0;
+    engine.setDownloadObserver(bytes => { received += bytes; });
+    for await (const _event of engine.start({ url: "https://example.test/live.m3u8", format: "hls" }, null)) {
+      // Drain the stream through HLS staging and replay.
+    }
+    expect(received).toBe(Buffer.byteLength(playlist) + segment.length);
+  });
+
   it("writes the stream to disk and yields data/completed", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
     const out = path.join(dir, "a.flv");

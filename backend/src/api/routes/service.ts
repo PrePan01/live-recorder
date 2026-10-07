@@ -33,6 +33,10 @@ export async function isDirectoryAvailable(directory: string | undefined | null)
 }
 
 export function registerServiceRoutes(app: FastifyInstance, services: Services): void {
+  // 高频轻量采样，不触发磁盘检测或数据库查询。
+  app.get('/api/v1/service/download-speed', async (_req, reply) => reply.send({
+    bytesPerSecond: services.manager.recordingDownloadBytesPerSecond(),
+  }));
   // 桌面原生电源控制使用独立轻量端点，不依赖磁盘检测或 WebView 是否可见。
   app.get('/api/v1/service/power', async (_req, reply) => reply.send({
     preventSleep: services.manager.shouldPreventSystemSleep(),

@@ -86,6 +86,11 @@ export async function stopRecording(id: string): Promise<void> {
   await http.post(`/rooms/${id}/stop-recording`);
 }
 
+export async function stopAllRecordings(): Promise<{ stopped: string[]; failed: string[] }> {
+  const { data } = await http.post<{ stopped: string[]; failed: string[] }>("/rooms/stop-recording-all");
+  return data;
+}
+
 export interface HighlightBufferStatus {
   enabled: boolean;
   availableSeconds: number;

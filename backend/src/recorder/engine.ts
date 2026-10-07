@@ -30,6 +30,8 @@ export type RecordingEvent =
   | { type: "stream_format_changed" };
 
 export interface RecordingEngine {
+  /** 在网络块到达时采样，独立于归一化、暂存及写盘进度。 */
+  setDownloadObserver?(observer: (bytes: number) => void): void;
   /** outputPath 传 null 时为纯预览模式：拉流只产出 data 事件（预览转发），不写文件、不发 file_created。 */
   start(
     input: StreamInput,

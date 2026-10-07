@@ -166,6 +166,17 @@ export function registerRoomRoutes(
     return reply.send({ ok: true, ...services.scheduler.queueEnabledRoomChecks() });
   });
 
+  app.post("/api/v1/rooms/stop-recording-all", async (_req, reply) => {
+    const roomIds = services.manager.activeRoomIds();
+    const results = await Promise.allSettled(
+      roomIds.map((id) => services.manager.stopRecording(id)),
+    );
+    return reply.send({
+      stopped: roomIds.filter((_, index) => results[index]!.status === "fulfilled"),
+      failed: roomIds.filter((_, index) => results[index]!.status === "rejected"),
+    });
+  });
+
   app.post("/api/v1/rooms", async (req, reply) => {
     const body = (req.body ?? {}) as {
       platform?: string;

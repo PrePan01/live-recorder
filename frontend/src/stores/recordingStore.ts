@@ -79,8 +79,10 @@ interface RecordingState {
   completionNotice: Recording | null;
   /** #220/#221：录制完成进入「待确认保留」态的录制（SSE recording:updated 到 awaiting_confirmation 时设置）。 */
   pendingConfirm: Recording | null;
+  /** 按事件到达顺序逐个询问，队首为 pendingConfirm。 */
+  pendingConfirmQueue: Recording[];
   /** #221：清空待确认保留提示（决策后或弹窗关闭）。 */
-  clearPendingConfirm: () => void;
+  clearPendingConfirm: (recordingId?: string) => void;
   /** 导出选区弹框（点导出即弹，保留后才后台导出）；关框/不保留=零动作取消。 */
   pendingClipExport: PendingClipExport | null;
   setPendingClipExport: (prompt: PendingClipExport) => void;
@@ -105,6 +107,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   historyLoaded: false,
   completionNotice: null,
   pendingConfirm: null,
+  pendingConfirmQueue: [],
   pendingClipExport: null,
   clipExports: {},
   clipDoneQueue: [],
@@ -225,6 +228,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         rec.endReason !== "service_restart";
       const justAwaiting =
         rec.state === "awaiting_confirmation" &&
+        previousEventState !== "awaiting_confirmation" &&
         previous?.state !== "awaiting_confirmation";
       const trackedClipExport = rec.id in s.clipExports;
       const isClipExport =
@@ -245,20 +249,28 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         // SSE 可能先于保存请求响应到达；贯穿导出和后处理保留本次任务。
         clipExports = { ...s.clipExports, [rec.id]: s.clipExports[rec.id] ?? rec.id };
       }
+      let pendingConfirmQueue = s.pendingConfirmQueue;
+      if (rec.state === "awaiting_confirmation") {
+        const queued = pendingConfirmQueue.some((item) => item.id === rec.id);
+        if (queued) {
+          pendingConfirmQueue = pendingConfirmQueue.map((item) =>
+            item.id === rec.id ? normalizeRecording(rec) : item,
+          );
+        } else if (justAwaiting) {
+          pendingConfirmQueue = [...pendingConfirmQueue, normalizeRecording(rec)];
+        }
+      } else {
+        // 已决策、导出失败等事件让该项失效，队列中的其他录制继续询问。
+        pendingConfirmQueue = pendingConfirmQueue.filter((item) => item.id !== rec.id);
+      }
       return {
         items,
         completionNotice:
           justCompleted && !isClipExport
             ? normalizeRecording(rec)
             : s.completionNotice,
-        pendingConfirm: justAwaiting
-          ? normalizeRecording(rec)
-          : // 精彩时刻导出失败可能发生在确认框已提前打开之后；收到失败事件时
-            // 收起已无效的确认框，避免用户提交一个不存在的待确认记录。
-            s.pendingConfirm?.id === rec.id &&
-              rec.state !== "awaiting_confirmation"
-            ? null
-            : s.pendingConfirm,
+        pendingConfirmQueue,
+        pendingConfirm: pendingConfirmQueue[0] ?? null,
         clipExports,
         clipDoneQueue:
           clipTerminal && (previousEventState !== rec.state ||
@@ -274,18 +286,25 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   },
   removeRecordingFromEvent(recordingId) {
     eventStateByRecordingId.delete(recordingId);
-    set((s) => ({
-      items: s.items.filter((item) => item.id !== recordingId),
-      total: Math.max(
-        0,
-        s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0),
-      ),
-      pendingConfirm:
-        s.pendingConfirm?.id === recordingId ? null : s.pendingConfirm,
-    }));
+    set((s) => {
+      const pendingConfirmQueue = s.pendingConfirmQueue.filter((item) => item.id !== recordingId);
+      return {
+        items: s.items.filter((item) => item.id !== recordingId),
+        total: Math.max(
+          0,
+          s.total - (s.items.some((item) => item.id === recordingId) ? 1 : 0),
+        ),
+        pendingConfirmQueue,
+        pendingConfirm: pendingConfirmQueue[0] ?? null,
+      };
+    });
   },
-  clearPendingConfirm() {
-    set({ pendingConfirm: null });
+  clearPendingConfirm(recordingId) {
+    set((s) => {
+      const id = recordingId ?? s.pendingConfirm?.id;
+      const pendingConfirmQueue = s.pendingConfirmQueue.filter((item) => item.id !== id);
+      return { pendingConfirmQueue, pendingConfirm: pendingConfirmQueue[0] ?? null };
+    });
   },
   setPendingClipExport(prompt) {
     set({ pendingClipExport: prompt });

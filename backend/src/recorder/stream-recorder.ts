@@ -232,6 +232,11 @@ export class FlvTimestampNormalizer {
  * FLV 标签时间戳在写盘/转发前归一化（抖音等 CDN 绝对 PTS → 相对），保证时长与可播正确。
  */
 export class StreamRecordingEngine implements RecordingEngine {
+  private downloadObserver: ((bytes: number) => void) | undefined;
+
+  setDownloadObserver(observer: (bytes: number) => void): void {
+    this.downloadObserver = observer;
+  }
   private stopped = false;
   private recordingActive = false;
   private controller: AbortController | null = null;
@@ -366,6 +371,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         const receivedAt = Date.now();
         const previousTs = normalizer.lastTimestampMs;
         const chunk = Buffer.from(value);
+        this.downloadObserver?.(chunk.length);
         // 写盘归一器会原地修改时间戳，观看支路须先处理自己的副本。
         // 每个新上游都发送 FLV 头并从本段起播，绝不沿用文件的续录偏移。
         if (previewNormalizer) {
@@ -561,6 +567,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         finally { health.pause(); }
         health.check();
         if (result.done) break;
+        this.downloadObserver?.(result.value.byteLength);
         health.received(false);
         yield Buffer.from(result.value);
       }

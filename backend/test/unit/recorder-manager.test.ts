@@ -256,6 +256,7 @@ describe("RecorderManager", () => {
     await waitFor(() => services.recordings.get(rec.id)!.state === "recording");
     const atStart = recordingUpdates;
     expect(atStart).toBeGreaterThanOrEqual(1); // file_created 补发
+    await waitFor(() => services.manager.recordingDownloadBytesPerSecond() > 0);
 
     // 录制期间推进 3 秒：不应再有每秒周期补发（后端 ticker 已移除，时长由前端本地 ticker 走时）。
     await settle(clock, 1000);
@@ -1806,6 +1807,23 @@ describe("shared preview watchdog lifecycle", () => {
     clock.advance(3000); await send(2000);
     expect(stops()).toBe(0);
     await services.manager.stopRecording(room.id);
+    await services.manager.stopPreviewStream(room.id);
+  });
+
+  it("counts shared recording data, excludes preview-only data, and clears silent or stopped recordings", async () => {
+    const { clock, services, room, send } = await setup();
+    await send(1000);
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(0);
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(0);
+    await send(2000);
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(16);
+    clock.advance(1000);
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(0);
+    await send(3000);
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(16);
+    await services.manager.stopRecording(room.id);
+    expect(services.manager.recordingDownloadBytesPerSecond()).toBe(0);
     await services.manager.stopPreviewStream(room.id);
   });
 

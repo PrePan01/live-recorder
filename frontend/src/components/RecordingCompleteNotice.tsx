@@ -14,26 +14,19 @@ import {
   isInterruptedEnd,
 } from "../utils/recordingEndReason";
 import RecordingKeepConfirmModal from "./RecordingKeepConfirmModal";
+import type { Recording } from "../types/recording";
 
 export default function RecordingCompleteNotice() {
-  const { notification, message } = App.useApp();
+  const { notification } = App.useApp();
   const seenRef = useRef<Set<string>>(new Set());
   const completed = useRecordingStore((s) => s.completionNotice);
   const pendingConfirm = useRecordingStore((s) => s.pendingConfirm);
-  const clearPendingConfirm = useRecordingStore((s) => s.clearPendingConfirm);
   const pendingClip = useRecordingStore((s) => s.pendingClipExport);
   const clearPendingClip = useRecordingStore((s) => s.clearPendingClipExport);
   const beginClipExport = useRecordingStore((s) => s.beginClipExport);
   const clipDoneQueue = useRecordingStore((s) => s.clipDoneQueue);
   const clearClipDoneQueue = useRecordingStore((s) => s.clearClipDoneQueue);
   const roomName = useRoomName();
-  const [confirming, setConfirming] = useState(false);
-  const [fileName, setFileName] = useState("");
-
-  useEffect(() => {
-    const current = pendingConfirm?.filePath?.split(/[\\/]/).pop() ?? "";
-    setFileName(current.replace(/\.[^.]+$/, ""));
-  }, [pendingConfirm]);
 
   useEffect(() => {
     if (pendingConfirm)
@@ -123,35 +116,12 @@ export default function RecordingCompleteNotice() {
   const confirmName = pendingConfirm
     ? (roomName[pendingConfirm.roomId] ?? pendingConfirm.roomId)
     : "";
-  const endReasonText = describeEndReason(pendingConfirm?.endReason);
-  const interruptedEnd = isInterruptedEnd(pendingConfirm?.endReason);
-  const doKeep = async (keep: boolean) => {
-    if (!pendingConfirm) return;
-    setConfirming(true);
-    try {
-      await confirmRecordingKeep(pendingConfirm.id, keep, fileName);
-    } catch {
-      message.error("决策提交失败，请重试");
-    } finally {
-      setConfirming(false);
-      clearPendingConfirm();
-    }
-  };
 
   return (
     <>
-      <RecordingKeepConfirmModal
-        open={!!pendingConfirm}
-        name={confirmName}
-        endReasonText={endReasonText}
-        interruptedEnd={interruptedEnd}
-        fileName={fileName}
-        onFileNameChange={setFileName}
-        confirming={confirming}
-        onKeep={() => void doKeep(true)}
-        onDiscard={() => void doKeep(false)}
-        onCancel={() => clearPendingConfirm()}
-      />
+      {pendingConfirm ? (
+        <RecordingKeepPrompt key={pendingConfirm.id} recording={pendingConfirm} name={confirmName} />
+      ) : null}
       {pendingClip ? (
         <ClipExportConfirmModal
           prompt={pendingClip}
@@ -161,6 +131,46 @@ export default function RecordingCompleteNotice() {
         />
       ) : null}
     </>
+  );
+}
+
+/** 每份录像独立维护输入和提交状态；响应晚于 SSE 时也只消费自己的队列项。 */
+function RecordingKeepPrompt({ recording, name }: { recording: Recording; name: string }) {
+  const { message } = App.useApp();
+  const [confirming, setConfirming] = useState(false);
+  const submitting = useRef(false);
+  const [fileName, setFileName] = useState(() =>
+    (recording.filePath?.split(/[\\/]/).pop() ?? "").replace(/\.[^.]+$/, ""),
+  );
+  const doKeep = async (keep: boolean) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setConfirming(true);
+    try {
+      await confirmRecordingKeep(recording.id, keep, fileName);
+      useRecordingStore.getState().clearPendingConfirm(recording.id);
+    } catch {
+      message.error("决策提交失败，请重试");
+    } finally {
+      submitting.current = false;
+      setConfirming(false);
+    }
+  };
+  return (
+    <RecordingKeepConfirmModal
+      open
+      name={name}
+      endReasonText={describeEndReason(recording.endReason)}
+      interruptedEnd={isInterruptedEnd(recording.endReason)}
+      fileName={fileName}
+      onFileNameChange={setFileName}
+      confirming={confirming}
+      onKeep={() => void doKeep(true)}
+      onDiscard={() => void doKeep(false)}
+      onCancel={() => {
+        if (!submitting.current) useRecordingStore.getState().clearPendingConfirm(recording.id);
+      }}
+    />
   );
 }
 
