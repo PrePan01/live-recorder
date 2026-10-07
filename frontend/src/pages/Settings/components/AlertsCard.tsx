@@ -28,7 +28,7 @@ export default function AlertsCard() {
       className="lr-alerts-card lr-settings-card"
       title="告警"
       extra={
-        <Space size={8}>
+        <Space size={8} wrap>
           <Button
             size="small"
             onClick={() => {
@@ -111,17 +111,19 @@ export default function AlertsCard() {
                       >
                         标记已读
                       </Button>,
-                    ]
+                    ].filter(Boolean)
               }
             >
               <List.Item.Meta
                 title={
-                  <Space>
+                  <div className="lr-alerts-card__title">
                     <Tag color={ALERT_LEVEL_META[a.level].color}>
                       {ALERT_LEVEL_META[a.level].text}
                     </Tag>
-                    <Typography.Text>{a.message}</Typography.Text>
-                  </Space>
+                    <Typography.Text className="lr-alerts-card__message">
+                      {a.message}
+                    </Typography.Text>
+                  </div>
                 }
                 description={
                   <Typography.Text type="secondary">

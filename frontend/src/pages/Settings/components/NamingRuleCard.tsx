@@ -15,6 +15,7 @@ export default function NamingRuleCard() {
   const [rule, setRule] = useState<string | null>(null);
   const [example, setExample] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const preset = NAMING_PRESETS.find((item) => item.value === rule);
 
   useEffect(() => {
     fetchNamingRule()
@@ -68,6 +69,7 @@ export default function NamingRuleCard() {
           placeholder="选择预设模板"
           options={NAMING_PRESETS}
           value={rule ?? undefined}
+          labelRender={() => preset?.label ?? "自定义"}
           onChange={save}
         />
       </Space>
