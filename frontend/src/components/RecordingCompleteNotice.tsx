@@ -225,6 +225,7 @@ function ClipExportConfirmModal({
       onDiscard={onFinished}
       onCancel={onFinished}
       closable
+      autoKeep={false}
     />
   );
 }

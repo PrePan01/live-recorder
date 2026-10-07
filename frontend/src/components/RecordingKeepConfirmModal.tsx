@@ -1,4 +1,6 @@
 import { Button, Input, Modal, Space, Typography } from "antd";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { startAutoKeepCountdown } from "../utils/autoKeepCountdown";
 
 type Props = {
   open: boolean;
@@ -15,6 +17,7 @@ type Props = {
   onCancel: () => void;
   /** 整段结束确认不给退路（维持原行为）；片段导出确认允许关框=取消导出。 */
   closable?: boolean;
+  autoKeep?: boolean;
 };
 
 /** 录制片段「保留/不保留」确认框（整段结束与导出选区共用同一套 UI）。 */
@@ -30,24 +33,47 @@ export default function RecordingKeepConfirmModal({
   onDiscard,
   onCancel,
   closable = false,
+  autoKeep = true,
 }: Props) {
+  const [remaining, setRemaining] = useState<number | null>(autoKeep ? 10 : null);
+  const consumed = useRef(false);
+  const cancelCountdown = useRef<(() => void) | null>(null);
+  const keepLatest = useEffectEvent(() => onKeep());
+
+  useEffect(() => {
+    if (!open || !autoKeep || confirming || consumed.current) return;
+    const cancel = startAutoKeepCountdown(setRemaining, () => {
+      consumed.current = true;
+      setRemaining(null);
+      keepLatest();
+    });
+    cancelCountdown.current = cancel;
+    return cancel;
+  }, [open, autoKeep, confirming]);
+
+  const decide = (action: () => void) => {
+    if (confirming) return;
+    consumed.current = true;
+    cancelCountdown.current?.();
+    setRemaining(null);
+    action();
+  };
+
   return (
     <Modal
       centered
       open={open}
-      title="录制完成"
+      title={`${name}录制完成`}
       closable={closable}
       maskClosable={false}
       zIndex={1200}
       footer={null}
-      onCancel={onCancel}
+      onCancel={() => decide(onCancel)}
     >
       <p>
         {interruptedEnd
           ? "录制已中断，是否保留已录到的部分？"
           : "录制已完成，是否保留此片段？"}
-        <br />
-        <span style={{ fontWeight: 600 }}>{name}</span>
       </p>
       {/* 中断结束不能只显示"录制完成"：要让用户知道这次是为什么停的。 */}
       {endReasonText ? (
@@ -69,11 +95,11 @@ export default function RecordingKeepConfirmModal({
       <Space
         style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}
       >
-        <Button danger loading={confirming} onClick={onDiscard}>
+        <Button danger loading={confirming} onClick={() => decide(onDiscard)}>
           不保留（删除）
         </Button>
-        <Button type="primary" loading={confirming} onClick={onKeep}>
-          保留
+        <Button type="primary" loading={confirming} onClick={() => decide(onKeep)}>
+          {remaining !== null ? `保留(${remaining})` : "保留"}
         </Button>
       </Space>
     </Modal>
