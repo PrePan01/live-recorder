@@ -40,6 +40,7 @@ export interface ExportConfig {
   exportedAt: string;
   settings: Awaited<ReturnType<typeof settingsView>>;
   rooms: ReturnType<Services['rooms']['list']>;
+  tags: ReturnType<Services['tags']['list']>;
   alerts: ReturnType<Services['alerts']['list']>;
   /** 已结束录制的历史元数据（不含录像文件），供恢复录制历史与统计看板。 */
   recordings: RecordingArchive;
@@ -50,7 +51,8 @@ export interface ExportConfig {
 export interface ImportConfigInput {
   version?: number;
   settings?: Partial<AppSettings>;
-  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean }>;
+  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; tags?: unknown[] }>;
+  tags?: unknown[];
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
   recordings?: unknown;
   prediction?: unknown;
@@ -167,6 +169,7 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
     exportedAt: services.clock.iso(),
     settings: await settingsView(services),
     rooms: services.rooms.list(),
+    tags: services.tags.list(),
     alerts: services.alerts.list(),
     recordings: exportRecordingArchive(services),
     prediction: exportPredictionArchive(services),
@@ -224,24 +227,56 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     }
     let importedRooms = 0;
     let skippedRooms = 0;
+    // 标签 ID 只在源安装内有效；按名称复用本地标签，兼容旧备份的 rooms[].tags。
+    const restoreTag = (input: unknown): string | null => {
+      if (!input || typeof input !== 'object') return null;
+      const tag = input as { name?: unknown; color?: unknown };
+      const name = typeof tag.name === 'string' ? tag.name.trim() : '';
+      if (!name || name.length > 30) return null;
+      const existing = services.tags.findByName(name);
+      if (existing) return existing.id;
+      const color = typeof tag.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(tag.color) ? tag.color : '#1677ff';
+      return services.tags.create({ name, color }).id;
+    };
+    if (Array.isArray(incoming.tags)) {
+      try {
+        services.db.transaction(() => {
+          for (const tag of incoming.tags!) restoreTag(tag);
+        })();
+      } catch {
+        throw new AppError('CONFIG_LOAD_FAILED', '标签导入失败', { details: { appliedSettings } });
+      }
+    }
     if (Array.isArray(incoming.rooms)) {
-      const existing = new Set(services.rooms.list().map((r) => `${r.platform}|${r.url}`));
+      const existing = new Map(services.rooms.list().map((r) => [`${r.platform}|${r.url}`, r]));
       try {
         for (const item of incoming.rooms) {
           if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin')) continue;
           const key = `${item.platform}|${item.url}`;
-          if (existing.has(key)) {
-            skippedRooms += 1;
-            continue;
+          let room = existing.get(key);
+          if (room) skippedRooms += 1;
+          else {
+            room = services.rooms.create({
+              platform: item.platform as Platform,
+              url: item.url,
+              displayName: typeof item.displayName === 'string' ? item.displayName : '',
+              enabled: item.enabled ?? true,
+            });
+            existing.set(key, room);
+            importedRooms += 1;
           }
-          services.rooms.create({
-            platform: item.platform as Platform,
-            url: item.url,
-            displayName: typeof item.displayName === 'string' ? item.displayName : '',
-            enabled: item.enabled ?? true,
-          });
-          existing.add(key);
-          importedRooms += 1;
+          if (Array.isArray(item.tags)) {
+            const roomId = room.id;
+            services.db.transaction(() => {
+              // 合并已有房间的关联，重复导入不清除本地标签或产生重复关联。
+              const ids = new Set(services.tags.tagsForRoom(roomId).map((tag) => tag.id));
+              for (const tag of item.tags!) {
+                const id = restoreTag(tag);
+                if (id) ids.add(id);
+              }
+              services.tags.setRoomTags(roomId, [...ids]);
+            })();
+          }
         }
       } catch (err) {
         throw new AppError('CONFIG_LOAD_FAILED', '房间导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });

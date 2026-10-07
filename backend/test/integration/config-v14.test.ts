@@ -53,6 +53,75 @@ describe('v1.4 browse-directories', () => {
 });
 
 describe('v1.4 config export/import', () => {
+  it('round-trips shared room tags and unassigned tags through a backup file', async () => {
+    const source = newServices();
+    const first = source.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/101', displayName: 'first' });
+    const second = source.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/102', displayName: 'second' });
+    const shared = source.tags.create({ name: '游戏', color: '#123456' });
+    const extra = source.tags.create({ name: '关注', color: '#abcdef' });
+    source.tags.create({ name: '未使用', color: '#654321' });
+    source.tags.setRoomTags(first.id, [shared.id, extra.id]);
+    source.tags.setRoomTags(second.id, [shared.id]);
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-tags-backup-'));
+    const file = await exportConfigToPath(source, path.join(dir, 'backup'));
+    const { config } = JSON.parse(await readFile(file, 'utf8'));
+    expect(config.tags).toHaveLength(3);
+    expect(config.rooms.find((r: { id: string }) => r.id === first.id).tags).toHaveLength(2);
+
+    const target = newServices();
+    const { app } = buildApp(target);
+    // Only restore rooms/tags here; settings have separate validation coverage.
+    const payload = { config: { rooms: config.rooms, tags: config.tags } };
+    for (let i = 0; i < 2; i += 1) {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST, payload });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().importedRooms).toBe(i === 0 ? 2 : 0);
+      expect(target.tags.list().map(({ name, color }) => ({ name, color }))).toEqual(
+        source.tags.list().map(({ name, color }) => ({ name, color })),
+      );
+      const rooms = target.rooms.list();
+      expect(rooms.find((r) => r.url === first.url)?.tags.map((t) => t.name).sort()).toEqual(['关注', '游戏']);
+      expect(rooms.find((r) => r.url === second.url)?.tags.map((t) => t.name)).toEqual(['游戏']);
+      expect(rooms.find((r) => r.url === first.url)?.id).not.toBe(first.id);
+      expect(target.tags.findByName('游戏')?.id).not.toBe(shared.id);
+    }
+    source.db.close();
+    await app.close();
+  });
+
+  it('restores inline tags from old backups onto existing rooms without overwriting local tags', async () => {
+    const services = newServices();
+    const { app } = buildApp(services);
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/103', displayName: 'local' });
+    const local = services.tags.create({ name: 'local', color: '#111111' });
+    const shared = services.tags.create({ name: 'shared', color: '#222222' });
+    services.tags.setRoomTags(room.id, [local.id]);
+    const payload = { config: { rooms: [{
+      platform: room.platform, url: room.url, displayName: 'backup',
+      tags: [
+        { id: local.id, name: 'SHARED', color: '#ffffff' },
+        { id: shared.id, name: 'new', color: '#123456' },
+        { name: 'new', color: '#123456' },
+        null, { name: '' }, { name: 42 },
+      ],
+    }] } };
+    for (let i = 0; i < 2; i += 1) {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST, payload });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ importedRooms: 0, skippedRooms: 1 });
+    }
+    expect(services.rooms.get(room.id)?.displayName).toBe('local');
+    expect(services.tags.tagsForRoom(room.id).map((t) => t.name)).toEqual(['local', 'new', 'shared']);
+    expect(services.tags.get(shared.id)?.color).toBe('#222222');
+    expect(services.tags.findByName('new')?.color).toBe('#123456');
+    // Backups predating tags must leave local associations intact.
+    const legacy = await app.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST,
+      payload: { config: { rooms: [{ platform: room.platform, url: room.url }] } } });
+    expect(legacy.statusCode).toBe(200);
+    expect(services.tags.tagsForRoom(room.id)).toHaveLength(3);
+    await app.close();
+  });
+
   it('exports settings/rooms/alerts with secrets masked as hasXxx flags', async () => {
     const services = newServices();
     const { app } = buildApp(services);

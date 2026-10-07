@@ -1,6 +1,7 @@
 import type { Settings } from './settings';
 import type { Room } from './room';
 import type { Alert } from './alert';
+import type { Tag } from './tag';
 
 /** v1.4：目录树浏览响应 */
 export interface DirectoryEntry {
@@ -70,6 +71,7 @@ export interface ExportConfig {
   exportedAt: string;
   settings: Settings;
   rooms: Room[];
+  tags: Tag[];
   alerts: Alert[];
   recordings: RecordingArchive;
   prediction: { rooms: PredictionArchiveRoom[] };
@@ -87,7 +89,8 @@ export interface ExportConfigFileResult {
 export interface ImportConfigInput {
   version?: number;
   settings?: Partial<Settings>;
-  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean }>;
+  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; tags?: Array<{ name: string; color?: string }> }>;
+  tags?: Array<{ name: string; color?: string }>;
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
   recordings?: RecordingArchive;
 }
