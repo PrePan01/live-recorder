@@ -11,10 +11,15 @@ import {
   readSync,
   closeSync,
   appendFileSync,
+  mkdirSync,
+  linkSync,
+  copyFileSync,
+  existsSync,
+  renameSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { execFile, execFileSync } from "node:child_process";
+import { join, resolve, dirname } from "node:path";
+import { spawn, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { verifyInstallerSignature } from "./verify-installer-signatures.mjs";
 import {
@@ -46,58 +51,70 @@ export function assertReleaseIdentity(saved, expected) {
   }
 }
 
-// The draft is the durable journal. Bind bytes before uploading any public CDN
+export function validateJournal(saved, tag, commit) {
+  if (saved?.commit !== commit || `v${saved?.version}` !== tag ||
+      !/^[a-f0-9]{40}$/.test(commit || "") ||
+      (saved.publishedSnapshot !== true && (!Number.isSafeInteger(saved.runId) || saved.runId <= 0 ||
+        !Number.isSafeInteger(saved.runAttempt) || saved.runAttempt <= 0)) ||
+      !saved.files || Array.isArray(saved.files) || !saved.files["latest.json"] || !saved.files["releases.json"] ||
+      Object.keys(saved.files).filter(name => name.endsWith(".dmg")).length !== 1 ||
+      Object.keys(saved.files).filter(name => name.endsWith(".exe")).length !== 1 ||
+      !Object.entries(saved.files).every(([name, digest]) =>
+        /^[A-Za-z0-9_.-]+$/.test(name) && name !== "." && name !== ".." && /^[a-f0-9]{64}$/.test(digest)))
+    throw new Error("Invalid frozen release checkpoint");
+}
+
+function assertPointerIdentity(state, pointer) {
+  if (!pointer) return;
+  const current = JSON.parse(pointer);
+  if (compareVersions(state.version, current.version) < 0)
+    throw new Error("Refusing to roll back the update pointer");
+  if (current.version === state.version) {
+    for (const asset of Object.values(current.platforms || {}))
+      if (state.files[asset.filename] !== asset.sha256)
+        throw new Error("This version is already public with different bytes");
+  }
+}
+
+// Freeze the journal in Actions before uploading any public CDN
 // objects; a retry may fill gaps but must never replace an existing asset.
 export async function publishRelease(state, remote, { sync = true } = {}) {
   remote.assertTag(state.commit);
   const latestVersion = remote.latestGitHubVersion();
   if (latestVersion && compareVersions(state.version, latestVersion) < 0)
     throw new Error("Refusing to publish an older version as latest");
-  const pointer = remote.readObject("latest.json");
-  if (pointer) {
-    const current = JSON.parse(pointer);
-    if (compareVersions(state.version, current.version) < 0)
-      throw new Error("Refusing to roll back the update pointer");
-    if (current.version === state.version) {
-      for (const asset of Object.values(current.platforms)) {
-        if (state.files[asset.filename] !== asset.sha256)
-          throw new Error(
-            "This version is already public with different bytes",
-          );
-      }
-    }
-  }
-  remote.ensureDraft(state.commit);
-  remote.assertTag(state.commit);
+  assertPointerIdentity(state, remote.readObject("latest.json"));
   const saved = remote.readAsset(STATE);
   if (saved) assertReleaseIdentity(JSON.parse(saved), state);
   else {
-    if (!remote.isDraft())
+    if (remote.release()?.draft === false)
       throw new Error(
         "Published release has no identity journal; refusing to modify it",
       );
-    await remote.uploadState(state);
+    await remote.requireCheckpoint(state);
   }
-  // Stage both destinations concurrently, with at most two files per service.
+  remote.ensureDraft(state.commit);
+  remote.assertTag(state.commit);
+  // Run one AWS batch concurrently with bounded GitHub asset uploads.
   // Drain all in-flight transfers on failure before cleaning up local resources.
   const entries = Object.entries(state.files);
+  console.log("Release phase: uploading frozen assets to GitHub and CDN");
   const uploads = await Promise.allSettled([
-    transferFiles(entries, async ([name, digest]) => {
-      const key = ["latest.json", "releases.json", "SHA256SUMS.txt"].includes(
-        name,
-      )
-        ? `releases/v${state.version}/${name}`
-        : name;
-      await remote.ensureObject(key, name, digest);
-    }),
+    remote.ensureObjects(entries.map(([name, digest]) => [
+      ["latest.json", "releases.json", "SHA256SUMS.txt"].includes(name)
+        ? `releases/v${state.version}/${name}` : name,
+      name, digest,
+    ])),
     transferFiles(entries, ([name, digest]) =>
       remote.ensureAsset(name, digest),
     ),
   ]);
   const failure = uploads.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;
+  console.log("Release phase: verifying uploaded assets");
   await remote.verifyStaged(state);
   remote.assertTag(state.commit);
+  console.log("Release phase: publishing GitHub Release");
   remote.publishGitHub(state.commit);
   remote.reportStatus?.("published_mirror_pending");
   if (sync) await syncRelease(state, remote);
@@ -107,16 +124,11 @@ export async function publishRelease(state, remote, { sync = true } = {}) {
 // never rebuilds installers or changes an already published Release.
 export async function syncRelease(state, remote) {
   remote.assertTag(state.commit);
-  if (remote.isDraft()) throw new Error("Cannot sync an unpublished release");
+  if (remote.release()?.draft !== false) throw new Error("Cannot sync an unpublished release");
   const latest = remote.latestGitHubVersion();
   if (latest && compareVersions(state.version, latest) < 0)
     throw new Error("Refusing to sync an older release");
-  const pointer = remote.readObject("latest.json");
-  if (
-    pointer &&
-    compareVersions(state.version, JSON.parse(pointer).version) < 0
-  )
-    throw new Error("Refusing to roll back the update pointer");
+  assertPointerIdentity(state, remote.readObject("latest.json"));
   try {
     remote.updatePointer("releases.json");
     remote.updatePointer("latest.json");
@@ -168,17 +180,8 @@ export async function prepareReleaseFiles(
       asset.sha256,
     ]),
   );
-  for (const name of readdirSync(directory)
-    .filter((name) => ![STATE, "SHA256SUMS.txt"].includes(name))
-    .sort()) {
-    files[name] ??= await hashFile(join(directory, name));
-  }
-  const sums = Object.entries(files)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, digest]) => `${digest}  ${name}\n`)
-    .join("");
-  writeFileSync(join(directory, "SHA256SUMS.txt"), sums);
-  files["SHA256SUMS.txt"] = hashBytes(sums);
+  for (const name of ["latest.json", "releases.json"])
+    files[name] = await hashFile(join(directory, name));
   return files;
 }
 
@@ -186,6 +189,7 @@ export async function verifyFrozenFiles(
   directory,
   version,
   pubkey = updaterPublicKey,
+  expectedFiles,
 ) {
   const manifest = JSON.parse(readFileSync(join(directory, "latest.json")));
   if (
@@ -199,9 +203,8 @@ export async function verifyFrozenFiles(
     Object.values(manifest.platforms).map((asset) => [asset.filename, asset]),
   );
   const files = {};
-  for (const name of readdirSync(directory)
-    .filter((name) => name !== STATE)
-    .sort()) {
+  const names = expectedFiles ? Object.keys(expectedFiles) : [...installers.keys(), "latest.json", "releases.json"];
+  for (const name of names.sort()) {
     const asset = installers.get(name);
     const hash = createHash("sha256");
     const prehash = asset ? createHash("blake2b512") : null;
@@ -216,17 +219,13 @@ export async function verifyFrozenFiles(
         files[name] !== asset.sha256
       )
         throw new Error(`Frozen installer mismatch: ${name}`);
-      const signature = readFileSync(
-        join(directory, `${name}.sig`),
-        "utf8",
-      ).trim();
-      if (signature !== asset.signature)
-        throw new Error(`Frozen signature mismatch: ${name}`);
+      const signature = asset.signature;
+      if (!signature) throw new Error(`Missing frozen signature: ${name}`);
       verifyInstallerSignature(pubkey, signature, prehash.digest());
     }
   }
   if (
-    ![...installers.keys(), "releases.json", "SHA256SUMS.txt"].every(
+    ![...installers.keys(), "latest.json", "releases.json"].every(
       (name) => files[name],
     )
   )
@@ -265,6 +264,8 @@ function command(program, args) {
     return execFileSync(program, args, {
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60000,
     });
   } catch (error) {
     throw new Error(
@@ -272,24 +273,53 @@ function command(program, args) {
     );
   }
 }
-function asyncCommand(program, args, options = {}) {
+export function asyncCommand(program, args, options = {}) {
+  const { label = program, timeout = 300000, liveOutput = false, idleTimeout = 0, ...execution } = options;
   return new Promise((resolve, reject) => {
-    execFile(
-      program,
-      args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...options },
-      (error, stdout, stderr) => {
-        if (error)
-          reject(
-            new Error(
-              `${program} ${args[0]} failed: ${stderr || error.message}`,
-            ),
-          );
-        else resolve(stdout);
-      },
-    );
+    const started = Date.now();
+    let lastProgress = started, lastAmount = '', progress = 'waiting for output';
+    let stdout = '', stderr = '', stopped, forceKill, settled = false;
+    const child = spawn(program, args, { ...execution, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stop = reason => {
+      if (stopped) return;
+      stopped = reason;
+      child.kill('SIGTERM');
+      forceKill = setTimeout(() => child.kill('SIGKILL'), 10000);
+    };
+    const deadline = setTimeout(() => stop(`${label} timed out after ${Math.round(timeout / 1000)}s`), timeout);
+    const heartbeat = setInterval(() => {
+      console.log(`[${label}] ${Math.round((Date.now() - started) / 1000)}s: ${progress}`);
+    }, 15000);
+    const idle = idleTimeout ? setInterval(() => {
+      if (Date.now() - lastProgress > idleTimeout) stop(`${label}: no upload progress for ${Math.round(idleTimeout / 1000)}s`);
+    }, Math.min(15000, idleTimeout / 2)) : undefined;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline); clearTimeout(forceKill); clearInterval(heartbeat); clearInterval(idle);
+      if (error) reject(error);
+      else { console.log(`[${label}] completed in ${Math.round((Date.now() - started) / 1000)}s`); resolve(stdout); }
+    };
+    for (const [stream, isError] of [[child.stdout, false], [child.stderr, true]]) stream.on('data', chunk => {
+      const output = chunk.toString();
+      if (isError) stderr += output; else stdout += output;
+      if (stdout.length + stderr.length > 16 * 1024 * 1024) stop(`${label}: output limit exceeded`);
+      if (liveOutput) process.stdout.write(output.replace(/\r/g, '\n'));
+      progress = output.trim().split(/[\r\n]+/).at(-1) || progress;
+      for (const match of output.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
+        const amount = `${match[1]} ${match[2]}`;
+        if (amount !== lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
+      }
+    });
+    child.on('error', error => finish(error));
+    child.on('close', (code, signal) => {
+      if (stopped) finish(new Error(stopped));
+      else if (code !== 0 || signal) finish(new Error(`${label} failed: ${stderr || signal || code}`));
+      else finish();
+    });
   });
 }
+
 async function retryTransfer(fn) {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -297,11 +327,12 @@ async function retryTransfer(fn) {
     } catch (error) {
       if (
         attempt === 3 ||
-        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify/.test(
+        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify|upload budget exceeded/.test(
           error.message,
         )
       )
         throw error;
+      console.warn(`Transfer failed; retry ${attempt + 2}/4 in ${2 ** attempt}s: ${error.message}`);
       await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
     }
   }
@@ -333,13 +364,6 @@ export class ReleaseRemote {
     this.repo = process.env.GITHUB_REPOSITORY;
     this.scratch = mkdtempSync(join(tmpdir(), "lr-publish-"));
     this.runAsync = runAsync;
-    // Use an isolated CLI profile: each of the two CDN transfers has at most
-    // four multipart requests, for eight total. Never change the user's config.
-    this.transferConfig = join(this.scratch, "aws-config");
-    writeFileSync(
-      this.transferConfig,
-      "[default]\nregion = cn-south-1\ns3 =\n    preferred_transfer_client = classic\n    multipart_threshold = 16MB\n    multipart_chunksize = 16MB\n    max_concurrent_requests = 4\n",
-    );
   }
   close() {
     rmSync(this.scratch, { recursive: true, force: true });
@@ -356,19 +380,19 @@ export class ReleaseRemote {
   }
   release(refresh = false) {
     if (refresh || this.releaseSnapshot === undefined) {
-      let release = this.api(`releases/tags/${this.tag}`);
-      if (!release) {
-        for (let page = 1; ; page++) {
-          const releases = this.api(`releases?per_page=100&page=${page}`);
-          if (!Array.isArray(releases))
-            throw new Error(
-              "Unable to list releases while checking for a draft",
-            );
-          release =
-            releases.find((candidate) => candidate.tag_name === this.tag) ??
-            null;
-          if (release || releases.length < 100) break;
-        }
+      // The release list covers both drafts and published releases. Looking up
+      // a draft through the published-by-tag endpoint adds an expected 404.
+      let release = null;
+      for (let page = 1; ; page++) {
+        const releases = this.api(`releases?per_page=100&page=${page}`);
+        if (!Array.isArray(releases))
+          throw new Error(
+            "Unable to list releases while checking for a draft",
+          );
+        release =
+          releases.find((candidate) => candidate.tag_name === this.tag) ??
+          null;
+        if (release || releases.length < 100) break;
       }
       this.releaseSnapshot = release;
     }
@@ -427,8 +451,17 @@ export class ReleaseRemote {
     });
   }
   readAsset(name) {
-    if (!this.release()?.assets.some((asset) => asset.name === name))
-      return null;
+    const release = this.release();
+    if (!release?.assets.some((asset) => asset.name === name)) {
+      if (name !== STATE && !["latest.json", "releases.json"].includes(name)) return null;
+      if (name === STATE && release?.draft === false) {
+        const snapshot = this.publishedJournal(release);
+        if (snapshot) return Buffer.from(JSON.stringify(snapshot));
+      }
+      const bundle = this.journalBundle();
+      const file = bundle && join(bundle, name);
+      return file && existsSync(file) ? readFileSync(file) : null;
+    }
     const file = join(this.scratch, name);
     retry(() =>
       command("gh", [
@@ -446,17 +479,126 @@ export class ReleaseRemote {
     );
     return readFileSync(file);
   }
-  async uploadState(state) {
-    writeFileSync(
-      join(this.directory, STATE),
-      `${JSON.stringify(state, null, 2)}\n`,
-    );
-    await this.ensureAsset(
-      STATE,
-      hashBytes(readFileSync(join(this.directory, STATE))),
-    );
+  publishedJournal(release) {
+    // Public asset digests and the updater manifest remain available after
+    // Actions artifacts expire. Index repair never needs original build jobs.
+    const commit = process.env.RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA;
+    const metadata = release.assets.find(asset => asset.name === "latest.json");
+    if (!metadata || !/^[a-f0-9]{40}$/.test(commit || "")) return null;
+    const bytes = this.readAsset("latest.json");
+    if (metadata.digest !== `sha256:${hashBytes(bytes)}`) throw new Error("Published manifest digest mismatch");
+    const manifest = JSON.parse(bytes);
+    const names = ["macos-aarch64", "windows-x86_64"].map(key => manifest.platforms?.[key]?.filename);
+    if (`v${manifest.version}` !== this.tag || names.some(name => !name)) throw new Error("Published manifest identity mismatch");
+    const files = {};
+    for (const name of [...names, "latest.json", "releases.json"]) {
+      const asset = release.assets.find(item => item.name === name);
+      if (!/^sha256:[a-f0-9]{64}$/.test(asset?.digest || "")) throw new Error(`Missing published digest: ${name}`);
+      files[name] = asset.digest.slice(7);
+    }
+    for (const item of Object.values(manifest.platforms))
+      if (files[item.filename] !== item.sha256) throw new Error("Published installer digest mismatch");
+    const saved = { version: manifest.version, commit, files, publishedSnapshot: true };
+    validateJournal(saved, this.tag, commit);
+    return saved;
+  }
+  journalBundle() {
+    if (this.journalDirectory !== undefined) return this.journalDirectory;
+    const commit = process.env.RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA;
+    if (!/^[a-f0-9]{40}$/.test(commit || "")) return null;
+    const name = `release-state-${this.tag}-${commit}`;
+    let artifact;
+    for (let page = 1; ; page++) {
+      const result = this.api(`actions/artifacts?name=${name}&per_page=100&page=${page}`);
+      if (!Array.isArray(result?.artifacts)) throw new Error("Unable to query internal release checkpoint");
+      artifact = result.artifacts.find(item => item.name === name && !item.expired && item.workflow_run?.head_sha === commit);
+      if (artifact || result.artifacts.length < 100) break;
+    }
+    if (!artifact) { this.journalDirectory = null; return null; }
+    const directory = join(this.scratch, "checkpoint");
+    mkdirSync(directory, { recursive: true });
+    this.downloadRunArtifact(artifact.workflow_run.id, name, directory);
+    const saved = JSON.parse(readFileSync(join(directory, STATE)));
+    if (saved.commit !== commit || `v${saved.version}` !== this.tag || saved.runId !== artifact.workflow_run.id)
+      throw new Error("Internal checkpoint identity mismatch");
+    this.journalDirectory = directory;
+    return directory;
+  }
+  downloadRunArtifact(runId, name, directory) {
+    retry(() => command("gh", ["run", "download", String(runId), "--repo", this.repo,
+      "--name", name, "--dir", directory]));
+  }
+  async requireCheckpoint(state) {
+    // The workflow must durably save this checkpoint before publication starts.
+    const saved = this.readAsset(STATE);
+    if (!saved) throw new Error("Missing internal release checkpoint; refusing to upload");
+    assertReleaseIdentity(JSON.parse(saved), state);
+  }
+  async restoreFrozen(commit, published = false, pubkey = updaterPublicKey) {
+    const raw = this.readAsset(STATE);
+    if (!raw) throw new Error("Missing frozen release checkpoint (or expired Actions artifact)");
+    const saved = JSON.parse(raw);
+    validateJournal(saved, this.tag, commit);
+    if (saved.publishedSnapshot && !published) throw new Error("Cannot restore a published snapshot as a draft");
+    this.assertTag(commit);
+    if (!published && !this.canReuseChecks(saved, commit))
+      throw new Error("Original release quality and native checks must have passed");
+    mkdirSync(this.directory, { recursive: true });
+    writeFileSync(join(this.directory, STATE), raw);
+    for (const name of ["latest.json", "releases.json"]) {
+      const bytes = this.readAsset(name);
+      if (bytes) writeFileSync(join(this.directory, name), bytes);
+      else if (published) throw new Error(`Missing published manifest: ${name}`);
+    }
+    if (published) {
+      for (const name of ["latest.json", "releases.json"])
+        if (hashBytes(readFileSync(join(this.directory, name))) !== saved.files[name])
+          throw new Error(`Frozen manifest mismatch: ${name}`);
+      return saved;
+    }
+    const missing = Object.keys(saved.files).filter(name => !existsSync(join(this.directory, name)));
+    // Prefer already frozen GitHub files. Only fetch original build artifacts
+    // when GitHub lacks an installer or a legacy manifest/signature.
+    let needBuild = false;
+    for (const name of missing) {
+      const bytes = this.readAsset(name);
+      if (bytes) writeFileSync(join(this.directory, name), bytes);
+      else needBuild = true;
+    }
+    if (needBuild) {
+      const needed = Object.keys(saved.files).filter(name => !existsSync(join(this.directory, name)));
+      const regenerate = !["latest.json", "releases.json"].every(name => existsSync(join(this.directory, name)));
+      for (const [platform, suffix] of [["macos", ".dmg"], ["windows", ".exe"]]) {
+        if (!regenerate && !needed.some(name => name.endsWith(suffix) || name.endsWith(`${suffix}.sig`))) continue;
+        const extracted = join(this.scratch, `build-${platform}`);
+        mkdirSync(extracted, { recursive: true });
+        await this.runAsync("gh", ["run", "download", String(saved.runId), "--repo", this.repo,
+          "--name", `live-recorder-${platform}-${saved.version}`, "--dir", extracted],
+          { label: `Restore original ${platform} artifact`, timeout: 480000 });
+        for (const name of readdirSync(extracted)) {
+          const target = join(this.directory, name.replace(/ /g, "."));
+          if (!existsSync(target)) copyFileSync(join(extracted, name), target);
+        }
+      }
+      for (const name of readdirSync(this.directory)) {
+        const normalized = name.replace(/ /g, ".");
+        if (normalized !== name) renameSync(join(this.directory, name), join(this.directory, normalized));
+      }
+      if (!["latest.json", "releases.json"].every(name => existsSync(join(this.directory, name))))
+        await generateUpdateManifest(this.directory, saved.version, process.env.UPDATE_BASE_URL, "release-notes.json", pubkey);
+      // Compatibility with checkpoints created before the public allowlist.
+      if (saved.files["SHA256SUMS.txt"] && !existsSync(join(this.directory, "SHA256SUMS.txt")))
+        writeFileSync(join(this.directory, "SHA256SUMS.txt"), Object.entries(saved.files)
+          .filter(([name]) => name !== "SHA256SUMS.txt").sort(([a], [b]) => a.localeCompare(b))
+          .map(([name, digest]) => `${digest}  ${name}\n`).join(""));
+    }
+    const files = await verifyFrozenFiles(this.directory, saved.version, pubkey, saved.files);
+    assertReleaseIdentity(saved, { ...saved, files });
+    return saved;
   }
   async ensureAsset(name, digest) {
+    const started = Date.now();
+    const budget = 8 * 60 * 1000;
     let refresh = false;
     await retryTransfer(async () => {
       const release = this.release(refresh);
@@ -473,6 +615,8 @@ export class ReleaseRemote {
         throw new Error(
           `Published release is missing ${name}; refusing to modify it`,
         );
+      const remaining = budget - (Date.now() - started);
+      if (remaining <= 0) throw new Error(`GitHub upload budget exceeded: ${name}`);
       await this.runAsync("gh", [
         "release",
         "upload",
@@ -480,7 +624,7 @@ export class ReleaseRemote {
         join(this.directory, name),
         "--repo",
         this.repo,
-      ]);
+      ], { label: `GitHub ${name}`, timeout: Math.min(300000, remaining) });
       // Update this phase's snapshot without another full Release request.
       const current = this.release();
       if (!current.assets.some((asset) => asset.name === name))
@@ -511,47 +655,51 @@ export class ReleaseRemote {
     retry(() => this.aws(["get-object", "--key", key, file]));
     return readFileSync(file);
   }
-  async ensureObject(key, name, digest) {
-    const head = this.objectHead(key);
-    if (head) {
-      const actual =
-        head.Metadata?.sha256 || hashBytes(this.readObject(key, head));
-      if (actual !== digest)
-        throw new Error(`Refusing to overwrite CDN object ${key}`);
-      return;
-    }
-    console.log(`Uploading CDN object: ${key}`);
-    await retryTransfer(() =>
-      this.runAsync(
-        "aws",
-        [
-          "--endpoint-url",
-          process.env.QINIU_ENDPOINT,
-          "s3",
-          "cp",
-          join(this.directory, name),
-          `s3://${process.env.QINIU_BUCKET}/${key}`,
-          "--metadata",
-          `sha256=${digest}`,
-          "--cache-control",
-          "public, max-age=31536000, immutable",
-          "--content-type",
-          name.endsWith(".json")
-            ? "application/json"
-            : "application/octet-stream",
-          "--only-show-errors",
-        ],
-        {
-          env: {
-            ...process.env,
-            AWS_CONFIG_FILE: this.transferConfig,
-            AWS_PROFILE: "default",
-            AWS_DEFAULT_PROFILE: "default",
-          },
-        },
-      ),
-    );
+  async ensureObjects(entries) {
+    // One native AWS recursive transfer, as in the previous working workflow.
+    // Stage only missing immutable objects, keeping public version indexes out
+    // of the batch. Hard links avoid rereading/copying large installers.
+    const fingerprint = hashBytes(JSON.stringify([...entries].sort()));
+    const staging = join(this.scratch, "cdn-upload");
+    const started = Date.now();
+    const budget = 25 * 60 * 1000;
+    await retryTransfer(async () => {
+      rmSync(staging, { recursive: true, force: true });
+      mkdirSync(staging, { recursive: true });
+      let pending = 0;
+      for (const [key, name, digest] of entries) {
+        const head = this.objectHead(key);
+        if (head) {
+          if (head.Metadata?.["release-set-sha256"] === fingerprint &&
+              head.ContentLength === statSync(join(this.directory, name)).size) continue;
+          const actual = head.Metadata?.sha256 || hashBytes(this.readObject(key, head));
+          if (actual !== digest) throw new Error(`Refusing to overwrite CDN object ${key}`);
+          continue;
+        }
+        const target = join(staging, key);
+        mkdirSync(dirname(target), { recursive: true });
+        try { linkSync(join(this.directory, name), target); }
+        catch (error) {
+          if (error.code !== "EXDEV") throw error;
+          copyFileSync(join(this.directory, name), target);
+        }
+        pending++;
+      }
+      if (!pending) return;
+      const remaining = budget - (Date.now() - started);
+      if (remaining <= 0) throw new Error("CDN upload budget exceeded");
+      console.log(`Uploading ${pending} CDN objects in one AWS recursive batch`);
+      await this.runAsync("aws", [
+        "--endpoint-url", process.env.QINIU_ENDPOINT,
+        "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
+        "--cache-control", "public, max-age=31536000, immutable",
+        "--metadata", `release-set-sha256=${fingerprint}`,
+      ], {
+        label: "CDN batch upload", liveOutput: true, timeout: remaining,
+      });
+    });
   }
+
   reportStatus(status) {
     console.log(`Release status: ${status}`);
     if (process.env.GITHUB_STEP_SUMMARY)
@@ -621,6 +769,7 @@ export class ReleaseRemote {
     // A fresh server snapshot supplies GitHub's actual asset digest; never trust
     // the synthetic cache entries populated after an upload.
     const release = this.release(true);
+    if (!release) throw new Error("Release missing during verification");
     for (const [name, digest] of Object.entries(state.files)) {
       const asset = release.assets.find((asset) => asset.name === name);
       if (
@@ -650,8 +799,9 @@ export class ReleaseRemote {
     retry(() => {
       // Refresh at the publication boundary and after any uncertain edit.
       this.assertTag(commit);
-      this.release(true);
-      if (this.isDraft())
+      const release = this.release(true);
+      if (!release) throw new Error("Release missing at publication boundary");
+      if (release.draft)
         command("gh", [
           "release",
           "edit",
@@ -661,7 +811,8 @@ export class ReleaseRemote {
           "--draft=false",
           "--latest",
         ]);
-      this.releaseSnapshot = undefined;
+      if (this.release(true)?.draft !== false)
+        throw new Error("GitHub publication could not be confirmed");
     });
   }
   canReuseChecks(saved, commit) {
@@ -715,6 +866,7 @@ export class ReleaseRemote {
 
 async function main() {
   const [mode, directory, version] = process.argv.slice(2);
+  const sourceCommit = process.env.RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA;
   const publishing = process.env.PUBLISH_RELEASE === "true";
   if (mode === "status") {
     if (process.env.GITHUB_REF !== "refs/heads/release")
@@ -723,24 +875,25 @@ async function main() {
       );
     const remote = new ReleaseRemote(directory, version);
     try {
-      remote.assertTag(process.env.GITHUB_SHA);
+      remote.assertTag(sourceCommit);
       const release = remote.release();
       const published = release?.draft === false;
+      const journal = remote.readAsset(STATE);
+      if (journal) validateJournal(JSON.parse(journal), remote.tag, sourceCommit);
       if (published) {
-        const journal = remote.readAsset(STATE);
         if (!journal)
           throw new Error("Published release has no identity journal");
         const saved = JSON.parse(journal);
         if (
           saved.version !== version ||
-          saved.commit !== process.env.GITHUB_SHA ||
+          saved.commit !== sourceCommit ||
           !Object.keys(saved.files).every((name) =>
             release.assets.some((asset) => asset.name === name),
           )
         )
           throw new Error("Published release identity or assets mismatch");
       }
-      process.stdout.write(`published=${published}\n`);
+      process.stdout.write(`published=${published}\nfrozen=${Boolean(journal)}\n`);
     } finally {
       remote.close();
     }
@@ -758,34 +911,22 @@ async function main() {
     if (publishing) {
       const remote = new ReleaseRemote(directory, version);
       try {
-        remote.assertTag(process.env.GITHUB_SHA);
+        remote.assertTag(sourceCommit);
         const release = remote.release();
         // Legacy published versions remain a no-op. New releases with a journal
         // can resume the final pointer update after GitHub publication.
-        if (
-          release &&
-          !release.draft &&
-          !release.assets.some((a) => a.name === STATE)
-        )
-          shouldRelease = false;
-        if (release?.assets.some((a) => a.name === STATE)) {
-          const saved = JSON.parse(remote.readAsset(STATE));
-          if (
-            saved.commit !== process.env.GITHUB_SHA ||
-            saved.version !== version
-          )
-            throw new Error(
-              "Release journal belongs to another commit or version",
-            );
-          reuseRelease = Object.keys(saved.files).every((name) =>
-            release.assets.some((a) => a.name === name),
-          );
-          published = !release.draft;
-          if (published && !reuseRelease)
+        const journal = remote.readAsset(STATE);
+        if (release?.draft === false && !journal) shouldRelease = false;
+        if (journal) {
+          const saved = JSON.parse(journal);
+          validateJournal(saved, remote.tag, sourceCommit);
+          reuseRelease = true;
+          published = release?.draft === false;
+          if (published && !Object.keys(saved.files).every(name => release.assets.some(a => a.name === name)))
             throw new Error("Published release has missing frozen assets");
           if (reuseRelease)
             reuseChecks =
-              published || remote.canReuseChecks(saved, process.env.GITHUB_SHA);
+              published || remote.canReuseChecks(saved, sourceCommit);
         }
       } finally {
         remote.close();
@@ -794,6 +935,22 @@ async function main() {
     process.stdout.write(
       `should_release=${shouldRelease}\nreuse_release=${reuseRelease}\nreuse_checks=${reuseChecks}\n`,
     );
+    return;
+  }
+  if (["prepare", "restore"].includes(mode)) {
+    if (process.env.GITHUB_REF !== "refs/heads/release")
+      throw new Error("Official publication is only allowed from the release branch");
+    const pubkey = JSON.parse(readFileSync("frontend/src-tauri/tauri.conf.json")).plugins.updater.pubkey;
+    if (mode === "restore") {
+      const remote = new ReleaseRemote(directory, version);
+      try { await remote.restoreFrozen(sourceCommit, process.env.ALREADY_PUBLISHED === "true", pubkey); }
+      finally { remote.close(); }
+    } else {
+      const files = await prepareReleaseFiles(directory, version, process.env.UPDATE_BASE_URL, "release-notes.json", pubkey);
+      const state = { version, commit: sourceCommit, files, runId: Number(process.env.GITHUB_RUN_ID), runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) };
+      validateJournal(state, `v${version}`, sourceCommit);
+      writeFileSync(join(directory, STATE), `${JSON.stringify(state, null, 2)}\n`);
+    }
     return;
   }
   if (
@@ -815,7 +972,7 @@ async function main() {
   }
   if (mode === "sync") {
     const saved = JSON.parse(readFileSync(join(directory, STATE)));
-    if (saved.version !== version || saved.commit !== process.env.GITHUB_SHA)
+    if (saved.version !== version || saved.commit !== sourceCommit)
       throw new Error("Synchronization identity mismatch");
     for (const name of ["latest.json", "releases.json"]) {
       if (hashBytes(readFileSync(join(directory, name))) !== saved.files[name])
@@ -832,25 +989,10 @@ async function main() {
     }
     return;
   }
-  let files;
-  if (process.env.PREPARE_RELEASE_ASSETS === "true") {
-    files = await prepareReleaseFiles(
-      directory,
-      version,
-      process.env.UPDATE_BASE_URL,
-    );
-  } else {
-    // Hash + authenticate restored installers in the same streaming pass.
-    files = await verifyFrozenFiles(directory, version);
-  }
-  const state = {
-    version,
-    commit: process.env.GITHUB_SHA,
-    files,
-    runId: Number(process.env.GITHUB_RUN_ID),
-    runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-  };
-  writeFileSync(join(directory, STATE), `${JSON.stringify(state, null, 2)}\n`);
+  const state = JSON.parse(readFileSync(join(directory, STATE)));
+  validateJournal(state, `v${version}`, sourceCommit);
+  // Restored bytes have already been verified; fresh bytes were signed and
+  // hashed in prepare. Reuse that work rather than hashing installers twice.
   const remote = new ReleaseRemote(directory, version);
   try {
     await publishRelease(state, remote, { sync: false });

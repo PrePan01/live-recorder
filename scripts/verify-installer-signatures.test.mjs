@@ -26,7 +26,10 @@ test('verifier accepts signatures produced by the installed Tauri CLI', () => {
     const cli = resolve('frontend/node_modules/@tauri-apps/cli/tauri.js');
     const run = (args) => {
       // Never print signer output: generation may include the temporary key.
-      const result = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+      const env = { ...process.env };
+      delete env.TAURI_SIGNING_PRIVATE_KEY;
+      delete env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
+      const result = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env });
       assert.equal(result.status, 0, 'Tauri signer command failed');
     };
     run(['signer', 'generate', '--ci', '--password', '', '--write-keys', key]);
