@@ -169,14 +169,16 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       if (idx === -1) return {};
       const next = [...s.items];
       // recording:updated 不携带上传快照；保留 SSE upload:updated 已写入的实时进度。
-      next[idx] = { ...rec, upload: rec.upload ?? next[idx]!.upload ?? null };
+      next[idx] = { ...next[idx], ...rec, upload: rec.upload ?? next[idx]!.upload ?? null };
       return { items: next };
     });
   },
   upsertRecordingFromEvent(rec) {
     const known = get().items.some((item) => item.id === rec.id);
     // 列表外的新记录（新录制/新片段）：分页筛选语义无法客户端插行，防抖重取当前页。
-    if (!known) {
+    const old = get().items.find(item => item.id === rec.id);
+    const accepted = !old || !TERMINAL_STATES.has(old.state) || TERMINAL_STATES.has(rec.state) || (rec.id in get().clipExports && rec.state === "processing" && (rec.pipelineStatus === "queued" || rec.pipelineStatus === "running"));
+    if (accepted && (!known || (old && (old.filePath !== rec.filePath || old.state !== rec.state || old.missingMs !== rec.missingMs || old.gapCount !== rec.gapCount)))) {
       const s = get();
       const inScope =
         s.historyLoaded && (!s.query.roomId || s.query.roomId === rec.roomId);
@@ -211,7 +213,11 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
           : s.items.map((item, index) =>
               index === idx
                 ? {
+                    ...item,
                     ...normalizeRecording(rec),
+                    ...(rec.gapSummary === undefined && (rec.gapCount !== undefined || rec.missingMs !== undefined) ? {
+                      gapSummary: { gapCount: rec.gapCount ?? item.gapSummary?.gapCount ?? 0, totalMissingMs: rec.missingMs ?? item.gapSummary?.totalMissingMs ?? 0, estimated: item.gapSummary?.estimated },
+                    } : {}),
                     upload: rec.upload ?? item.upload ?? null,
                   }
                 : item,

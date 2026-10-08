@@ -438,3 +438,10 @@ describe("history query invalidation on list-external records", () => {
     vi.useRealTimers();
   });
 });
+
+it('preserves list-only danmaku and gap fields across raw recording SSE updates', () => {
+  const rec = recording({ id: 'list-enrichment', hasDanmaku: true, gapSummary: { gapCount: 2, totalMissingMs: 60000 } });
+  useRecordingStore.setState({ items: [rec] });
+  useRecordingStore.getState().upsertRecordingFromEvent(recording({ id: rec.id, integrity: 'verified' }));
+  expect(useRecordingStore.getState().items[0]).toMatchObject({ hasDanmaku: true, gapSummary: rec.gapSummary, integrity: 'verified' });
+});

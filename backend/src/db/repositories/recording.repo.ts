@@ -316,6 +316,14 @@ export class RecordingRepository {
       .run(input.recordingId);
   }
 
+  gapSummaries(recordingIds: string[]): Map<string, { gapCount: number; totalMissingMs: number }> {
+    if (!recordingIds.length) return new Map();
+    const rows = this.db.prepare(`SELECT recording_id AS recordingId, COUNT(*) AS gapCount,
+      SUM(missing_ms) AS totalMissingMs FROM recording_gaps WHERE recording_id IN (${recordingIds.map(() => '?').join(',')})
+      GROUP BY recording_id`).all(...recordingIds) as { recordingId: string; gapCount: number; totalMissingMs: number }[];
+    return new Map(rows.map(row => [row.recordingId, { gapCount: row.gapCount, totalMissingMs: row.totalMissingMs }]));
+  }
+
   listGaps(recordingId: string): Array<{ id: string; startedAt: string; endedAt: string; missingMs: number; kind: string; evidence: string | null }> {
     const rows = this.db
       .prepare('SELECT id, started_at AS startedAt, ended_at AS endedAt, missing_ms AS missingMs, kind, evidence FROM recording_gaps WHERE recording_id = ? ORDER BY started_at')

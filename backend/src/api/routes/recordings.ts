@@ -6,6 +6,7 @@ import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
 import { renameRecordingWithBuffer, removeRecordingBuffer } from "../../recorder/buffered-writer.js";
 import { DanmakuStore } from "../../danmaku/store.js";
+import { exportDanmakuFiles } from "../../danmaku/export.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
@@ -235,7 +236,8 @@ export function registerRecordingRoutes(
   async function hasDanmakuRows(filePath: string | null | undefined): Promise<boolean> {
     if (!filePath) return false;
     const { stat } = await import("node:fs/promises");
-    const info = await stat(DanmakuStore.sidecarPathFor(filePath)).catch(() => null);
+    const store = await DanmakuStore.openExisting(filePath);
+    const info = store ? await stat(store.filePath).catch(() => null) : null;
     return Boolean(info && info.size > 0);
   }
 
@@ -300,6 +302,7 @@ export function registerRecordingRoutes(
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
     });
+    const gapSummaries = services.recordings.gapSummaries(rawResult.items.map(item => item.id));
     const result = {
       ...rawResult,
       items: await Promise.all(rawResult.items.map(async (item) => ({
@@ -308,12 +311,10 @@ export function registerRecordingRoutes(
         hasDanmaku: await hasDanmakuRows(item.filePath),
         // 中断记账：次数与累计缺失分开出（历史列「N 次中断·共 X 秒」直接渲染）。
         gapSummary: (() => {
-          const gaps = services.recordings.listGaps(item.id);
-          const detailSum = gaps.reduce((acc, g) => acc + g.missingMs, 0);
-          // 与明细口同口径：总缺失取权威值与明细合计的较大者（时长不丢秒）。
+          const detail = gapSummaries.get(item.id);
           return {
-            gapCount: gaps.length,
-            totalMissingMs: Math.max(item.missingMs ?? 0, detailSum),
+            gapCount: detail?.gapCount ?? item.gapCount ?? 0,
+            totalMissingMs: Math.max(item.missingMs ?? 0, detail?.totalMissingMs ?? 0),
             estimated: item.missingMs == null,
           };
         })(),
@@ -339,22 +340,51 @@ export function registerRecordingRoutes(
     return reply.send(result);
   });
 
+  app.post("/api/v1/recordings/:id/danmaku-export", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec?.filePath || rec.state !== "completed") {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择已完成的录像");
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { directory, durationMs, width, height, opacity, density } = body;
+    if (typeof directory !== "string" || !directory.trim() ||
+      typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) || durationMs <= 0 ||
+      typeof width !== "number" || !Number.isInteger(width) || width < 1 || width > 16384 ||
+      typeof height !== "number" || !Number.isInteger(height) || height < 1 || height > 16384 ||
+      typeof opacity !== "number" || !Number.isFinite(opacity) || opacity < 0.2 || opacity > 1 ||
+      typeof density !== "number" || ![20, 40, 80].includes(density)) {
+      throw new AppError("CONFIG_INVALID", "弹幕导出参数无效");
+    }
+    try {
+      const result = await exportDanmakuFiles(rec.filePath, { directory, durationMs, width, height, opacity, density });
+      return reply.send(result);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("RECORDING_WRITE_FAILED", "弹幕导出失败，请检查目录权限和磁盘空间");
+    }
+  });
+
   app.get("/api/v1/recordings/:id/danmaku", async (req, reply) => {
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", { recordingId: id });
     const q = req.query as Record<string, string | undefined>;
-    const fromMs = Math.max(0, Number(q.fromMs ?? 0) || 0);
+    const fromMs = Number(q.fromMs ?? 0);
+    const endMs = q.toMs === undefined ? Number.MAX_SAFE_INTEGER : Number(q.toMs);
+    if (!Number.isFinite(fromMs) || fromMs < 0 || !Number.isFinite(endMs) || endMs < fromMs) throw new AppError("CONFIG_INVALID", "弹幕时间区间无效");
     // 缺省窗=全量（裸参不带 toMs 时按上界过滤会恒空——默认取最大值兜底）。
-    const toMs = q.toMs === undefined ? Number.MAX_SAFE_INTEGER : Math.max(fromMs, Number(q.toMs) || fromMs);
+    const toMs = endMs;
     const limit = q.limit ? Number(q.limit) : undefined;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20000)) throw new AppError("CONFIG_INVALID", "弹幕条数必须为 1-20000");
+    if (q.cursor !== undefined && (!/^\d+$/.test(q.cursor) || !Number.isSafeInteger(Number(q.cursor)))) throw new AppError("CONFIG_INVALID", "弹幕游标无效");
     const includeUnmappable = q.includeUnmappable === "1";
     const result = await services.danmaku.readRange(
       id,
       rec.filePath ?? "",
       fromMs,
       toMs,
-      { ...(limit ? { limit } : {}), includeUnmappable },
+      { ...(limit ? { limit } : {}), ...(q.cursor !== undefined ? { cursor: q.cursor } : {}), includeUnmappable },
     );
     return reply.send(result);
   });
@@ -362,9 +392,10 @@ export function registerRecordingRoutes(
   function estimatePositionMs(
     rec: { startedAt: string } | null | undefined,
     gapStartedAt: string,
+    previousMissingMs: number,
   ): number {
     if (!rec?.startedAt) return 0;
-    const pos = Date.parse(gapStartedAt) - Date.parse(rec.startedAt);
+    const pos = Date.parse(gapStartedAt) - Date.parse(rec.startedAt) - previousMissingMs;
     return Math.max(0, pos);
   }
 
@@ -376,6 +407,7 @@ export function registerRecordingRoutes(
         details: { recordingId: id },
       });
     const rawGaps = services.recordings.listGaps(id);
+    let previousMissingMs = 0;
     const gaps = rawGaps.map((g) => {
       let mediaPositionMs: number | null = null;
       try {
@@ -385,14 +417,18 @@ export function registerRecordingRoutes(
       } catch {
         mediaPositionMs = null;
       }
+      if (mediaPositionMs !== null && (!Number.isFinite(mediaPositionMs) || mediaPositionMs < 0)) mediaPositionMs = null;
+      const positionMs = mediaPositionMs ?? estimatePositionMs(rec, g.startedAt, previousMissingMs);
+      previousMissingMs += Math.max(0, g.missingMs);
       return {
+        evidence: g.evidence,
         id: g.id,
         startedAt: g.startedAt,
         endedAt: g.endedAt,
         missingMs: g.missingMs,
         kind: g.kind,
         // 位置=证据里的媒体锚点；旧记录无锚=墙钟估算位（FE 悬停带「约」）。
-        positionMs: mediaPositionMs ?? estimatePositionMs(rec, g.startedAt),
+        positionMs,
         estimated: mediaPositionMs === null,
       };
     });
@@ -678,6 +714,7 @@ export function registerRecordingRoutes(
       const nextPath = join(dir, nextName);
       try {
         await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
+        await services.danmaku.moveSidecar(id, rec.filePath, nextPath);
         await moveMarkerSidecar(rec.filePath, nextPath);
         await moveSeekIndexSidecar(rec.filePath, nextPath);
         services.recordings.update(id, {
@@ -716,6 +753,7 @@ export function registerRecordingRoutes(
     }
     await services.manager.cancelHighlightExport(id);
     await services.manager.stopActiveSessionForDeletion(id);
+    await services.danmaku.stopForRecording(id);
     await services.danmaku.removeSidecar(rec.filePath);
     services.pipeline.cancel(id, "录制已删除");
     services.manager.cancelClipExport(id);
@@ -858,6 +896,7 @@ export function registerRecordingRoutes(
       }
       await services.manager.cancelHighlightExport(id);
       await services.manager.stopActiveSessionForDeletion(id);
+      await services.danmaku.stopForRecording(id);
       await services.danmaku.removeSidecar(rec.filePath);
       services.pipeline.cancel(id, "录制已删除");
       services.manager.cancelClipExport(id);

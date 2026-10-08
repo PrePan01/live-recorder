@@ -39,17 +39,11 @@ describe("点③ 硬件编码加速+自动回退", () => {
   it("取消不回退：isCancelled=true 时硬编失败不再重试", async () => {
     const calls: string[] = [];
     // auto 模式在无硬编环境=直软编；此处用 software 分支无法覆盖，直接钉包装器取消面：
-    const out = await encodeWithFallback({
-      mode: "software",
-      crf: 23,
-      isCancelled: () => true,
-      attempt: async (encoder) => {
-        calls.push(encoder);
-        return "中途失败";
-      },
-    });
-    expect(calls).toHaveLength(1);
-    expect(out.fallbackReason).toBeNull();
+    await expect(encodeWithFallback({
+      mode: "software", crf: 23, isCancelled: () => true,
+      attempt: async encoder => { calls.push(encoder); return "中途失败"; },
+    })).rejects.toThrow("cancelled");
+    expect(calls).toHaveLength(0);
   });
 
   it("质量参数映射：同一 crf 意图落到各编码器近似旋钮（同数值不等价画质的兑底）", () => {

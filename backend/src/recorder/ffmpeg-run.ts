@@ -24,6 +24,8 @@ export interface FfmpegRunResult {
 }
 
 export interface FfmpegRunOptions {
+  encodingMode?: "auto" | "software";
+  onEncoder?: (outcome: import("./hw-encode.js").EncodeOutcome) => void;
   /** 长步骤进度回调（ffmpeg -progress 键值行解析）：outTimeMs=已处理媒体时长，speed=实时倍率（可能未知）。 */
   onProgress?: (info: { outTimeMs: number; speed: number | null }) => void;
   stallMs?: number;

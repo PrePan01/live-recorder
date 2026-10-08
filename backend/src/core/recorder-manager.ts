@@ -44,7 +44,7 @@ import {
 } from "../recorder/stream-recorder.js";
 import { SeekIndexWriter, endSeekWriter } from "../storage/seek-index.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
-import { exportClipFile, setEncodingMode } from "../recorder/pipeline-ffmpeg.js";
+import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
 import { DownloadSpeed } from "./download-speed.js";
@@ -272,7 +272,7 @@ export class RecorderManager {
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
-    const pending: Promise<void>[] = [];
+    const pending: Promise<void>[] = [this.services.danmaku.shutdown()];
     for (const abort of this.clipExportAborts.values()) abort.abort();
     pending.push(...this.clipExportJobs.values());
     for (const session of [...this.active.values()]) {
@@ -462,6 +462,12 @@ export class RecorderManager {
       speed += session.downloadSpeed.bytesPerSecond(now);
     }
     return speed;
+  }
+
+  private recordingMediaNow(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId || session.gapStartAt !== null || session.stopRequested) return null;
+    return session.mediaPositionMs ?? null;
   }
 
   /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
@@ -1003,6 +1009,7 @@ export class RecorderManager {
         return;
       }
       await renameRecordingWithBuffer(this.services.recordingBufferDirectory, rec.filePath, nextPath);
+      await this.services.danmaku.moveSidecar(recordingId, rec.filePath, nextPath);
       await moveMarkerSidecar(rec.filePath, nextPath);
       await moveSeekIndexSidecar(rec.filePath, nextPath);
       // 确认改名即保留：标签数据归位到 标签/（改名已完成、用新名落位）。
@@ -1432,17 +1439,8 @@ export class RecorderManager {
     this.active.set(room.id, session);
     // 弹幕采集随录制启动（异步起、失败只降级弹幕自身，不阻塞录制路径）。
     {
-      const startedWallMs = Date.now();
-      this.services.danmaku.startForRecording(
-        recording.id,
-        filePath,
-        room,
-        () =>
-          Math.max(
-            sharedRecording.normalizer.lastTimestampMs,
-            Date.now() - startedWallMs - (sharedRecording.session.missingMs ?? 0),
-          ),
-      );
+      this.services.danmaku.startForRecording(recording.id, filePath, room,
+        () => this.recordingMediaNow(room.id, recording.id));
     }
     this.services.recordings.update(recording.id, {
       state: "recording",
@@ -1929,14 +1927,8 @@ export class RecorderManager {
               filePath: event.filePath,
             });
             {
-              const startedWallMs = Date.now();
-              this.services.danmaku.startForRecording(
-                recordingId,
-                event.filePath,
-                room,
-                // 媒体时钟=墙钟流逝-累计缺失（timestampOffsetMs 只在分段边界推进、健康单段恒 0，不能当活时钟）。
-                () => Math.max(0, Date.now() - startedWallMs - (session.missingMs ?? 0)),
-              );
+              this.services.danmaku.startForRecording(recordingId, event.filePath, room,
+                () => this.recordingMediaNow(room.id, recordingId));
             }
             this.services.events.emit({
               type: "recording:updated",
@@ -2492,7 +2484,7 @@ export class RecorderManager {
     err: AppError,
     preservePreview = false,
   ): Promise<void> {
-    void this.services.danmaku.stopForRecording(recordingId);
+    await this.services.danmaku.stopForRecording(recordingId, this.active.get(room.id)?.mediaPositionMs);
     const session = this.active.get(room.id);
     const size = session?.size ?? 0;
     // 失败原因落库统一富化（reasonCategory）+落日志（[record] 同 [verify] 款，诊断盲区教训）。
@@ -2728,7 +2720,6 @@ export class RecorderManager {
       let lastPct = -1;
       let lastEmitAt = 0;
       try {
-        setEncodingMode(this.services.settings.load()?.encodingMode ?? "auto");
         const result = await exportClipFile(
           source.filePath!,
           outputPath,
@@ -2736,6 +2727,15 @@ export class RecorderManager {
           endSecond,
           {
             signal: abort.signal,
+            encodingMode: this.services.settings.load()?.encodingMode ?? "auto",
+            onEncoder: ({ actualEncoder, fallbackReason }) => {
+              if (abort.signal.aborted || !this.services.recordings.get(clip.id)) return;
+              const row = this.services.recordings.update(clip.id, { metadata: {
+                ...(this.services.recordings.get(clip.id)?.metadata ?? { durationMs: null, segmentCount: 1, quality: null, size: 0 }),
+                actualEncoder, fallbackReason,
+              } });
+              this.services.events.emit({ type: "recording:updated", data: row });
+            },
             onProgress: ({ outTimeMs }) => {
               if (abort.signal.aborted || this.shuttingDown) return;
               const pct = Math.max(
@@ -3012,7 +3012,7 @@ export class RecorderManager {
       failure?: ErrorObject | null;
     } = {},
   ): Promise<void> {
-    void this.services.danmaku.stopForRecording(recordingId);
+    await this.services.danmaku.stopForRecording(recordingId, this.active.get(room.id)?.mediaPositionMs);
     // 退出中：只放掉会话，不改库、不发通知、不起后处理——状态交给下次启动的恢复流程统一收口。
     if (this.shuttingDown) {
       this.active.get(room.id)?.resolveDone?.();
@@ -3195,6 +3195,8 @@ export class RecorderManager {
     this.services.pipeline.cancel(recordingId, "录制已删除");
     this.cancelClipExport(recordingId);
     if (rec.filePath) {
+      void this.services.danmaku.stopForRecording(recordingId)
+        .then(() => this.services.danmaku.removeSidecar(rec.filePath)).catch(() => undefined);
       void unlink(rec.filePath).catch(() => undefined);
       void removeMarkerSidecar(rec.filePath);
       void removeSeekIndexSidecar(rec.filePath);

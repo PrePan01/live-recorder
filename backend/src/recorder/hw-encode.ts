@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { runFfmpeg } from "./pipeline-ffmpeg.js";
+import { encodingWorkQueue } from "./media-work-queue.js";
 import { resolveBin } from "../utils/ffmpeg.js";
 
 export type HwEncoder = "h264_videotoolbox" | "h264_nvenc" | "h264_qsv" | "h264_amf";
@@ -22,6 +23,8 @@ interface ProbeCacheEntry {
   encoder: HwEncoder | null;
 }
 let probeCache: ProbeCacheEntry | null = null;
+const probes = new Map<string, Promise<HwEncoder | null>>();
+let probeQueue: Promise<unknown> = Promise.resolve();
 
 async function ffmpegFingerprint(ffmpegBin: string): Promise<string> {
   const info = await stat(ffmpegBin).catch(() => null);
@@ -38,16 +41,19 @@ export async function detectHwEncoder(ffmpegBin: string): Promise<HwEncoder | nu
   const fingerprint = await ffmpegFingerprint(ffmpegBin);
   if (probeCache?.fingerprint === fingerprint) return probeCache.encoder;
 
-  let found: HwEncoder | null = null;
-  for (const encoder of candidates) {
-    const ok = await probeEncoder(ffmpegBin, encoder);
-    if (ok) {
-      found = encoder;
-      break;
+  const pending = probes.get(fingerprint);
+  if (pending) return pending;
+  const job = probeQueue.then(async () => {
+    let found: HwEncoder | null = null;
+    for (const encoder of candidates) {
+      if (await encodingWorkQueue.run(() => probeEncoder(ffmpegBin, encoder))) { found = encoder; break; }
     }
-  }
-  probeCache = { fingerprint, encoder: found };
-  return found;
+    probeCache = { fingerprint, encoder: found };
+    return found;
+  });
+  probes.set(fingerprint, job);
+  probeQueue = job.catch(() => undefined);
+  try { return await job; } finally { probes.delete(fingerprint); }
 }
 
 function ffmpegBin(): string {
@@ -67,6 +73,7 @@ async function probeEncoder(_ffmpegBin: string, encoder: HwEncoder): Promise<boo
       "-i", "testsrc=duration=0.3:size=640x360:rate=30",
       "-frames:v", "5",
       "-c:v", encoder,
+      "-pix_fmt", "yuv420p",
       "-f", "null",
       "-",
     ], { stallMs: 8000, signal: controller.signal });
@@ -133,21 +140,40 @@ export interface EncodeOutcome {
 export async function encodeWithFallback(opts: {
   mode: "auto" | "software";
   crf: number;
+  preset?: string;
+  signal?: AbortSignal;
+  onWaiting?: () => void;
+  onEncoder?: (outcome: EncodeOutcome) => void;
   /** 单次尝试：返回失败类或 null=成功。 */
   attempt: (encoder: ActualEncoder, qualityArgs: string[]) => Promise<FallbackReason | null>;
   /** 取消判定：取消不触发回退（设计边界）。 */
   isCancelled?: () => boolean;
 }): Promise<EncodeOutcome> {
-  const { mode, crf, attempt, isCancelled } = opts;
+  const { mode, crf, isCancelled } = opts;
+  const attempt = (encoder: ActualEncoder, quality: string[], fallbackReason: FallbackReason | null = null) => {
+    if (isCancelled?.()) throw new Error("Media job cancelled");
+    opts.onEncoder?.({ actualEncoder: encoder, fallbackReason });
+    return opts.attempt(encoder, quality);
+  };
   if (mode === "software") {
-    await attempt("libx264", softwareEncodeArgs(crf));
+    await attempt("libx264", softwareEncodeArgs(crf, opts.preset));
     return { actualEncoder: "libx264", fallbackReason: null };
   }
-  const hw = await detectHwEncoder(ffmpegBin()).catch(() => null);
+  if (isCancelled?.()) throw new Error("Media job cancelled");
+  const pending = detectHwEncoder(ffmpegBin()).catch(() => null);
+  const hw = await new Promise<HwEncoder | null>((resolve, reject) => {
+    const heartbeat = opts.onWaiting ? setInterval(opts.onWaiting, 1000) : undefined;
+    heartbeat?.unref();
+    const cleanup = () => { if (heartbeat) clearInterval(heartbeat); opts.signal?.removeEventListener("abort", abort); };
+    const abort = () => { cleanup(); reject(new Error("Media job cancelled")); };
+    opts.signal?.addEventListener("abort", abort, { once: true });
+    if (opts.signal?.aborted) abort();
+    pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
   if (!hw) {
     // 无硬编（平台无候选=合法软编；候选但探测全败=标「探测失败」）。
     const hasCandidates = (PLATFORM_ORDER[process.platform] ?? []).length > 0;
-    await attempt("libx264", softwareEncodeArgs(crf));
+    await attempt("libx264", softwareEncodeArgs(crf, opts.preset), hasCandidates ? "探测失败" : null);
     return {
       actualEncoder: "libx264",
       fallbackReason: hasCandidates ? "探测失败" : null,
@@ -158,6 +184,6 @@ export async function encodeWithFallback(opts: {
   if (reason === null) return { actualEncoder: hw, fallbackReason: null };
   if (isCancelled?.()) return { actualEncoder: hw, fallbackReason: null };
   // 硬编失败=从原输入软编重试一次（调用方已清临时产物）。
-  await attempt("libx264", softwareEncodeArgs(crf));
+  await attempt("libx264", softwareEncodeArgs(crf, opts.preset), reason);
   return { actualEncoder: "libx264", fallbackReason: reason };
 }

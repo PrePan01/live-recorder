@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   previewPosition,
+  recordingTimelineEnd,
+  recordingSeekTarget,
   rangeAtSecond,
   timelinePercent,
   timelineSecondAt,
@@ -66,5 +68,61 @@ describe("指针与绘制坐标使用相同的轨道内部宽度", () => {
     expect(previewPosition("history", 95, 70)).toBe(70);
     expect(rangeAtSecond([20, 80], "start", 90, 95)).toEqual([79, 80]);
     expect(rangeAtSecond([20, 80], "end", 10, 95)).toEqual([20, 21]);
+  });
+});
+
+describe("文件回放轨道与录制轨道的交互区别", () => {
+  it("短视频和带小数的片尾使用真实时长，录制模式继续跨分钟扩展", () => {
+    expect(recordingTimelineEnd(28.995, "playback")).toBe(28.995);
+    expect(recordingTimelineEnd(28.995, "recording")).toBe(60);
+    expect(recordingTimelineEnd(95, "recording")).toBe(120);
+    expect(recordingTimelineEnd(95, "playback")).toBe(95);
+    expect(recordingTimelineEnd(0, "playback")).toBe(0);
+  });
+
+  it("文件片尾是有效跳播秒数，录制片尾仍返回直播", () => {
+    for (const point of [28.995, 30, 100]) {
+      expect(recordingSeekTarget("playback", "playhead", point, 28.995)).toBe(
+        28.995,
+      );
+      expect(recordingSeekTarget("recording", "playhead", point, 28.995)).toBe(
+        "live",
+      );
+    }
+    expect(recordingSeekTarget("playback", "playhead", -5, 28.995)).toBe(0);
+    expect(recordingSeekTarget("playback", "playhead", 12.5, 28.995)).toBe(
+      12.5,
+    );
+  });
+
+  it("文件选区手柄不提交播放定位，录制模式保留手柄跳播", () => {
+    for (const kind of ["start", "end"] as const) {
+      expect(recordingSeekTarget("playback", kind, 20, 95)).toBeUndefined();
+      expect(recordingSeekTarget("recording", kind, 20, 95)).toBe(20);
+    }
+    expect(recordingSeekTarget("recording", "end", 95, 95)).toBe("live");
+  });
+
+  it("视频不可定位时忽略提交，包括未就绪、错误和非法时间", () => {
+    expect(
+      recordingSeekTarget("playback", "playhead", 20, 95, true),
+    ).toBeUndefined();
+    for (const duration of [0, -1, NaN, Infinity]) {
+      expect(
+        recordingSeekTarget("playback", "playhead", 20, duration),
+      ).toBeUndefined();
+    }
+    expect(
+      recordingSeekTarget("playback", "playhead", NaN, 95),
+    ).toBeUndefined();
+  });
+
+  it("文件轨道右端准确对应带小数的片尾，游标随媒体时间而非选区", () => {
+    const end = recordingTimelineEnd(28.995, "playback");
+    expect(timelineSecondAt(448, 22, 426, end, end)).toBe(end);
+    expect(timelinePercent(end, end)).toBe(100);
+    expect(previewPosition("history", end, 21.5)).toBe(21.5);
+    expect(rangeAtSecond([0, end], "end", 15, end)).toEqual([0, 15]);
+    expect(previewPosition("history", end, 21.5)).toBe(21.5);
   });
 });

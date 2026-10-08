@@ -1,6 +1,7 @@
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
 import path from 'node:path';
+import { validatePipelineConfig } from './pipeline.js';
 
 /** 配置校验（阶段 B 手写检查；阶段 B-E4 路由层补 JSON Schema）。 */
 export function validateSettings(input: unknown): AppSettings {
@@ -60,6 +61,10 @@ export function validateSettings(input: unknown): AppSettings {
   const m = s.mail;
   if (m && (typeof m.host !== 'string' || typeof m.port !== 'number' || !Array.isArray(m.recipients))) {
     throw new AppError('CONFIG_INVALID', '邮件配置非法');
+  }
+  if (s.pipeline !== undefined) {
+    const error = validatePipelineConfig(s.pipeline);
+    if (error) throw error;
   }
   return s as AppSettings;
 }

@@ -5,7 +5,6 @@ import { resolveBin } from '../utils/ffmpeg.js';
 import { runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
 import { CLIP_BOUNDARY_TOLERANCE_SECONDS, createFlvSnapshotStream, openFlvClipSource, prepareFlvClipInput, type FlvClipSource } from './flv-clip-input.js';
 import { encodeWithFallback } from './hw-encode.js';
-import { encodingMode } from './pipeline-ffmpeg.js';
 import { encodingWorkQueue, MediaWorkQueue } from './media-work-queue.js';
 import { videoPassthroughArgs } from './ffmpeg-capabilities.js';
 
@@ -110,6 +109,7 @@ export async function exportClipFile(
   inputPath: string, outputPath: string, startSecond: number, endSecond: number,
   options: FfmpegRunOptions = {},
 ): Promise<ClipExportResult> {
+  const mode = options.encodingMode ?? "auto";
   let source: FlvClipSource | null = null;
   try {
     if (!Number.isFinite(startSecond) || !Number.isFinite(endSecond) || startSecond < 0 || endSecond <= startSecond || inputPath === outputPath) {
@@ -121,6 +121,7 @@ export async function exportClipFile(
       const copyInput = source ? await prepareFlvClipInput(source, startSecond, endSecond, true) : null;
       if (options.signal?.aborted) throw new Error('Media job cancelled');
       if (copyInput?.copySafe) {
+        options.onEncoder?.({ actualEncoder: "copy", fallbackReason: null });
         const res = await runFfmpegTracked(['-y', '-f', 'flv', '-i', 'pipe:0',
           '-t', String(endSecond - copyInput.keyframeSecond), '-map', '0:v?', '-map', '0:a?',
           '-c', 'copy', ...(copyInput.frameRate ? ['-r:v', String(copyInput.frameRate)] : []),
@@ -143,9 +144,14 @@ export async function exportClipFile(
         : options;
       const frameSync = input ? await videoPassthroughArgs() : [];
       let res: { ok: boolean; code: number | null; stderr: string } = { ok: false, code: null, stderr: '' };
+      let checkedBounds: Map<string, PacketBounds> | null = null;
       const outcome = await encodeWithFallback({
-        mode: encodingMode(),
+        mode,
+        preset: "superfast",
+        ...(options.onEncoder ? { onEncoder: options.onEncoder } : {}),
         crf: 23,
+        ...(options.signal ? { signal: options.signal } : {}),
+        onWaiting: () => options.onProgress?.({ outTimeMs: 0, speed: null }),
         isCancelled: () => options.signal?.aborted ?? false,
         attempt: async (encoder, quality) => {
           await unlink(outputPath).catch(() => undefined);
@@ -167,14 +173,14 @@ export async function exportClipFile(
           ], tracked), options.signal);
           if (options.signal?.aborted) return '中途失败';
           if (!res.ok) return progressed ? '中途失败' : res.code === null ? '启动失败' : '无进度';
-          const bounds = await probeBounds(outputPath, options.signal);
+          const bounds = checkedBounds = await probeBounds(outputPath, options.signal);
           const duration = endSecond - startSecond;
           const primary = bounds && ([...bounds].find(([type]) => type.startsWith('video:'))?.[1] ?? [...bounds.values()][0]);
           const valid = primary && Math.abs(primary.last + primary.duration - primary.first - duration) <= CLIP_BOUNDARY_TOLERANCE_SECONDS;
           return valid ? null : '产物校验失败';
         },
       });
-      const bounds = res.ok ? await probeBounds(outputPath, options.signal) : null;
+      const bounds = res.ok ? checkedBounds as Map<string, PacketBounds> | null : null;
       // 编码路径保持帧级起点；拒绝 EOF 导致的明显短片，不能把半个选区标为成功。
       const duration = endSecond - startSecond;
       const primary = bounds && ([...bounds].find(([type]) => type.startsWith('video:'))?.[1] ?? [...bounds.values()][0]);

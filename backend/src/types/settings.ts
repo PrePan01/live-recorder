@@ -179,4 +179,6 @@ export interface SettingsView {
   highlightEnabled: boolean;
   /** 编码方式：auto=硬编优先失败回退（默认）；software=只软编。 */
   encodingMode: 'auto' | 'software';
+  /** 弹幕采集开关（回传面），房间覆盖在 room.danmakuEnabled。 */
+  danmaku: { enabled: boolean };
 }

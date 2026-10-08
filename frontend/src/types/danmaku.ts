@@ -2,7 +2,7 @@
 export interface DanmakuMessage {
   id: string;
   /** 媒体时间（毫秒），与播放时间轴同源。 */
-  tMs: number;
+  tMs: number | null;
   text: string;
   /** 显示属性预留（颜色/字号等），首版可为空对象。 */
   attrs?: Record<string, unknown>;
@@ -25,5 +25,6 @@ export type DanmakuState =
 export interface DanmakuStatus {
   recordingId: string;
   state: DanmakuState;
-  since: string;
+  since: number;
+  reason?: string;
 }

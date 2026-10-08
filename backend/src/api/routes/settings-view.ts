@@ -34,5 +34,6 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
     highlightEnabled: settings.highlightEnabled ?? true,
     encodingMode: settings.encodingMode ?? 'auto',
+    danmaku: { enabled: settings.danmaku?.enabled ?? false },
   };
 }

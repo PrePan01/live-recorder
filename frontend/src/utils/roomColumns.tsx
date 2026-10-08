@@ -7,7 +7,6 @@ import {
   Space,
   Switch,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -125,12 +124,12 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       ),
     },
     {
-      title: "弹幕采集",
+      title: "弹幕保存",
       dataIndex: "danmakuEnabled",
       width: 120,
       render: (v: boolean | null, room) => (
         <Select
-          aria-label={`弹幕采集 ${room.displayName}`}
+          aria-label={`弹幕保存 ${room.displayName}`}
           size="small"
           value={v === null || v === undefined ? "inherit" : v ? "on" : "off"}
           style={{ width: 100 }}
@@ -168,7 +167,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       width: 100,
       render: (v: boolean, room) => (
         <Switch
-        aria-label={`开播提醒 ${room.displayName}`}
+          aria-label={`开播提醒 ${room.displayName}`}
           checked={v}
           onChange={(checked) =>
             void setLiveNotification(room.id, checked).catch((e) =>
@@ -213,13 +212,6 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
             style={{ cursor: "text" }}
           >
             <span>{v || "-"}</span>
-            {r.titleFallbackUsed ? (
-              <Tooltip title="回退/占位标题，平台接口未返回正式标题">
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  （回退）
-                </Typography.Text>
-              </Tooltip>
-            ) : null}
           </Space>
         ),
     },
@@ -283,7 +275,7 @@ export function buildRoomColumns(deps: RoomColumnsDeps): ColumnsType<Room> {
       width: 70,
       render: (v: boolean, room) => (
         <Switch
-        aria-label={`启用 ${room.displayName}`}
+          aria-label={`启用 ${room.displayName}`}
           checked={v}
           onChange={(checked) =>
             void toggleRoom(room.id, checked).catch((e) =>

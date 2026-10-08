@@ -6,14 +6,6 @@ import { availableParallelism } from 'node:os';
 import { discardTemp, finalizeMp4, runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
 import { encodeWithFallback } from './hw-encode.js';
 
-/** 编码方式：auto=硬编优先失败回退软编；software=只软编。默认 auto。 */
-let encodingModeSetting: 'auto' | 'software' = 'auto';
-export function setEncodingMode(mode: 'auto' | 'software'): void {
-  encodingModeSetting = mode;
-}
-export function encodingMode(): 'auto' | 'software' {
-  return encodingModeSetting;
-}
 import { uniqueTargetPath } from '../storage/file-organizer.js';
 import { encodingWorkQueue } from './media-work-queue.js';
 export { exportClipFile } from './clip-export.js';
@@ -190,6 +182,7 @@ export async function compressOrRemux(
   crf: number | null,
   options: FfmpegRunOptions = {},
 ): Promise<CompressResult | null> {
+  const mode = options.encodingMode ?? "auto";
   if (crf === null) return null;
   const preferredPath = inputPath.replace(/\.(flv|ts|mp4)$/i, '_c.mp4');
   if (preferredPath === inputPath) return null;
@@ -197,8 +190,11 @@ export async function compressOrRemux(
   const tempPath = `${outPath}.part`;
   await discardTemp(tempPath);
   const outcome = await encodeWithFallback({
-    mode: encodingMode(),
+    mode,
+    ...(options.onEncoder ? { onEncoder: options.onEncoder } : {}),
     crf,
+    ...(options.signal ? { signal: options.signal } : {}),
+    onWaiting: () => options.onProgress?.({ outTimeMs: 0, speed: null }),
     isCancelled: () => options.signal?.aborted ?? false,
     attempt: async (encoder, quality) => {
       await discardTemp(tempPath);
@@ -212,7 +208,7 @@ export async function compressOrRemux(
       };
       const res = await encodingWorkQueue.run(
         () => runFfmpeg(
-          ['-y', '-i', inputPath, '-c:v', encoder, ...quality, '-threads', String(ffmpegThreadCount()), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath],
+          ['-y', '-i', inputPath, '-c:v', encoder, ...quality, '-threads', String(ffmpegThreadCount()), '-c:a', 'aac', '-f', 'mp4', tempPath],
           runOptions,
         ),
         options.signal,

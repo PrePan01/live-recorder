@@ -36,6 +36,28 @@ export function registerRoomRoutes(
   services: Services,
 ): void {
   registerRoomCoverRoutes(app, services);
+  const danmakuPreview = (req: { params: unknown }) => {
+    const { id, token } = req.params as { id: string; token: string };
+    if (!/^[a-zA-Z0-9-]{16,96}$/.test(token)) throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");
+    return { id, token };
+  };
+  app.post("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    const room = services.rooms.get(id);
+    if (!room) throw new AppError("RESOURCE_NOT_FOUND", "直播间不存在");
+    return reply.send(services.danmaku.subscribePreview(room, token));
+  });
+  app.get("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    const { cursor = "0" } = req.query as { cursor?: string };
+    if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
+    return reply.send(services.danmaku.readPreview(id, token, Number(cursor)));
+  });
+  app.delete("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    await services.danmaku.unsubscribePreview(id, token);
+    return reply.send({ ok: true });
+  });
   const enrich = (room: import("../../types/index.js").Room) =>
     services.manager.enrichRoom(room);
   let insightCache:

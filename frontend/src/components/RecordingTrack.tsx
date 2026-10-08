@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { Button, Input, Modal, Popconfirm, Tooltip } from "antd";
 import {
@@ -17,22 +18,23 @@ import {
 import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { recordingGapText } from "../utils/recordingGapText";
 
-/** 缺口归因的人话兜底（evidence 无因时按 kind 粗归因显示；判不出=原因未知）。 */
-const KIND_FALLBACK: Record<string, string> = {
-  system_sleep: "系统休眠期间暂停录制",
-  source_stall: "源端长静默（直播源长时间无数据）",
-  stream_disconnect: "直播连接中断",
-  recording_tail: "录制结束前的缺失",
-};
+import { GENERIC_GAP_REASON, recordingGapKindText } from "../utils/recordingGapKindText";
 import {
   timelinePercent,
   timelineSecondAt,
   rangeAtSecond,
   previewPosition,
+  recordingTimelineEnd,
+  recordingSeekTarget,
+  type RecordingTrackMode,
 } from "../utils/recordingTimeline";
 
 type Props = {
   elapsedSeconds: number;
+  /** 文件回放使用真实时长，选区调整不跳播。 */
+  mode?: RecordingTrackMode;
+  seekDisabled?: boolean;
+  toolbar?: ReactNode;
   markers: RecordingMarker[];
   editable?: boolean;
   busy?: boolean;
@@ -69,12 +71,11 @@ function persistTrackCollapsed(value: boolean): void {
     /* 存储不可用静默，行为退化为本次会话内记忆 */
   }
 }
-// 仅调整这个值即可同时改变初始显示上限与每次扩展的阶梯大小。
-const TIMELINE_STEP_SECONDS = 60;
 const clock = (value: number) => {
-  const h = Math.floor(value / 3600);
-  const m = Math.floor((value % 3600) / 60);
-  const s = value % 60;
+  const seconds = Math.max(0, Math.floor(value));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
   return h
     ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
     : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
@@ -82,6 +83,9 @@ const clock = (value: number) => {
 
 export default function RecordingTrack({
   elapsedSeconds,
+  mode = "recording",
+  seekDisabled = false,
+  toolbar,
   markers,
   editable = false,
   busy = false,
@@ -131,13 +135,9 @@ export default function RecordingTrack({
     end: 0,
   });
   const recordingEnd = elapsedSeconds;
-  const liveTimelineEnd = Math.max(
-    TIMELINE_STEP_SECONDS,
-    Math.ceil(Math.max(1, recordingEnd) / TIMELINE_STEP_SECONDS) *
-      TIMELINE_STEP_SECONDS,
-  );
-  // 时间轴始终按已录制时长跨档扩展；手动选择只固定选区，不冻结显示上限。
-  const timelineEnd = liveTimelineEnd;
+  const timelineEnd = recordingTimelineEnd(recordingEnd, mode);
+  // 仅文件回放隐藏选区；录制中的历史预览仍保留剪辑选区。
+  const showSelection = mode !== "playback";
 
   useLayoutEffect(() => {
     const previousEnd = lastElapsedRef.current;
@@ -190,7 +190,7 @@ export default function RecordingTrack({
   const positionAt = useCallback(
     (clientX: number) => {
       const rail = railRef.current;
-      if (!rail || recordingEnd < 1) return 0;
+      if (!rail || recordingEnd <= 0) return 0;
       const rect = rail.getBoundingClientRect();
       const scale = rail.offsetWidth > 0 ? rect.width / rail.offsetWidth : 1;
       return timelineSecondAt(
@@ -249,10 +249,14 @@ export default function RecordingTrack({
           dragging.kind === "playhead"
             ? positionAt(event.clientX)
             : setRangeAt(dragging.kind, event.clientX);
-        onSeekCommit?.(
-          clamped >= recordingEnd ? "live" : clamped,
-          dragging.kind === "playhead" ? clamped : undefined,
+        const target = recordingSeekTarget(
+          mode, dragging.kind, clamped, recordingEnd, seekDisabled,
         );
+        if (target !== undefined)
+          onSeekCommit?.(
+            target,
+            dragging.kind === "playhead" ? clamped : undefined,
+          );
         setPlayheadSecond(null);
       }
       if (dragging && !("kind" in dragging)) {
@@ -302,6 +306,8 @@ export default function RecordingTrack({
     setRangeAt,
     onSeekCommit,
     recordingEnd,
+    mode,
+    seekDisabled,
   ]);
 
   const beginRange = (kind: "start" | "end", event: React.PointerEvent) => {
@@ -309,12 +315,13 @@ export default function RecordingTrack({
     event.stopPropagation();
     movedRef.current = false;
     touchedRef.current = true;
-    onSeekIntent?.(positionAt(event.clientX));
+    if (mode === "recording") onSeekIntent?.(positionAt(event.clientX));
     setDragging({ kind });
   };
   const beginPlayhead = (event: React.PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    if (seekDisabled || recordingEnd <= 0) return;
     movedRef.current = false;
     const second = positionAt(event.clientX);
     setPlayheadSecond(second);
@@ -347,6 +354,10 @@ export default function RecordingTrack({
     setEditorOpen(true);
   };
   const railJump = (event: React.PointerEvent) => {
+    if (mode === "playback") {
+      beginPlayhead(event);
+      return;
+    }
     touchedRef.current = true;
     const point = positionAt(event.clientX);
     setRangeAt(
@@ -461,7 +472,7 @@ export default function RecordingTrack({
   return (
     <section
       className={`lr-recording-track${collapsed ? " lr-recording-track--collapsed" : ""}`}
-      aria-label="录制轨道"
+      aria-label={mode === "playback" ? "回放轨道" : "录制轨道"}
     >
       <div className="lr-recording-track__topline">
         <div className="lr-recording-track__status-group">
@@ -477,6 +488,7 @@ export default function RecordingTrack({
             <span className="lr-recording-track__hint">{seekHint}</span>
           ) : null}
         </div>
+        {toolbar && <div className="lr-recording-track__toolbar">{toolbar}</div>}
         {editable && (
           <span className="lr-recording-track__actions">
             {onReturnToLive && (
@@ -537,7 +549,7 @@ export default function RecordingTrack({
                         发生于 {new Date(gap.startedAt).toLocaleString()}
                       </div>
                       <div style={{ opacity: 0.8 }}>
-                        {recordingGapText(gap).reason || KIND_FALLBACK[gap.kind] || "原因未知"}
+                        {recordingGapText(gap).reason === GENERIC_GAP_REASON ? recordingGapKindText(gap.kind) : recordingGapText(gap).reason}
                       </div>
                     </div>
                   }
@@ -549,13 +561,15 @@ export default function RecordingTrack({
                 </Tooltip>
               );
             })}
-            <div
-              className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
-              style={{
-                left: `${startPosition}%`,
-                width: `${Math.max(0, endPosition - startPosition)}%`,
-              }}
-            />
+            {showSelection && (
+              <div
+                className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
+                style={{
+                  left: `${startPosition}%`,
+                  width: `${Math.max(0, endPosition - startPosition)}%`,
+                }}
+              />
+            )}
             {previewMode && positionSecond != null && (
               <div
                 className={`lr-recording-track__playhead lr-recording-track__playhead--${previewMode}${dragging && "kind" in dragging && dragging.kind === "playhead" ? " lr-recording-track__playhead--dragging" : ""}`}
@@ -568,7 +582,8 @@ export default function RecordingTrack({
                     : `回看位置 ${clock(Math.floor(positionSecond))}`
                 }
                 role="slider"
-                tabIndex={0}
+                tabIndex={seekDisabled ? -1 : 0}
+                aria-disabled={seekDisabled}
                 aria-valuemin={0}
                 aria-valuemax={recordingEnd}
                 aria-valuenow={positionSecond}
@@ -581,7 +596,7 @@ export default function RecordingTrack({
                       : event.key === "ArrowRight" || event.key === "ArrowUp"
                         ? 1
                         : 0;
-                  if (!direction) return;
+                  if (!direction || seekDisabled) return;
                   event.preventDefault();
                   const second = Math.max(
                     0,
@@ -591,12 +606,15 @@ export default function RecordingTrack({
                     ),
                   );
                   onSeekIntent?.(second);
-                  onSeekCommit?.(second >= recordingEnd ? "live" : second);
+                  const target = recordingSeekTarget(
+                    mode, "playhead", second, recordingEnd, seekDisabled,
+                  );
+                  if (target !== undefined) onSeekCommit?.(target);
                 }}
               />
             )}
-            {handle("start", range[0])}
-            {handle("end", range[1])}
+            {showSelection && handle("start", range[0])}
+            {showSelection && handle("end", range[1])}
           </div>
           {dragging && (
             <i
@@ -608,7 +626,7 @@ export default function RecordingTrack({
           )}
           <div className="lr-recording-track__labels">
             <span>{clock(0)}</span>
-            <span>{clock(timelineEnd)}</span>
+            <span>{clock(Math.floor(timelineEnd))}</span>
           </div>
           {markers.length > 0 && (
             <div className="lr-recording-track__markers">
@@ -639,18 +657,20 @@ export default function RecordingTrack({
         </div>
       </div>
       <div className="lr-recording-track__summary">
-        <span className="lr-recording-track__range-summary">
-          <i aria-hidden="true" />
-          选区{" "}
-          <span>
-            {clock(range[0])} — {clock(range[1])}
+        {showSelection && (
+          <span className="lr-recording-track__range-summary">
+            <i aria-hidden="true" />
+            选区{" "}
+            <span>
+              {clock(range[0])} — {clock(range[1])}
+            </span>
           </span>
-        </span>
+        )}
         {previewMode && (
           <span
             className={`lr-recording-track__preview-legend lr-recording-track__preview-legend--${previewMode}`}
           >
-            <i aria-hidden="true" /> 预览位置
+            <i aria-hidden="true" /> {mode === "playback" ? "播放位置" : "预览位置"}
           </span>
         )}
         <span className="lr-recording-track__duration">

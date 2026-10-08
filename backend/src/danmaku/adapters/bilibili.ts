@@ -1,5 +1,5 @@
 import { inflateSync, brotliDecompressSync } from "node:zlib";
-import WebSocket from "ws";
+import { platformFetch, socketTextStream } from "./transport.js";
 import { createHash } from "node:crypto";
 
 const UA =
@@ -27,8 +27,9 @@ function md5(text: string): string {
 async function wbiSign(
   params: Record<string, string>,
   headers: Record<string, string>,
+  signal: AbortSignal,
 ): Promise<{ query: string; uid: number }> {
-  const navRes = await fetch("https://api.bilibili.com/x/web-interface/nav", { headers });
+  const navRes = await platformFetch("https://api.bilibili.com/x/web-interface/nav", { headers }, signal);
   const navJson = (await navRes.json()) as {
     data?: { wbi_img?: { img_url?: string; sub_url?: string }; mid?: number };
   };
@@ -62,193 +63,75 @@ function packet(op: number, body: Buffer): Buffer {
   return Buffer.concat([u32(16 + body.length), u16(16), u16(1), u32(op), u32(1), body]);
 }
 
-function* packets(buf: Buffer): Generator<{ op: number; body: Buffer }> {
+export function* packets(buf: Buffer, depth = 0): Generator<{ op: number; body: Buffer }> {
+  if (depth > 4) throw new Error("弹幕压缩嵌套过深");
   let offset = 0;
   while (offset + 16 <= buf.length) {
     const len = buf.readUInt32BE(offset);
     const headerLen = buf.readUInt16BE(offset + 4);
     const ver = buf.readUInt16BE(offset + 6);
     const op = buf.readUInt32BE(offset + 8);
-    if (len < headerLen || offset + len > buf.length) return;
+    if (headerLen < 16 || len < headerLen || offset + len > buf.length) throw new Error("弹幕包头无效");
     let body = buf.subarray(offset + headerLen, offset + len);
     offset += len;
     if (ver === 2) {
       try {
-        body = inflateSync(body);
+        body = inflateSync(body, { maxOutputLength: 4 * 1024 * 1024 });
       } catch {
         continue;
       }
     } else if (ver === 3) {
       try {
-        body = brotliDecompressSync(body);
+        body = brotliDecompressSync(body, { maxOutputLength: 4 * 1024 * 1024 });
       } catch {
         continue;
       }
     }
     if (ver === 2 || ver === 3) {
-      yield* packets(body);
+      yield* packets(body, depth + 1);
     } else {
       yield { op, body };
     }
   }
 }
 
-async function openDanmakuWs(
-  roomUrl: string,
-  cookie: string | null,
-  onMessage: (text: string) => void,
-  onOpen: () => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const roomId = /(\d+)/.exec(roomUrl)?.[1];
-  if (!roomId) throw new Error("room id missing");
-  const headers: Record<string, string> = {
-    referer: WS_ORIGIN,
-    origin: WS_ORIGIN,
-    "user-agent": UA,
-  };
-  if (cookie) headers.cookie = cookie;
-
-  const signed = await wbiSign(
-    { id: roomId, type: "0", web_location: "444.8" },
-    headers,
-  ).catch(() => ({ query: `id=${roomId}`, uid: 0 }));
-  const uid = signed.uid;
-  const infoRes = await fetch(
-    `https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?${signed.query}`,
-    { headers },
-  );
-  const infoJson = (await infoRes.json()) as {
-    code?: number;
-    message?: string;
-    data?: { token?: string; host_list?: { host: string; wss_port: number }[] };
-  };
-  const token = infoJson.data?.token;
-  const host = infoJson.data?.host_list?.[0];
-  console.log(
-    `[danmaku ${new Date().toISOString()}] bili-danmuinfo status=${infoRes.status} code=${infoJson.code ?? "-"} hasToken=${Boolean(token)} hasHost=${Boolean(host)} msg=${infoJson.message ?? "-"}`,
-  );
-  if (!token || !host) throw new Error("danmu info unavailable");
-
-  const url = `wss://${host.host}:${host.wss_port}/sub`;
-  const ws = new WebSocket(url, { headers });
-  // global WebSocket 不能携自定义头；鉴权走 fetch 阶段（token/room_id），连接本身无需 cookie。
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("ws open timeout")), 10_000);
-    timer.unref?.();
-    ws.on("open", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    ws.on("error", (error: Error) => {
-      clearTimeout(timer);
-      reject(new Error(`ws error: ${error?.message ?? error}`));
-    });
-    signal.addEventListener("abort", () => {
-      try {
-        ws.close();
-      } catch {
-        /* 由 abort 收束 */
-      }
-    });
-  });
-
-  const buvid = /buvid3=([^;]+)/.exec(cookie ?? "")?.[1] ?? "";
-  const join = JSON.stringify({
-    uid,
-    roomid: Number(roomId),
-    protover: 3,
-    platform: "web",
-    type: 2,
-    key: token,
-    ...(buvid ? { buvid } : {}),
-  });
-  ws.send(packet(7, Buffer.from(join)));
-  onOpen();
-  const heartbeat = setInterval(() => {
-    try {
-      ws.send(packet(2, Buffer.alloc(0)));
-    } catch {
-      /* 心跳失败由断连收束 */
-    }
-  }, 30_000);
-  heartbeat.unref?.();
-
-  await new Promise<void>((resolve) => {
-    ws.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
-      try {
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-        for (const pkt of packets(buf)) {
-          if (pkt.op !== 5) continue;
-          const json = JSON.parse(pkt.body.toString("utf8")) as {
-            cmd?: string;
-            info?: unknown[];
-          };
-          if (!json.cmd?.startsWith("DANMU_MSG")) continue;
-          const info = json.info;
-          const text = Array.isArray(info) ? String((info[1] as string) ?? "") : "";
-          if (text) onMessage(text);
-        }
-      } catch {
-        /* 单包解析失败不影响后续 */
-      }
-    });
-    ws.on("close", (code: number, reason: Buffer) => {
-      console.log(`[danmaku ${new Date().toISOString()}] bili-ws-close code=${code} reason=${reason?.toString() || "-"}`);
-      resolve();
-    });
-    ws.on("error", (error: Error) => {
-      console.log(`[danmaku ${new Date().toISOString()}] bili-ws-error err=${error?.message ?? error}`);
-      resolve();
-    });
-    signal.addEventListener("abort", () => resolve());
-  });
-  clearInterval(heartbeat);
-}
-
 export const bilibiliDanmakuAdapter: DanmakuAdapter = {
   platform: "bilibili",
-  async *collect(roomUrl, cookie, signal): AsyncIterable<DanmakuMessage> {
-    const queue: DanmakuMessage[] = [];
-    let wake: (() => void) | null = null;
-    let finished = false;
-    let seq = 0;
-    const notify = () => {
-      const fn = wake;
-      wake = null;
-      fn?.();
-    };
-    const push = (text: string) => {
-      seq += 1;
-      queue.push({
-        id: `bb-${Date.now()}-${seq}`,
-        tMs: null,
-        wallMs: Date.now(),
-        text,
-      });
-      notify();
-    };
-    let adapterError: Error | null = null;
-    const pump = openDanmakuWs(roomUrl, cookie, push, () => undefined, signal)
-      .catch((error: Error) => {
-        adapterError = error;
-        console.log(`[danmaku ${new Date().toISOString()}] adapter-error platform=bilibili err=${error?.message ?? error}`);
-      })
-      .finally(() => {
-        finished = true;
-        notify();
-      });
-    while (!finished || queue.length > 0) {
-      if (queue.length === 0) {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        continue;
-      }
-      yield queue.shift()!;
-    }
-    await pump;
-    if (adapterError) throw adapterError;
+  async *collect(roomUrl, cookie, signal, onConnected): AsyncIterable<DanmakuMessage> {
+    const requestedId = new URL(roomUrl).pathname.match(/^\/(\d+)/)?.[1];
+    if (!requestedId) throw new Error("room id missing");
+    const headers: Record<string, string> = { referer: WS_ORIGIN, origin: WS_ORIGIN, "user-agent": UA };
+    if (cookie) headers.cookie = cookie;
+    // Popular short room IDs must be resolved before websocket authentication.
+    const init = await platformFetch(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${requestedId}`, { headers }, signal);
+    const room = await init.json() as { data?: { room_id?: number } };
+    const roomId = String(room.data?.room_id ?? requestedId);
+    const signed = await wbiSign({ id: roomId, type: "0", web_location: "444.8" }, headers, signal);
+    const infoRes = await platformFetch(`https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?${signed.query}`, { headers }, signal);
+    const info = await infoRes.json() as { code?: number; data?: { token?: string; host_list?: { host: string; wss_port: number }[] } };
+    const token = info.data?.token, host = info.data?.host_list?.[0];
+    if (info.code !== 0 || !token || !host) throw new Error("danmu info unavailable");
+    const buvid = /buvid3=([^;]+)/.exec(cookie ?? "")?.[1] ?? "";
+    yield* socketTextStream(`wss://${host.host}:${host.wss_port}/sub`, headers, signal, {
+      open: ws => ws.send(packet(7, Buffer.from(JSON.stringify({ uid: signed.uid, roomid: Number(roomId), protover: 3,
+        platform: "web", type: 2, key: token, ...(buvid ? { buvid } : {}) })))),
+      frame: (buffer, _ws, ready) => {
+        const texts: string[] = [];
+        for (const pkt of packets(buffer)) {
+          if (pkt.op === 8) {
+            const auth = JSON.parse(pkt.body.toString("utf8")) as { code?: number };
+            if (auth.code !== 0) throw new Error("弹幕鉴权失败");
+            ready();
+          } else if (pkt.op === 5) {
+            try {
+              const json = JSON.parse(pkt.body.toString("utf8")) as { cmd?: string; info?: unknown[] };
+              if (json.cmd?.startsWith("DANMU_MSG") && typeof json.info?.[1] === "string") texts.push(json.info[1]);
+            } catch { /* ignore one malformed business message */ }
+          }
+        }
+        return texts;
+      },
+      heartbeat: ws => ws.send(packet(2, Buffer.alloc(0))),
+    }, onConnected);
   },
 };

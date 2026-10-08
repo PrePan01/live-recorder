@@ -234,6 +234,13 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
           >
             <Switch aria-label="录制中防止系统休眠" />
           </Form.Item>
+          <Form.Item
+            label="录制弹幕"
+            name={["danmaku", "enabled"]}
+            valuePropName="checked"
+          >
+            <Switch aria-label="录制弹幕" />
+          </Form.Item>
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item
@@ -262,6 +269,17 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
                 />
               </Form.Item>
             </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="编码方式" name="encodingMode">
+                <Select
+                  aria-label="编码方式"
+                  options={[
+                    { value: "auto", label: "自动（硬件优先）" },
+                    { value: "software", label: "软件（仅软编）" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
           </Row>
           <div className="lr-settings-section">
             <Typography.Title className="lr-settings-section__title" level={4}>
@@ -273,28 +291,6 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
               valuePropName="checked"
             >
               <Switch aria-label="检测到开播自动录制" />
-            </Form.Item>
-            <Form.Item
-              label="录制弹幕"
-              name={["danmaku", "enabled"]}
-              valuePropName="checked"
-            >
-              <Switch aria-label="录制弹幕" />
-            </Form.Item>
-            <Typography.Paragraph
-              className="lr-settings-section__hint"
-              type="secondary"
-            >
-              开启后随录制采集弹幕（仅文字弹幕）；房间可在列表中单独覆盖此开关。
-            </Typography.Paragraph>
-            <Form.Item label="编码方式" name="encodingMode">
-              <Select
-                aria-label="编码方式"
-                options={[
-                  { value: "auto", label: "自动（硬件优先，失败回退软编）" },
-                  { value: "software", label: "软件（仅软编）" },
-                ]}
-              />
             </Form.Item>
             <Typography.Title className="lr-settings-section__title" level={5}>
               检测频率

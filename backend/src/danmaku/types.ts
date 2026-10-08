@@ -41,5 +41,6 @@ export interface DanmakuAdapter {
     roomUrl: string,
     cookie: string | null,
     signal: AbortSignal,
+    onConnected?: () => void,
   ): AsyncIterable<DanmakuMessage>;
 }

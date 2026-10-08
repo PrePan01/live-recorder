@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -15,9 +16,7 @@ import {
   Modal,
   Popconfirm,
   Popover,
-  Slider,
   Space,
-  Switch,
   Tooltip,
   Typography,
 } from "antd";
@@ -32,12 +31,10 @@ import {
 import RecordingStopIcon from "./RecordingStopIcon";
 import RecordingTrack from "./RecordingTrack";
 import { DanmakuLayer } from "./DanmakuLayer";
-import { fetchDanmaku } from "../api/danmaku";
-import {
-  DANMUKU_DENSITY_OPTIONS,
-  loadDanmakuPref,
-  saveDanmakuPref,
-} from "../utils/danmakuPrefs";
+import DanmakuSettings from "./DanmakuSettings";
+import { useLiveDanmaku } from "../hooks/useLiveDanmaku";
+import { fetchDanmakuWindow } from "../api/danmakuWindow";
+import { useDanmakuPrefsStore } from "../stores/danmakuPrefsStore";
 import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
 import type { RecordingGap } from "../types/recording";
 import {
@@ -110,6 +107,7 @@ export default function PreviewModal({
   defaultWidth?: number;
   enableHighlights?: boolean;
 }) {
+  const playerPortalId = useId();
   const { message } = App.useApp();
   const {
     rooms,
@@ -581,16 +579,16 @@ export default function PreviewModal({
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
   );
-  // 弹幕显示：三设置与回看播放器共偏好；关闭显示不停止采集（拉取照旧）。
-  const [danmakuVisible, setDanmakuVisible] = useState(() =>
-    loadDanmakuPref("visible", true),
-  );
-  const [danmakuOpacity, setDanmakuOpacity] = useState(() =>
-    loadDanmakuPref("opacity", 0.9),
-  );
-  const [danmakuDensity, setDanmakuDensity] = useState(() =>
-    loadDanmakuPref("density", 40),
-  );
+  // 显示偏好与回看共用；隐藏时释放直播订阅，录制采集独立继续。
+  const {
+    visible: danmakuVisible,
+    opacity: danmakuOpacity,
+    density: danmakuDensity,
+    setVisible: setDanmakuVisible,
+    setOpacity: setDanmakuOpacity,
+    setDensity: setDanmakuDensity,
+  } = useDanmakuPrefsStore();
+  const liveDanmaku = useLiveDanmaku(room.id, danmakuVisible && !seekPlayback, previewVideo);
   const [danmakuMessages, setDanmakuMessages] = useState<DanmakuMessage[]>([]);
   const [trackGaps, setTrackGaps] = useState<RecordingGap[]>([]);
   useEffect(() => {
@@ -614,47 +612,39 @@ export default function PreviewModal({
   const danmakuStatus = useDanmakuStore((s) =>
     selectDanmakuStatus(s, activeRecordingId),
   );
+  const displayedDanmakuStatus = seekPlayback ? danmakuStatus : liveDanmaku.status;
   const danmakuAnchorRef = useRef<number | null>(null);
   const getDanmakuTimeMs = useCallback((): number => {
-    if (seekPlayback) {
-      const current = previewVideo?.currentTime ?? 0;
-      if (danmakuAnchorRef.current == null) danmakuAnchorRef.current = current;
-      return (
-        seekPlayback.startSecond +
-        (current - danmakuAnchorRef.current)
-      ) * 1000;
-    }
-    const startedAt = live.activeRecording?.startedAt;
-    return startedAt ? Math.max(0, Date.now() - Date.parse(startedAt)) : 0;
-  }, [seekPlayback, previewVideo, live.activeRecording?.startedAt]);
+    if (!seekPlayback || !previewVideo || !previewVideo.buffered.length) return NaN;
+    if (previewFrameGenerationRef.current !== seekPlayback.generation) return NaN;
+    if (danmakuAnchorRef.current == null) danmakuAnchorRef.current = previewVideo.buffered.start(0);
+    return (seekPlayback.startSecond + previewVideo.currentTime - danmakuAnchorRef.current) * 1000;
+  }, [seekPlayback, previewVideo]);
   useEffect(() => {
     danmakuAnchorRef.current = null;
-  }, [seekPlayback?.generation]);
-  useEffect(() => {
-    if (!activeRecordingId) return undefined;
-    let cancelled = false;
-    const load = () => {
-      const nowMs = getDanmakuTimeMs();
-      void fetchDanmaku(activeRecordingId, {
-        fromMs: Math.max(0, nowMs - 60_000),
-        toMs: nowMs + 600_000,
-        limit: 2000,
-      })
-        .then((data) => {
-          if (cancelled) return;
-          setDanmakuMessages(data.messages);
-          setDanmakuGaps(data.gaps ?? []);
-          if (data.status) useDanmakuStore.getState().applyStatus(data.status);
-        })
-        .catch(() => undefined);
+    setDanmakuMessages([]);
+    setDanmakuGaps([]);
+    if (!activeRecordingId || !seekPlayback || !danmakuVisible) return undefined;
+    const controller = new AbortController();
+    let running = false;
+    const load = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const nowMs = getDanmakuTimeMs();
+        if (!Number.isFinite(nowMs)) return;
+        const data = await fetchDanmakuWindow(activeRecordingId, Math.max(0, nowMs - 15_000), nowMs + 30_000, controller.signal);
+        if (controller.signal.aborted) return;
+        setDanmakuMessages(data.messages);
+        setDanmakuGaps(data.gaps ?? []);
+        if (data.status) useDanmakuStore.getState().applyStatus(data.status);
+      } catch { /* Next poll retries transient errors. */ }
+      finally { running = false; }
     };
-    load();
-    const timer = window.setInterval(load, 2500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeRecordingId, getDanmakuTimeMs, seekPlayback?.generation]);
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 2500);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [activeRecordingId, getDanmakuTimeMs, seekPlayback, previewVideo, danmakuVisible]);
   const previewFrameGenerationRef = useRef<number | null>(null);
   const requestedPlaybackRef = useRef(seekPlayback);
   requestedPlaybackRef.current = seekPlayback;
@@ -938,13 +928,14 @@ export default function PreviewModal({
     if (requestedPlaybackRef.current) return;
     if (typeof lastSeekCommitRef.current?.target === "number") return;
     lastSeekCommitRef.current = null;
+    liveDanmaku.resetTime();
     setDisplayPreview({ mode: "live" });
     try {
       performance.measure("lr-seek:to-live-first-frame", "lr-seek:to-live");
     } catch {
       /* 无切直播打点时静默 */
     }
-  }, []);
+  }, [liveDanmaku.resetTime]);
 
   const handleClose = () => {
     if (enableHighlights)
@@ -1093,6 +1084,7 @@ export default function PreviewModal({
     <>
       <Modal
         open={!pictureInPicture}
+        aria-owns={playerPortalId}
         title={
           <div
             style={{
@@ -1104,6 +1096,36 @@ export default function PreviewModal({
           >
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                content={
+                  <DanmakuSettings
+                    compact
+                    visible={danmakuVisible}
+                    opacity={danmakuOpacity}
+                    density={danmakuDensity}
+                    statusText={
+                      displayedDanmakuStatus &&
+                      (recording || displayedDanmakuStatus.state !== "collecting")
+                        ? danmakuStateText(displayedDanmakuStatus.state)
+                        : undefined
+                    }
+                    onVisibleChange={setDanmakuVisible}
+                    onOpacityChange={setDanmakuOpacity}
+                    onDensityChange={setDanmakuDensity}
+                  />
+                }
+              >
+                <Tooltip title="弹幕设置">
+                  <Button
+                    type="text"
+                    size="small"
+                    aria-label="弹幕设置"
+                    icon={<CommentOutlined />}
+                  />
+                </Tooltip>
+              </Popover>
               <Tooltip title="画中画">
                 <Button
                   type="text"
@@ -1168,94 +1190,7 @@ export default function PreviewModal({
                   willChange: "width, height",
                 }}
               />
-              {danmakuVisible ? (
-                <DanmakuLayer
-                  messages={danmakuMessages}
-                  gaps={danmakuGaps}
-                  getTimeMs={getDanmakuTimeMs}
-                  maxBullets={danmakuDensity}
-                  opacity={danmakuOpacity}
-                  resetKey={seekPlayback?.generation ?? "live"}
-                />
-              ) : null}
-              <Popover
-                trigger="click"
-                placement="bottomRight"
-                content={
-                  <div style={{ width: 220 }}>
-                    <Space direction="vertical" style={{ width: "100%" }}>
-                      {danmakuStatus ? (
-                        <div style={{ fontSize: 12, opacity: 0.75 }}>
-                          {danmakuStateText(danmakuStatus.state)}
-                        </div>
-                      ) : null}
-                      <Space>
-                        <span style={{ fontSize: 12 }}>显示弹幕</span>
-                        <Switch
-                          size="small"
-                          checked={danmakuVisible}
-                          onChange={(v) => {
-                            setDanmakuVisible(v);
-                            saveDanmakuPref("visible", v);
-                          }}
-                        />
-                      </Space>
-                      <div>
-                        <div style={{ fontSize: 12, marginBottom: 4 }}>
-                          透明度
-                        </div>
-                        <Slider
-                          min={0.2}
-                          max={1}
-                          step={0.1}
-                          value={danmakuOpacity}
-                          onChange={(v) => {
-                            setDanmakuOpacity(v as number);
-                            saveDanmakuPref("opacity", v);
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 12, marginBottom: 4 }}>
-                          同屏密度
-                        </div>
-                        <Slider
-                          min={0}
-                          max={DANMUKU_DENSITY_OPTIONS.length - 1}
-                          step={1}
-                          value={DANMUKU_DENSITY_OPTIONS.indexOf(
-                            danmakuDensity,
-                          )}
-                          onChange={(v) => {
-                            const d =
-                              DANMUKU_DENSITY_OPTIONS[v as number] ?? 40;
-                            setDanmakuDensity(d);
-                            saveDanmakuPref("density", d);
-                          }}
-                        />
-                      </div>
-                    </Space>
-                  </div>
-                }
-              >
-                <Button
-                  type="text"
-                  aria-label="弹幕设置"
-                  icon={
-                    <CommentOutlined
-                      style={{ color: "rgba(255,255,255,0.85)", fontSize: 16 }}
-                    />
-                  }
-                  style={{
-                    position: "absolute",
-                    top: 8,
-                    right: 8,
-                    height: 28,
-                    width: 28,
-                    padding: 0,
-                  }}
-                />
-              </Popover>
+
             </div>
             {displayedTrack ? (
               <div
@@ -1518,6 +1453,7 @@ export default function PreviewModal({
       </Modal>
       {createPortal(
         <div
+          id={playerPortalId}
           role={pictureInPicture ? "button" : undefined}
           tabIndex={pictureInPicture ? 0 : undefined}
           aria-label={pictureInPicture ? "画中画视频，点击返回预览" : undefined}
@@ -1573,6 +1509,18 @@ export default function PreviewModal({
             onSeekRetry={handleSeekRetry}
             onLiveFirstFrame={handleLiveFirstFrame}
           />
+          {danmakuVisible ? (
+            <div className="lr-preview-danmaku-overlay">
+              <DanmakuLayer
+                messages={seekPlayback ? danmakuMessages : liveDanmaku.messages}
+                gaps={seekPlayback ? danmakuGaps : []}
+                getTimeMs={seekPlayback ? getDanmakuTimeMs : liveDanmaku.getTimeMs}
+                maxBullets={danmakuDensity}
+                opacity={danmakuOpacity}
+                resetKey={seekPlayback?.generation ?? `live:${liveDanmaku.resetKey}`}
+              />
+            </div>
+          ) : null}
           {!pictureInPicture && (
             <div
               onMouseDown={onHandleDown}

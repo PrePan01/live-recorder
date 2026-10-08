@@ -29,7 +29,7 @@ export function danmakuStateText(state: DanmakuStatus['state']): string {
     case 'connecting':
       return '弹幕连接中';
     case 'collecting':
-      return '弹幕采集中';
+      return '弹幕保存中';
     case 'reconnecting':
       return '弹幕重连中';
     default:

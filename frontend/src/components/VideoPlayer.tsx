@@ -1,3 +1,4 @@
+import { livePreviewConfig } from "../utils/livePreviewConfig";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Spin } from "antd";
 import mpegts from "mpegts.js";
@@ -237,19 +238,7 @@ export default function VideoPlayer({
           isLive: true,
           ...(thumbnail ? { hasAudio: false } : {}),
         },
-        {
-          enableStashBuffer: false,
-          liveBufferLatencyChasing: true,
-          enableWorker: !thumbnail,
-          fixAudioTimestampGap: false,
-          ...(thumbnail
-            ? {
-                autoCleanupSourceBuffer: true,
-                autoCleanupMaxBackwardDuration: 10,
-                autoCleanupMinBackwardDuration: 5,
-              }
-            : {}),
-        },
+        livePreviewConfig(thumbnail),
       );
       player = instance;
       instance.attachMediaElement(videoRef.current);

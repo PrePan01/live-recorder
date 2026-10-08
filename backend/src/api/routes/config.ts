@@ -51,7 +51,7 @@ export interface ExportConfig {
 export interface ImportConfigInput {
   version?: number;
   settings?: Partial<AppSettings>;
-  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; tags?: unknown[] }>;
+  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; danmakuEnabled?: boolean | null; tags?: unknown[] }>;
   tags?: unknown[];
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
   recordings?: unknown;
@@ -264,6 +264,9 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
             });
             existing.set(key, room);
             importedRooms += 1;
+          }
+          if (item.danmakuEnabled === null || typeof item.danmakuEnabled === 'boolean') {
+            services.rooms.update(room.id, { danmakuEnabled: item.danmakuEnabled });
           }
           if (Array.isArray(item.tags)) {
             const roomId = room.id;
