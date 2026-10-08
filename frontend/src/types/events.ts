@@ -7,6 +7,7 @@ import type { Diagnostic } from './diagnostic';
 import type { UploadJob } from '../api/openlist';
 import type { PipelineArtifact, PipelineRun } from './pipeline';
 import type { DanmakuStatus } from './danmaku';
+import type { StreamHealth } from './streamHealth';
 
 export type ServerEvent =
   | { type: 'room:updated'; room: Room }
@@ -21,7 +22,8 @@ export type ServerEvent =
   | { type: 'disk:space'; disk: DiskSpace }
   | { type: 'diagnostic:updated'; diagnostic: Diagnostic }
   | { type: 'upload:updated'; upload: UploadJob }
-  | { type: 'danmaku:status'; status: DanmakuStatus };
+  | { type: 'danmaku:status'; status: DanmakuStatus }
+  | { type: 'stream-health'; health: StreamHealth };
 
 export const SSE_EVENT_NAMES = [
   'room:updated',
@@ -37,4 +39,5 @@ export const SSE_EVENT_NAMES = [
   'diagnostic:updated',
   'upload:updated',
   'danmaku:status',
+  'stream-health',
 ] as const satisfies ServerEvent['type'][];

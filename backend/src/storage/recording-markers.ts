@@ -41,7 +41,9 @@ export function markerTime(seconds: number): string {
 /** Keep a human-readable sidecar next to the source recording. 录制中/待确认写 .cache/（临时居所）。 */
 export async function syncMarkerSidecar(recording: Recording, markers: RecordingMarker[]): Promise<void> {
   if (!recording.filePath) return;
-  const target = liveMarkerSidecarPath(recording.filePath);
+  const target = recording.state === 'completed'
+    ? keptMarkerSidecarPath(recording.filePath)
+    : liveMarkerSidecarPath(recording.filePath);
   if (markers.length === 0) {
     await rm(target, { force: true }).catch(() => undefined);
     await rm(keptMarkerSidecarPath(recording.filePath), { force: true }).catch(() => undefined);

@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type Ref,
 } from "react";
 import { Button, Input, Modal, Popconfirm, Tooltip } from "antd";
 import {
@@ -13,12 +14,16 @@ import {
   DeleteOutlined,
   ForwardOutlined,
   PlusOutlined,
+  PushpinOutlined,
   ScissorOutlined,
 } from "@ant-design/icons";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { recordingGapText } from "../utils/recordingGapText";
 
-import { GENERIC_GAP_REASON, recordingGapKindText } from "../utils/recordingGapKindText";
+import {
+  GENERIC_GAP_REASON,
+  recordingGapKindText,
+} from "../utils/recordingGapKindText";
 import {
   timelinePercent,
   timelineSecondAt,
@@ -35,10 +40,16 @@ type Props = {
   mode?: RecordingTrackMode;
   seekDisabled?: boolean;
   toolbar?: ReactNode;
+  markerNavigationRef?: Ref<HTMLSpanElement>;
+  /** 标记列表随时间轴共同展开和收起。 */
+  children?: ReactNode;
   markers: RecordingMarker[];
   editable?: boolean;
   busy?: boolean;
   onAdd?: (text: string) => Promise<void>;
+  onQuickAdd?: () => void;
+  addingMarker?: boolean;
+  quickAddDisabled?: boolean;
   onEdit?: (id: string, text: string) => Promise<void>;
   onMove?: (id: string, positionSeconds: number) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
@@ -54,7 +65,8 @@ type Props = {
   /** 中断缺口（缺口标记层）：positionMs=拼接位、尾缺=片尾处；无位缺口不画（不伪造位置）。 */
   gaps?: RecordingGap[];
 };
-type Drag = { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
+type Drag =
+  { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
 // 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
 const TRACK_COLLAPSED_KEY = "lr-recording-track-collapsed";
 function readTrackCollapsed(): boolean {
@@ -86,10 +98,15 @@ export default function RecordingTrack({
   mode = "recording",
   seekDisabled = false,
   toolbar,
+  markerNavigationRef,
+  children,
   markers,
   editable = false,
   busy = false,
   onAdd,
+  onQuickAdd,
+  addingMarker = false,
+  quickAddDisabled = false,
   onEdit,
   onMove,
   onDelete,
@@ -118,6 +135,14 @@ export default function RecordingTrack({
   const [editorOpen, setEditorOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(readTrackCollapsed);
   const movedRef = useRef(false);
+  const markerClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (markerClickTimer.current) clearTimeout(markerClickTimer.current);
+      markerClickTimer.current = null;
+    },
+    [markers],
+  );
   const touchedRef = useRef(false);
   const lastElapsedRef = useRef(elapsedSeconds);
   const rangeRef = useRef(range);
@@ -159,12 +184,8 @@ export default function RecordingTrack({
 
   const pct = (value: number) => timelinePercent(value, timelineEnd);
   const positionSecond =
-    playheadSecond ?? previewPosition(
-      previewMode,
-      recordingEnd,
-      previewSecond,
-      previewLoading,
-    );
+    playheadSecond ??
+    previewPosition(previewMode, recordingEnd, previewSecond, previewLoading);
   useLayoutEffect(() => {
     const update = () => {
       const next = {
@@ -250,7 +271,11 @@ export default function RecordingTrack({
             ? positionAt(event.clientX)
             : setRangeAt(dragging.kind, event.clientX);
         const target = recordingSeekTarget(
-          mode, dragging.kind, clamped, recordingEnd, seekDisabled,
+          mode,
+          dragging.kind,
+          clamped,
+          recordingEnd,
+          seekDisabled,
         );
         if (target !== undefined)
           onSeekCommit?.(
@@ -262,13 +287,15 @@ export default function RecordingTrack({
       if (dragging && !("kind" in dragging)) {
         const position = positionAt(event.clientX);
         if (movedRef.current)
-          void onMove?.(dragging.markerId, position).finally(() =>
-            setMarkerPositions((current) => {
-              const next = { ...current };
-              delete next[dragging.markerId];
-              return next;
-            }),
-          );
+          void onMove?.(dragging.markerId, position)
+            .catch(() => undefined)
+            .finally(() =>
+              setMarkerPositions((current) => {
+                const next = { ...current };
+                delete next[dragging.markerId];
+                return next;
+              }),
+            );
         else
           setMarkerPositions((current) => {
             const next = { ...current };
@@ -329,6 +356,8 @@ export default function RecordingTrack({
     setDragging({ kind: "playhead" });
   };
   const beginMarker = (marker: RecordingMarker, event: React.PointerEvent) => {
+    if (markerClickTimer.current) clearTimeout(markerClickTimer.current);
+    markerClickTimer.current = null;
     if (!editable) return;
     event.preventDefault();
     event.stopPropagation();
@@ -342,8 +371,13 @@ export default function RecordingTrack({
   const submit = async () => {
     const text = draft.trim();
     if (!text) return;
-    if (editing) await onEdit?.(editing.id, text);
-    else await onAdd?.(text);
+    try {
+      if (editing) await onEdit?.(editing.id, text);
+      else await onAdd?.(text);
+    } catch {
+      // 宿主展示保存错误，保留草稿以便重试。
+      return;
+    }
     setDraft("");
     setEditing(null);
     setEditorOpen(false);
@@ -479,7 +513,7 @@ export default function RecordingTrack({
           <Button
             size="small"
             className="lr-recording-track__toggle"
-            aria-label={collapsed ? "展开轨道" : "收缩轨道"}
+            aria-label={collapsed ? "展开时间轴与标记" : "收起时间轴与标记"}
             aria-expanded={!collapsed}
             icon={<CaretUpOutlined />}
             onClick={toggleCollapsed}
@@ -488,7 +522,9 @@ export default function RecordingTrack({
             <span className="lr-recording-track__hint">{seekHint}</span>
           ) : null}
         </div>
-        {toolbar && <div className="lr-recording-track__toolbar">{toolbar}</div>}
+        {toolbar && (
+          <div className="lr-recording-track__toolbar">{toolbar}</div>
+        )}
         {editable && (
           <span className="lr-recording-track__actions">
             {onReturnToLive && (
@@ -499,6 +535,25 @@ export default function RecordingTrack({
               >
                 直播
               </Button>
+            )}
+            {markers.length > 0 && markerNavigationRef && (
+              <span
+                className="lr-recording-track__marker-navigation"
+                ref={markerNavigationRef}
+              />
+            )}
+            {onQuickAdd && (
+              <Tooltip title="一键标记当前位置（Alt+M）">
+                <Button
+                  size="small"
+                  icon={<PushpinOutlined />}
+                  loading={addingMarker}
+                  disabled={quickAddDisabled}
+                  onClick={onQuickAdd}
+                >
+                  标记
+                </Button>
+              </Tooltip>
             )}
             <Button
               size="small"
@@ -521,170 +576,200 @@ export default function RecordingTrack({
           </span>
         )}
       </div>
-      <div className="lr-recording-track__canvas-wrap">
-        <div className="lr-recording-track__canvas">
-          <div
-            className="lr-recording-track__rail"
-            ref={railRef}
-            onPointerDown={railJump}
-          >
-            <div
-              className="lr-recording-track__recorded"
-              style={{ width: `${pct(recordingEnd)}%` }}
-            />
-            {gaps.map((gap) => {
-              if (gap.positionMs == null) return null;
-              const posSec = gap.positionMs / 1000;
-              const atTail = posSec >= recordingEnd - 1;
-              const secs = Math.round(gap.missingMs / 1000);
-              return (
-                <Tooltip
-                  key={gap.id}
-                  title={
-                    <div style={{ fontSize: 12 }}>
-                      <div>
-                        {gap.estimated ? "约 " : ""}缺失 {secs} 秒
-                      </div>
-                      <div style={{ opacity: 0.8 }}>
-                        发生于 {new Date(gap.startedAt).toLocaleString()}
-                      </div>
-                      <div style={{ opacity: 0.8 }}>
-                        {recordingGapText(gap).reason === GENERIC_GAP_REASON ? recordingGapKindText(gap.kind) : recordingGapText(gap).reason}
-                      </div>
-                    </div>
-                  }
-                >
-                  <div
-                    className={`lr-recording-track__gap${atTail ? " lr-recording-track__gap--tail" : ""}`}
-                    style={{ left: `${pct(Math.max(0, posSec))}%` }}
-                  />
-                </Tooltip>
-              );
-            })}
-            {showSelection && (
+      <div
+        className="lr-recording-track__body"
+        aria-hidden={collapsed}
+        inert={collapsed}
+      >
+        <div className="lr-recording-track__body-inner">
+          <div className="lr-recording-track__canvas-wrap">
+            <div className="lr-recording-track__canvas">
               <div
-                className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
-                style={{
-                  left: `${startPosition}%`,
-                  width: `${Math.max(0, endPosition - startPosition)}%`,
-                }}
-              />
-            )}
-            {previewMode && positionSecond != null && (
-              <div
-                className={`lr-recording-track__playhead lr-recording-track__playhead--${previewMode}${dragging && "kind" in dragging && dragging.kind === "playhead" ? " lr-recording-track__playhead--dragging" : ""}`}
-                style={{
-                  left: `${pct(positionSecond)}%`,
-                }}
-                aria-label={
-                  previewMode === "live"
-                    ? "直播位置"
-                    : `回看位置 ${clock(Math.floor(positionSecond))}`
-                }
-                role="slider"
-                tabIndex={seekDisabled ? -1 : 0}
-                aria-disabled={seekDisabled}
-                aria-valuemin={0}
-                aria-valuemax={recordingEnd}
-                aria-valuenow={positionSecond}
-                aria-valuetext={clock(Math.floor(positionSecond))}
-                onPointerDown={beginPlayhead}
-                onKeyDown={(event) => {
-                  const direction =
-                    event.key === "ArrowLeft" || event.key === "ArrowDown"
-                      ? -1
-                      : event.key === "ArrowRight" || event.key === "ArrowUp"
-                        ? 1
-                        : 0;
-                  if (!direction || seekDisabled) return;
-                  event.preventDefault();
-                  const second = Math.max(
-                    0,
-                    Math.min(
-                      recordingEnd,
-                      positionSecond + direction * (event.shiftKey ? 5 : 1),
-                    ),
-                  );
-                  onSeekIntent?.(second);
-                  const target = recordingSeekTarget(
-                    mode, "playhead", second, recordingEnd, seekDisabled,
-                  );
-                  if (target !== undefined) onSeekCommit?.(target);
-                }}
-              />
-            )}
-            {showSelection && handle("start", range[0])}
-            {showSelection && handle("end", range[1])}
-          </div>
-          {dragging && (
-            <i
-              className="lr-recording-track__guide"
-              style={{
-                left: `${pct("kind" in dragging ? dragging.kind === "playhead" ? (positionSecond ?? 0) : range[dragging.kind === "start" ? 0 : 1] : (markerPositions[dragging.markerId] ?? 0))}%`,
-              }}
-            />
-          )}
-          <div className="lr-recording-track__labels">
-            <span>{clock(0)}</span>
-            <span>{clock(Math.floor(timelineEnd))}</span>
-          </div>
-          {markers.length > 0 && (
-            <div className="lr-recording-track__markers">
-              {markers.map((marker, index) => {
-                const position =
-                  markerPositions[marker.id] ?? marker.positionSeconds;
-                return (
-                  <Tooltip
-                    key={marker.id}
-                    title={`${clock(position)} · ${marker.text}`}
-                  >
-                    <button
-                      aria-label={`${clock(position)} · ${marker.text}`}
-                      className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}`}
-                      style={{ left: `${pct(position)}%` }}
-                      onPointerDown={(event) => beginMarker(marker, event)}
-                      onClick={() => {
-                        if (movedRef.current) return;
-                        // 单击=回看定位（复用跳播流程）；双击=编辑（保留既有编辑能力）。
-                        onSeekCommit?.(Math.floor(position));
-                      }}
-                      onDoubleClick={() => {
-                        if (editable && !movedRef.current) openEdit(marker);
-                      }}
+                className="lr-recording-track__rail"
+                ref={railRef}
+                onPointerDown={railJump}
+              >
+                <div
+                  className="lr-recording-track__recorded"
+                  style={{ width: `${pct(recordingEnd)}%` }}
+                />
+                {gaps.map((gap) => {
+                  if (gap.positionMs == null) return null;
+                  const posSec = gap.positionMs / 1000;
+                  const atTail = posSec >= recordingEnd - 1;
+                  const secs = Math.round(gap.missingMs / 1000);
+                  return (
+                    <Tooltip
+                      key={gap.id}
+                      title={
+                        <div style={{ fontSize: 12 }}>
+                          <div>
+                            {gap.estimated ? "约 " : ""}缺失 {secs} 秒
+                          </div>
+                          <div style={{ opacity: 0.8 }}>
+                            发生于 {new Date(gap.startedAt).toLocaleString()}
+                          </div>
+                          <div style={{ opacity: 0.8 }}>
+                            {recordingGapText(gap).reason === GENERIC_GAP_REASON
+                              ? recordingGapKindText(gap.kind)
+                              : recordingGapText(gap).reason}
+                          </div>
+                        </div>
+                      }
                     >
-                      {marker.text}
-                    </button>
-                  </Tooltip>
-                );
-              })}
+                      <div
+                        className={`lr-recording-track__gap${atTail ? " lr-recording-track__gap--tail" : ""}`}
+                        style={{ left: `${pct(Math.max(0, posSec))}%` }}
+                      />
+                    </Tooltip>
+                  );
+                })}
+                {showSelection && (
+                  <div
+                    className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
+                    style={{
+                      left: `${startPosition}%`,
+                      width: `${Math.max(0, endPosition - startPosition)}%`,
+                    }}
+                  />
+                )}
+                {previewMode && positionSecond != null && (
+                  <div
+                    className={`lr-recording-track__playhead lr-recording-track__playhead--${previewMode}${dragging && "kind" in dragging && dragging.kind === "playhead" ? " lr-recording-track__playhead--dragging" : ""}`}
+                    style={{
+                      left: `${pct(positionSecond)}%`,
+                    }}
+                    aria-label={
+                      previewMode === "live"
+                        ? "直播位置"
+                        : `回看位置 ${clock(Math.floor(positionSecond))}`
+                    }
+                    role="slider"
+                    tabIndex={seekDisabled ? -1 : 0}
+                    aria-disabled={seekDisabled}
+                    aria-valuemin={0}
+                    aria-valuemax={recordingEnd}
+                    aria-valuenow={positionSecond}
+                    aria-valuetext={clock(Math.floor(positionSecond))}
+                    onPointerDown={beginPlayhead}
+                    onKeyDown={(event) => {
+                      const direction =
+                        event.key === "ArrowLeft" || event.key === "ArrowDown"
+                          ? -1
+                          : event.key === "ArrowRight" ||
+                              event.key === "ArrowUp"
+                            ? 1
+                            : 0;
+                      if (!direction || seekDisabled) return;
+                      event.preventDefault();
+                      const second = Math.max(
+                        0,
+                        Math.min(
+                          recordingEnd,
+                          positionSecond + direction * (event.shiftKey ? 5 : 1),
+                        ),
+                      );
+                      onSeekIntent?.(second);
+                      const target = recordingSeekTarget(
+                        mode,
+                        "playhead",
+                        second,
+                        recordingEnd,
+                        seekDisabled,
+                      );
+                      if (target !== undefined) onSeekCommit?.(target);
+                    }}
+                  />
+                )}
+                {showSelection && handle("start", range[0])}
+                {showSelection && handle("end", range[1])}
+              </div>
+              {dragging && (
+                <i
+                  className="lr-recording-track__guide"
+                  style={{
+                    left: `${pct("kind" in dragging ? (dragging.kind === "playhead" ? (positionSecond ?? 0) : range[dragging.kind === "start" ? 0 : 1]) : (markerPositions[dragging.markerId] ?? 0))}%`,
+                  }}
+                />
+              )}
+              <div className="lr-recording-track__labels">
+                <span>{clock(0)}</span>
+                <span>{clock(Math.floor(timelineEnd))}</span>
+              </div>
+              {markers.length > 0 && (
+                <div className="lr-recording-track__markers">
+                  {markers.map((marker, index) => {
+                    const position =
+                      markerPositions[marker.id] ?? marker.positionSeconds;
+                    return (
+                      <Tooltip
+                        key={marker.id}
+                        title={`${clock(position)}：${marker.text}${editable ? "（单击回看，双击编辑）" : ""}`}
+                      >
+                        <button
+                          aria-label={`${clock(position)} · ${marker.text}`}
+                          className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}`}
+                          style={{ left: `${pct(position)}%` }}
+                          onPointerDown={(event) => beginMarker(marker, event)}
+                          onClick={(event) => {
+                            if (
+                              (event.detail > 0 && movedRef.current) ||
+                              seekDisabled
+                            )
+                              return;
+                            if (markerClickTimer.current)
+                              clearTimeout(markerClickTimer.current);
+                            if (editable && event.detail > 0) {
+                              markerClickTimer.current = setTimeout(() => {
+                                markerClickTimer.current = null;
+                                onSeekCommit?.(Math.floor(position));
+                              }, 500);
+                            } else onSeekCommit?.(Math.floor(position));
+                          }}
+                          onDoubleClick={() => {
+                            if (markerClickTimer.current)
+                              clearTimeout(markerClickTimer.current);
+                            markerClickTimer.current = null;
+                            if (editable && !movedRef.current) openEdit(marker);
+                          }}
+                        >
+                          {marker.text}
+                        </button>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
-      <div className="lr-recording-track__summary">
-        {showSelection && (
-          <span className="lr-recording-track__range-summary">
-            <i aria-hidden="true" />
-            选区{" "}
-            <span>
-              {clock(range[0])} — {clock(range[1])}
+          </div>
+          <div className="lr-recording-track__summary">
+            {showSelection && (
+              <span className="lr-recording-track__range-summary">
+                <i aria-hidden="true" />
+                选区{" "}
+                <span>
+                  {clock(range[0])} — {clock(range[1])}
+                </span>
+              </span>
+            )}
+            {previewMode && (
+              <span
+                className={`lr-recording-track__preview-legend lr-recording-track__preview-legend--${previewMode}`}
+              >
+                <i aria-hidden="true" />{" "}
+                {mode === "playback" ? "播放位置" : "预览位置"}
+              </span>
+            )}
+            <span className="lr-recording-track__duration">
+              {previewLoading
+                ? "加载中..."
+                : previewMode === "live"
+                  ? "直播中"
+                  : `回看${previewSecond != null ? ` ${clock(Math.floor(previewSecond))}` : ""}`}
             </span>
-          </span>
-        )}
-        {previewMode && (
-          <span
-            className={`lr-recording-track__preview-legend lr-recording-track__preview-legend--${previewMode}`}
-          >
-            <i aria-hidden="true" /> {mode === "playback" ? "播放位置" : "预览位置"}
-          </span>
-        )}
-        <span className="lr-recording-track__duration">
-          {previewLoading
-            ? "加载中..."
-            : previewMode === "live"
-            ? "直播中"
-            : `回看${previewSecond != null ? ` ${clock(Math.floor(previewSecond))}` : ""}`}
-        </span>
+          </div>
+          {children}
+        </div>
       </div>
       <Modal
         title={editing ? "编辑标记" : "添加标记"}

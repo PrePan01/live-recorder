@@ -181,6 +181,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   });
   app.addHook('onClose', async () => {
     services.scheduler.stop();
+    services.quality.stop();
     // 关库之前先把正在录制的会话收尾：停拉流并等写流落盘关闭。
     // 否则退出时最后几秒数据还在缓冲里就没了，记录也会留在"录制中"。
     await services.manager.shutdown();

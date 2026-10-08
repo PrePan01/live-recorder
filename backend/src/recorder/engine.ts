@@ -32,6 +32,8 @@ export type RecordingEvent =
 export interface RecordingEngine {
   /** 在网络块到达时采样，独立于归一化、暂存及写盘进度。 */
   setDownloadObserver?(observer: (bytes: number) => void): void;
+  /** 分片流的预期数据间隔；连续流返回 0。 */
+  expectedDataIntervalMs?(): number;
   /** outputPath 传 null 时为纯预览模式：拉流只产出 data 事件（预览转发），不写文件、不发 file_created。 */
   start(
     input: StreamInput,

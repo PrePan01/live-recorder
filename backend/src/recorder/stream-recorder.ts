@@ -243,6 +243,9 @@ export class StreamRecordingEngine implements RecordingEngine {
   /** 本段写出的最大媒体时间戳；随 error/completed 上报，供上层计算下一段续录偏移。 */
   private lastTimestampMs = 0;
   private hlsCursor: HlsCursor | undefined;
+  private dataIntervalMs = 0;
+
+  expectedDataIntervalMs(): number { return this.dataIntervalMs; }
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -264,6 +267,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
     this.stopped = false;
+    this.dataIntervalMs = input.format === "hls" ? 10_000 : 0;
     // 本段一个字节都没拿到就中断时，把传入的偏移原样带回，
     // 避免上层把续录偏移重置为 0、导致下一段时间轴跳回开头。
     this.lastTimestampMs = resume?.timestampOffsetMs ?? 0;
@@ -449,6 +453,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         const text = await this.fetchText(input.url, input.headers);
         quietMs += performance.now() - waitingAt;
         const parsed = parseM3u8(text, input.url);
+        this.dataIntervalMs = (parsed.targetDuration || 10) * 1000;
         if (parsed.mediaSequence !== null && this.hlsCursor &&
             parsed.discontinuitySequence !== this.hlsCursor.discontinuitySequence &&
             parsed.mediaSequence + parsed.segments.length - 1 < this.hlsCursor.sequence) {

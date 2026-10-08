@@ -47,6 +47,7 @@ import { HighlightBuffer } from "../recorder/highlight-buffer.js";
 import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
+import type { HealthProbe } from "./quality-health.js";
 import { DownloadSpeed } from "./download-speed.js";
 import {
   PerformanceDiagnostics,
@@ -468,6 +469,18 @@ export class RecorderManager {
     const session = this.active.get(roomId);
     if (!session || session.recordingId !== recordingId || session.gapStartAt !== null || session.stopRequested) return null;
     return session.mediaPositionMs ?? null;
+  }
+
+  /** 标记采用文件媒体时间；断流期间沿用最后收到的媒体位置。 */
+  recordingMarkerTail(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    if (session.mediaPositionMs != null) return Math.floor(session.mediaPositionMs / 1000);
+    if (session.size === 0) return 0;
+    // 无媒体时钟的源按有效接收时间估计，扣除已结束和正在发生的断流。
+    const now = this.services.clock.now();
+    const pendingGap = session.gapStartAt == null ? 0 : Math.max(0, now - session.gapStartAt);
+    return Math.max(0, Math.floor((now - Date.parse(session.startedAt) - session.missingMs - pendingGap) / 1000));
   }
 
   /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
@@ -2517,7 +2530,32 @@ export class RecorderManager {
     );
   }
 
-  /** 删除联动兜底：行被删而会话仍在录=停捕获拆链+清房间录制态，房间不留残影。 */
+  /** 读取当前健康事实，历史恢复次数不代表当前写入故障。 */
+  healthProbe(): HealthProbe[] {
+    return [...this.active].map(([roomId, session]) => {
+      const rec = this.services.recordings.get(session.recordingId);
+      return {
+        recordingId: session.recordingId,
+        roomId,
+        bytes: session.size,
+        mediaTsMs: session.mediaPositionMs ?? null,
+        lastDataAt: session.lastDataAt,
+        writeError:
+          session.writeRestartPending ||
+          Boolean(this.previewSessions.get(roomId)?.recording?.writeError),
+        qualityFallback: Boolean(
+          rec?.expectedQuality &&
+          rec.quality &&
+          rec.expectedQuality !== rec.quality,
+        ),
+        recovering: session.gapStartAt != null || session.writeRestartPending,
+        missingMs: session.missingMs,
+        dataIntervalMs: session.engine?.expectedDataIntervalMs?.() ?? 0,
+      };
+    });
+  }
+
+  /** 删除联动兜底：停捕获拆链并清房间录制态。 */
   async stopActiveSessionForDeletion(recordingId: string): Promise<void> {
     const entry = [...this.active.entries()].find(
       ([, s]) => s.recordingId === recordingId,

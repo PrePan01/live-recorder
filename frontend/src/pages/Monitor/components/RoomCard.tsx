@@ -25,6 +25,7 @@ import RoomAvatar from "./RoomAvatar";
 import RoomStats from "./RoomStats";
 import RoomHealth from "./RoomHealth";
 import LiveStatusTag from "../../../components/LiveStatusTag";
+import { RoomQualityLight } from "../../../components/QualityLight";
 import LivePredictionBadge from "./LivePredictionBadge";
 import { useRoomSortableItem } from "../../../components/RoomSortable";
 import type { RoomInsight } from "../../../api/rooms";
@@ -208,7 +209,10 @@ export const RoomCard = memo(function RoomCard({
           </>
         }
         extra={
-          <Space size={0}>
+          <Space size={0} className="lr-room-card__header-actions">
+            {recording ? (
+              <RoomQualityLight recordingId={room.activeRecording?.recordingId} />
+            ) : null}
             {onAir ? (
               <Tooltip
                 title={

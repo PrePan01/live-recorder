@@ -10,7 +10,7 @@ import { exportDanmakuFiles } from "../../danmaku/export.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
-import type { RecordingState } from "../../types/index.js";
+import type { Recording, RecordingState } from "../../types/index.js";
 import { CsvExportWorkerPool } from "../csv-export-worker-pool.js";
 import {
   moveMarkerSidecar,
@@ -108,6 +108,10 @@ export function registerRecordingRoutes(
     return recording;
   };
 
+  const markerTail = (recording: Recording) =>
+    services.manager.recordingMarkerTail(recording.roomId, recording.id) ??
+    Math.max(0, Math.floor((services.clock.now() - Date.parse(recording.startedAt)) / 1000));
+
   app.get("/api/v1/recordings/:id/markers", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!services.recordings.get(id))
@@ -129,13 +133,8 @@ export function registerRecordingRoutes(
       throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
         recordingId: id,
       });
-    // 位置：客户端可带当前预览播放头秒（与 PATCH 同款校验）；不带则回退「当前已录尾」（直播语义不变）。
-    const recordedSeconds = Math.max(
-      0,
-      Math.floor(
-        (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
-      ),
-    );
+    // 回看按播放头落点，直播按文件媒体尾落点，断流等待不累计成录像秒数。
+    const recordedSeconds = markerTail(recording);
     const rawPosition = body.positionSeconds;
     if (
       rawPosition !== undefined &&
@@ -157,11 +156,16 @@ export function registerRecordingRoutes(
 
   app.patch("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
     const { id, markerId } = req.params as { id: string; markerId: string };
-    const recording = activeMarkerRecording(id);
     const body = (req.body ?? {}) as {
       text?: unknown;
       positionSeconds?: unknown;
     };
+    // 完成后可补写说明，位置仍由录制期间确定，避免改动文件时间轴。
+    const existing = services.recordings.get(id);
+    const recording = existing?.state === "completed" &&
+      typeof body.text === "string" && body.positionSeconds === undefined
+      ? existing
+      : activeMarkerRecording(id);
     const text = typeof body.text === "string" ? body.text.trim() : undefined;
     const positionSeconds = body.positionSeconds;
     if (text !== undefined && (!text || text.length > 200))
@@ -173,10 +177,7 @@ export function registerRecordingRoutes(
       (typeof positionSeconds !== "number" ||
         !Number.isInteger(positionSeconds) ||
         positionSeconds < 0 ||
-        positionSeconds >
-          Math.floor(
-            (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
-          ))
+        positionSeconds > markerTail(recording))
     ) {
       throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
         recordingId: id,
@@ -398,6 +399,15 @@ export function registerRecordingRoutes(
     const pos = Date.parse(gapStartedAt) - Date.parse(rec.startedAt) - previousMissingMs;
     return Math.max(0, pos);
   }
+
+  app.get("/api/v1/recordings/quality", async (_req, reply) => {
+    return reply.send({ health: services.quality.snapshotAll() });
+  });
+
+  app.get("/api/v1/recordings/:id/quality", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send(services.quality.snapshot(id));
+  });
 
   app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
     const { id } = req.params as { id: string };

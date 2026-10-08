@@ -1,6 +1,7 @@
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
 import { DanmakuManager } from "../danmaku/manager.js";
+import { QualityHealthService } from "./quality-health.js";
 import type { RecordingEngine } from "../recorder/engine.js";
 import type { DiskGuard } from "../storage/disk-guard.js";
 import type { Mailer } from "../mail/mailer.js";
@@ -78,6 +79,7 @@ export interface Services {
   notifier: Notifier;
   manager: RecorderManager;
   danmaku: DanmakuManager;
+  quality: QualityHealthService;
   scheduler: Scheduler;
   pipeline: PipelineManager;
   uploader: UploadManager;
@@ -241,6 +243,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     notifier: undefined as unknown as Notifier,
     manager: undefined as unknown as RecorderManager,
     danmaku: undefined as unknown as DanmakuManager,
+    quality: undefined as unknown as QualityHealthService,
     scheduler: undefined as unknown as Scheduler,
     pipeline: undefined as unknown as PipelineManager,
     uploader: undefined as unknown as UploadManager,
@@ -261,6 +264,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   );
   services.manager = new RecorderManager(services, services.notifier);
   services.danmaku = new DanmakuManager(services);
+  services.quality = new QualityHealthService(services);
   services.scheduler = new Scheduler(services, services.manager);
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);

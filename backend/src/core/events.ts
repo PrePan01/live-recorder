@@ -16,7 +16,8 @@ export type AppEvent =
   | { type: 'upload:updated'; data: UploadJob }
   | { type: 'schedule:updated'; data: RecordingSchedule }
   | { type: 'export:updated'; data: ExportJob }
-  | { type: 'danmaku:status'; data: DanmakuStatus };
+  | { type: 'danmaku:status'; data: DanmakuStatus }
+  | { type: 'stream-health'; data: import('./quality-health.js').StreamHealth };
 
 export interface ServiceStatusPayload {
   state: 'running' | 'starting' | 'offline' | 'restarting';

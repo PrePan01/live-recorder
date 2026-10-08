@@ -493,6 +493,7 @@ export default function History() {
       {danmakuRec ? (
         <DanmakuPlayerModal
           recordingId={danmakuRec.id}
+          roomId={danmakuRec.roomId}
           title={danmakuRec.streamTitle || danmakuRec.roomName}
           filePath={danmakuRec.filePath ?? undefined}
           initialSecond={danmakuAt}

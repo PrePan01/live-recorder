@@ -30,6 +30,7 @@ import { describeEndReason, isInterruptedEnd } from "./recordingEndReason";
 import { uploadPhaseLabel, uploadPhaseText } from "./uploadProgress";
 import { describeUploadError, classifyUploadError } from "./uploadError";
 import type { Recording } from "../types/recording";
+import { recordingOutcome } from "./recordingOutcome";
 import GapDetail from "../pages/History/components/GapDetail";
 import EditableRecordingTitle from "../pages/History/components/EditableRecordingTitle";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
@@ -142,15 +143,27 @@ export function buildRecordingColumns(
     {
       title: "完整性",
       dataIndex: "integrity",
-      width: 80,
+      width: 160,
       render: (v: Recording["integrity"], r) => (
-        <Space size={4}>
+        <Space orientation="vertical" size={4}>
           <IntegrityTag
             integrity={v}
             integrityState={r.integrityState}
             verifyQueuePosition={r.verifyQueuePosition}
             integrityError={r.integrityError}
           />
+          {recordingOutcome(r) ? (
+            <Typography.Text
+              type={
+                (r.gapSummary?.totalMissingMs ?? r.missingMs ?? 0) > 0
+                  ? "warning"
+                  : "secondary"
+              }
+              style={{ fontSize: 12 }}
+            >
+              {recordingOutcome(r)}
+            </Typography.Text>
+          ) : null}
           {v === "failed" && r.failureReason ? (
             <Tooltip title={`${r.failureReason.message}`}>
               <WarningOutlined style={{ color: "#ff4d4f" }} />

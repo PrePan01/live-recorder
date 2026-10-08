@@ -692,6 +692,10 @@
   line-height: 1.4;
 }
 
+.lr-room-card__header-actions .lr-quality-light {
+  padding-inline: 8px;
+}
+
 .lr-floating-recorder-toggle.ant-btn {
   width: 24px;
   height: 24px;

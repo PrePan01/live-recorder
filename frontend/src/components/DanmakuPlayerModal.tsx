@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Modal, Select, Typography } from "antd";
-import { PauseOutlined, CaretRightOutlined, ExportOutlined, SoundOutlined, MutedOutlined } from "@ant-design/icons";
+import {
+  PauseOutlined,
+  CaretRightOutlined,
+  ExportOutlined,
+  SoundOutlined,
+  MutedOutlined,
+} from "@ant-design/icons";
 import mpegts from "mpegts.js";
 import { recordingFileUrl } from "../api/recordings";
 import { fetchDanmakuWindow } from "../api/danmakuWindow";
@@ -10,14 +16,22 @@ import { ApiError } from "../types/error";
 import { describeError } from "../utils/errorMap";
 import { DanmakuLayer } from "./DanmakuLayer";
 import RecordingTrack from "./RecordingTrack";
+import { MarkerNavPanel } from "./MarkerNavPanel";
+import { markerClipName } from "../utils/markerNavigation";
+import { useRecordingStore } from "../stores/recordingStore";
 import DanmakuSettings from "./DanmakuSettings";
-import { fetchRecordingGaps, fetchRecordingMarkers } from "../api/recordings";
+import {
+  fetchRecordingGaps,
+  fetchRecordingMarkers,
+  updateRecordingMarker,
+} from "../api/recordings";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { useDanmakuPrefsStore } from "../stores/danmakuPrefsStore";
 import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
 
 interface DanmakuPlayerModalProps {
   recordingId: string;
+  roomId?: string;
   title: string;
   /** 完成态文件路径：决定原生 mp4 播放还是 FLV 流式播放。 */
   filePath?: string;
@@ -33,17 +47,21 @@ interface DanmakuPlayerModalProps {
  */
 export function DanmakuPlayerModal({
   recordingId,
+  roomId,
   title,
   filePath,
   initialSecond = 0,
   onClose,
 }: DanmakuPlayerModalProps) {
   const { message } = App.useApp();
+  const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
   const [exporting, setExporting] = useState(false);
   const exportBusyRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // Modal 的内容会延迟挂载；元素就绪后再绑定流式播放器。
-  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(
+    null,
+  );
   const attachVideo = useCallback((element: HTMLVideoElement | null) => {
     videoRef.current = element;
     setVideoElement(element);
@@ -57,7 +75,8 @@ export function DanmakuPlayerModal({
   const loadingRef = useRef(false);
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [gaps, setGaps] = useState<DanmakuGap[]>([]);
-  const { visible, opacity, density, setVisible, setOpacity, setDensity } = useDanmakuPrefsStore();
+  const { visible, opacity, density, setVisible, setOpacity, setDensity } =
+    useDanmakuPrefsStore();
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -99,9 +118,7 @@ export function DanmakuPlayerModal({
         loadedWindowRef.current = { from, to };
         setMessages(data.messages);
         setGaps(data.gaps ?? []);
-        setDanmakuStatusText(
-          data.messages.length ? "" : "当前时段暂无弹幕",
-        );
+        setDanmakuStatusText(data.messages.length ? "" : "当前时段暂无弹幕");
       } catch {
         if (seq !== loadSeqRef.current) return;
         setMessages([]);
@@ -203,7 +220,8 @@ export function DanmakuPlayerModal({
     const video = videoRef.current;
     if (!video || failed) return;
     if (video.paused) {
-      if (video.ended || (duration > 0 && video.currentTime >= duration)) seek(0);
+      if (video.ended || (duration > 0 && video.currentTime >= duration))
+        seek(0);
       void video.play().catch(() => undefined);
     } else video.pause();
   };
@@ -224,15 +242,20 @@ export function DanmakuPlayerModal({
         opacity,
         density,
       });
-      message.success(`已导出至 ${directory}（ASS ${result.assCount} 条，SRT ${result.count} 条）`);
+      message.success(
+        `已导出至 ${directory}（ASS ${result.assCount} 条，SRT ${result.count} 条）`,
+      );
     } catch (error) {
-      message.error(error instanceof ApiError ? describeError(error.code, error.message) : "弹幕导出失败，请重试");
+      message.error(
+        error instanceof ApiError
+          ? describeError(error.code, error.message)
+          : "弹幕导出失败，请重试",
+      );
     } finally {
       exportBusyRef.current = false;
       setExporting(false);
     }
   };
-
 
   return (
     <Modal
@@ -240,7 +263,11 @@ export function DanmakuPlayerModal({
       width={960}
       className="lr-danmaku-player-modal"
       title={<Typography.Text strong>{title}</Typography.Text>}
-      footer={<Button size="small" onClick={onClose}>关闭</Button>}
+      footer={
+        <Button size="small" onClick={onClose}>
+          关闭
+        </Button>
+      }
       onCancel={onClose}
     >
       <div className="lr-danmaku-player__video">
@@ -303,7 +330,11 @@ export function DanmakuPlayerModal({
           onClick={togglePlay}
           disabled={failed}
         />
-        <div className="lr-danmaku-player__volume" role="group" aria-label="音量控制">
+        <div
+          className="lr-danmaku-player__volume"
+          role="group"
+          aria-label="音量控制"
+        >
           <Button
             size="small"
             aria-label={muted || volume === 0 ? "取消静音" : "静音"}
@@ -374,7 +405,57 @@ export function DanmakuPlayerModal({
           onSeekCommit={(target) => {
             if (typeof target === "number") seek(target);
           }}
-        />
+        >
+          <MarkerNavPanel
+            key={recordingId}
+            markers={markers}
+            gaps={videoGaps}
+            currentSecond={current}
+            duration={duration}
+            liveMode={false}
+            blockedReason={
+              failed
+                ? "录像播放失败，暂不可定位"
+                : duration <= 0
+                  ? "录像加载中"
+                  : undefined
+            }
+            onSeek={(second) => seek(second)}
+            onEdit={async (marker, text) => {
+              try {
+                const updated = await updateRecordingMarker(
+                  recordingId,
+                  marker.id,
+                  { text },
+                );
+                setMarkers((previous) =>
+                  previous.map((item) =>
+                    item.id === updated.id ? updated : item,
+                  ),
+                );
+              } catch (error) {
+                message.error(
+                  error instanceof ApiError
+                    ? describeError(error.code, error.message)
+                    : "标记保存失败",
+                );
+                throw error;
+              }
+            }}
+            onExport={
+              roomId
+                ? (startSecond, endSecond, name) =>
+                    setPendingClipExport({
+                      recordingId,
+                      roomId,
+                      startSecond,
+                      endSecond,
+                      defaultName: markerClipName(title, name),
+                    })
+                : undefined
+            }
+          />
+        </RecordingTrack>
         <DanmakuSettings
           visible={visible}
           opacity={opacity}
@@ -391,7 +472,9 @@ export function DanmakuPlayerModal({
               loading={exporting}
               disabled={seekDisabled}
               title="导出整段录像的 ASS 滚动弹幕和 SRT 字幕"
-              onClick={() => { void handleExportDanmaku(); }}
+              onClick={() => {
+                void handleExportDanmaku();
+              }}
             >
               导出弹幕
             </Button>

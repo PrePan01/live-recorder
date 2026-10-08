@@ -31,6 +31,10 @@ import {
 import RecordingStopIcon from "./RecordingStopIcon";
 import RecordingTrack from "./RecordingTrack";
 import { DanmakuLayer } from "./DanmakuLayer";
+import { MarkerNavPanel } from "./MarkerNavPanel";
+import { markerClipName } from "../utils/markerNavigation";
+import { QualityLight } from "./QualityLight";
+import { useStreamHealth } from "../hooks/useStreamHealth";
 import DanmakuSettings from "./DanmakuSettings";
 import { useLiveDanmaku } from "../hooks/useLiveDanmaku";
 import { fetchDanmakuWindow } from "../api/danmakuWindow";
@@ -88,7 +92,7 @@ const formatClock = (value: number) => {
   const s = total % 60;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
-type PlayerBounds = { left: number; top: number; width: number };
+type PlayerBounds = { left: number; top: number; width: number; height: number };
 type PendingPreviewResize = { portrait: boolean; value: number };
 
 /**
@@ -146,6 +150,8 @@ export default function PreviewModal({
   >(null);
   const [exporting, setExporting] = useState(false);
   const [markers, setMarkers] = useState<RecordingMarker[]>([]);
+  const [markerNavigationContainer, setMarkerNavigationContainer] =
+    useState<HTMLSpanElement | null>(null);
   const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
   const [displayedTrack, setDisplayedTrack] = useState<{
     id: string;
@@ -193,6 +199,10 @@ export default function PreviewModal({
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
   const activeRecordingId = live.activeRecording?.recordingId;
+  const activeRecordingRef = useRef(activeRecordingId);
+  activeRecordingRef.current = activeRecordingId;
+  const addingMarkerRef = useRef(false);
+  const [addingMarker, setAddingMarker] = useState(false);
   const lastStreamRatioRef = useRef<number | null>(null);
   const handleStreamAspectRatio = useCallback((ratio: number) => {
     const previous = lastStreamRatioRef.current;
@@ -278,13 +288,17 @@ export default function PreviewModal({
     : 0;
 
   useEffect(() => {
-    if (!activeRecordingId) {
-      setMarkers([]);
-      return;
-    }
+    setMarkers([]);
+    if (!activeRecordingId) return;
+    let cancelled = false;
     void fetchRecordingMarkers(activeRecordingId)
-      .then(setMarkers)
-      .catch(() => setMarkers([]));
+      .then((items) => {
+        if (!cancelled) setMarkers(items);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [activeRecordingId]);
 
   useLayoutEffect(() => {
@@ -452,14 +466,17 @@ export default function PreviewModal({
     }
     const slot = previewPlayerSlot;
     const syncBounds = () => {
-      const { left, top, width: nextWidth } = slot.getBoundingClientRect();
+      // Portal 不受弹窗 flex 收缩和裁切约束，必须同步占位容器的实际宽高。
+      const { left, top, width: nextWidth, height: nextHeight } =
+        slot.getBoundingClientRect();
       setPreviewPlayerBounds((current) =>
         current &&
         current.left === left &&
         current.top === top &&
-        current.width === nextWidth
+        current.width === nextWidth &&
+        current.height === nextHeight
           ? current
-          : { left, top, width: nextWidth },
+          : { left, top, width: nextWidth, height: nextHeight },
       );
     };
     setPreviewPlayerVisible(false);
@@ -486,7 +503,9 @@ export default function PreviewModal({
     seconds = Math.max(1, Math.min(Math.floor(seconds), highlightMaxSeconds));
     setExporting(true);
     void exportHighlight(room.id, seconds)
-      .then(() => message.success(`${formatSeconds(seconds)}精彩时刻录制完成`, 5))
+      .then(() =>
+        message.success(`${formatSeconds(seconds)}精彩时刻录制完成`, 5),
+      )
       .catch((e) =>
         message.error(
           e instanceof ApiError
@@ -543,19 +562,31 @@ export default function PreviewModal({
   const updateMarkers = async (
     action: () => Promise<RecordingMarker | void>,
   ) => {
-    await action();
-    if (activeRecordingId)
-      setMarkers(await fetchRecordingMarkers(activeRecordingId));
+    const id = activeRecordingId;
+    try {
+      await action();
+      if (id) {
+        const items = await fetchRecordingMarkers(id);
+        if (activeRecordingRef.current === id) setMarkers(items);
+      }
+    } catch (error) {
+      message.error(
+        error instanceof ApiError
+          ? describeError(error.code, error.message)
+          : "标记保存失败",
+      );
+      throw error;
+    }
   };
 
-  const handleClipExport = (start: number, end: number) => {
+  const handleClipExport = (start: number, end: number, name?: string) => {
     if (!activeRecordingId) return;
     setPendingClipExport({
       recordingId: activeRecordingId,
       roomId: room.id,
       startSecond: start,
       endSecond: end,
-      defaultName: `${live.displayName}_片段`,
+      defaultName: markerClipName(live.displayName, name),
     });
   };
 
@@ -588,9 +619,14 @@ export default function PreviewModal({
     setOpacity: setDanmakuOpacity,
     setDensity: setDanmakuDensity,
   } = useDanmakuPrefsStore();
-  const liveDanmaku = useLiveDanmaku(room.id, danmakuVisible && !seekPlayback, previewVideo);
+  const liveDanmaku = useLiveDanmaku(
+    room.id,
+    danmakuVisible && !seekPlayback,
+    previewVideo,
+  );
   const [danmakuMessages, setDanmakuMessages] = useState<DanmakuMessage[]>([]);
   const [trackGaps, setTrackGaps] = useState<RecordingGap[]>([]);
+  const streamHealth = useStreamHealth(activeRecordingId);
   useEffect(() => {
     if (!activeRecordingId) return undefined;
     let cancelled = false;
@@ -612,19 +648,30 @@ export default function PreviewModal({
   const danmakuStatus = useDanmakuStore((s) =>
     selectDanmakuStatus(s, activeRecordingId),
   );
-  const displayedDanmakuStatus = seekPlayback ? danmakuStatus : liveDanmaku.status;
+  const displayedDanmakuStatus = seekPlayback
+    ? danmakuStatus
+    : liveDanmaku.status;
   const danmakuAnchorRef = useRef<number | null>(null);
   const getDanmakuTimeMs = useCallback((): number => {
-    if (!seekPlayback || !previewVideo || !previewVideo.buffered.length) return NaN;
-    if (previewFrameGenerationRef.current !== seekPlayback.generation) return NaN;
-    if (danmakuAnchorRef.current == null) danmakuAnchorRef.current = previewVideo.buffered.start(0);
-    return (seekPlayback.startSecond + previewVideo.currentTime - danmakuAnchorRef.current) * 1000;
+    if (!seekPlayback || !previewVideo || !previewVideo.buffered.length)
+      return NaN;
+    if (previewFrameGenerationRef.current !== seekPlayback.generation)
+      return NaN;
+    if (danmakuAnchorRef.current == null)
+      danmakuAnchorRef.current = previewVideo.buffered.start(0);
+    return (
+      (seekPlayback.startSecond +
+        previewVideo.currentTime -
+        danmakuAnchorRef.current) *
+      1000
+    );
   }, [seekPlayback, previewVideo]);
   useEffect(() => {
     danmakuAnchorRef.current = null;
     setDanmakuMessages([]);
     setDanmakuGaps([]);
-    if (!activeRecordingId || !seekPlayback || !danmakuVisible) return undefined;
+    if (!activeRecordingId || !seekPlayback || !danmakuVisible)
+      return undefined;
     const controller = new AbortController();
     let running = false;
     const load = async () => {
@@ -633,18 +680,37 @@ export default function PreviewModal({
       try {
         const nowMs = getDanmakuTimeMs();
         if (!Number.isFinite(nowMs)) return;
-        const data = await fetchDanmakuWindow(activeRecordingId, Math.max(0, nowMs - 15_000), nowMs + 30_000, controller.signal);
+        const data = await fetchDanmakuWindow(
+          activeRecordingId,
+          Math.max(0, nowMs - 15_000),
+          nowMs + 30_000,
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
         setDanmakuMessages(data.messages);
         setDanmakuGaps(data.gaps ?? []);
         if (data.status) useDanmakuStore.getState().applyStatus(data.status);
-      } catch { /* Next poll retries transient errors. */ }
-      finally { running = false; }
+      } catch {
+        /* Next poll retries transient errors. */
+      } finally {
+        running = false;
+      }
     };
     void load();
-    const timer = window.setInterval(() => { void load(); }, 2500);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [activeRecordingId, getDanmakuTimeMs, seekPlayback, previewVideo, danmakuVisible]);
+    const timer = window.setInterval(() => {
+      void load();
+    }, 2500);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [
+    activeRecordingId,
+    getDanmakuTimeMs,
+    seekPlayback,
+    previewVideo,
+    danmakuVisible,
+  ]);
   const previewFrameGenerationRef = useRef<number | null>(null);
   const requestedPlaybackRef = useRef(seekPlayback);
   requestedPlaybackRef.current = seekPlayback;
@@ -937,6 +1003,70 @@ export default function PreviewModal({
     }
   }, [liveDanmaku.resetTime]);
 
+  const quickAddMarker = useCallback(() => {
+    if (
+      !activeRecordingId ||
+      addingMarkerRef.current ||
+      displayPreview.loading ||
+      trackClosing
+    )
+      return;
+    addingMarkerRef.current = true;
+    setAddingMarker(true);
+    const index =
+      markers.reduce(
+        (max, m) =>
+          Math.max(max, Number(/^标记 (\d+)$/.exec(m.text)?.[1] ?? 0)),
+        markers.length,
+      ) + 1;
+    const position =
+      displayPreview.mode === "history" ? displayPreview.second : undefined;
+    void createRecordingMarker(activeRecordingId, `标记 ${index}`, position)
+      .then((marker) => {
+        if (activeRecordingRef.current !== activeRecordingId) return;
+        setMarkers((items) => [...items, marker]);
+        message.success("已打点，可在标记列表补充文字", 2);
+      })
+      .catch((error) =>
+        message.error(
+          error instanceof ApiError
+            ? describeError(error.code, error.message)
+            : "打点失败",
+        ),
+      )
+      .finally(() => {
+        addingMarkerRef.current = false;
+        setAddingMarker(false);
+      });
+  }, [
+    activeRecordingId,
+    displayPreview.loading,
+    displayPreview.mode,
+    displayPreview.second,
+    markers,
+    message,
+    trackClosing,
+  ]);
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        !event.altKey ||
+        event.code !== "KeyM" ||
+        target?.closest("input, textarea, select, [contenteditable=true]")
+      )
+        return;
+      event.preventDefault();
+      quickAddMarker();
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [quickAddMarker]);
+
   const handleClose = () => {
     if (enableHighlights)
       void disableHighlightBuffer(room.id).catch(() => undefined);
@@ -1107,7 +1237,8 @@ export default function PreviewModal({
                     density={danmakuDensity}
                     statusText={
                       displayedDanmakuStatus &&
-                      (recording || displayedDanmakuStatus.state !== "collecting")
+                      (recording ||
+                        displayedDanmakuStatus.state !== "collecting")
                         ? danmakuStateText(displayedDanmakuStatus.state)
                         : undefined
                     }
@@ -1190,7 +1321,6 @@ export default function PreviewModal({
                   willChange: "width, height",
                 }}
               />
-
             </div>
             {displayedTrack ? (
               <div
@@ -1199,64 +1329,108 @@ export default function PreviewModal({
                 style={{
                   width: trackWidth,
                   margin: "0 auto",
-                  flexShrink: 1,
+                  flexShrink: 0,
                   minHeight: 0,
+                  maxWidth: "100%",
                 }}
               >
-                <RecordingTrack
-                  gaps={trackGaps}
-                  elapsedSeconds={trackElapsedSeconds}
-                  markers={markers}
-                  editable
-                  onSeekIntent={handleSeekIntent}
-                  onSeekCommit={handleSeekCommit}
-                  onReturnToLive={
-                    seekPlayback ? () => handleSeekCommit("live") : undefined
-                  }
-                  previewMode={displayPreview.mode}
-                  previewSecond={displayPreview.second}
-                  previewLoading={displayPreview.loading}
-                  seekHint={
-                    seekIndexState === "building"
-                      ? "正在加载…"
-                      : seekActualStart != null
-                        ? `从 ${formatClock(seekActualStart.second)} 起播`
-                        : undefined
-                  }
-                  onAdd={(text) =>
-                    updateMarkers(() =>
-                      createRecordingMarker(
-                        displayedTrack.id,
-                        text,
-                        displayPreview.mode === "history" &&
-                          displayPreview.second != null
-                          ? Math.floor(displayPreview.second)
-                          : undefined,
-                      ),
-                    )
-                  }
-                  onEdit={(markerId, text) =>
-                    updateMarkers(() =>
-                      updateRecordingMarker(displayedTrack.id, markerId, {
-                        text,
-                      }),
-                    )
-                  }
-                  onMove={(markerId, positionSeconds) =>
-                    updateMarkers(() =>
-                      updateRecordingMarker(displayedTrack.id, markerId, {
-                        positionSeconds,
-                      }),
-                    )
-                  }
-                  onDelete={(markerId) =>
-                    updateMarkers(() =>
-                      deleteRecordingMarker(displayedTrack.id, markerId),
-                    )
-                  }
-                  onExport={handleClipExport}
-                  onCollapsedChange={setTrackCollapsed}
-                />
+                <div>
+                  <RecordingTrack
+                    gaps={trackGaps}
+                    elapsedSeconds={trackElapsedSeconds}
+                    markers={markers}
+                    editable
+                    onQuickAdd={quickAddMarker}
+                    markerNavigationRef={setMarkerNavigationContainer}
+                    addingMarker={addingMarker}
+                    quickAddDisabled={displayPreview.loading || trackClosing}
+                    toolbar={
+                      recording && !trackClosing ? (
+                        <QualityLight health={streamHealth} />
+                      ) : undefined
+                    }
+                    onSeekIntent={handleSeekIntent}
+                    onSeekCommit={handleSeekCommit}
+                    onReturnToLive={
+                      seekPlayback ? () => handleSeekCommit("live") : undefined
+                    }
+                    previewMode={displayPreview.mode}
+                    previewSecond={displayPreview.second}
+                    previewLoading={displayPreview.loading}
+                    seekHint={
+                      seekIndexState === "building"
+                        ? "正在加载…"
+                        : seekActualStart != null
+                          ? `从 ${formatClock(seekActualStart.second)} 起播`
+                          : undefined
+                    }
+                    onAdd={(text) =>
+                      updateMarkers(() =>
+                        createRecordingMarker(
+                          displayedTrack.id,
+                          text,
+                          displayPreview.mode === "history" &&
+                            displayPreview.second != null
+                            ? Math.floor(displayPreview.second)
+                            : undefined,
+                        ),
+                      )
+                    }
+                    onEdit={(markerId, text) =>
+                      updateMarkers(() =>
+                        updateRecordingMarker(displayedTrack.id, markerId, {
+                          text,
+                        }),
+                      )
+                    }
+                    onMove={(markerId, positionSeconds) =>
+                      updateMarkers(() =>
+                        updateRecordingMarker(displayedTrack.id, markerId, {
+                          positionSeconds,
+                        }),
+                      )
+                    }
+                    onDelete={(markerId) =>
+                      updateMarkers(() =>
+                        deleteRecordingMarker(displayedTrack.id, markerId),
+                      )
+                    }
+                    onExport={handleClipExport}
+                    onCollapsedChange={setTrackCollapsed}
+                  >
+                    <MarkerNavPanel
+                      navigationContainer={markerNavigationContainer}
+                      key={displayedTrack.id}
+                      markers={markers}
+                      gaps={trackGaps}
+                      duration={trackElapsedSeconds}
+                      currentSecond={
+                        displayPreview.mode === "history"
+                          ? displayPreview.second
+                          : undefined
+                      }
+                      liveMode={displayPreview.mode === "live"}
+                      loading={displayPreview.loading}
+                      blockedReason={
+                        trackClosing
+                          ? "录制已结束"
+                          : seekIndexState === "building"
+                            ? "索引加载中，暂不可定位"
+                            : undefined
+                      }
+                      onSeek={(second) => handleSeekCommit(second)}
+                      onReturnToLive={() => handleSeekCommit("live")}
+                      onEdit={(marker, text) =>
+                        updateMarkers(() =>
+                          updateRecordingMarker(displayedTrack.id, marker.id, {
+                            text,
+                          }),
+                        )
+                      }
+                      onExport={handleClipExport}
+                    />
+                  </RecordingTrack>
+                </div>
               </div>
             ) : null}
           </div>
@@ -1475,7 +1649,9 @@ export default function PreviewModal({
             width: pictureInPicture
               ? pictureBox.width
               : (previewPlayerBounds?.width ?? 0),
-            height: pictureInPicture ? pictureBox.height : undefined,
+            height: pictureInPicture
+              ? pictureBox.height
+              : (previewPlayerBounds?.height ?? 0),
             zIndex: pictureInPicture ? 1100 : 1001,
             cursor: pictureInPicture ? "move" : undefined,
             borderRadius: 8,
@@ -1496,6 +1672,7 @@ export default function PreviewModal({
           }}
         >
           <VideoPlayer
+            fill
             preserveFrameOnSwitch
             roomId={room.id}
             platform={room.platform}
@@ -1514,10 +1691,14 @@ export default function PreviewModal({
               <DanmakuLayer
                 messages={seekPlayback ? danmakuMessages : liveDanmaku.messages}
                 gaps={seekPlayback ? danmakuGaps : []}
-                getTimeMs={seekPlayback ? getDanmakuTimeMs : liveDanmaku.getTimeMs}
+                getTimeMs={
+                  seekPlayback ? getDanmakuTimeMs : liveDanmaku.getTimeMs
+                }
                 maxBullets={danmakuDensity}
                 opacity={danmakuOpacity}
-                resetKey={seekPlayback?.generation ?? `live:${liveDanmaku.resetKey}`}
+                resetKey={
+                  seekPlayback?.generation ?? `live:${liveDanmaku.resetKey}`
+                }
               />
             </div>
           ) : null}
