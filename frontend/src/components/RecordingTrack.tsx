@@ -644,6 +644,11 @@ export default function RecordingTrack({
                       style={{ left: `${pct(position)}%` }}
                       onPointerDown={(event) => beginMarker(marker, event)}
                       onClick={() => {
+                        if (movedRef.current) return;
+                        // 单击=回看定位（复用跳播流程）；双击=编辑（保留既有编辑能力）。
+                        onSeekCommit?.(Math.floor(position));
+                      }}
+                      onDoubleClick={() => {
                         if (editable && !movedRef.current) openEdit(marker);
                       }}
                     >
