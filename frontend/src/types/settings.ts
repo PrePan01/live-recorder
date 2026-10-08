@@ -43,6 +43,8 @@ export interface Settings {
   autoRecord: boolean;
   /** 弹幕采集全局开关；房间可单独覆盖（danmakuEnabled null=跟随全局）。 */
   danmaku: { enabled: boolean };
+  /** 编码方式：自动=硬编优先失败回退软编；软件=只软编。 */
+  encodingMode?: 'auto' | 'software';
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
@@ -82,6 +84,7 @@ export interface SettingsInput {
   recordingFormat?: RecordingFormat;
   autoRecord?: boolean;
   danmaku?: { enabled: boolean };
+  encodingMode?: 'auto' | 'software';
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;

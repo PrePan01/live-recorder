@@ -949,6 +949,14 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
   },
   { version: 45, up: (db) => ensureColumn(db, "rooms", "live_cover_url", "live_cover_url TEXT") },
   { version: 46, up: (db) => ensureColumn(db, "rooms", "danmaku_enabled", "danmaku_enabled INTEGER") },
+  { version: 47, up: (db) => {
+    // 坑点：版本记录伪造/缺表的存量库上 ALTER 会炸整轮迁移——表在才补列。
+    const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='pipeline_artifacts'").get();
+    if (hasTable) {
+      ensureColumn(db, "pipeline_artifacts", "actual_encoder", "actual_encoder TEXT");
+      ensureColumn(db, "pipeline_artifacts", "fallback_reason", "fallback_reason TEXT");
+    }
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

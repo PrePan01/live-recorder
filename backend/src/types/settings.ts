@@ -72,6 +72,8 @@ export interface AppSettings {
   highlightEnabled?: boolean;
   /** V5 OpenList 上传配置。 */
   openlist?: OpenListConfig;
+  /** 编码方式：auto=硬编优先失败回退软编（默认）；software=只软编。作用于后处理压缩与片段重编码。 */
+  encodingMode?: 'auto' | 'software';
   /** 弹幕采集总开关（默认关）；房间可用 danmakuEnabled 单独覆盖。 */
   danmaku?: { enabled: boolean };
 }
@@ -175,4 +177,6 @@ export interface SettingsView {
   preventSleepWhileRecording: boolean;
   highlightBufferSeconds: number;
   highlightEnabled: boolean;
+  /** 编码方式：auto=硬编优先失败回退（默认）；software=只软编。 */
+  encodingMode: 'auto' | 'software';
 }

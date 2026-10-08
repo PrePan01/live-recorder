@@ -44,7 +44,7 @@ import {
 } from "../recorder/stream-recorder.js";
 import { SeekIndexWriter, endSeekWriter } from "../storage/seek-index.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
-import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
+import { exportClipFile, setEncodingMode } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
 import { DownloadSpeed } from "./download-speed.js";
@@ -2728,6 +2728,7 @@ export class RecorderManager {
       let lastPct = -1;
       let lastEmitAt = 0;
       try {
+        setEncodingMode(this.services.settings.load()?.encodingMode ?? "auto");
         const result = await exportClipFile(
           source.filePath!,
           outputPath,
@@ -2824,6 +2825,17 @@ export class RecorderManager {
           ).toISOString(),
           fileSizeBytes: result.sizeBytes,
           filePath: landed,
+          // 编码面记账：任务显示实际编码方式与回退原因（设计第 3 项显示面）。元数据整替=先并后写。
+          metadata: {
+            ...(this.services.recordings.get(clip.id)?.metadata ?? {
+              durationMs: null,
+              segmentCount: 1,
+              quality: null,
+              size: 0,
+            }),
+            actualEncoder: (result as { actualEncoder?: string }).actualEncoder ?? null,
+            fallbackReason: (result as { fallbackReason?: string | null }).fallbackReason ?? null,
+          },
           ...(finalTitle !== undefined ? { streamTitle: finalTitle } : {}),
         });
         this.clipProgress.delete(clip.id);

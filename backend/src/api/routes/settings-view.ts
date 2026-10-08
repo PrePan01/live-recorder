@@ -33,5 +33,6 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
     highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
     highlightEnabled: settings.highlightEnabled ?? true,
+    encodingMode: settings.encodingMode ?? 'auto',
   };
 }

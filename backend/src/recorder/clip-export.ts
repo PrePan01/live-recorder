@@ -4,6 +4,8 @@ import { availableParallelism } from 'node:os';
 import { resolveBin } from '../utils/ffmpeg.js';
 import { runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
 import { CLIP_BOUNDARY_TOLERANCE_SECONDS, createFlvSnapshotStream, openFlvClipSource, prepareFlvClipInput, type FlvClipSource } from './flv-clip-input.js';
+import { encodeWithFallback } from './hw-encode.js';
+import { encodingMode } from './pipeline-ffmpeg.js';
 import { encodingWorkQueue, MediaWorkQueue } from './media-work-queue.js';
 import { videoPassthroughArgs } from './ffmpeg-capabilities.js';
 
@@ -15,6 +17,8 @@ export interface ClipExportResult {
   sizeBytes: number;
   stderr: string;
   method?: 'copy' | 'encode';
+  actualEncoder?: string | null;
+  fallbackReason?: string | null;
 }
 
 interface PacketBounds {
@@ -123,7 +127,7 @@ export async function exportClipFile(
           '-avoid_negative_ts', 'make_zero', outputPath], { ...options, input: copyInput.createStream });
         if (res.ok && accurateCopy(await probeBounds(outputPath, options.signal), copyInput.keyframeSecond, startSecond, endSecond)) {
           const out = await stat(outputPath);
-          return { ok: out.size > 0, sizeBytes: out.size, stderr: res.stderr, method: 'copy' };
+          return { ok: out.size > 0, sizeBytes: out.size, stderr: res.stderr, method: 'copy', actualEncoder: 'copy', fallbackReason: null };
         }
         await unlink(outputPath).catch(() => undefined);
       }
@@ -138,14 +142,38 @@ export async function exportClipFile(
         ? { ...options, input: () => createFlvSnapshotStream(source!) }
         : options;
       const frameSync = input ? await videoPassthroughArgs() : [];
-      const res = await encodingWorkQueue.run(() => runFfmpegTracked([
-        '-y', ...inputArgs, '-t', String(endSecond - startSecond), '-map', '0:v?', '-map', '0:a?',
-        '-c:v', 'libx264', '-preset', 'superfast', '-crf', '23',
-        '-threads', String(Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)))),
-        '-c:a', 'aac', '-avoid_negative_ts', 'make_zero',
-        ...frameSync,
-        outputPath,
-      ], runOptions), options.signal);
+      let res: { ok: boolean; code: number | null; stderr: string } = { ok: false, code: null, stderr: '' };
+      const outcome = await encodeWithFallback({
+        mode: encodingMode(),
+        crf: 23,
+        isCancelled: () => options.signal?.aborted ?? false,
+        attempt: async (encoder, quality) => {
+          await unlink(outputPath).catch(() => undefined);
+          let progressed = false;
+          const tracked: FfmpegRunOptions = {
+            ...runOptions,
+            onProgress: (info) => {
+              if (info.outTimeMs > 0) progressed = true;
+              runOptions.onProgress?.(info);
+            },
+          };
+          res = await encodingWorkQueue.run(() => runFfmpegTracked([
+            '-y', ...inputArgs, '-t', String(endSecond - startSecond), '-map', '0:v?', '-map', '0:a?',
+            '-c:v', encoder, ...quality,
+            '-threads', String(Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)))),
+            '-c:a', 'aac', '-avoid_negative_ts', 'make_zero',
+            ...frameSync,
+            outputPath,
+          ], tracked), options.signal);
+          if (options.signal?.aborted) return '中途失败';
+          if (!res.ok) return progressed ? '中途失败' : res.code === null ? '启动失败' : '无进度';
+          const bounds = await probeBounds(outputPath, options.signal);
+          const duration = endSecond - startSecond;
+          const primary = bounds && ([...bounds].find(([type]) => type.startsWith('video:'))?.[1] ?? [...bounds.values()][0]);
+          const valid = primary && Math.abs(primary.last + primary.duration - primary.first - duration) <= CLIP_BOUNDARY_TOLERANCE_SECONDS;
+          return valid ? null : '产物校验失败';
+        },
+      });
       const bounds = res.ok ? await probeBounds(outputPath, options.signal) : null;
       // 编码路径保持帧级起点；拒绝 EOF 导致的明显短片，不能把半个选区标为成功。
       const duration = endSecond - startSecond;
@@ -154,11 +182,11 @@ export async function exportClipFile(
       const out = await stat(outputPath).catch(() => null);
       const ok = res.ok && Boolean(valid && out?.size) && !options.signal?.aborted;
       if (!ok) await unlink(outputPath).catch(() => undefined);
-      return { ok, sizeBytes: ok ? out!.size : 0, stderr: res.stderr + (res.ok && !valid ? '\nClip media does not cover the selected interval within 1 second' : ''), method: 'encode' };
+      return { ok, sizeBytes: ok ? out!.size : 0, stderr: res.stderr + (res.ok && !valid ? '\nClip media does not cover the selected interval within 1 second' : ''), method: 'encode', actualEncoder: outcome.actualEncoder, fallbackReason: outcome.fallbackReason };
     }, options.signal);
   } catch (error) {
     if (inputPath !== outputPath) await unlink(outputPath).catch(() => undefined);
-    return { ok: false, sizeBytes: 0, stderr: error instanceof Error ? error.message : String(error) };
+    return { ok: false, sizeBytes: 0, stderr: error instanceof Error ? error.message : String(error), actualEncoder: null, fallbackReason: null };
   } finally {
     await source?.close().catch(() => undefined);
   }

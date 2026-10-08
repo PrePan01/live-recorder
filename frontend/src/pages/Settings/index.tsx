@@ -156,6 +156,7 @@ export default function SettingsPage() {
         quality: settings.quality,
         autoRecord: settings.autoRecord ?? false,
         danmaku: { enabled: settings.danmaku?.enabled ?? false },
+        encodingMode: settings.encodingMode ?? 'auto',
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
         preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,

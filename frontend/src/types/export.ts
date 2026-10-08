@@ -1,6 +1,9 @@
-export type ExportStatus = 'queued' | 'running' | 'ok' | 'partial' | 'failed' | 'cancelled';
+export type ExportStatus =
+  "queued" | "running" | "ok" | "partial" | "failed" | "cancelled";
 
 export interface ExportJob {
+  actualEncoder?: string | null;
+  fallbackReason?: string | null;
   id: string;
   status: ExportStatus;
   recordingIds: string[];

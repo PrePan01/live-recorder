@@ -287,6 +287,15 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
             >
               开启后随录制采集弹幕（仅文字弹幕）；房间可在列表中单独覆盖此开关。
             </Typography.Paragraph>
+            <Form.Item label="编码方式" name="encodingMode">
+              <Select
+                aria-label="编码方式"
+                options={[
+                  { value: "auto", label: "自动（硬件优先，失败回退软编）" },
+                  { value: "software", label: "软件（仅软编）" },
+                ]}
+              />
+            </Form.Item>
             <Typography.Title className="lr-settings-section__title" level={5}>
               检测频率
             </Typography.Title>

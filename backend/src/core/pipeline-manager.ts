@@ -9,6 +9,7 @@ import { checkFileIntegrity, checkFileIntegrityDetailed } from '../recorder/inte
 import { resolveBin } from '../utils/ffmpeg.js';
 import { moveMarkerSidecar } from '../storage/recording-markers.js';
 import { removeSeekIndexSidecar } from '../storage/seek-index.js';
+import { setEncodingMode } from '../recorder/pipeline-ffmpeg.js';
 import { extractCoverFrame, segmentFile, exportAudioToMp3, convertToMp4, compressOrRemux, archiveTo, cleanupDir } from '../recorder/pipeline-ffmpeg.js';
 import { composeRunProgress } from './task-progress.js';
 import type { PipelineArtifact, PipelineStep, Recording, PipelineRun, PipelineRunStatus } from '../types/index.js';
@@ -292,7 +293,9 @@ export class PipelineManager {
     const sidecar = this.stepStart(run, 'sidecar');
       this.pipelineRepo.setArtifact(sidecar.id, { status: 'running', startedAt: this.services.clock.iso() });
       const st = await stat(recording.filePath);
+      // 元数据整替=先并后写：保留其他写点已落的键（如导出编码面 actualEncoder/fallbackReason）。
       const metadata = {
+        ...(this.services.recordings.get(recording.id)?.metadata ?? {}),
         durationMs: await probeDurationMs(recording.filePath),
         segmentCount: 1,
         quality: recording.quality ?? null,
@@ -419,6 +422,7 @@ export class PipelineManager {
 
       // ⑥ compress：只做重编码；未启用时明确跳过。
       {
+    setEncodingMode(this.services.settings.load()?.encodingMode ?? 'auto');
     const compArt = this.stepStart(run, 'compress');
         if (config.crf === null) {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'skipped', endedAt: this.services.clock.iso() });
@@ -444,7 +448,7 @@ export class PipelineManager {
             this.services.recordings.update(recording.id, { filePath: comp.outPath, fileSizeBytes: comp.sizeBytes });
             await moveMarkerSidecar(sourcePath, comp.outPath);
             recording.filePath = comp.outPath;
-            this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso() });
+            this.pipelineRepo.setArtifact(compArt.id, { status: 'ok', path: comp.outPath, sizeBytes: comp.sizeBytes, endedAt: this.services.clock.iso(), actualEncoder: comp.actualEncoder ?? null, fallbackReason: comp.fallbackReason ?? null });
           } else {
             this.pipelineRepo.setArtifact(compArt.id, { status: 'failed', error: '压缩失败，已保留并使用源文件', endedAt: this.services.clock.iso() });
             finalStatus = 'partial';
