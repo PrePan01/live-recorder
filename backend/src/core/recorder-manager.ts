@@ -115,6 +115,14 @@ function withClipFinalizeLock<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * 收尾时仍未结算的静默时长（毫秒）。录制期间累计缺失只在"恢复拿到数据"时才结算，
  */
+/**
+ * 停流合成因判定：连接断（stream_disconnect）与源停吐（source_stall）分名——
+ * 悬停原因要能区分「断网」和「主播端没货」两种缺失。
+ */
+export function isStallCause(cause: { message?: string } | null | undefined): boolean {
+  return Boolean(cause?.message?.includes("静默超时"));
+}
+
 function tailSilenceMs(
   session: ActiveSession | undefined,
   now: number,
@@ -388,6 +396,7 @@ export class RecorderManager {
   }
 
   private settleRecordingGap(session: ActiveSession, now: number): void {
+    // kind 分名：连接断/源停吐/休眠/尾部四值（悬停原因可辨，判不出=粗归因不猜）。
     if (session.gapStartAt === null) return;
     const gapMs = Math.max(0, now - session.gapStartAt);
     session.missingMs += gapMs;
@@ -396,7 +405,11 @@ export class RecorderManager {
         recordingId: session.recordingId,
         startedAt: new Date(session.gapStartAt).toISOString(), endedAt: new Date(now).toISOString(),
         missingMs: gapMs,
-        kind: this.isSystemSleepGap(session.gapStartAt, now) ? "system_sleep" : "stream_disconnect",
+        kind: this.isSystemSleepGap(session.gapStartAt, now)
+          ? "system_sleep"
+          : isStallCause(session.gapCause)
+            ? "source_stall"
+            : "stream_disconnect",
         evidence: JSON.stringify({ gapStartAt: session.gapStartAt, size: session.size,
           cause: session.gapCause, mediaPositionMs: session.mediaPositionMs }),
       });

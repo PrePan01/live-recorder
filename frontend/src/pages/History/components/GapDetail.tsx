@@ -6,6 +6,13 @@ import { formatRelative } from "../../../utils/format";
 import { recordingGapSummary } from "../../../utils/recordingGapSummary";
 import { recordingGapText } from "../../../utils/recordingGapText";
 import { recordingGapPosition } from "../../../utils/recordingGapPosition";
+import { GENERIC_GAP_REASON, recordingGapKindText } from "../../../utils/recordingGapKindText";
+
+function gapPositionMs(gap: RecordingGap): number | undefined {
+  return gap.positionMs != null && Number.isFinite(gap.positionMs)
+    ? gap.positionMs
+    : undefined;
+}
 
 function gapText(gap: RecordingGap): string {
   const s = Math.round(gap.missingMs / 1000);
@@ -17,11 +24,17 @@ export default function GapDetail({
   recordingStartedAt,
   missingMs,
   gapCount,
+  estimated,
+  onLocate,
 }: {
   recordingId: string;
   recordingStartedAt: string;
   missingMs: number;
   gapCount?: number;
+  /** 旧记录估算位：汇总文案带「约」。 */
+  estimated?: boolean;
+  /** 点击条目回看定位（可播轴秒）；不传则条目不可点。 */
+  onLocate?: (positionSecond: number) => void;
 }) {
   const [gaps, setGaps] = useState<RecordingGap[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -59,22 +72,42 @@ export default function GapDetail({
                   : gaps.length > 0
                     ? `共 ${gaps.length} 次中断，`
                     : ""}
-                累计 {missingSeconds} 秒
+                {estimated ? "约 " : ""}累计 {missingSeconds} 秒
               </Typography.Text>
+              {unlistedSeconds > 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  另有未定位缺失 {unlistedSeconds} 秒（位置或原因未知，不伪造）
+                </Typography.Text>
+              ) : null}
               {gaps.length === 0 ? (
                 <Typography.Text type="secondary">
                   暂无缺失事件记录
                 </Typography.Text>
               ) : null}
               {gaps.map((g) => {
-                const { status, reason } = recordingGapText(g);
+                const { status, reason: reasonRaw } = recordingGapText(g);
+                // 通用空话（未记因）回退 kind 人话：source_stall 等粗归因可辨。
+                const reason =
+                  reasonRaw && reasonRaw !== GENERIC_GAP_REASON
+                    ? reasonRaw
+                    : recordingGapKindText(g.kind);
                 const position = recordingGapPosition(
                   g,
                   gaps,
                   recordingStartedAt,
                 );
                 return (
-                  <Space key={g.id} orientation="vertical" size={4}>
+                  <Space
+                    key={g.id}
+                    orientation="vertical"
+                    size={4}
+                    style={onLocate ? { cursor: "pointer" } : undefined}
+                    onClick={
+                      onLocate && gapPositionMs(g) != null
+                        ? () => onLocate(gapPositionMs(g)! / 1000)
+                        : undefined
+                    }
+                  >
                     <Space size={8} wrap>
                       <Tag style={{ marginInlineEnd: 0 }}>{gapText(g)}</Tag>
                       <Typography.Text style={{ fontSize: 12 }}>
@@ -82,7 +115,7 @@ export default function GapDetail({
                       </Typography.Text>
                     </Space>
                     <Typography.Text style={{ fontSize: 12 }}>
-                      录像位置：{position ?? "无法确定"}
+                      录像位置：{position != null ? `${g.estimated ? "约 " : ""}${position}` : "无法确定"}
                     </Typography.Text>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       {reason}

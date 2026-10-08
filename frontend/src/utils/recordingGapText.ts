@@ -1,3 +1,4 @@
+import { GENERIC_GAP_REASON } from "./recordingGapKindText";
 import type { RecordingGap } from "../types/recording";
 
 const CAUSE_TEXT: Record<string, string> = {
@@ -50,6 +51,6 @@ export function recordingGapText(gap: RecordingGap): { status: string; reason: s
   const reason = code && Object.hasOwn(CAUSE_TEXT, code) ? CAUSE_TEXT[code] : undefined;
   return {
     status: gap.kind === "stream_disconnect" ? "恢复录制" : "中断记录",
-    reason: reason ?? "直播数据传输中断，具体原因未记录。",
+    reason: reason ?? GENERIC_GAP_REASON,
   };
 }

@@ -14,7 +14,16 @@ import {
   PlusOutlined,
   ScissorOutlined,
 } from "@ant-design/icons";
-import type { RecordingMarker } from "../types/recording";
+import type { RecordingGap, RecordingMarker } from "../types/recording";
+import { recordingGapText } from "../utils/recordingGapText";
+
+/** 缺口归因的人话兜底（evidence 无因时按 kind 粗归因显示；判不出=原因未知）。 */
+const KIND_FALLBACK: Record<string, string> = {
+  system_sleep: "系统休眠期间暂停录制",
+  source_stall: "源端长静默（直播源长时间无数据）",
+  stream_disconnect: "直播连接中断",
+  recording_tail: "录制结束前的缺失",
+};
 import {
   timelinePercent,
   timelineSecondAt,
@@ -40,6 +49,8 @@ type Props = {
   previewSecond?: number;
   previewLoading?: boolean;
   seekHint?: string;
+  /** 中断缺口（缺口标记层）：positionMs=拼接位、尾缺=片尾处；无位缺口不画（不伪造位置）。 */
+  gaps?: RecordingGap[];
 };
 type Drag = { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
 // 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
@@ -87,6 +98,7 @@ export default function RecordingTrack({
   previewSecond,
   previewLoading = false,
   seekHint,
+  gaps = [],
 }: Props) {
   const [range, setRange] = useState<[number, number]>(() => [
     0,
@@ -508,6 +520,35 @@ export default function RecordingTrack({
               className="lr-recording-track__recorded"
               style={{ width: `${pct(recordingEnd)}%` }}
             />
+            {gaps.map((gap) => {
+              if (gap.positionMs == null) return null;
+              const posSec = gap.positionMs / 1000;
+              const atTail = posSec >= recordingEnd - 1;
+              const secs = Math.round(gap.missingMs / 1000);
+              return (
+                <Tooltip
+                  key={gap.id}
+                  title={
+                    <div style={{ fontSize: 12 }}>
+                      <div>
+                        {gap.estimated ? "约 " : ""}缺失 {secs} 秒
+                      </div>
+                      <div style={{ opacity: 0.8 }}>
+                        发生于 {new Date(gap.startedAt).toLocaleString()}
+                      </div>
+                      <div style={{ opacity: 0.8 }}>
+                        {recordingGapText(gap).reason || KIND_FALLBACK[gap.kind] || "原因未知"}
+                      </div>
+                    </div>
+                  }
+                >
+                  <div
+                    className={`lr-recording-track__gap${atTail ? " lr-recording-track__gap--tail" : ""}`}
+                    style={{ left: `${pct(Math.max(0, posSec))}%` }}
+                  />
+                </Tooltip>
+              );
+            })}
             <div
               className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
               style={{

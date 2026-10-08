@@ -67,6 +67,7 @@ export default function History() {
   );
   const [renaming, setRenaming] = useState<Recording | null>(null);
   const [danmakuRec, setDanmakuRec] = useState<Recording | null>(null);
+  const [danmakuAt, setDanmakuAt] = useState(0);
   const [renameValue, setRenameValue] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [pipelineRec, setPipelineRec] = useState<Recording | null>(null);
@@ -330,7 +331,10 @@ export default function History() {
         setRenameValue,
         setPipelineRec,
         retryUploadFor,
-        openDanmakuPlayer: (r) => setDanmakuRec(r),
+        openDanmakuPlayer: (r, at) => {
+          setDanmakuRec(r);
+          setDanmakuAt(at ?? 0);
+        },
       }),
     [
       roomLabel,
@@ -491,6 +495,7 @@ export default function History() {
           recordingId={danmakuRec.id}
           title={danmakuRec.streamTitle || danmakuRec.roomName}
           filePath={danmakuRec.filePath ?? undefined}
+          initialSecond={danmakuAt}
           onClose={() => setDanmakuRec(null)}
         />
       ) : null}

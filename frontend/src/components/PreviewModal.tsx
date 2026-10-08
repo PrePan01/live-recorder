@@ -39,6 +39,7 @@ import {
   saveDanmakuPref,
 } from "../utils/danmakuPrefs";
 import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
+import type { RecordingGap } from "../types/recording";
 import {
   danmakuStateText,
   selectDanmakuStatus,
@@ -67,6 +68,7 @@ import {
 import {
   createRecordingMarker,
   deleteRecordingMarker,
+  fetchRecordingGaps,
   fetchRecordingMarkers,
   fetchRecordings,
   prewarmRecordingSeek,
@@ -590,6 +592,24 @@ export default function PreviewModal({
     loadDanmakuPref("density", 40),
   );
   const [danmakuMessages, setDanmakuMessages] = useState<DanmakuMessage[]>([]);
+  const [trackGaps, setTrackGaps] = useState<RecordingGap[]>([]);
+  useEffect(() => {
+    if (!activeRecordingId) return undefined;
+    let cancelled = false;
+    const load = () => {
+      void fetchRecordingGaps(activeRecordingId)
+        .then((gaps) => {
+          if (!cancelled) setTrackGaps(gaps);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeRecordingId]);
   const [danmakuGaps, setDanmakuGaps] = useState<DanmakuGap[]>([]);
   const danmakuStatus = useDanmakuStore((s) =>
     selectDanmakuStatus(s, activeRecordingId),
@@ -1249,6 +1269,7 @@ export default function PreviewModal({
                 }}
               >
                 <RecordingTrack
+                  gaps={trackGaps}
                   elapsedSeconds={trackElapsedSeconds}
                   markers={markers}
                   editable

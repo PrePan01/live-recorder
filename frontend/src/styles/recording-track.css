@@ -396,3 +396,25 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* 中断缺口标记：中段=拼接位灰断点；尾缺=片尾外沿宽标。只画标记不画空白段。 */
+.lr-recording-track__gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: rgba(120, 120, 130, 0.85);
+  border-radius: 1px;
+  cursor: help;
+  z-index: 2;
+}
+.lr-recording-track__gap--tail {
+  width: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(120, 120, 130, 0.9),
+    rgba(120, 120, 130, 0.9) 2px,
+    rgba(120, 120, 130, 0.35) 2px,
+    rgba(120, 120, 130, 0.35) 4px
+  );
+}

@@ -1,6 +1,9 @@
 import type { RecordingGap } from "../types/recording";
 
 function mediaPosition(gap: RecordingGap): number | undefined {
+  // 基轴定版：契约 positionMs（文件媒体轴=拼接位）直渲为唯一基轴；
+  // 旧记录无该字段才走证据锚点/换算（显示带「约」语义由 estimated 承担）。
+  if (gap.positionMs != null && Number.isFinite(gap.positionMs)) return gap.positionMs;
   try {
     const evidence: unknown = JSON.parse(gap.evidence ?? "null");
     if (!evidence || typeof evidence !== "object" || !("mediaPositionMs" in evidence)) return;

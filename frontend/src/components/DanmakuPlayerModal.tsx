@@ -5,6 +5,9 @@ import mpegts from 'mpegts.js';
 import { recordingFileUrl } from '../api/recordings';
 import { fetchDanmaku } from '../api/danmaku';
 import { DanmakuLayer } from './DanmakuLayer';
+import RecordingTrack from './RecordingTrack';
+import { fetchRecordingGaps, fetchRecordingMarkers } from '../api/recordings';
+import type { RecordingGap, RecordingMarker } from '../types/recording';
 import {
   DANMUKU_DENSITY_OPTIONS,
   loadDanmakuPref,
@@ -22,6 +25,8 @@ interface DanmakuPlayerModalProps {
   title: string;
   /** 完成态文件路径：决定原生 mp4 播放还是 FLV 流式播放。 */
   filePath?: string;
+  /** 定位起播秒（缺口定位用）；就绪后跳到该点。 */
+  initialSecond?: number;
   onClose: () => void;
 }
 
@@ -52,6 +57,7 @@ export function DanmakuPlayerModal({
   recordingId,
   title,
   filePath,
+  initialSecond = 0,
   onClose,
 }: DanmakuPlayerModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -67,6 +73,8 @@ export function DanmakuPlayerModal({
   const [duration, setDuration] = useState(0);
   const [rate, setRate] = useState(1);
   const [seekTick, setSeekTick] = useState(0);
+  const [markers, setMarkers] = useState<RecordingMarker[]>([]);
+  const [videoGaps, setVideoGaps] = useState<RecordingGap[]>([]);
   const [failed, setFailed] = useState(false);
   const danmakuStatus = useDanmakuStore((s) => selectDanmakuStatus(s, recordingId));
   const isNative = (filePath ?? '').toLowerCase().endsWith('.mp4');
@@ -101,7 +109,9 @@ export function DanmakuPlayerModal({
 
   useEffect(() => {
     void reload(0);
-  }, [reload]);
+    void fetchRecordingMarkers(recordingId).then(setMarkers).catch(() => undefined);
+    void fetchRecordingGaps(recordingId).then(setVideoGaps).catch(() => undefined);
+  }, [reload, recordingId]);
 
   // FLV 走 mpegts 绑源；mp4 由 JSX src 直绑（原生）。
   useEffect(() => {
@@ -211,6 +221,11 @@ export function DanmakuPlayerModal({
           onLoadedMetadata={() => {
             const v = videoRef.current;
             if (v && Number.isFinite(v.duration)) setDuration(v.duration);
+            if (v && initialSecond > 0) {
+              v.currentTime = initialSecond;
+              setSeekTick((t) => t + 1);
+              void reload(initialSecond * 1000);
+            }
           }}
           onError={() => setFailed(true)}
           onClick={togglePlay}
@@ -223,6 +238,22 @@ export function DanmakuPlayerModal({
           opacity={opacity}
           visible={visible}
           resetKey={seekTick}
+        />
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <RecordingTrack
+          elapsedSeconds={duration}
+          markers={markers}
+          editable={false}
+          gaps={videoGaps}
+          onSeekCommit={(target) => {
+            if (typeof target !== 'number') return;
+            const v = videoRef.current;
+            if (v) v.currentTime = target;
+            setCurrent(target);
+            setSeekTick((t) => t + 1);
+            void reload(target * 1000);
+          }}
         />
       </div>
       <Space style={{ marginTop: 8 }} size="middle">

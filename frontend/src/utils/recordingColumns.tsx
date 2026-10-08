@@ -62,7 +62,7 @@ export interface RecordingColumnsDeps {
   setRenameValue: Dispatch<SetStateAction<string>>;
   setPipelineRec: Dispatch<SetStateAction<Recording | null>>;
   retryUploadFor: (recordingId: string) => Promise<void>;
-  openDanmakuPlayer: (r: Recording) => void;
+  openDanmakuPlayer: (r: Recording, atSecond?: number) => void;
 }
 
 export function buildRecordingColumns(
@@ -339,11 +339,8 @@ export function buildRecordingColumns(
       dataIndex: "failureReason",
       width: 180,
       render: (f: Recording["failureReason"], r: Recording) => {
-        const missingSeconds =
-          r.missingMs && r.missingMs >= 1000
-            ? Math.round(r.missingMs / 1000)
-            : 0;
-        if (!f && missingSeconds === 0 && !r.systemSleepInterrupted) return "-";
+        const gap = r.gapSummary;
+        if (!f && !(gap && gap.gapCount > 0) && !r.systemSleepInterrupted) return "-";
         return (
           <Space direction="vertical" size={0}>
             {f ? (
@@ -354,12 +351,14 @@ export function buildRecordingColumns(
             {r.systemSleepInterrupted && f?.code !== "SYSTEM_SLEEP_INTERRUPTED" ? (
               <Typography.Text type="warning">系统休眠，录制中断</Typography.Text>
             ) : null}
-            {missingSeconds > 0 ? (
+            {gap && gap.gapCount > 0 ? (
               <GapDetail
                 recordingId={r.id}
                 recordingStartedAt={r.startedAt}
-                missingMs={r.missingMs ?? 0}
-                gapCount={r.gapCount}
+                missingMs={gap.totalMissingMs}
+                gapCount={gap.gapCount}
+                estimated={gap.estimated}
+                onLocate={(sec) => deps.openDanmakuPlayer(r, sec)}
               />
             ) : null}
           </Space>

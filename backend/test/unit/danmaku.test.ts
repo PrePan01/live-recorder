@@ -159,3 +159,13 @@ describe("弹幕开关语义", () => {
     expect(danmakuEnabledFor({ danmakuEnabled: null }, { danmaku: { enabled: true } })).toBe(true);
   });
 });
+
+describe('点② 中断供数面', () => {
+  it('isStallCause 分名：停流合成因→source_stall 判因、断网→false', async () => {
+    const { isStallCause } = await import("../../src/core/recorder-manager.js");
+    expect(isStallCause({ message: "上游数据中断（静默超时）" })).toBe(true);
+    expect(isStallCause({ message: "网络不可用" })).toBe(false);
+    expect(isStallCause(null)).toBe(false);
+    expect(isStallCause(undefined)).toBe(false);
+  });
+});

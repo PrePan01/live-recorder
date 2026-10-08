@@ -306,6 +306,17 @@ export function registerRecordingRoutes(
         ...item,
         // 弹幕记账：sidecar 存在且非空=该录像有弹幕（列表入口灰/亮的依据）。
         hasDanmaku: await hasDanmakuRows(item.filePath),
+        // 中断记账：次数与累计缺失分开出（历史列「N 次中断·共 X 秒」直接渲染）。
+        gapSummary: (() => {
+          const gaps = services.recordings.listGaps(item.id);
+          const detailSum = gaps.reduce((acc, g) => acc + g.missingMs, 0);
+          // 与明细口同口径：总缺失取权威值与明细合计的较大者（时长不丢秒）。
+          return {
+            gapCount: gaps.length,
+            totalMissingMs: Math.max(item.missingMs ?? 0, detailSum),
+            estimated: item.missingMs == null,
+          };
+        })(),
         verifyQueuePosition: services.verificationQueue.positionOf(item.id),
         progressPercent:
           item.origin === "clip" && item.state === "processing"
@@ -348,6 +359,15 @@ export function registerRecordingRoutes(
     return reply.send(result);
   });
 
+  function estimatePositionMs(
+    rec: { startedAt: string } | null | undefined,
+    gapStartedAt: string,
+  ): number {
+    if (!rec?.startedAt) return 0;
+    const pos = Date.parse(gapStartedAt) - Date.parse(rec.startedAt);
+    return Math.max(0, pos);
+  }
+
   app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
     const { id } = req.params as { id: string };
     const rec = services.recordings.get(id);
@@ -355,7 +375,42 @@ export function registerRecordingRoutes(
       throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", {
         details: { recordingId: id },
       });
-    return reply.send({ gaps: services.recordings.listGaps(id) });
+    const rawGaps = services.recordings.listGaps(id);
+    const gaps = rawGaps.map((g) => {
+      let mediaPositionMs: number | null = null;
+      try {
+        mediaPositionMs = g.evidence
+          ? ((JSON.parse(g.evidence) as { mediaPositionMs?: number }).mediaPositionMs ?? null)
+          : null;
+      } catch {
+        mediaPositionMs = null;
+      }
+      return {
+        id: g.id,
+        startedAt: g.startedAt,
+        endedAt: g.endedAt,
+        missingMs: g.missingMs,
+        kind: g.kind,
+        // 位置=证据里的媒体锚点；旧记录无锚=墙钟估算位（FE 悬停带「约」）。
+        positionMs: mediaPositionMs ?? estimatePositionMs(rec, g.startedAt),
+        estimated: mediaPositionMs === null,
+      };
+    });
+    const detailSum = gaps.reduce((acc, g) => acc + g.missingMs, 0);
+    const totalMissingMs = Math.max(rec?.missingMs ?? 0, detailSum);
+    // 两账分立：文件状态只判文件面（可播/损坏），缺失一律走 gapSummary——不再混判打脸。
+    const fileStatus =
+      rec?.integrity === "verified" ? "playable" : rec?.integrity === "failed" ? "corrupt" : "unknown";
+    return reply.send({
+      gaps,
+      summary: {
+        gapCount: gaps.length,
+        totalMissingMs,
+        unlocatedMissingMs: Math.max(0, totalMissingMs - detailSum),
+        fileStatus,
+        integrity: rec?.integrity ?? "unknown",
+      },
+    });
   });
 
   // 跳播起流：从索引命中关键帧字节偏移直通 FLV 字节流（FLV 头+序列头+标签到已写尾部即止）。
