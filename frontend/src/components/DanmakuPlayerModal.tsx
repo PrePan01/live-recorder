@@ -29,6 +29,11 @@ import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { useDanmakuPrefsStore } from "../stores/danmakuPrefsStore";
 import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
 
+const PLAYBACK_RATES = Array.from({ length: 11 }, (_, index) => {
+  const value = 0.5 + index * 0.25;
+  return { value, label: `${value}×` };
+});
+
 interface DanmakuPlayerModalProps {
   recordingId: string;
   roomId?: string;
@@ -390,10 +395,7 @@ export function DanmakuPlayerModal({
                   size="small"
                   aria-label="播放倍速"
                   value={rate}
-                  options={Array.from({ length: 11 }, (_, index) => {
-                    const value = 0.5 + index * 0.25;
-                    return { value, label: `${value}×` };
-                  })}
+                  options={PLAYBACK_RATES}
                   onChange={(value) => {
                     setRate(value);
                     if (videoRef.current) videoRef.current.playbackRate = value;

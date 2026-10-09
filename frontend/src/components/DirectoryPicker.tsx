@@ -72,14 +72,12 @@ export default function DirectoryPicker({
     const p = String(node.key);
     try {
       const res = await browseDirectories(p);
-      const next = (node.children ?? []).map((c) => c);
       node.children = buildTree(res.directories);
       setTreeData((prev) =>
         prev.map((t) =>
           t.key === node.key ? { ...t, children: node.children } : t,
         ),
       );
-      void next;
     } catch (e) {
       message.error(
         e instanceof ApiError

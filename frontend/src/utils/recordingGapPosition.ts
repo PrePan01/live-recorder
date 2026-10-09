@@ -1,4 +1,5 @@
 import type { RecordingGap } from "../types/recording";
+import { hmsClock as hms } from "./playbackClock";
 
 function mediaPosition(gap: RecordingGap): number | undefined {
   // 基轴定版：契约 positionMs（文件媒体轴=拼接位）直渲为唯一基轴；
@@ -14,11 +15,7 @@ function mediaPosition(gap: RecordingGap): number | undefined {
   }
 }
 
-function hms(ms: number): string {
-  const seconds = Math.floor(Math.max(0, ms) / 1000);
-  return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
-    .map(value => String(value).padStart(2, "0")).join(":");
-}
+
 
 /** 录像会拼接有效内容；旧记录只可根据墙钟减去此前中断估算位置。 */
 export function recordingGapPosition(

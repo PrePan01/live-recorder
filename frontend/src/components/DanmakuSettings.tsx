@@ -4,6 +4,11 @@ import MemphisRadioGroup from "./MemphisRadioGroup";
 import { DANMUKU_DENSITY_OPTIONS } from "../utils/danmakuPrefs";
 import "../styles/danmaku-player.css";
 
+const DENSITY_OPTIONS = DANMUKU_DENSITY_OPTIONS.map((value, index) => ({
+  label: ["低", "中", "高"][index],
+  value,
+}));
+
 interface DanmakuSettingsProps {
   visible: boolean;
   opacity: number;
@@ -78,10 +83,7 @@ export default function DanmakuSettings({
           <MemphisRadioGroup
             aria-labelledby={`${id}-density`}
             value={density}
-            options={DANMUKU_DENSITY_OPTIONS.map((value, index) => ({
-              label: ["低", "中", "高"][index],
-              value,
-            }))}
+            options={DENSITY_OPTIONS}
             onChange={(event) => onDensityChange(event.target.value)}
           />
         </div>

@@ -1,3 +1,4 @@
+import { playbackClock as markerClock } from "../utils/playbackClock";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Input, Modal, Tooltip, Typography } from "antd";
@@ -14,17 +15,6 @@ import { formatDurationMs } from "../utils/format";
 
 const MARKER_ROW_HEIGHT = 24;
 const MARKER_LIST_HEIGHT = 60;
-
-const markerClock = (seconds: number) => {
-  const total = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor(total / 60) % 60;
-  const parts = [minutes, total % 60].map((part) =>
-    String(part).padStart(2, "0"),
-  );
-  if (hours) parts.unshift(String(hours).padStart(2, "0"));
-  return parts.join(":");
-};
 
 interface MarkerNavPanelProps {
   markers: RecordingMarker[];
