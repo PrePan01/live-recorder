@@ -222,7 +222,7 @@ export class QualityHealthService {
     let issue: Exclude<StreamHealth["issue"], undefined> = null;
     if (probe.writeError) {
       state = "empty";
-      reason = "录像写入异常";
+      reason = "录像无法正常写入文件";
       issue = "write_error";
     } else if (silence >= emptySilenceMs) {
       state = "empty";
@@ -252,7 +252,9 @@ export class QualityHealthService {
         track.dropSince ??= now;
         if (now - track.dropSince >= DEGRADED_SUSTAIN_MS) {
           state = "degraded";
-          reason = bitrateDrop ? "码率持续下降" : "媒体时间暂未推进";
+          reason = bitrateDrop
+            ? "收到的直播数据比平时少"
+            : "录制内容可能卡住了";
           issue = dropIssue;
         }
       } else {
@@ -362,7 +364,7 @@ export class QualityHealthService {
         source: "stream-health",
         roomId,
         occurredAt: this.services.clock.iso(),
-        message: `${health.reason}，请检查直播源；已收到的数据仍会保存。`,
+        message: health.reason ?? "直播数据异常",
       });
       track.alertId = alert.id;
       this.services.events.emit({ type: "alert:created", data: alert });

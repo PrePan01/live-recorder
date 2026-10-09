@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { App, Button, Popover, Space, Typography } from "antd";
-import { openRecordingDirectory } from "../api/recordings";
+import { Popover, Space, Typography } from "antd";
 import { useStreamHealth } from "../hooks/useStreamHealth";
 import { useDisplayClock } from "../hooks/useDisplayClock";
 import { useServiceStore } from "../stores/serviceStore";
@@ -24,7 +23,6 @@ export function QualityLight({
   health: StreamHealth | null;
   compact?: boolean;
 }) {
-  const { message } = App.useApp();
   const [open, setOpen] = useState(false);
   const connected = useServiceStore((s) => s.sseConnected);
   const now = useDisplayClock(open);
@@ -36,19 +34,19 @@ export function QualityLight({
       ? "degraded"
       : (health?.state ?? "unknown");
   const label = stale
-    ? "健康状态待同步"
+    ? "暂时无法确认录制状态"
     : health?.recovering
       ? "正在恢复录制"
       : streamHealthText(health ?? { recordingId: "", state: "unknown" });
   const action =
     health?.issue === "write_error"
-      ? "检查保存目录、剩余空间和磁盘权限。"
+      ? "请检查保存目录的空间和写入权限"
       : health?.issue === "no_data"
-        ? "检查网络和主播直播状态；中断明细会在恢复后保留。"
+        ? "请检查网络和主播的直播状态"
         : health?.issue === "low_bitrate"
-          ? "直播码率持续降低；已收到的数据仍在保存。"
+          ? "请检查网络和主播的直播状态"
           : health?.issue === "media_stalled"
-            ? "媒体时间暂未推进，请检查直播源。"
+            ? "请检查主播的直播状态"
             : null;
   if (!health || health.active === false || state === "unknown") return null;
 
@@ -65,7 +63,7 @@ export function QualityLight({
           <Typography.Text strong>{label}</Typography.Text>
           {stale ? (
             <Typography.Text type="secondary">
-              连接中断或状态过期，正在等待同步。
+              暂时无法确认录制状态
             </Typography.Text>
           ) : (
             <>
@@ -74,17 +72,18 @@ export function QualityLight({
               {health?.state === "good" &&
               !health.recovering &&
               (health.missingMs ?? 0) > 0 ? (
-                <span>已恢复数据接收</span>
+                <span>已恢复接收直播数据</span>
               ) : null}
               {(health?.state === "degraded" || health?.state === "empty") &&
               (health?.silenceMs ?? 0) >= 6000 ? (
                 <span>
-                  连续约 {Math.floor(health!.silenceMs! / 1000)} 秒未收到数据
+                  已连续约 {Math.floor(health!.silenceMs! / 1000)}{" "}
+                  秒未收到直播数据
                 </span>
               ) : null}
               {(health?.missingMs ?? 0) > 0 ? (
                 <span>
-                  本次录制累计缺失 {Math.ceil(health!.missingMs! / 1000)} 秒
+                  本次录制共中断约 {Math.ceil(health!.missingMs! / 1000)} 秒
                 </span>
               ) : null}
               {action ? (
@@ -92,33 +91,7 @@ export function QualityLight({
               ) : null}
             </>
           )}
-          {health?.qualityFallback ? (
-            <span>清晰度已回退，仍按实际清晰度录制</span>
-          ) : null}
-          <Space>
-            <Button
-              size="small"
-              onClick={() =>
-                void refreshStreamHealth().catch(() =>
-                  message.error("健康状态同步失败"),
-                )
-              }
-            >
-              刷新状态
-            </Button>
-            {health?.recordingId ? (
-              <Button
-                size="small"
-                onClick={() =>
-                  void openRecordingDirectory(health.recordingId).catch(() =>
-                    message.error("无法打开保存目录"),
-                  )
-                }
-              >
-                保存目录
-              </Button>
-            ) : null}
-          </Space>
+          {health?.qualityFallback ? <span>当前录制清晰度低于设置</span> : null}
         </Space>
       }
     >
@@ -132,7 +105,7 @@ export function QualityLight({
           <span>{label}</span>
         ) : null}
         {!compact && health?.qualityFallback ? (
-          <span className="lr-quality-light__fallback">清晰度回退</span>
+          <span className="lr-quality-light__fallback">清晰度降低</span>
         ) : null}
       </button>
     </Popover>

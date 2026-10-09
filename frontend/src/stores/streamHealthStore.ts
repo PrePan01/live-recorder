@@ -90,10 +90,12 @@ export function streamHealthText(health: StreamHealth): string {
     case "good":
       return "录制正常";
     case "degraded":
-      return health.issue === "no_data" ? "数据暂时中断" : "录制数据异常";
+      return health.issue === "no_data" ? "直播数据暂时中断" : "录制出现异常";
     case "empty":
-      return health.issue === "write_error" ? "录像写入异常" : "长时间无数据";
+      return health.issue === "write_error"
+        ? "录像无法正常写入文件"
+        : "长时间未收到直播数据";
     default:
-      return "状态未知";
+      return "暂时无法确认录制状态";
   }
 }
