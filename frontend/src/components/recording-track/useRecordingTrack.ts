@@ -57,6 +57,7 @@ export function useRecordingTrack({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<RecordingMarker | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const addPositionRef = useRef(0);
   const [collapsed, setCollapsed] = useLocalPref<boolean>(
     TRACK_COLLAPSED_KEY,
     false,
@@ -301,7 +302,7 @@ export function useRecordingTrack({
     if (!text) return;
     try {
       if (editing) await onEdit?.(editing.id, text);
-      else await onAdd?.(text);
+      else await onAdd?.(text, addPositionRef.current);
     } catch {
       // 宿主展示保存错误，保留草稿以便重试。
       return;
@@ -311,6 +312,10 @@ export function useRecordingTrack({
     setEditorOpen(false);
   };
   const openEdit = (marker?: RecordingMarker) => {
+    // 锁定打开标签编辑器时的位置，输入文字和保存期间时间轴仍会推进。
+    if (!marker) {
+      addPositionRef.current = Math.max(0, Math.floor(positionSecond ?? 0));
+    }
     setEditing(marker ?? null);
     setDraft(marker?.text ?? "");
     setEditorOpen(true);

@@ -15,7 +15,7 @@ export type RecordingTrackProps = {
   markers: RecordingMarker[];
   editable?: boolean;
   busy?: boolean;
-  onAdd?: (text: string) => Promise<void>;
+  onAdd?: (text: string, positionSeconds: number) => Promise<void>;
   onQuickAdd?: () => void;
   addingMarker?: boolean;
   quickAddDisabled?: boolean;

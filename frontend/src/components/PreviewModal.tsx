@@ -148,6 +148,7 @@ export default function PreviewModal({
     activeRecordingRef,
     displayPreview,
     trackClosing,
+    trackElapsedSeconds,
   );
   const resetLiveDanmakuTime = liveDanmaku.resetTime;
   const handleLiveFirstFrame = useCallback(() => {

@@ -110,15 +110,12 @@ export function PreviewRecordingTrack({
                     ? `从 ${playbackClock(seekActualStart.second, false)} 起播`
                     : undefined
               }
-              onAdd={(text) =>
+              onAdd={(text, positionSeconds) =>
                 updateMarkers(() =>
                   createRecordingMarker(
                     displayedTrack.id,
                     text,
-                    displayPreview.mode === "history" &&
-                      displayPreview.second != null
-                      ? Math.floor(displayPreview.second)
-                      : undefined,
+                    positionSeconds,
                   ),
                 )
               }

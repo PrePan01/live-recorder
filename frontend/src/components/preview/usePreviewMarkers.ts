@@ -24,6 +24,7 @@ export function usePreviewMarkers(
     loading?: boolean;
   },
   trackClosing: boolean,
+  trackElapsedSeconds: number,
 ) {
   const { message } = App.useApp();
   const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
@@ -92,7 +93,9 @@ export function usePreviewMarkers(
         markers.length,
       ) + 1;
     const position =
-      displayPreview.mode === "history" ? displayPreview.second : undefined;
+      displayPreview.mode === "history"
+        ? Math.floor(displayPreview.second ?? 0)
+        : trackElapsedSeconds;
     void createRecordingMarker(activeRecordingId, `标记 ${index}`, position)
       .then((marker) => {
         if (activeRecordingRef.current !== activeRecordingId) return;
@@ -119,6 +122,7 @@ export function usePreviewMarkers(
     markers,
     message,
     trackClosing,
+    trackElapsedSeconds,
   ]);
 
   useEffect(() => {

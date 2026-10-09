@@ -158,6 +158,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
             <Button
               size="small"
               icon={<PlusOutlined />}
+              disabled={quickAddDisabled}
               onClick={() => openEdit()}
             >
               标签
