@@ -125,7 +125,7 @@ export default function RoomStats({
         <div className="lr-stat lr-stat--duration lr-stat--duration-visible">
           <div className="lr-stat__label lr-stat__recording-label">
             <span className="lr-stat__recording-dot" aria-hidden="true" />
-            {state === "reconnecting" ? "重连中 · 录制时长" : "录制时长"}
+            {state === "reconnecting" ? "重连中" : "录制时长"}
           </div>
           <RollingDuration value={duration} />
         </div>

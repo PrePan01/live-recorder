@@ -62,6 +62,8 @@ export interface RecordingMarker {
   id: string;
   recordingId: string;
   positionSeconds: number;
+  /** Null/absent for a point label; otherwise the end of a persistent segment. */
+  endPositionSeconds?: number | null;
   text: string;
   createdAt: string;
   updatedAt: string;

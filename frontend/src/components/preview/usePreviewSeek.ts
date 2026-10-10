@@ -182,6 +182,7 @@ export function usePreviewSeek(
             throw new Error("回看定位信息缺失，请重试");
           }
           setSeekPlayback({
+            recordingId: activeRecordingId,
             url: recordingSeekStreamUrl(
               activeRecordingId,
               target,

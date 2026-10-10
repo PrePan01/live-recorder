@@ -2,6 +2,8 @@ import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
 import { DanmakuManager } from "../danmaku/manager.js";
 import { QualityHealthService } from "./quality-health.js";
+import { ClipQueueManager } from "./clip-queue.js";
+import { ClipQueueRepo } from "../db/repositories/clip-queue.repo.js";
 import type { RecordingEngine } from "../recorder/engine.js";
 import type { DiskGuard } from "../storage/disk-guard.js";
 import type { Mailer } from "../mail/mailer.js";
@@ -80,6 +82,8 @@ export interface Services {
   manager: RecorderManager;
   danmaku: DanmakuManager;
   quality: QualityHealthService;
+  clipQueue: ClipQueueRepo;
+  clipQueueManager: ClipQueueManager;
   scheduler: Scheduler;
   pipeline: PipelineManager;
   uploader: UploadManager;
@@ -244,6 +248,8 @@ export function buildServices(opts: BuildOptions = {}): Services {
     manager: undefined as unknown as RecorderManager,
     danmaku: undefined as unknown as DanmakuManager,
     quality: undefined as unknown as QualityHealthService,
+    clipQueue: undefined as unknown as ClipQueueRepo,
+    clipQueueManager: undefined as unknown as ClipQueueManager,
     scheduler: undefined as unknown as Scheduler,
     pipeline: undefined as unknown as PipelineManager,
     uploader: undefined as unknown as UploadManager,
@@ -265,12 +271,15 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.manager = new RecorderManager(services, services.notifier);
   services.danmaku = new DanmakuManager(services);
   services.quality = new QualityHealthService(services);
+  services.clipQueue = new ClipQueueRepo(services.db, clock);
+  services.clipQueueManager = new ClipQueueManager(services);
   services.scheduler = new Scheduler(services, services.manager);
   services.pipeline = new PipelineManager(services);
   services.uploader = new UploadManager(services);
   services.exporter = new ExportManager(services);
   services.seek = new SeekService(services);
   services.verificationQueue = new VerificationQueue(services);
+  services.clipQueueManager.reconcileOnBoot();
   return services;
 }
 

@@ -76,6 +76,11 @@ export class FlvTimestampNormalizer {
   /** 本段最后一个媒体时间戳（毫秒，含续录偏移）。 */
   get hasMedia(): boolean { return this.rawByTrack.size > 0; }
 
+  /** Exact translation from the preview stream clock to the written file. */
+  get timestampOffsetMs(): number | null {
+    return this.base == null ? null : (this.options.offsetMs ?? 0) - this.base + this.epochShift;
+  }
+
   get lastTimestampMs(): number {
     return this.maxTs;
   }
@@ -378,11 +383,14 @@ export class StreamRecordingEngine implements RecordingEngine {
         this.downloadObserver?.(chunk.length);
         // 写盘归一器会原地修改时间戳，观看支路须先处理自己的副本。
         // 每个新上游都发送 FLV 头并从本段起播，绝不沿用文件的续录偏移。
-        if (previewNormalizer) {
-          for (const part of previewNormalizer.push(Buffer.from(chunk)))
-            yield { type: "preview_data", chunk: part };
-        }
+        const previewParts = previewNormalizer?.push(Buffer.from(chunk));
         const parts = normalizer.push(chunk);
+        if (previewParts && previewNormalizer) {
+          const fileOffset = normalizer.timestampOffsetMs;
+          const previewOffset = previewNormalizer.timestampOffsetMs;
+          const recordingOffsetMs = fileOffset == null || previewOffset == null ? null : fileOffset - previewOffset;
+          for (const part of previewParts) yield { type: "preview_data", chunk: part, recordingOffsetMs };
+        }
         health.received(normalizer.lastTimestampMs > previousTs, Boolean(outputPath || this.recordingActive) && normalizer.hasMedia);
         const normalized = Buffer.concat(parts);
         const tags = pendingTags.splice(0);

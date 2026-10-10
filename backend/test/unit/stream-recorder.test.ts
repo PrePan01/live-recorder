@@ -737,7 +737,10 @@ describe('recording and preview timelines', () => {
     for await (const event of engine.start({ url: 'https://x/live.flv', format: 'flv' }, out, {
       append: true, timestampOffsetMs: 2_400_000,
     })) {
-      if (event.type === 'preview_data') previews.push(event.chunk);
+      if (event.type === 'preview_data') {
+        previews.push(event.chunk);
+        if (event.recordingOffsetMs != null) expect(event.recordingOffsetMs).toBe(2_400_000);
+      }
       if (event.type === 'data') {
         expect(event.previewForwarded).toBe(true);
         disk.push(event.chunk);
@@ -768,6 +771,14 @@ describe('recording continuity regressions', () => {
     b[11] = type === 9 ? 0x17 : 0xaf; b[12] = sequence ? 0 : 1; b.writeUInt32BE(17, 17); return b;
   }
   const ts = (b: Buffer) => b.readUIntBE(4, 3) + b[7]! * 0x1000000;
+
+  it('maps a pre-existing preview clock to a new recording clock exactly', () => {
+    const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });
+    expect(n.timestampOffsetMs).toBeNull();
+    n.push(Buffer.concat([head, tag(0, 9, true), tag(45000), tag(55000)]));
+    expect(n.timestampOffsetMs).toBe(-45000);
+    expect(55000 + n.timestampOffsetMs!).toBe(n.lastTimestampMs);
+  });
 
   it('preserves audio/video alignment and rebases a source clock reset without unsigned underflow', () => {
     const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });

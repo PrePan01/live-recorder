@@ -33,15 +33,33 @@ function render(props: Partial<RecordingTrackProps> = {}) {
 }
 
 describe("recording and file playback track", () => {
-  it("keeps the editable selection, marker labels, export action and toolbar", () => {
+  it("keeps temporary export handles separate from saved segment adjustment", () => {
+    const onExport = () => {};
+    const normal = render({ onExport });
+    expect(normal).toContain('aria-label="选区起始手柄"');
+    expect(normal).toContain('aria-label="选区结束手柄"');
+    expect(normal).toContain("导出选区");
+    expect(normal).not.toContain("取消选区");
+    expect(normal).not.toContain("保存范围");
+    const marking = render({ onExport, selectionDisabled: true, temporarySegment: [3, 8] });
+    expect(marking).not.toContain('aria-label="选区起始手柄"');
+    expect(marking).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?导出选区/);
+    expect(marking).toContain("lr-recording-track__temporary-segment");
+    const adjusting = render({ onExport, rangeSelection: [3, 8] });
+    expect(adjusting).toContain("保存范围");
+    expect(adjusting).toContain("导出选区");
+  });
+  it("keeps range editing, point marker labels and the toolbar", () => {
     const html = render({
       editable: true,
       toolbar: createElement("span", null, "录制健康"),
+      rangeSelection: [0, 10],
     });
     expect(html).toContain('aria-label="选区起始手柄"');
     expect(html).toContain('aria-label="选区结束手柄"');
     expect(html).toContain('aria-label="01:01:01 · 精彩时刻"');
-    expect(html).toContain("导出选区");
+    expect(html).toContain("保存范围");
+    expect(html).not.toContain("导出选区");
     expect(html).toContain("录制健康");
   });
   it("file playback hides the selection and disables seeking when unavailable", () => {
@@ -55,6 +73,25 @@ describe("recording and file playback track", () => {
     expect(html).not.toContain('aria-label="选区结束手柄"');
     expect(html).toContain('aria-label="回看位置 01:01:01"');
     expect(html).toContain('tabindex="-1" aria-disabled="true"');
+  });
+  it("renders persistent segments as stretched yellow markers without hiding point markers", () => {
+    const html = render({
+      mode: "playback",
+      elapsedSeconds: 100,
+      markers: [
+        marker,
+        {
+          ...marker,
+          id: "segment",
+          positionSeconds: 10,
+          endPositionSeconds: 20,
+          text: "片段 1",
+        },
+      ],
+    });
+    expect(html).toContain("lr-recording-track__marker--segment");
+    expect(html).toContain("width:10%");
+    expect(html).toContain('aria-label="01:01:01 · 精彩时刻"');
   });
   it("only paints gaps with real media positions", () => {
     const html = render({

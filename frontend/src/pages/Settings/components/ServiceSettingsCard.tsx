@@ -275,7 +275,7 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
                   aria-label="编码方式"
                   options={[
                     { value: "auto", label: "自动（硬件优先）" },
-                    { value: "software", label: "软件（仅软编）" },
+                    { value: "software", label: "仅软件" },
                   ]}
                 />
               </Form.Item>

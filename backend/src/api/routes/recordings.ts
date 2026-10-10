@@ -1,3 +1,4 @@
+import { recordedSeconds, assertSegmentRange } from '../../core/recording-range.js';
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
@@ -92,119 +93,87 @@ export function registerRecordingRoutes(
       ? null
       : new CsvExportWorkerPool(services.db.name);
 
-  const activeMarkerRecording = (id: string) => {
-    const recording = services.recordings.get(id);
-    if (!recording)
-      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
-        recordingId: id,
-      });
-    if (recording.state !== "recording" && recording.state !== "reconnecting") {
-      throw new AppError(
-        "RECORDING_NOT_AVAILABLE",
-        "仅录制中的录像可编辑标记",
-        { recordingId: id },
-      );
-    }
-    return recording;
+  const editableMarkerRecording = (id: string) => {
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", { recordingId: id });
+    if (!["recording", "reconnecting", "completed"].includes(rec.state))
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录像当前不可编辑标记", { recordingId: id });
+    return rec;
   };
-
-  const markerTail = (recording: Recording) =>
-    services.manager.recordingMarkerTail(recording.roomId, recording.id) ??
-    Math.max(0, Math.floor((services.clock.now() - Date.parse(recording.startedAt)) / 1000));
-
+  const markerText = (text: unknown, id: string) => {
+    if (typeof text !== "string" || !text.trim() || text.trim().length > 200)
+      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", { recordingId: id });
+    return text.trim();
+  };
+  app.get("/api/v1/recordings/:id/marker-position", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = editableMarkerRecording(id);
+    const durationSeconds = await recordedSeconds(services, rec);
+    const lag = Number((req.query as { lagSeconds?: string }).lagSeconds ?? 0);
+    if (!Number.isFinite(lag) || lag < 0) throw new AppError("CONFIG_INVALID", "播放位置非法", { recordingId: id });
+    return reply.send({ durationSeconds, positionSeconds: Math.max(0, durationSeconds - lag),
+      previewOffsetSeconds: services.manager.recordingPreviewOffsetSeconds(rec.roomId, id),
+    });
+  });
   app.get("/api/v1/recordings/:id/markers", async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!services.recordings.get(id))
-      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
-        recordingId: id,
-      });
+    if (!services.recordings.get(id)) throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", { recordingId: id });
     return reply.send({ markers: services.recordingMarkers.list(id) });
   });
-
   app.post("/api/v1/recordings/:id/markers", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const recording = activeMarkerRecording(id);
-    const body = (req.body ?? {}) as {
-      text?: unknown;
-      positionSeconds?: unknown;
-    };
-    const text = typeof body.text === "string" ? body.text.trim() : "";
-    if (!text || text.length > 200)
-      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
-        recordingId: id,
-      });
-    // 回看按播放头落点，直播按文件媒体尾落点，断流等待不累计成录像秒数。
-    const recordedSeconds = markerTail(recording);
-    const rawPosition = body.positionSeconds;
-    if (
-      rawPosition !== undefined &&
-      (typeof rawPosition !== "number" ||
-        !Number.isInteger(rawPosition) ||
-        rawPosition < 0 ||
-        rawPosition > recordedSeconds)
-    ) {
-      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
-        recordingId: id,
-      });
-    }
-    const positionSeconds =
-      rawPosition !== undefined ? rawPosition : recordedSeconds;
-    const marker = services.recordingMarkers.create(id, positionSeconds, text);
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    const rec = editableMarkerRecording(id);
+    const body = (req.body ?? {}) as { text?: unknown; positionSeconds?: unknown; endPositionSeconds?: unknown };
+    const text = markerText(body.text, id);
+    const segment = body.endPositionSeconds !== undefined && body.endPositionSeconds !== null;
+    if (rec.state === "completed" && body.positionSeconds === undefined)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择标记位置", { recordingId: id });
+    const tail = await recordedSeconds(services, rec);
+    const position = body.positionSeconds ?? Math.floor(tail);
+    if (segment) assertSegmentRange(position, body.endPositionSeconds, tail, id);
+    else if (typeof position !== "number" || !Number.isFinite(position) || position < 0 || position > tail)
+      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", { recordingId: id });
+    const marker = services.recordingMarkers.create(id, position as number, text, segment ? body.endPositionSeconds as number : null);
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.status(201).send({ marker });
   });
-
   app.patch("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
     const { id, markerId } = req.params as { id: string; markerId: string };
-    const body = (req.body ?? {}) as {
-      text?: unknown;
-      positionSeconds?: unknown;
-    };
-    // 完成后可补写说明，位置仍由录制期间确定，避免改动文件时间轴。
-    const existing = services.recordings.get(id);
-    const recording = existing?.state === "completed" &&
-      typeof body.text === "string" && body.positionSeconds === undefined
-      ? existing
-      : activeMarkerRecording(id);
-    const text = typeof body.text === "string" ? body.text.trim() : undefined;
-    const positionSeconds = body.positionSeconds;
-    if (text !== undefined && (!text || text.length > 200))
-      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
-        recordingId: id,
-      });
-    if (
-      positionSeconds !== undefined &&
-      (typeof positionSeconds !== "number" ||
-        !Number.isInteger(positionSeconds) ||
-        positionSeconds < 0 ||
-        positionSeconds > markerTail(recording))
-    ) {
-      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
-        recordingId: id,
-      });
+    const rec = editableMarkerRecording(id);
+    const existing = services.recordingMarkers.get(id, markerId);
+    if (!existing) throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", { recordingId: id });
+    const body = (req.body ?? {}) as { text?: unknown; positionSeconds?: unknown; endPositionSeconds?: unknown };
+    if (body.text === undefined && body.positionSeconds === undefined && body.endPositionSeconds === undefined)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择需要修改的标记内容", { recordingId: id });
+    const text = body.text === undefined ? undefined : markerText(body.text, id);
+    if (body.endPositionSeconds !== undefined && (existing.endPositionSeconds == null || body.endPositionSeconds === null))
+      throw new AppError("CONFIG_INVALID", "标记类型不可更改", { recordingId: id });
+    if (body.positionSeconds !== undefined || body.endPositionSeconds !== undefined) {
+      const tail = await recordedSeconds(services, rec);
+      const position = body.positionSeconds ?? existing.positionSeconds;
+      if (existing.endPositionSeconds != null) assertSegmentRange(position, body.endPositionSeconds ?? existing.endPositionSeconds, tail, id);
+      else if (typeof position !== "number" || !Number.isFinite(position) || position < 0 || position > tail)
+        throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", { recordingId: id });
     }
     const marker = services.recordingMarkers.update(id, markerId, {
       ...(text !== undefined ? { text } : {}),
-      ...(positionSeconds !== undefined
-        ? { positionSeconds: positionSeconds as number }
-        : {}),
+      ...(body.positionSeconds !== undefined ? { positionSeconds: body.positionSeconds as number } : {}),
+      ...(body.endPositionSeconds !== undefined ? { endPositionSeconds: body.endPositionSeconds as number } : {}),
     });
-    if (!marker)
-      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
-        recordingId: id,
-      });
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.send({ marker });
   });
-
   app.delete("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
     const { id, markerId } = req.params as { id: string; markerId: string };
-    const recording = activeMarkerRecording(id);
-    if (!services.recordingMarkers.remove(id, markerId))
-      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
-        recordingId: id,
-      });
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    const rec = editableMarkerRecording(id);
+    if (!services.recordingMarkers.remove(id, markerId)) throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", { recordingId: id });
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.status(204).send();
   });
 
@@ -765,6 +734,7 @@ export function registerRecordingRoutes(
     await services.manager.stopActiveSessionForDeletion(id);
     await services.danmaku.stopForRecording(id);
     await services.danmaku.removeSidecar(rec.filePath);
+    await services.clipQueueManager.removeByRecording(id);
     services.pipeline.cancel(id, "录制已删除");
     services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
@@ -908,6 +878,7 @@ export function registerRecordingRoutes(
       await services.manager.stopActiveSessionForDeletion(id);
       await services.danmaku.stopForRecording(id);
       await services.danmaku.removeSidecar(rec.filePath);
+      await services.clipQueueManager.removeByRecording(id);
       services.pipeline.cancel(id, "录制已删除");
       services.manager.cancelClipExport(id);
       if (rec.filePath) {

@@ -496,6 +496,7 @@ export default function History() {
           roomId={danmakuRec.roomId}
           title={danmakuRec.streamTitle || danmakuRec.roomName}
           filePath={danmakuRec.filePath ?? undefined}
+          hasDanmaku={danmakuRec.hasDanmaku ?? (danmakuRec.danmakuCount ?? 0) > 0}
           initialSecond={danmakuAt}
           onClose={() => setDanmakuRec(null)}
         />

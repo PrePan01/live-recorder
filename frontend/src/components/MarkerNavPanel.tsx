@@ -1,62 +1,108 @@
 import { playbackClock as markerClock } from "../utils/playbackClock";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { Button, Input, Modal, Tooltip, Typography } from "antd";
 import {
-  LeftOutlined,
-  RightOutlined,
-  VideoCameraOutlined,
+  Button,
+  Checkbox,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Space,
+  Typography,
+} from "antd";
+import {
   EditOutlined,
-  ScissorOutlined,
+  DeleteOutlined,
+  PlayCircleOutlined,
+  ExpandOutlined,
 } from "@ant-design/icons";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
-import { markerClipRange, markerNeighbors } from "../utils/markerNavigation";
-import { formatDurationMs } from "../utils/format";
+import { markerNeighbors } from "../utils/markerNavigation";
 
 const MARKER_ROW_HEIGHT = 24;
 const MARKER_LIST_HEIGHT = 60;
 
 interface MarkerNavPanelProps {
   markers: RecordingMarker[];
-  navigationContainer?: HTMLElement | null;
   currentSecond?: number;
   duration: number;
   onSeek: (second: number) => void;
-  onReturnToLive?: () => void;
   liveMode: boolean;
   loading?: boolean;
   blockedReason?: string;
   onEdit?: (marker: RecordingMarker, text: string) => Promise<void>;
-  onExport?: (start: number, end: number, name: string) => void;
+  onDelete?: (marker: RecordingMarker) => Promise<void>;
+  onRangeEdit?: (
+    marker: RecordingMarker,
+    start: number,
+    end: number,
+  ) => Promise<void>;
+  onAdjustRange?: (marker: RecordingMarker) => void;
+  onPreview?: (marker: RecordingMarker) => void;
+  selectingSegments?: boolean;
+  selectedSegmentIds?: ReadonlySet<string>;
+  onSelectSegment?: (id: string, checked: boolean) => void;
+  exportBusy?: boolean;
   gaps?: RecordingGap[];
 }
 
 export function MarkerNavPanel({
   markers,
-  navigationContainer,
   currentSecond,
   duration,
   onSeek,
-  onReturnToLive,
   liveMode,
   loading = false,
   blockedReason,
   onEdit,
-  onExport,
+  onDelete,
+  onRangeEdit,
+  onAdjustRange,
+  onPreview,
+  selectingSegments = false,
+  selectedSegmentIds,
+  onSelectSegment,
+  exportBusy = false,
 }: MarkerNavPanelProps) {
   const [editing, setEditing] = useState<RecordingMarker | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [rangeStart, setRangeStart] = useState(0);
+  const [rangeEnd, setRangeEnd] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = null;
+  }, [markers]);
+  const openEditor = (marker: RecordingMarker) => {
+    if (!onEdit || saving) return;
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = null;
+    setEditing(marker);
+    setDraft(marker.text);
+    setRangeStart(marker.positionSeconds);
+    setRangeEnd(marker.endPositionSeconds ?? 0);
+  };
   const sorted = useMemo(
-    () => [...markers].sort((a, b) => a.positionSeconds - b.positionSeconds),
+    () =>
+      [...markers].sort(
+        (a, b) =>
+          a.positionSeconds - b.positionSeconds ||
+          a.createdAt.localeCompare(b.createdAt) ||
+          a.id.localeCompare(b.id),
+      ),
     [markers],
   );
-  const { current, previous, next } = markerNeighbors(
-    sorted,
-    currentSecond,
-    liveMode,
+  const { current } = markerNeighbors(sorted, currentSecond, liveMode);
+  const timeWidth = useMemo(
+    () => sorted.reduce((width, marker) => Math.max(
+      width,
+      markerClock(marker.positionSeconds).length +
+        (marker.endPositionSeconds != null ? 1 + markerClock(marker.endPositionSeconds).length : 0),
+    ), 5) + 1,
+    [sorted],
   );
   useEffect(() => {
     if (current < 0 || !listRef.current) return;
@@ -80,64 +126,8 @@ export function MarkerNavPanel({
     onSeek(marker.positionSeconds);
   };
   if (sorted.length === 0) return null;
-  const navigation =
-    sorted.length > 0 ? (
-      <>
-        <Tooltip
-          title={
-            blockedReason ?? (previous < 0 ? "没有上一个标记" : "上一个标记")
-          }
-        >
-          <Button
-            size="small"
-            type="text"
-            aria-label="上一个标记"
-            disabled={disabled || previous < 0}
-            icon={<LeftOutlined />}
-            onClick={() => seekTo(sorted[previous])}
-          />
-        </Tooltip>
-        <Tooltip
-          title={blockedReason ?? (next < 0 ? "没有下一个标记" : "下一个标记")}
-        >
-          <Button
-            size="small"
-            type="text"
-            aria-label="下一个标记"
-            disabled={disabled || next < 0}
-            icon={<RightOutlined />}
-            onClick={() => seekTo(sorted[next])}
-          />
-        </Tooltip>
-      </>
-    ) : null;
   return (
     <section className="lr-marker-nav" aria-label="标记导航">
-      {navigationContainer
-        ? createPortal(navigation, navigationContainer)
-        : null}
-      {(navigationContainer === undefined && navigation) ||
-      (!liveMode && onReturnToLive) ? (
-        <div className="lr-marker-nav__toolbar">
-          <div className="lr-marker-nav__group">
-            {navigationContainer === undefined ? navigation : null}
-          </div>
-          <div className="lr-marker-nav__group">
-            {!liveMode && onReturnToLive ? (
-              <Tooltip title="回到直播">
-                <Button
-                  size="small"
-                  type="text"
-                  aria-label="回到直播"
-                  icon={<VideoCameraOutlined />}
-                  onClick={onReturnToLive}
-                />
-              </Tooltip>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-      {loading ? <div className="lr-marker-nav__hint">正在定位…</div> : null}
       {blockedReason ? (
         <Typography.Text
           type="secondary"
@@ -154,21 +144,50 @@ export function MarkerNavPanel({
         <div style={{ height: firstVisible * MARKER_ROW_HEIGHT }} />
         {sorted.slice(firstVisible, lastVisible).map((marker, offset) => {
           const i = firstVisible + offset;
-          const clip = markerClipRange(marker.positionSeconds, duration);
+          const segment = marker.endPositionSeconds != null;
           return (
             <div
               key={marker.id}
               className={`lr-marker-nav__row${i === current ? " lr-marker-nav__row--current" : ""}`}
             >
+              {selectingSegments && onSelectSegment ? (
+                <span className="lr-marker-nav__selection">
+                  {segment ? (
+                    <Checkbox
+                      aria-label={`选择 ${marker.text}`}
+                      disabled={exportBusy}
+                      checked={selectedSegmentIds?.has(marker.id) ?? false}
+                      onChange={(e) => onSelectSegment(marker.id, e.target.checked)}
+                    />
+                  ) : null}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="lr-marker-nav__seek"
                 disabled={disabled}
                 aria-current={i === current ? "true" : undefined}
                 title={marker.text}
-                onClick={() => seekTo(marker)}
+                onClick={(event) => {
+                  if (clickTimer.current) clearTimeout(clickTimer.current);
+                  clickTimer.current = null;
+                  if (onEdit && event.detail > 0)
+                    clickTimer.current = setTimeout(() => {
+                      clickTimer.current = null;
+                      seekTo(marker);
+                    }, 500);
+                  else seekTo(marker);
+                }}
+                onDoubleClick={() => {
+                  if (clickTimer.current) clearTimeout(clickTimer.current);
+                  clickTimer.current = null;
+                  openEditor(marker);
+                }}
               >
-                <time>{markerClock(marker.positionSeconds)}</time>
+                <time style={{ width: `${timeWidth}ch` }}>
+                  {markerClock(marker.positionSeconds)}
+                  {segment ? `—${markerClock(marker.endPositionSeconds!)}` : ""}
+                </time>
                 <span>{marker.text}</span>
               </button>
               {onEdit ? (
@@ -177,31 +196,41 @@ export function MarkerNavPanel({
                   size="small"
                   aria-label={`编辑 ${marker.text}`}
                   icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditing(marker);
-                    setDraft(marker.text);
-                  }}
+                  onClick={() => openEditor(marker)}
                 />
               ) : null}
-              {onExport ? (
-                <Tooltip
-                  title={
-                    clip
-                      ? `导出标记前 5 秒至后 15 秒（${formatDurationMs(clip[0] * 1000)}~${formatDurationMs(clip[1] * 1000)}）`
-                      : "暂无可导出的录制内容"
-                  }
+              {segment && onPreview ? (
+                <Button
+                  type="text"
+                  size="small"
+                  disabled={disabled}
+                  aria-label={`预览 ${marker.text}`}
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => onPreview(marker)}
+                />
+              ) : null}
+              {segment && onAdjustRange ? (
+                <Button
+                  type="text"
+                  size="small"
+                  disabled={saving}
+                  aria-label={`调整 ${marker.text} 范围`}
+                  icon={<ExpandOutlined />}
+                  onClick={() => onAdjustRange(marker)}
+                />
+              ) : null}
+              {onDelete ? (
+                <Popconfirm
+                  title={`删除${segment ? "片段" : "标签"}标记？导出文件不受影响。`}
+                  onConfirm={() => onDelete(marker)}
                 >
                   <Button
                     type="text"
                     size="small"
-                    aria-label={`导出 ${marker.text} 片段`}
-                    disabled={!clip}
-                    icon={<ScissorOutlined />}
-                    onClick={() => {
-                      if (clip) onExport(clip[0], clip[1], marker.text);
-                    }}
+                    aria-label={`删除 ${marker.text}`}
+                    icon={<DeleteOutlined />}
                   />
-                </Tooltip>
+                </Popconfirm>
               ) : null}
             </div>
           );
@@ -214,20 +243,62 @@ export function MarkerNavPanel({
         title="编辑标记"
         open={editing != null}
         confirmLoading={saving}
-        okButtonProps={{ disabled: !draft.trim() }}
+        okButtonProps={{
+          disabled:
+            !draft.trim() ||
+            (editing?.endPositionSeconds != null &&
+              (rangeStart < 0 ||
+                rangeEnd - rangeStart < 1 ||
+                rangeEnd > duration)),
+        }}
         onCancel={() => {
           if (!saving) setEditing(null);
         }}
         onOk={() => {
           if (!editing || !onEdit || !draft.trim() || saving) return;
           setSaving(true);
-          void onEdit(editing, draft.trim())
+          const save = async () => {
+            if (
+              editing.endPositionSeconds != null &&
+              onRangeEdit &&
+              (rangeStart !== editing.positionSeconds ||
+                rangeEnd !== editing.endPositionSeconds)
+            ) {
+              if (
+                rangeStart < 0 ||
+                rangeEnd - rangeStart < 1 ||
+                rangeEnd > duration
+              )
+                throw new Error("片段范围非法");
+              await onRangeEdit(editing, rangeStart, rangeEnd);
+            }
+            await onEdit(editing, draft.trim());
+          };
+          void save()
             .then(() => setEditing(null))
             .catch(() => undefined)
             .finally(() => setSaving(false));
         }}
         destroyOnHidden
       >
+        {editing?.endPositionSeconds != null && onRangeEdit ? (
+          <Space style={{ marginBottom: 8 }}>
+            <InputNumber
+              aria-label="片段起点"
+              min={0}
+              max={Math.max(0, rangeEnd - 1)}
+              value={rangeStart}
+              onChange={(v) => setRangeStart(v ?? 0)}
+            />
+            <InputNumber
+              aria-label="片段终点"
+              min={rangeStart + 1}
+              max={duration}
+              value={rangeEnd}
+              onChange={(v) => setRangeEnd(v ?? 0)}
+            />
+          </Space>
+        ) : null}
         <Input
           value={draft}
           maxLength={200}

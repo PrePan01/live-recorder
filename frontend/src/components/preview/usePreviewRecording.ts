@@ -1,6 +1,5 @@
 import { App } from "antd";
 import { useEffect, useRef, useState } from "react";
-import { useDisplayClock } from "../../hooks/useDisplayClock";
 import { useRoomStore } from "../../stores/roomStore";
 import { ApiError } from "../../types/error";
 import type { Room } from "../../types/room";
@@ -22,7 +21,6 @@ export function usePreviewRecording(room: Room) {
   } | null>(null);
   const recording =
     live.monitorState === "recording" || live.monitorState === "reconnecting";
-  const now = useDisplayClock(recording);
   const onAir = live.lastLiveStatus === "live";
   const busy = actingRoomId === room.id;
   const activeRecordingId = live.activeRecording?.recordingId;
@@ -52,12 +50,6 @@ export function usePreviewRecording(room: Room) {
     displayedTrack,
   ]);
   const trackClosing = Boolean(displayedTrack) && !recording;
-  const trackElapsedSeconds = displayedTrack
-    ? Math.max(
-        0,
-        Math.floor((now - Date.parse(displayedTrack.startedAt)) / 1000),
-      )
-    : 0;
 
   useEffect(() => {
     if (!recentStop) return;
@@ -81,7 +73,6 @@ export function usePreviewRecording(room: Room) {
   };
 
   return {
-    now,
     live,
     recording,
     onAir,
@@ -91,7 +82,6 @@ export function usePreviewRecording(room: Room) {
     activeRecordingRef,
     displayedTrack,
     trackClosing,
-    trackElapsedSeconds,
     recentStop,
     handleStart,
     handleStop,

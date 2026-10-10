@@ -1,3 +1,4 @@
+import { App } from "antd";
 import {
   useCallback,
   useEffect,
@@ -35,6 +36,12 @@ export function useRecordingTrack({
   seekDisabled = false,
   markers,
   editable = false,
+  rangeSelection,
+  onExport,
+  selectionDisabled = false,
+  onSelectionChange,
+  markerPositionSecond,
+  getMarkerPosition,
   onAdd,
   onEdit,
   onMove,
@@ -45,10 +52,12 @@ export function useRecordingTrack({
   previewSecond,
   previewLoading = false,
 }: RecordingTrackProps) {
+  const { message } = App.useApp();
   const [range, setRange] = useState<[number, number]>(() => [
     0,
     elapsedSeconds,
   ]);
+  const wasRangeEditing = useRef(false);
   const [dragging, setDragging] = useState<Drag>(null);
   const [playheadSecond, setPlayheadSecond] = useState<number | null>(null);
   const [markerPositions, setMarkerPositions] = useState<
@@ -58,6 +67,7 @@ export function useRecordingTrack({
   const [editing, setEditing] = useState<RecordingMarker | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const addPositionRef = useRef(0);
+  const submitLock = useRef(false);
   const [collapsed, setCollapsed] = useLocalPref<boolean>(
     TRACK_COLLAPSED_KEY,
     false,
@@ -90,10 +100,24 @@ export function useRecordingTrack({
   });
   const recordingEnd = elapsedSeconds;
   const timelineEnd = recordingTimelineEnd(recordingEnd, mode);
-  // 仅文件回放隐藏选区；录制中的历史预览仍保留剪辑选区。
-  const showSelection = mode !== "playback";
+  const showSelection = rangeSelection != null || (!!onExport && !selectionDisabled);
+  useLayoutEffect(() => {
+    onSelectionChange?.(!rangeSelection && dragging != null && "kind" in dragging && dragging.kind !== "playhead");
+    return () => onSelectionChange?.(false);
+  }, [dragging, rangeSelection, onSelectionChange]);
+  useEffect(() => { if (rangeSelection) { touchedRef.current = true; setRange(rangeSelection); } }, [rangeSelection]);
 
   useLayoutEffect(() => {
+    if (rangeSelection) {
+      wasRangeEditing.current = true;
+      return;
+    }
+    if (wasRangeEditing.current) {
+      wasRangeEditing.current = false;
+      touchedRef.current = false;
+      rangeRef.current = [0, recordingEnd];
+      setRange([0, recordingEnd]);
+    }
     const previousEnd = lastElapsedRef.current;
     lastElapsedRef.current = recordingEnd;
     setRange(([start, end]) => {
@@ -109,9 +133,10 @@ export function useRecordingTrack({
         : Math.min(recordingEnd, Math.max(safeStart + 1, end));
       return [safeStart, safeEnd];
     });
-  }, [elapsedSeconds, recordingEnd]);
+  }, [elapsedSeconds, recordingEnd, rangeSelection, onSelectionChange]);
 
   const pct = (value: number) => timelinePercent(value, timelineEnd);
+  // 直播指示器跟随已录尾部；保存标记时独立读取点击瞬间的媒体位置。
   const positionSecond =
     playheadSecond ??
     previewPosition(previewMode, recordingEnd, previewSecond, previewLoading);
@@ -206,7 +231,7 @@ export function useRecordingTrack({
           recordingEnd,
           seekDisabled,
         );
-        if (target !== undefined)
+        if (target !== undefined && (!rangeSelection || dragging.kind === "playhead"))
           onSeekCommit?.(
             target,
             dragging.kind === "playhead" ? clamped : undefined,
@@ -263,15 +288,17 @@ export function useRecordingTrack({
     onSeekCommit,
     recordingEnd,
     mode,
+    rangeSelection,
     seekDisabled,
   ]);
 
   const beginRange = (kind: "start" | "end", event: React.PointerEvent) => {
+    if (recordingEnd <= 0 || (selectionDisabled && !rangeSelection)) return;
     event.preventDefault();
     event.stopPropagation();
     movedRef.current = false;
     touchedRef.current = true;
-    if (mode === "recording") onSeekIntent?.(positionAt(event.clientX));
+    if (!rangeSelection && mode === "recording") onSeekIntent?.(positionAt(event.clientX));
     setDragging({ kind });
   };
   const beginPlayhead = (event: React.PointerEvent) => {
@@ -287,10 +314,11 @@ export function useRecordingTrack({
   const beginMarker = (marker: RecordingMarker, event: React.PointerEvent) => {
     if (markerClickTimer.current) clearTimeout(markerClickTimer.current);
     markerClickTimer.current = null;
-    if (!editable) return;
-    event.preventDefault();
+    // 片段不参与点标记拖动，但也不能把按下事件传给轨道选区。
     event.stopPropagation();
     movedRef.current = false;
+    if (!editable || marker.endPositionSeconds != null) return;
+    event.preventDefault();
     setMarkerPositions((current) => ({
       ...current,
       [marker.id]: marker.positionSeconds,
@@ -299,29 +327,40 @@ export function useRecordingTrack({
   };
   const submit = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || submitLock.current) return;
+    submitLock.current = true;
     try {
       if (editing) await onEdit?.(editing.id, text);
       else await onAdd?.(text, addPositionRef.current);
     } catch {
       // 宿主展示保存错误，保留草稿以便重试。
       return;
+    } finally {
+      submitLock.current = false;
     }
     setDraft("");
     setEditing(null);
     setEditorOpen(false);
   };
-  const openEdit = (marker?: RecordingMarker) => {
+  const openEdit = async (marker?: RecordingMarker) => {
+    if (submitLock.current) return;
     // 锁定打开标签编辑器时的位置，输入文字和保存期间时间轴仍会推进。
     if (!marker) {
-      addPositionRef.current = Math.max(0, Math.floor(positionSecond ?? 0));
+      try {
+        addPositionRef.current = getMarkerPosition
+          ? await getMarkerPosition()
+          : Math.max(0, Math.floor(markerPositionSecond ?? positionSecond ?? 0));
+      } catch {
+        message.error("播放位置尚未就绪，请稍后重试");
+        return;
+      }
     }
     setEditing(marker ?? null);
     setDraft(marker?.text ?? "");
     setEditorOpen(true);
   };
   const railJump = (event: React.PointerEvent) => {
-    if (mode === "playback") {
+    if (mode === "playback" || !rangeSelection) {
       beginPlayhead(event);
       return;
     }
@@ -335,6 +374,7 @@ export function useRecordingTrack({
     );
   };
   const nudgeRange = (kind: "start" | "end", delta: number) => {
+    if (recordingEnd <= 0 || (selectionDisabled && !rangeSelection)) return;
     touchedRef.current = true;
     setRange(([start, end]) =>
       kind === "start"

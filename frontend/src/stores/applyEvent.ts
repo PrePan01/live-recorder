@@ -11,6 +11,7 @@ import { usePipelineStore } from "./pipelineStore";
 import { useTasksStore } from "./tasksStore";
 import { useDanmakuStore } from "./danmakuStore";
 import { useStreamHealthStore } from "./streamHealthStore";
+import { useClipQueueStore } from "./clipQueueStore";
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -80,6 +81,9 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case "stream-health":
       useStreamHealthStore.getState().applyHealth(e.health);
+      break;
+    case "clip-queue:updated":
+      useClipQueueStore.getState().touch();
       break;
   }
 }

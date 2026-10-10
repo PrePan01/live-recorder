@@ -31,7 +31,7 @@ describe("preview video presentation", () => {
     const html = render({
       fill: true,
       preserveFrameOnSwitch: true,
-      seek: { url: "/seek", generation: 1, second: 120, startSecond: 118 },
+      seek: { recordingId: "recording-1", url: "/seek", generation: 1, second: 120, startSecond: 118 },
     });
     expect(html).not.toContain('autoPlay=""');
     expect(html).toContain('controls=""');

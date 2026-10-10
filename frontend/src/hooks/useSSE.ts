@@ -60,6 +60,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, status: payload as unknown as DanmakuStatus };
     case 'stream-health':
       return { type, health: payload as unknown as StreamHealth };
+    case 'clip-queue:updated':
+      return { type };
   }
 }
 

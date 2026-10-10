@@ -4,6 +4,7 @@ import type { Services } from '../core/services.js';
 import { registerRoomRoutes } from './routes/rooms.js';
 import { registerRecordingRoutes } from './routes/recordings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerClipQueueRoutes } from './routes/clip-queue.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerServiceRoutes } from './routes/service.js';
@@ -152,6 +153,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
 
   registerRoomRoutes(app, services);
   registerRecordingRoutes(app, services);
+  registerClipQueueRoutes(app, services);
   registerTaskRoutes(app, services);
   registerSettingsRoutes(app, services);
   registerAlertRoutes(app, services);

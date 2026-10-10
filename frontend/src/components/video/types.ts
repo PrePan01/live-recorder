@@ -18,6 +18,7 @@ export interface VideoPlayerProps {
   preserveFrameOnSwitch?: boolean;
   /** 跳播回看源：携带目标时间和解码关键帧时间；空=实时直播。 */
   seek?: {
+    recordingId: string;
     url: string;
     generation: number;
     second: number;

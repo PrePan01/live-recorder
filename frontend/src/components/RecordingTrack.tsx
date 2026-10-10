@@ -3,9 +3,9 @@ import {
   CaretUpOutlined,
   DeleteOutlined,
   ForwardOutlined,
+  ExportOutlined,
   PlusOutlined,
   PushpinOutlined,
-  ScissorOutlined,
 } from "@ant-design/icons";
 import { Button, Input, Modal, Popconfirm, Tooltip } from "antd";
 import { recordingGapText } from "../utils/recordingGapText";
@@ -23,16 +23,21 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     mode = "recording",
     seekDisabled = false,
     toolbar,
-    markerNavigationRef,
     children,
     markers,
     editable = false,
     busy = false,
+    selectionDisabled = false,
     onQuickAdd,
     addingMarker = false,
     quickAddDisabled = false,
     onDelete,
+    segmentActions,
+    temporarySegment,
+    onSaveRange,
     onExport,
+    rangeSelection,
+    onCancelRange,
     onSeekIntent,
     onSeekCommit,
     onReturnToLive,
@@ -125,7 +130,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
         {toolbar && (
           <div className="lr-recording-track__toolbar">{toolbar}</div>
         )}
-        {editable && (
+        {(editable || showSelection || segmentActions || onExport) && (
           <span className="lr-recording-track__actions">
             {onReturnToLive && (
               <Button
@@ -135,12 +140,6 @@ export default function RecordingTrack(props: RecordingTrackProps) {
               >
                 直播
               </Button>
-            )}
-            {markers.length > 0 && markerNavigationRef && (
-              <span
-                className="lr-recording-track__marker-navigation"
-                ref={markerNavigationRef}
-              />
             )}
             {onQuickAdd && (
               <Tooltip title="一键标记当前位置（Alt+M）">
@@ -155,25 +154,37 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                 </Button>
               </Tooltip>
             )}
-            <Button
-              size="small"
-              icon={<PlusOutlined />}
-              disabled={quickAddDisabled}
-              onClick={() => openEdit()}
-            >
-              标签
-            </Button>
-            <Button
-              type="primary"
-              size="small"
-              className="lr-recording-track__export"
-              icon={<ScissorOutlined />}
-              disabled={selectionSeconds < 1 || busy}
-              loading={busy}
-              onClick={() => void onExport?.(range[0], range[1])}
-            >
-              导出选区
-            </Button>
+            {editable && (
+              <Button
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={quickAddDisabled}
+                onClick={() => openEdit()}
+              >
+                标签
+              </Button>
+            )}
+            {segmentActions}
+            {rangeSelection != null ? (
+              <>
+                <Button
+                  size="small"
+                  type="primary"
+                  disabled={selectionSeconds < 1 || busy}
+                  onClick={() => void onSaveRange?.(range[0], range[1])}
+                >
+                  保存范围
+                </Button>
+                <Button size="small" disabled={busy} onClick={onCancelRange}>
+                  取消调整
+                </Button>
+              </>
+            ) : null}
+            {onExport ? (
+              <Button size="small" icon={<ExportOutlined />}
+                disabled={selectionSeconds < 1 || busy || selectionDisabled || rangeSelection != null}
+                onClick={() => onExport(range[0], range[1])}>导出选区</Button>
+            ) : null}
           </span>
         )}
       </div>
@@ -226,7 +237,16 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                     </Tooltip>
                   );
                 })}
-                {showSelection && (
+                {temporarySegment ? (
+                  <div
+                    className="lr-recording-track__temporary-segment"
+                    style={{
+                      left: `${pct(Math.min(...temporarySegment))}%`,
+                      width: `${Math.abs(pct(temporarySegment[1]) - pct(temporarySegment[0]))}%`,
+                    }}
+                  />
+                ) : null}
+                {(showSelection || !!onExport) && (
                   <div
                     className={`lr-recording-track__selection${startPosition === 0 ? " lr-recording-track__selection--at-start" : ""}${endPosition === 100 ? " lr-recording-track__selection--at-end" : ""}`}
                     style={{
@@ -306,12 +326,19 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                     return (
                       <Tooltip
                         key={marker.id}
-                        title={`${clock(position)}：${marker.text}${editable ? "（单击回看，双击编辑）" : ""}`}
+                        title={`${clock(position)}${marker.endPositionSeconds != null ? `—${clock(marker.endPositionSeconds)}` : ""}：${marker.text}${editable ? "（单击回看，双击编辑）" : ""}`}
                       >
                         <button
                           aria-label={`${clock(position)} · ${marker.text}`}
-                          className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}`}
-                          style={{ left: `${pct(position)}%` }}
+                          className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}${marker.endPositionSeconds != null ? " lr-recording-track__marker--segment" : ""}`}
+                          style={{
+                            left: `${pct(position)}%`,
+                            ...(marker.endPositionSeconds != null
+                              ? {
+                                  width: `${Math.max(0, pct(marker.endPositionSeconds) - pct(position))}%`,
+                                }
+                              : {}),
+                          }}
                           onPointerDown={(event) => beginMarker(marker, event)}
                           onClick={(event) => {
                             if (

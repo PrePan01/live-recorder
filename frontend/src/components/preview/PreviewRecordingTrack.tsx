@@ -1,3 +1,4 @@
+import { promptRangeExport } from "../../utils/promptRangeExport";
 import { playbackClock } from "../../utils/playbackClock";
 import {
   createRecordingMarker,
@@ -6,7 +7,15 @@ import {
 } from "../../api/recordings";
 import { MarkerNavPanel } from "../MarkerNavPanel";
 import { QualityLight } from "../QualityLight";
+
 import RecordingTrack from "../RecordingTrack";
+import { useCallback, useEffect, useState } from "react";
+import type { RecordingMarker } from "../../types/recording";
+import { useSegmentMarking } from "../../hooks/useSegmentMarking";
+import { useSegmentExport } from "../../hooks/useSegmentExport";
+import type { useRecordingMediaPosition } from "../../hooks/useRecordingMediaPosition";
+import { SegmentExportActions } from "../SegmentExportActions";
+import { SegmentMarkActions } from "../SegmentMarkActions";
 
 import { usePreviewDanmaku } from "./usePreviewDanmaku.ts";
 import { usePreviewLayout } from "./usePreviewLayout.ts";
@@ -15,7 +24,7 @@ import { usePreviewRecording } from "./usePreviewRecording.ts";
 import { usePreviewSeek } from "./usePreviewSeek.ts";
 type Props = Pick<
   ReturnType<typeof usePreviewRecording>,
-  "displayedTrack" | "trackClosing" | "trackElapsedSeconds" | "recording"
+  "displayedTrack" | "trackClosing" | "recording"
 > &
   Pick<
     ReturnType<typeof usePreviewLayout>,
@@ -24,11 +33,7 @@ type Props = Pick<
   Pick<ReturnType<typeof usePreviewDanmaku>, "trackGaps" | "streamHealth"> &
   Pick<
     ReturnType<typeof usePreviewMarkers>,
-    | "markers"
-    | "quickAddMarker"
-    | "addingMarker"
-    | "updateMarkers"
-    | "handleClipExport"
+    "markers" | "quickAddMarker" | "addingMarker" | "updateMarkers"
   > &
   Pick<
     ReturnType<typeof usePreviewSeek>,
@@ -39,10 +44,13 @@ type Props = Pick<
     | "seekIndexState"
     | "seekActualStart"
   > & {
-    markerNavigationContainer: HTMLSpanElement | null;
-    setMarkerNavigationContainer: (element: HTMLSpanElement | null) => void;
+    roomId: string;
+    media: ReturnType<typeof useRecordingMediaPosition>;
+    trackElapsedSeconds: number;
+    onPreviewSegment: (marker: RecordingMarker) => void;
   };
 export function PreviewRecordingTrack({
+  roomId,
   displayedTrack,
   trackClosing,
   trackRevealRef,
@@ -51,7 +59,6 @@ export function PreviewRecordingTrack({
   trackElapsedSeconds,
   markers,
   quickAddMarker,
-  setMarkerNavigationContainer,
   addingMarker,
   displayPreview,
   recording,
@@ -62,10 +69,53 @@ export function PreviewRecordingTrack({
   seekIndexState,
   seekActualStart,
   updateMarkers,
-  handleClipExport,
+  media,
+  onPreviewSegment,
   setTrackCollapsed,
-  markerNavigationContainer,
 }: Props) {
+  const id = displayedTrack?.id;
+  const [editingRange, setEditingRange] = useState<{
+    marker: RecordingMarker;
+    range: [number, number];
+  } | null>(null);
+  const [selectingRange, setSelectingRange] = useState(false);
+  const [rangeSaving, setRangeSaving] = useState(false);
+  useEffect(() => {
+    setEditingRange(null);
+    setSelectingRange(false);
+  }, [id]);
+  const saved = useCallback(() => {
+    void updateMarkers(async () => {}).catch(() => undefined);
+  }, [updateMarkers]);
+  const marking = useSegmentMarking(
+    id,
+    markers,
+    media.getPosition,
+    saved,
+    trackClosing ||
+      displayPreview.loading ||
+      !media.duration ||
+      editingRange != null || selectingRange,
+  );
+  const exports = useSegmentExport(id, markers);
+  const changeRange = async (
+    marker: RecordingMarker,
+    start: number,
+    end: number,
+  ) => {
+    if (!id) return;
+    await updateMarkers(() =>
+      updateRecordingMarker(id, marker.id, {
+        positionSeconds: start,
+        endPositionSeconds: end,
+      }),
+    );
+  };
+  const removeMarker = async (marker: RecordingMarker) => {
+    if (!id) return;
+    await updateMarkers(() => deleteRecordingMarker(id, marker.id));
+    if (editingRange?.marker.id === marker.id) setEditingRange(null);
+  };
   return (
     <>
       {displayedTrack ? (
@@ -82,12 +132,59 @@ export function PreviewRecordingTrack({
         >
           <div>
             <RecordingTrack
+              key={id}
+              onExport={(start, end) => promptRangeExport(displayedTrack.id, roomId, start, end)}
+              selectionDisabled={trackClosing || marking.saving || marking.start != null}
+              onSelectionChange={setSelectingRange}
+              segmentActions={
+                <SegmentMarkActions
+                  marking={marking}
+                  current={media.current}
+                  disabled={
+                    trackClosing ||
+                    displayPreview.loading ||
+                    !media.duration ||
+                    editingRange != null || selectingRange
+                  }
+                >
+                  <SegmentExportActions
+                    exports={exports}
+                    disabled={trackClosing || editingRange != null}
+                  />
+                </SegmentMarkActions>
+              }
+              temporarySegment={
+                marking.start != null
+                  ? [
+                      marking.start,
+                      marking.end ?? media.current ?? marking.start,
+                    ]
+                  : null
+              }
+              rangeSelection={
+                editingRange && editingRange.marker.recordingId === id
+                  ? editingRange.range
+                  : null
+              }
+              busy={rangeSaving}
+              onSaveRange={async (start, end) => {
+                if (!editingRange || rangeSaving) return;
+                setRangeSaving(true);
+                try {
+                  await changeRange(editingRange.marker, start, end);
+                  setEditingRange(null);
+                } catch {
+                  /* updateMarkers presents the error and preserves the range. */
+                } finally {
+                  setRangeSaving(false);
+                }
+              }}
+              onCancelRange={() => setEditingRange(null)}
               gaps={trackGaps}
               elapsedSeconds={trackElapsedSeconds}
               markers={markers}
               editable
               onQuickAdd={quickAddMarker}
-              markerNavigationRef={setMarkerNavigationContainer}
               addingMarker={addingMarker}
               quickAddDisabled={displayPreview.loading || trackClosing}
               toolbar={
@@ -101,7 +198,9 @@ export function PreviewRecordingTrack({
                 seekPlayback ? () => handleSeekCommit("live") : undefined
               }
               previewMode={displayPreview.mode}
-              previewSecond={displayPreview.second}
+              previewSecond={media.current ?? displayPreview.second}
+              markerPositionSecond={media.current}
+              getMarkerPosition={media.getPosition}
               previewLoading={displayPreview.loading}
               seekHint={
                 seekIndexState === "building"
@@ -138,11 +237,9 @@ export function PreviewRecordingTrack({
                   deleteRecordingMarker(displayedTrack.id, markerId),
                 )
               }
-              onExport={handleClipExport}
               onCollapsedChange={setTrackCollapsed}
             >
               <MarkerNavPanel
-                navigationContainer={markerNavigationContainer}
                 key={displayedTrack.id}
                 markers={markers}
                 gaps={trackGaps}
@@ -162,7 +259,19 @@ export function PreviewRecordingTrack({
                       : undefined
                 }
                 onSeek={(second) => handleSeekCommit(second)}
-                onReturnToLive={() => handleSeekCommit("live")}
+                onDelete={removeMarker}
+                onRangeEdit={changeRange}
+                onAdjustRange={marking.start != null || marking.saving ? undefined : (marker) =>
+                  setEditingRange({
+                    marker,
+                    range: [marker.positionSeconds, marker.endPositionSeconds!],
+                  })
+                }
+                onPreview={onPreviewSegment}
+                selectingSegments={exports.selecting}
+                selectedSegmentIds={exports.selectedSet}
+                onSelectSegment={exports.select}
+                exportBusy={exports.busy}
                 onEdit={(marker, text) =>
                   updateMarkers(() =>
                     updateRecordingMarker(displayedTrack.id, marker.id, {
@@ -170,7 +279,6 @@ export function PreviewRecordingTrack({
                     }),
                   )
                 }
-                onExport={handleClipExport}
               />
             </RecordingTrack>
           </div>

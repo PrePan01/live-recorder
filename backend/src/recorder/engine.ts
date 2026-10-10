@@ -24,7 +24,7 @@ export interface RecordingResumeOptions {
 export type RecordingEvent =
   | { type: "file_created"; filePath: string }
   | { type: "data"; chunk: Buffer; previewForwarded?: boolean; mediaTimestampMs?: number; receivedAt?: number }
-  | { type: "preview_data"; chunk: Buffer }
+  | { type: "preview_data"; chunk: Buffer; recordingOffsetMs?: number | null }
   | { type: "completed"; fileSize: number; endTimestampMs?: number; hlsCursor?: HlsCursor }
   | { type: "error"; error: ErrorObject; endTimestampMs?: number; hlsCursor?: HlsCursor }
   | { type: "stream_format_changed" };

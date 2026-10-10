@@ -21,10 +21,11 @@ export async function createRecordingMarker(
   id: string,
   text: string,
   positionSeconds?: number,
+  endPositionSeconds?: number,
 ): Promise<RecordingMarker> {
   const { data } = await http.post<{ marker: RecordingMarker }>(
     `/recordings/${id}/markers`,
-    positionSeconds !== undefined ? { text, positionSeconds } : { text },
+    { text, ...(positionSeconds !== undefined ? {positionSeconds} : {}), ...(endPositionSeconds !== undefined ? {endPositionSeconds} : {}) },
   );
   return data.marker;
 }
@@ -32,7 +33,7 @@ export async function createRecordingMarker(
 export async function updateRecordingMarker(
   id: string,
   markerId: string,
-  patch: { text?: string; positionSeconds?: number },
+  patch: { text?: string; positionSeconds?: number; endPositionSeconds?: number },
 ): Promise<RecordingMarker> {
   const { data } = await http.patch<{ marker: RecordingMarker }>(
     `/recordings/${id}/markers/${markerId}`,
@@ -202,4 +203,8 @@ export async function confirmRecordingKeep(
     { keep, ...(keep && fileName ? { fileName } : {}) },
   );
   return data?.recording ?? null;
+}
+
+export async function fetchRecordingPosition(id: string, lagSeconds = 0): Promise<{durationSeconds:number; positionSeconds:number; previewOffsetSeconds:number|null}> {
+  const {data} = await http.get(`/recordings/${id}/marker-position`, {params:{lagSeconds}}); return data;
 }

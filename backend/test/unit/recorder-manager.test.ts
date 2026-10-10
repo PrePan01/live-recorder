@@ -1547,6 +1547,55 @@ describe("RecorderManager", () => {
   });
 
 
+  it('恢复收到媒体后同步卡片状态且不把打开文件误判为恢复', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-recovered-emit-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    let starts = 0;
+    let releaseMedia!: () => void;
+    const mediaGate = new Promise<void>(resolve => { releaseMedia = resolve; });
+    services.engineFor = () => {
+      let stop!: () => void;
+      const stopped = new Promise<void>(resolve => { stop = resolve; });
+      return {
+        async *start(_input, filePath) {
+          starts += 1;
+          yield { type: "file_created" as const, filePath: filePath! };
+          if (starts === 1) {
+            yield { type: "data" as const, chunk: buildMinimalFlv(), mediaTimestampMs: 1000 };
+            yield { type: "error" as const, error: new AppError("NETWORK_UNAVAILABLE", "断网", { retryable: true }).toObject() };
+            return;
+          }
+          yield { type: "preview_data" as const, chunk: buildMinimalFlv().subarray(0, 13) };
+          await mediaGate;
+          yield { type: "data" as const, chunk: buildMinimalFlv(), mediaTimestampMs: 2000 };
+          yield { type: "data" as const, chunk: buildMinimalFlv(), mediaTimestampMs: 2500 };
+          await stopped;
+        },
+        stop: async () => { stop(); },
+      } satisfies RecordingEngine;
+    };
+    const room = services.rooms.create({ platform: "bilibili", url: "https://live.bilibili.com/151", displayName: "R" });
+    const states: string[] = [];
+    services.events.on(event => {
+      if (event.type === "room:updated" && event.data.id === room.id) states.push(event.data.monitorState);
+    });
+    await services.manager.maybeStartRecording(room, { streamSessionId: "r1" });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await waitForWithClock(clock, () => starts === 2);
+    expect(services.rooms.get(room.id)!.monitorState).toBe("reconnecting");
+    expect(services.recordings.get(rec.id)!.state).toBe("reconnecting");
+    const before = states.length;
+    releaseMedia();
+    await waitFor(() => services.manager.healthProbe()[0]?.mediaTsMs === 2500);
+    expect(services.rooms.get(room.id)!.monitorState).toBe("recording");
+    expect(services.recordings.get(rec.id)!.state).toBe("recording");
+    expect(states.slice(before)).toEqual(["recording"]);
+    expect(services.recordings.listGaps(rec.id)).toHaveLength(1);
+    await services.manager.stopRecording(room.id);
+  });
+
   it('断流重连时补发 room:updated（且仅状态变化时发一次，退避循环不重复广播）', async () => {
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), "lr-reconnect-emit-"));
@@ -1786,7 +1835,7 @@ describe("shared preview watchdog lifecycle", () => {
     }
     await waitFor(() => services.manager.isPreviewReadyForRecording(room.id));
     const send = async (ts: number) => { release!(tag(ts)); await new Promise(r => setTimeout(r, 10)); };
-    return { clock, services, room, send, stops: () => stops };
+    return { clock, services, room, send, tag, stops: () => stops };
   }
 
   it("allows a first preview packet after seven seconds", async () => {
@@ -1794,6 +1843,63 @@ describe("shared preview watchdog lifecycle", () => {
     expect(stops()).toBe(0);
     expect(services.manager.isPreviewReadyForRecording(room.id)).toBe(true);
     await services.manager.stopPreviewStream(room.id);
+  });
+
+  it("exposes the recording offset when a preview has already been running", async () => {
+    const { services, room, send } = await setup();
+    const preview = services.manager.preview as FakePreview;
+    const bootstrap = Buffer.from(preview.bootstrap!);
+    bootstrap.writeUIntBE(45000, 17, 3);
+    preview.bootstrap = bootstrap;
+    await send(45000);
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    await send(55000);
+    expect(services.manager.recordingPreviewOffsetSeconds(room.id, rec.id)).toBe(-45);
+    expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(10);
+    expect(services.manager.recordingPreviewOffsetSeconds(room.id, "other-recording")).toBeNull();
+    await services.manager.stopRecording(room.id);
+    await services.manager.stopPreviewStream(room.id);
+  });
+
+  it("keeps cached GOP, marker API and file timestamps on one media clock", async () => {
+    const { clock, services, room, send, tag } = await setup();
+    const preview = services.manager.preview as FakePreview;
+    const header = preview.bootstrap!.subarray(0, 13);
+    preview.bootstrap = Buffer.concat([header, tag(45000), tag(48000)]);
+    await send(48000);
+    await services.manager.maybeStartRecording(room, {}, { manual: true });
+    const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+    // The file contains the last GOP: it already has three seconds of media
+    // although the new recording's wall timer has only just started.
+    await waitFor(() => services.manager.recordingMediaTailSeconds(room.id, rec.id) === 3);
+    expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(3);
+    expect(services.manager.recordingPreviewOffsetSeconds(room.id, rec.id)).toBe(-45);
+    clock.advance(4000); await send(52000);
+    expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(7);
+    const { buildApp } = await import("../../src/api/server.js");
+    const { app } = buildApp(services);
+    const inject = (options: Parameters<typeof app.inject>[0]) => app.inject(options);
+    const position = await inject({ method: "GET", url: `/api/v1/recordings/${rec.id}/marker-position`, headers: { host: "127.0.0.1:43120" } });
+    expect(position.json()).toMatchObject({ durationSeconds: 7, previewOffsetSeconds: -45 });
+    // Raw preview 50.125s means file 5.125s, not four seconds since recording
+    // started or the seven-second receive tail. All marker types keep fractions.
+    for (const payload of [
+      { text: "标记", positionSeconds: 5.125 },
+      { text: "标签", positionSeconds: 5.125 },
+      { text: "片段", positionSeconds: 3.125, endPositionSeconds: 5.125 },
+    ]) {
+      const response = await inject({ method: "POST", url: `/api/v1/recordings/${rec.id}/markers`, headers: { host: "127.0.0.1:43120" }, payload });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().marker).toMatchObject(payload);
+    }
+    await services.manager.stopRecording(room.id);
+    await services.manager.stopPreviewStream(room.id);
+    const bytes = await readFile(rec.filePath!);
+    expect(bytes.readUIntBE(17, 3)).toBe(0);
+    expect(bytes.readUIntBE(33, 3)).toBe(3000);
+    expect(bytes.readUIntBE(49, 3)).toBe(7000);
+    await app.close();
   });
 
   it("counts the current frame and resets the baseline when recording restarts", async () => {

@@ -25,6 +25,7 @@ async function setup() {
   const address = server.address() as { port: number };
   return {
     stop, finishStart,
+    hasViewers: () => preview.hasClients("hover-room"),
     async connect() {
       const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/preview/hover-room`);
       sockets.push(socket);
@@ -49,6 +50,8 @@ describe('preview startup after a hover has ended', () => {
       const socket = await fixture.connect();
       socket.close();
       await once(socket, 'close');
+      // Client close can arrive before the server removes its viewer.
+      await vi.waitFor(() => expect(fixture.hasViewers()).toBe(false));
       fixture.finishStart();
       await vi.waitFor(() => expect(fixture.stop).toHaveBeenCalledWith('hover-room'));
     } finally { await fixture.close(); }

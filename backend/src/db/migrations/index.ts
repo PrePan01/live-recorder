@@ -949,13 +949,67 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
   },
   { version: 45, up: (db) => ensureColumn(db, "rooms", "live_cover_url", "live_cover_url TEXT") },
   { version: 46, up: (db) => ensureColumn(db, "rooms", "danmaku_enabled", "danmaku_enabled INTEGER") },
-  { version: 47, up: (db) => {
+    {
+    version: 48,
+    sql: `
+      CREATE TABLE IF NOT EXISTS clip_queue (
+        id TEXT PRIMARY KEY,
+        recording_id TEXT NOT NULL,
+        start_second REAL NOT NULL,
+        end_second REAL NOT NULL,
+        file_name TEXT NOT NULL,
+        encode_policy TEXT,
+        state TEXT NOT NULL CHECK(state IN ('queued','running','done','failed','cancelled','interrupted')),
+        sort_order INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        actual_encoder TEXT,
+        fallback_reason TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        ended_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_clip_queue_state ON clip_queue(state, sort_order);
+    `,
+  },
+{ version: 47, up: (db) => {
     // 坑点：版本记录伪造/缺表的存量库上 ALTER 会炸整轮迁移——表在才补列。
     const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='pipeline_artifacts'").get();
     if (hasTable) {
       ensureColumn(db, "pipeline_artifacts", "actual_encoder", "actual_encoder TEXT");
       ensureColumn(db, "pipeline_artifacts", "fallback_reason", "fallback_reason TEXT");
     }
+  } },
+  { version: 49, up: (db) => {
+    ensureColumn(db, "recording_markers", "end_position_seconds", "end_position_seconds REAL");
+    // An unreleased v48 database may contain selections awaiting submission.
+    // Promote those to persistent range markers before replacing the task model.
+    db.exec(`INSERT INTO recording_markers (id, recording_id, position_seconds, text, created_at, updated_at, end_position_seconds)
+      SELECT 'mark_' || q.id, q.recording_id, q.start_second, substr(q.file_name, 1, 200), q.created_at, q.created_at, q.end_second
+      FROM clip_queue q JOIN recordings r ON r.id = q.recording_id
+      WHERE q.encode_policy IS NULL AND q.state = 'queued' AND q.end_second - q.start_second >= 1;
+      CREATE TABLE clip_batches (id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        created_at TEXT NOT NULL, UNIQUE(recording_id, request_id));
+      INSERT INTO clip_batches SELECT 'legacy_' || recording_id, recording_id, 'legacy', MIN(created_at)
+        FROM clip_queue WHERE encode_policy IS NOT NULL OR state <> 'queued' GROUP BY recording_id;
+      ALTER TABLE clip_queue RENAME TO clip_queue_legacy;
+      CREATE TABLE clip_queue (
+        id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, start_second REAL NOT NULL, end_second REAL NOT NULL,
+        file_name TEXT NOT NULL, encode_policy TEXT NOT NULL, state TEXT NOT NULL
+          CHECK(state IN ('queued','running','cancelling','done','failed','cancelled','interrupted')),
+        sort_order INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, actual_encoder TEXT,
+        fallback_reason TEXT, created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT,
+        batch_id TEXT NOT NULL, marker_id TEXT, output_recording_id TEXT);
+      INSERT INTO clip_queue SELECT id, recording_id, start_second, end_second, file_name,
+        COALESCE(encode_policy, '{"encodingMode":"auto"}'), state, sort_order, attempts, error, actual_encoder,
+        fallback_reason, created_at, started_at, ended_at, 'legacy_' || recording_id, NULL, NULL
+        FROM clip_queue_legacy WHERE encode_policy IS NOT NULL OR state <> 'queued';
+      DROP TABLE clip_queue_legacy;
+      CREATE INDEX idx_clip_queue_state ON clip_queue(state, sort_order);
+      CREATE INDEX idx_clip_queue_recording ON clip_queue(recording_id, created_at);
+      CREATE INDEX idx_clip_queue_batch ON clip_queue(batch_id);
+      CREATE INDEX idx_clip_batches_recording ON clip_batches(recording_id, created_at, id);
+      CREATE INDEX idx_clip_batches_created ON clip_batches(created_at, id);`);
   } },
 ];
 

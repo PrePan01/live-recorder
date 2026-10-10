@@ -32,7 +32,6 @@
 .lr-marker-nav {
   border-top: 1px solid var(--lr-border);
   margin-top: 8px;
-  padding: 8px 0 0;
   background: var(--lr-surface);
 }
 .lr-marker-nav__list {
@@ -74,6 +73,13 @@
   flex-shrink: 0;
   color: var(--lr-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lr-marker-nav__selection {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
 }
 .lr-marker-nav__seek > span {
   overflow: hidden;
@@ -155,6 +161,8 @@
 .lr-recording-track__actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
   flex-shrink: 0;
   margin-left: auto;
   gap: 4px;
@@ -204,7 +212,8 @@
   --lr-recording-track-rail-height: 18px;
   position: relative;
   height: calc(
-    var(--lr-recording-track-rail-top) + var(--lr-recording-track-rail-height) + 24px
+    var(--lr-recording-track-rail-top) + var(--lr-recording-track-rail-height) +
+      24px
   );
   padding-top: var(--lr-recording-track-rail-top);
 }
@@ -492,17 +501,6 @@
   );
 }
 
-/* 标记操作统一使用 28px 高度、8px 组内间距，设置移入菜单。 */
-.lr-marker-nav__toolbar,
-.lr-marker-nav__group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.lr-marker-nav__toolbar {
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
 .lr-marker-nav .ant-btn {
   height: 28px;
   min-width: 28px;
@@ -524,11 +522,6 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-.lr-marker-nav__hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--lr-muted);
 }
 .lr-recording-track__topline .ant-btn {
   height: 28px;
@@ -578,4 +571,40 @@
   .lr-recording-track__body {
     transition: none;
   }
+}
+
+/* Range markers reuse the point marker's yellow indicator and hover treatment. */
+.lr-recording-track__marker--segment {
+  min-width: 7px;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.lr-recording-track__marker--segment::before {
+  width: 100%;
+  box-sizing: border-box;
+}
+.lr-recording-track__marker--segment:is(:hover, :focus-visible)::before {
+  transform: translate(-50%, -50%);
+}
+.lr-recording-track__temporary-segment {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  height: 12px;
+  min-width: 7px;
+  transform: translateY(-50%);
+  border: 1px dashed var(--lr-ink);
+  background: color-mix(in srgb, var(--lr-yellow) 55%, transparent);
+  pointer-events: none;
+}
+.lr-clip-tasks {
+  margin-top: 8px;
+}
+.lr-clip-task-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.lr-clip-task-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--lr-border);
 }

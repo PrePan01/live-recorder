@@ -44,6 +44,8 @@ export type PendingClipExport = {
   startSecond: number;
   endSecond: number;
   defaultName: string;
+  /** 直接选区导出复用持久任务队列；旧入口仍兼容。 */
+  queueRequestId?: string;
 };
 
 interface RecordingState {

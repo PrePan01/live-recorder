@@ -1,4 +1,4 @@
-import { type ReactNode, type Ref } from "react";
+import { type ReactNode } from "react";
 import type { RecordingGap, RecordingMarker } from "../../types/recording";
 
 import { type RecordingTrackMode } from "../../utils/recordingTimeline";
@@ -9,7 +9,6 @@ export type RecordingTrackProps = {
   mode?: RecordingTrackMode;
   seekDisabled?: boolean;
   toolbar?: ReactNode;
-  markerNavigationRef?: Ref<HTMLSpanElement>;
   /** 标记列表随时间轴共同展开和收起。 */
   children?: ReactNode;
   markers: RecordingMarker[];
@@ -22,7 +21,17 @@ export type RecordingTrackProps = {
   onEdit?: (id: string, text: string) => Promise<void>;
   onMove?: (id: string, positionSeconds: number) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
-  onExport?: (start: number, end: number) => void | Promise<void>;
+  markerPositionSecond?: number;
+  getMarkerPosition?: () => Promise<number>;
+  segmentActions?: import("react").ReactNode;
+  temporarySegment?: [number,number] | null;
+  rangeSelection?: [number,number] | null;
+  /** 临时选区直接导出，不保存为标记。 */
+  onExport?: (start: number, end: number) => void;
+  selectionDisabled?: boolean;
+  onSelectionChange?: (active: boolean) => void;
+  onSaveRange?: (start:number,end:number) => Promise<void>;
+  onCancelRange?: () => void;
   onCollapsedChange?: (collapsed: boolean) => void;
   onSeekIntent?: (second: number) => void;
   onSeekCommit?: (target: number | "live", indicatorSecond?: number) => void;

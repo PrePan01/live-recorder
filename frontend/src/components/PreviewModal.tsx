@@ -1,3 +1,6 @@
+import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
+import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
+import type { RecordingMarker } from "../types/recording";
 import { styles } from "./preview/previewStyles";
 import { playbackClock } from "../utils/playbackClock";
 import {
@@ -7,7 +10,14 @@ import {
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
 import { Button, Modal, Popconfirm, Popover, Space, Tooltip } from "antd";
-import { useCallback, useId, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import { disableHighlightBuffer } from "../api/rooms";
 import { danmakuStateText } from "../stores/danmakuStore";
@@ -45,10 +55,7 @@ export default function PreviewModal({
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
   );
-  const [markerNavigationContainer, setMarkerNavigationContainer] =
-    useState<HTMLSpanElement | null>(null);
   const {
-    now,
     live,
     recording,
     onAir,
@@ -58,11 +65,12 @@ export default function PreviewModal({
     activeRecordingRef,
     displayedTrack,
     trackClosing,
-    trackElapsedSeconds,
     recentStop,
     handleStart,
     handleStop,
   } = usePreviewRecording(room);
+  const mediaClock = useRecordingMediaRange(activeRecordingId ?? displayedTrack?.id, previewVideo);
+  const trackElapsedSeconds = mediaClock.durationSeconds;
   const {
     pictureInPicture,
     setPictureInPicture,
@@ -135,21 +143,54 @@ export default function PreviewModal({
     previewVideo,
     previewFrameGenerationRef,
   );
-  const {
-    markers,
-    addingMarker,
-    updateMarkers,
-    handleClipExport,
-    quickAddMarker,
-  } = usePreviewMarkers(
-    room,
-    live,
+  const media = useRecordingMediaPosition(
     activeRecordingId,
-    activeRecordingRef,
+    previewVideo,
     displayPreview,
-    trackClosing,
-    trackElapsedSeconds,
+    seekPlayback,
+    mediaClock,
+    previewFrameGenerationRef,
   );
+  const { markers, addingMarker, updateMarkers, quickAddMarker } =
+    usePreviewMarkers(
+      room,
+      live,
+      activeRecordingId,
+      activeRecordingRef,
+      displayPreview,
+      trackClosing,
+      trackElapsedSeconds,
+      media.getPosition,
+    );
+  const segmentPreviewEnd = useRef<number | null>(null);
+  const segmentPreviewActive = useRef(false);
+  const seekManually = (target: number | "live", indicatorSecond?: number) => {
+    segmentPreviewEnd.current = null;
+    segmentPreviewActive.current = false;
+    handleSeekCommit(target, indicatorSecond);
+  };
+  const previewSegment = (marker: RecordingMarker) => {
+    handleSeekCommit(marker.positionSeconds);
+    segmentPreviewEnd.current = marker.endPositionSeconds ?? null;
+    segmentPreviewActive.current = true;
+    void previewVideo?.play().catch(() => undefined);
+  };
+  useEffect(() => {
+    if (
+      displayPreview.mode === "history" &&
+      !displayPreview.loading &&
+      segmentPreviewEnd.current != null &&
+      displayPreview.second != null &&
+      displayPreview.second >= segmentPreviewEnd.current
+    ) {
+      previewVideo?.pause();
+      segmentPreviewEnd.current = null;
+    }
+  }, [displayPreview, previewVideo]);
+  useEffect(() => {
+    segmentPreviewEnd.current = null;
+    segmentPreviewActive.current = false;
+  }, [activeRecordingId]);
   const resetLiveDanmakuTime = liveDanmaku.resetTime;
   const handleLiveFirstFrame = useCallback(() => {
     if (requestedPlaybackRef.current) return;
@@ -176,13 +217,6 @@ export default function PreviewModal({
     onClose();
   };
 
-  const formatRecordingElapsed = (startedAt: string | undefined) => {
-    const startedAtMs = startedAt ? Date.parse(startedAt) : Number.NaN;
-    const seconds = Number.isNaN(startedAtMs)
-      ? 0
-      : Math.max(0, Math.floor((now - startedAtMs) / 1_000));
-    return playbackClock(seconds);
-  };
   return (
     <>
       <Modal
@@ -270,6 +304,7 @@ export default function PreviewModal({
               <div ref={setPreviewPlayerSlot} style={styles.playerSlot} />
             </div>
             <PreviewRecordingTrack
+              roomId={room.id}
               displayedTrack={displayedTrack}
               trackClosing={trackClosing}
               trackRevealRef={trackRevealRef}
@@ -278,20 +313,19 @@ export default function PreviewModal({
               trackElapsedSeconds={trackElapsedSeconds}
               markers={markers}
               quickAddMarker={quickAddMarker}
-              setMarkerNavigationContainer={setMarkerNavigationContainer}
               addingMarker={addingMarker}
               displayPreview={displayPreview}
               recording={recording}
               streamHealth={streamHealth}
               handleSeekIntent={handleSeekIntent}
-              handleSeekCommit={handleSeekCommit}
+              handleSeekCommit={seekManually}
               seekPlayback={seekPlayback}
               seekIndexState={seekIndexState}
               seekActualStart={seekActualStart}
               updateMarkers={updateMarkers}
-              handleClipExport={handleClipExport}
+              media={media}
+              onPreviewSegment={previewSegment}
               setTrackCollapsed={setTrackCollapsed}
-              markerNavigationContainer={markerNavigationContainer}
             />
           </div>
           <div style={styles.footer}>
@@ -305,7 +339,7 @@ export default function PreviewModal({
                   loading={busy && actingAction === "stop"}
                 >
                   停止录制（
-                  {formatRecordingElapsed(live.activeRecording?.startedAt)}）
+                  {playbackClock(trackElapsedSeconds)}）
                 </Button>
               </Popconfirm>
             ) : (
@@ -386,7 +420,12 @@ export default function PreviewModal({
             onStreamAspectRatio={handleStreamAspectRatio}
             onVideoElementChange={setPreviewVideo}
             seek={seekPlayback}
-            onSeekTail={handleSeekTail}
+            onSeekTail={() => {
+              if (segmentPreviewActive.current) {
+                previewVideo?.pause();
+                segmentPreviewEnd.current = null;
+              } else handleSeekTail();
+            }}
             onSeekFirstFrame={handleSeekFirstFrame}
             onSeekError={handleSeekError}
             onSeekRetry={handleSeekRetry}

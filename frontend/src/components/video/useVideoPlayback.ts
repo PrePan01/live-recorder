@@ -1,3 +1,4 @@
+import { resetPreviewMediaClock, setLiveMediaOrigin, readPreviewElapsed } from "../../utils/previewMediaClock";
 import mpegts from "mpegts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { previewWsUrl } from "../../api/client";
@@ -38,6 +39,9 @@ export function useVideoPlayback({
 }: VideoPlayerProps) {
   const liveFirstFrameRef = useRef(onLiveFirstFrame);
   liveFirstFrameRef.current = onLiveFirstFrame;
+  // 回调随父组件刷新而变化，不代表回看源变化，不能触发销毁/重新加载。
+  const seekCallbacksRef = useRef({ onSeekTail, onSeekFirstFrame, onSeekError });
+  seekCallbacksRef.current = { onSeekTail, onSeekFirstFrame, onSeekError };
   const isSeeking = Boolean(seek);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewErrorRef = useRef(onPreviewError);
@@ -158,6 +162,7 @@ export function useVideoPlayback({
       const current = player;
       if (current) holdFrame();
       player = null;
+      if (video) resetPreviewMediaClock(video);
       if (deferred) queueMicrotask(() => current?.destroy());
       else current?.destroy();
     };
@@ -192,6 +197,8 @@ export function useVideoPlayback({
     function create() {
       if (disposed || !videoRef.current) return;
       destroyPlayer();
+      const clockVideo = videoRef.current;
+      resetPreviewMediaClock(clockVideo);
       lastMediaTime = videoRef.current.currentTime;
       lastProgressAt = Date.now();
       hasPlayed = false;
@@ -202,7 +209,7 @@ export function useVideoPlayback({
           isLive: true,
           ...(thumbnail ? { hasAudio: false } : {}),
         },
-        livePreviewConfig(thumbnail),
+        livePreviewConfig(thumbnail, thumbnail ? undefined : (origin) => setLiveMediaOrigin(clockVideo, origin)),
       );
       player = instance;
       instance.attachMediaElement(videoRef.current);
@@ -282,6 +289,7 @@ export function useVideoPlayback({
   useEffect(() => {
     const video = videoRef.current;
     if (!seek || !video) return;
+    resetPreviewMediaClock(video);
     const gen = seek.generation;
     seekGenRef.current = gen;
     let disposed = false;
@@ -306,11 +314,7 @@ export function useVideoPlayback({
     };
     let positioned = false;
     let stopWaitingForFrame: (() => void) | null = null;
-    let mediaStart: number | null = null;
-    const elapsed = () => {
-      if (video.buffered.length) mediaStart ??= video.buffered.start(0);
-      return Math.max(0, video.currentTime - (mediaStart ?? video.currentTime));
-    };
+    const elapsed = () => readPreviewElapsed(video) ?? 0;
     const fail = (reason: string) => {
       if (stale()) return;
       const second =
@@ -329,7 +333,7 @@ export function useVideoPlayback({
       releaseFrame();
       setState("error");
       setErrorMsg("回看加载失败，请重试");
-      onSeekError?.(gen, second);
+      seekCallbacksRef.current.onSeekError?.(gen, second);
     };
     let hasFrame = false;
     const health = watchSeekPlayback(video, fail, () => !stale());
@@ -344,7 +348,7 @@ export function useVideoPlayback({
             hasFrame = true;
             health.presented();
             releaseFrame();
-            onSeekFirstFrame?.(gen, elapsed());
+            seekCallbacksRef.current.onSeekFirstFrame?.(gen, elapsed());
           },
           () => !stale(),
         );
@@ -352,7 +356,7 @@ export function useVideoPlayback({
     };
     const onEnded = () => {
       if (stale() || !positioned) return;
-      onSeekTail?.();
+      seekCallbacksRef.current.onSeekTail?.();
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("ended", onEnded);
@@ -423,9 +427,6 @@ export function useVideoPlayback({
     };
   }, [
     seek,
-    onSeekTail,
-    onSeekFirstFrame,
-    onSeekError,
     holdFrame,
     releaseFrame,
     reloadToken,

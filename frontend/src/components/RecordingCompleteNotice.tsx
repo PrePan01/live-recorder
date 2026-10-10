@@ -1,3 +1,4 @@
+import { exportClipRange } from "../api/clipQueue";
 import { useEffect, useRef, useState } from "react";
 import { App } from "antd";
 import {
@@ -124,6 +125,7 @@ export default function RecordingCompleteNotice() {
       ) : null}
       {pendingClip ? (
         <ClipExportConfirmModal
+          key={pendingClip.queueRequestId ?? `${pendingClip.recordingId}:${pendingClip.startSecond}:${pendingClip.endSecond}`}
           prompt={pendingClip}
           name={roomName[pendingClip.roomId] ?? pendingClip.roomId}
           onStarted={beginClipExport}
@@ -190,16 +192,23 @@ function ClipExportConfirmModal({
   // 弹框按需挂载，文件名随挂载初始化，不会串上一次的输入。
   const [fileName, setFileName] = useState(prompt.defaultName);
   const [confirming, setConfirming] = useState(false);
+  const submitting = useRef(false);
   const keep = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
     setConfirming(true);
     try {
-      const res = await exportRecordingClip(
-        prompt.recordingId,
-        prompt.startSecond,
-        prompt.endSecond,
-        fileName.trim() || prompt.defaultName,
-      );
-      onStarted(prompt.recordingId, res.clip.id);
+      if (prompt.queueRequestId) {
+        await exportClipRange(prompt.recordingId, prompt.startSecond, prompt.endSecond,
+          fileName.trim() || prompt.defaultName, prompt.queueRequestId);
+        message.success("已提交选区导出");
+      } else {
+        const res = await exportRecordingClip(
+          prompt.recordingId, prompt.startSecond, prompt.endSecond,
+          fileName.trim() || prompt.defaultName,
+        );
+        onStarted(prompt.recordingId, res.clip.id);
+      }
       onFinished();
     } catch (error) {
       // 命名不合法等可修正错误：留在弹框让用户重输，不吞错。
@@ -209,6 +218,7 @@ function ClipExportConfirmModal({
           : "片段导出失败，请重试",
       );
     } finally {
+      submitting.current = false;
       setConfirming(false);
     }
   };

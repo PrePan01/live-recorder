@@ -1,3 +1,4 @@
+import { promptRangeExport } from "../utils/promptRangeExport";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Modal, Select, Typography } from "antd";
 import {
@@ -9,6 +10,14 @@ import {
 } from "@ant-design/icons";
 import mpegts from "mpegts.js";
 import { recordingFileUrl } from "../api/recordings";
+import {
+  createRecordingMarker,
+  deleteRecordingMarker,
+} from "../api/recordings";
+import { useSegmentMarking } from "../hooks/useSegmentMarking";
+import { useSegmentExport } from "../hooks/useSegmentExport";
+import { SegmentExportActions } from "./SegmentExportActions";
+import { SegmentMarkActions } from "./SegmentMarkActions";
 import { fetchDanmakuWindow } from "../api/danmakuWindow";
 import { exportDanmaku } from "../api/danmaku";
 import { pickDirectory } from "../api/config";
@@ -17,8 +26,6 @@ import { describeError } from "../utils/errorMap";
 import { DanmakuLayer } from "./DanmakuLayer";
 import RecordingTrack from "./RecordingTrack";
 import { MarkerNavPanel } from "./MarkerNavPanel";
-import { markerClipName } from "../utils/markerNavigation";
-import { useRecordingStore } from "../stores/recordingStore";
 import DanmakuSettings from "./DanmakuSettings";
 import {
   fetchRecordingGaps,
@@ -40,6 +47,8 @@ interface DanmakuPlayerModalProps {
   title: string;
   /** 完成态文件路径：决定原生 mp4 播放还是 FLV 流式播放。 */
   filePath?: string;
+  /** 整条录像的弹幕状态，不受当前播放时段是否有弹幕影响。 */
+  hasDanmaku?: boolean;
   /** 定位起播秒（缺口定位用）；就绪后跳到该点。 */
   initialSecond?: number;
   onClose: () => void;
@@ -55,13 +64,14 @@ export function DanmakuPlayerModal({
   roomId,
   title,
   filePath,
+  hasDanmaku = false,
   initialSecond = 0,
   onClose,
 }: DanmakuPlayerModalProps) {
   const { message } = App.useApp();
-  const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
   const [exporting, setExporting] = useState(false);
   const exportBusyRef = useRef(false);
+  const previewEnd = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // Modal 的内容会延迟挂载；元素就绪后再绑定流式播放器。
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(
@@ -210,6 +220,121 @@ export function DanmakuPlayerModal({
     [duration, failed, reload],
   );
 
+  const [selectingRange, setSelectingRange] = useState(false);
+  const [editingRange, setEditingRange] = useState<{
+    marker: RecordingMarker;
+    range: [number, number];
+  } | null>(null);
+  const [rangeSaving, setRangeSaving] = useState(false);
+  const savedMarker = useCallback(
+    (marker: RecordingMarker) =>
+      setMarkers((items) => [
+        ...items.filter((m) => m.id !== marker.id),
+        marker,
+      ]),
+    [],
+  );
+  const getPosition = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.seeking || failed)
+      throw new Error("画面尚未就绪");
+    return video.currentTime;
+  }, [failed]);
+  const marking = useSegmentMarking(
+    recordingId,
+    markers,
+    getPosition,
+    savedMarker,
+    failed || duration <= 0 || editingRange != null || selectingRange,
+  );
+  const exports = useSegmentExport(recordingId, markers);
+  const updateMarker = async (
+    marker: RecordingMarker,
+    patch: {
+      text?: string;
+      positionSeconds?: number;
+      endPositionSeconds?: number;
+    },
+  ) => {
+    try {
+      savedMarker(await updateRecordingMarker(recordingId, marker.id, patch));
+    } catch (error) {
+      message.error(
+        error instanceof ApiError
+          ? describeError(error.code, error.message)
+          : "标记保存失败",
+      );
+      throw error;
+    }
+  };
+  const removeMarker = async (marker: RecordingMarker) => {
+    try {
+      await deleteRecordingMarker(recordingId, marker.id);
+      setMarkers((items) => items.filter((m) => m.id !== marker.id));
+      if (editingRange?.marker.id === marker.id) setEditingRange(null);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除失败");
+      throw error;
+    }
+  };
+  const addLabel = useCallback(
+    async (text: string, second: number) => {
+      try {
+        savedMarker(
+          await createRecordingMarker(recordingId, text, second),
+        );
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "标记保存失败");
+        throw error;
+      }
+    },
+    [recordingId, savedMarker, message],
+  );
+  const quickAddLabel = useCallback(() => {
+    const index =
+      markers.reduce(
+        (max, m) =>
+          Math.max(max, Number(/^标记 (\d+)$/.exec(m.text)?.[1] ?? 0)),
+        0,
+      ) + 1;
+    if (!videoRef.current || videoRef.current.readyState < 2 || videoRef.current.seeking || failed) {
+      message.error("播放位置尚未就绪，请稍后重试");
+      return;
+    }
+    void getPosition().then(second => addLabel(`标记 ${index}`, second)).catch(
+      () => undefined,
+    );
+  }, [markers, addLabel, getPosition, failed, message]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (
+        failed ||
+        duration <= 0 ||
+        e.repeat ||
+        !e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.code !== "KeyM" ||
+        (e.target as HTMLElement | null)?.closest(
+          "input,textarea,select,[contenteditable=true]",
+        )
+      )
+        return;
+      e.preventDefault();
+      quickAddLabel();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [quickAddLabel, failed, duration]);
+  useEffect(() => {
+    setEditingRange(null);
+    previewEnd.current = null;
+  }, [recordingId]);
+  const seekManually = (second: number) => {
+    previewEnd.current = null;
+    seek(second);
+  };
+
   const updateDuration = () => {
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.duration) || video.duration <= 0)
@@ -293,7 +418,17 @@ export function DanmakuPlayerModal({
           onPause={() => setPlaying(false)}
           onTimeUpdate={() => {
             const v = videoRef.current;
-            if (v) setCurrent(v.currentTime);
+            if (v) {
+              if (
+                previewEnd.current != null &&
+                v.currentTime >= previewEnd.current
+              ) {
+                v.pause();
+                v.currentTime = previewEnd.current;
+                previewEnd.current = null;
+              }
+              setCurrent(v.currentTime);
+            }
           }}
           onCanPlay={() => {
             updateDuration();
@@ -378,13 +513,67 @@ export function DanmakuPlayerModal({
       </div>
       <div className="lr-danmaku-player__panel">
         <RecordingTrack
+          key={recordingId}
+          onExport={(start, end) => promptRangeExport(recordingId, roomId ?? "", start, end)}
+          selectionDisabled={failed || duration <= 0 || marking.saving || marking.start != null}
+          onSelectionChange={setSelectingRange}
+          segmentActions={
+            <SegmentMarkActions
+              marking={marking}
+              current={current}
+              disabled={failed || duration <= 0 || editingRange != null || selectingRange}
+            >
+              <SegmentExportActions
+                exports={exports}
+                disabled={failed || duration <= 0 || editingRange != null}
+              />
+            </SegmentMarkActions>
+          }
+          temporarySegment={
+            marking.start != null
+              ? [marking.start, marking.end ?? current]
+              : null
+          }
+          rangeSelection={editingRange?.range ?? null}
+          busy={rangeSaving}
+          onSaveRange={async (start, end) => {
+            if (!editingRange || rangeSaving) return;
+            setRangeSaving(true);
+            try {
+              await updateMarker(editingRange.marker, {
+                positionSeconds: start,
+                endPositionSeconds: end,
+              });
+              setEditingRange(null);
+            } catch {
+              /* preserve adjustment for retry */
+            } finally {
+              setRangeSaving(false);
+            }
+          }}
+          onCancelRange={() => setEditingRange(null)}
+          onAdd={addLabel}
+          onQuickAdd={quickAddLabel}
+          onEdit={async (id, text) => {
+            const marker = markers.find((m) => m.id === id);
+            if (marker) await updateMarker(marker, { text });
+          }}
+          onMove={async (id, positionSeconds) => {
+            const marker = markers.find((m) => m.id === id);
+            if (marker) await updateMarker(marker, { positionSeconds });
+          }}
+          onDelete={async (id) => {
+            const marker = markers.find((m) => m.id === id);
+            if (marker) await removeMarker(marker);
+          }}
           elapsedSeconds={duration}
           markers={markers}
-          editable={false}
+          editable
           gaps={videoGaps}
           mode="playback"
           previewMode="history"
           previewSecond={current}
+          getMarkerPosition={getPosition}
           seekDisabled={seekDisabled}
           toolbar={
             <>
@@ -405,7 +594,7 @@ export function DanmakuPlayerModal({
             </>
           }
           onSeekCommit={(target) => {
-            if (typeof target === "number") seek(target);
+            if (typeof target === "number") seekManually(target);
           }}
         >
           <MarkerNavPanel
@@ -422,40 +611,30 @@ export function DanmakuPlayerModal({
                   ? "录像加载中"
                   : undefined
             }
-            onSeek={(second) => seek(second)}
-            onEdit={async (marker, text) => {
-              try {
-                const updated = await updateRecordingMarker(
-                  recordingId,
-                  marker.id,
-                  { text },
-                );
-                setMarkers((previous) =>
-                  previous.map((item) =>
-                    item.id === updated.id ? updated : item,
-                  ),
-                );
-              } catch (error) {
-                message.error(
-                  error instanceof ApiError
-                    ? describeError(error.code, error.message)
-                    : "标记保存失败",
-                );
-                throw error;
-              }
-            }}
-            onExport={
-              roomId
-                ? (startSecond, endSecond, name) =>
-                    setPendingClipExport({
-                      recordingId,
-                      roomId,
-                      startSecond,
-                      endSecond,
-                      defaultName: markerClipName(title, name),
-                    })
-                : undefined
+            onSeek={seekManually}
+            onEdit={(marker, text) => updateMarker(marker, { text })}
+            onRangeEdit={(marker, start, end) =>
+              updateMarker(marker, {
+                positionSeconds: start,
+                endPositionSeconds: end,
+              })
             }
+            onAdjustRange={marking.start != null || marking.saving ? undefined : (marker) =>
+              setEditingRange({
+                marker,
+                range: [marker.positionSeconds, marker.endPositionSeconds!],
+              })
+            }
+            onDelete={removeMarker}
+            onPreview={(marker) => {
+              seek(marker.positionSeconds);
+              previewEnd.current = marker.endPositionSeconds ?? null;
+              void videoRef.current?.play().catch(() => undefined);
+            }}
+            selectingSegments={exports.selecting}
+            selectedSegmentIds={exports.selectedSet}
+            onSelectSegment={exports.select}
+            exportBusy={exports.busy}
           />
         </RecordingTrack>
         <DanmakuSettings
@@ -466,7 +645,7 @@ export function DanmakuPlayerModal({
           onVisibleChange={setVisible}
           onOpacityChange={setOpacity}
           onDensityChange={setDensity}
-          actions={
+          actions={hasDanmaku ? (
             <Button
               size="small"
               className="lr-danmaku-player__export"
@@ -480,7 +659,7 @@ export function DanmakuPlayerModal({
             >
               导出弹幕
             </Button>
-          }
+          ) : undefined}
         />
       </div>
     </Modal>

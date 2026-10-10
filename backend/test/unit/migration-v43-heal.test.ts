@@ -62,7 +62,7 @@ describe('迁移 43 条件补列（gap_count 缺列事故修复）', () => {
     // ① 迁移 43 条件补列
     expect(runMigrations(db)).toBe(1);
     expect(hasGapCount(db)).toBe(true);
-    expect(currentSchemaVersion(db)).toBe(47);
+    expect(currentSchemaVersion(db)).toBe(49);
     // 幂等：再跑不补不报
     expect(runMigrations(db)).toBe(0);
 

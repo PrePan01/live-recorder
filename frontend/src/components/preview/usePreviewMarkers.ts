@@ -8,14 +8,12 @@ import { ApiError } from "../../types/error";
 import type { RecordingMarker } from "../../types/recording";
 import type { Room } from "../../types/room";
 import { describeError } from "../../utils/errorMap";
-import { markerClipName } from "../../utils/markerNavigation";
 
 import type { RefObject } from "react";
-import { useRecordingStore } from "../../stores/recordingStore";
 
 export function usePreviewMarkers(
-  room: Room,
-  live: Room,
+  _room: Room,
+  _live: Room,
   activeRecordingId: string | undefined,
   activeRecordingRef: RefObject<string | undefined>,
   displayPreview: {
@@ -25,9 +23,9 @@ export function usePreviewMarkers(
   },
   trackClosing: boolean,
   trackElapsedSeconds: number,
+  getPosition?: () => Promise<number>,
 ) {
   const { message } = App.useApp();
-  const setPendingClipExport = useRecordingStore((s) => s.setPendingClipExport);
   const [markers, setMarkers] = useState<RecordingMarker[]>([]);
   const addingMarkerRef = useRef(false);
   const [addingMarker, setAddingMarker] = useState(false);
@@ -65,17 +63,6 @@ export function usePreviewMarkers(
     }
   };
 
-  const handleClipExport = (start: number, end: number, name?: string) => {
-    if (!activeRecordingId) return;
-    setPendingClipExport({
-      recordingId: activeRecordingId,
-      roomId: room.id,
-      startSecond: start,
-      endSecond: end,
-      defaultName: markerClipName(live.displayName, name),
-    });
-  };
-
   const quickAddMarker = useCallback(() => {
     if (
       !activeRecordingId ||
@@ -96,11 +83,13 @@ export function usePreviewMarkers(
       displayPreview.mode === "history"
         ? Math.floor(displayPreview.second ?? 0)
         : trackElapsedSeconds;
-    void createRecordingMarker(activeRecordingId, `标记 ${index}`, position)
+    const create = (at: number) =>
+      createRecordingMarker(activeRecordingId, `标记 ${index}`, at);
+    const pending = getPosition ? getPosition().then(create) : create(position);
+    void pending
       .then((marker) => {
         if (activeRecordingRef.current !== activeRecordingId) return;
         setMarkers((items) => [...items, marker]);
-        message.success("已打点，可在标记列表补充文字", 2);
       })
       .catch((error) =>
         message.error(
@@ -123,6 +112,7 @@ export function usePreviewMarkers(
     message,
     trackClosing,
     trackElapsedSeconds,
+    getPosition,
   ]);
 
   useEffect(() => {
@@ -148,7 +138,6 @@ export function usePreviewMarkers(
     markers,
     addingMarker,
     updateMarkers,
-    handleClipExport,
     quickAddMarker,
   };
 }

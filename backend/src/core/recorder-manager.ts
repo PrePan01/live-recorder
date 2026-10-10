@@ -1,3 +1,4 @@
+import { assertSegmentRange, recordedSeconds } from './recording-range.js';
 import { createWriteStream, statSync, type WriteStream } from "node:fs";
 import { access, mkdir, open, rename, unlink, stat } from "node:fs/promises";
 import { once } from "node:events";
@@ -137,7 +138,7 @@ function tailSilenceMs(
  * 片段命名校验：必填 1-120 字、文件名非法字符直接拒绝（用户重输），
  * 兼容误带的视频扩展名（与历史改名同口径去掉后缀）。
  */
-function validateClipName(raw: string, recordingId: string): string {
+export function validateClipName(raw: string, recordingId: string): string {
   const base = (typeof raw === "string" ? raw : "")
     .trim()
     .replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, "")
@@ -179,6 +180,7 @@ interface ActiveSession {
   timestampOffsetMs: number;
   /** 已写入录像的媒体位置，用于历史页标注中断发生在录像何处。 */
   mediaPositionMs?: number;
+  previewOffsetMs?: number | null;
   hlsCursor?: import("../recorder/engine.js").HlsCursor;
   /** 最后一次收到数据的时刻；中断造成的缺失时长从它算起。 */
   lastDataAt: number;
@@ -272,6 +274,7 @@ export class RecorderManager {
    * （标记为"服务重启中断"，并重跑校验 / mp4_after 转封装 / 管线 / 上传）。
    */
   async shutdown(): Promise<void> {
+    await this.services.clipQueueManager?.shutdown();
     this.shuttingDown = true;
     const pending: Promise<void>[] = [this.services.danmaku.shutdown()];
     for (const abort of this.clipExportAborts.values()) abort.abort();
@@ -416,6 +419,15 @@ export class RecorderManager {
       });
     }
     session.gapStartAt = null;
+    // 取到地址或打开文件不代表恢复；收到媒体后再同步记录与监控卡片。
+    const recording = this.services.recordings.update(session.recordingId, {
+      state: "recording",
+      failureReason: null,
+    });
+    this.services.rooms.setState(session.roomId, "recording", { lastError: null });
+    const room = this.services.rooms.get(session.roomId);
+    if (room) this.services.events.emit({ type: "room:updated", data: this.enrichRoom(room) });
+    this.services.events.emit({ type: "recording:updated", data: recording });
   }
 
   /** 新建录制会话：续录/缺失时长相关的状态集中在这里初始化。 */
@@ -481,6 +493,22 @@ export class RecorderManager {
     const now = this.services.clock.now();
     const pendingGap = session.gapStartAt == null ? 0 : Math.max(0, now - session.gapStartAt);
     return Math.max(0, Math.floor((now - Date.parse(session.startedAt) - session.missingMs - pendingGap) / 1000));
+  }
+
+  recordingPreviewOffsetSeconds(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    const shared = this.previewSessions.get(roomId)?.recording;
+    if (!shared || shared.session !== session) return session.previewOffsetMs == null ? null : session.previewOffsetMs / 1000;
+    const offset = shared.normalizer.timestampOffsetMs;
+    return offset == null ? null : offset / 1000;
+  }
+
+  recordingMediaTailSeconds(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    // Range boundaries must use received media, including the last frame during reconnects.
+    return Math.max(0, (session.mediaPositionMs ?? 0) / 1000);
   }
 
   /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
@@ -1889,7 +1917,6 @@ export class RecorderManager {
         session.downloadSpeed.add(bytes, this.services.clock.now());
     });
     session.filePath = filePath;
-    this.services.rooms.setState(room.id, "recording");
     this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
@@ -1930,13 +1957,15 @@ export class RecorderManager {
         if (session.stopRequested) break;
         switch (event.type) {
           case "preview_data": {
+            if (event.recordingOffsetMs !== undefined) session.previewOffsetMs = event.recordingOffsetMs;
             this.preview?.broadcastFrame(room.id, event.chunk);
             break;
           }
           case "file_created": {
+            session.previewOffsetMs = null;
             startedConfirmed = true;
             this.services.recordings.update(recordingId, {
-              state: "recording",
+              state: session.gapStartAt === null ? "recording" : "reconnecting",
               filePath: event.filePath,
             });
             {
@@ -1966,8 +1995,10 @@ export class RecorderManager {
               session.mediaPositionMs = event.mediaTimestampMs;
             }
             session.lastDataAt = now;
-            if (!event.previewForwarded)
+            if (!event.previewForwarded) {
+              session.previewOffsetMs = 0;
               this.preview?.broadcastFrame(room.id, event.chunk);
+            }
             break;
           }
           case "stream_format_changed": {
@@ -2649,6 +2680,8 @@ export class RecorderManager {
 
   /** 片段导出进度快照（0-100）：导出进行中为数字，供历史列表显示「导出中 x%」。 */
   /** 删除联动：取消该片段的在途导出（立即真停，不留孤儿任务）。 */
+  canStartClipExport(): boolean { return !this.shuttingDown && this.clipExports.size < MAX_PARALLEL_CLIP_EXPORTS; }
+
   cancelClipExport(recordingId: string): void {
     const abort = this.clipExportAborts.get(recordingId);
     if (!abort) return;
@@ -2669,15 +2702,29 @@ export class RecorderManager {
     startSecond: number,
     endSecond: number,
     name: string,
+    opts: {
+      /** 队列面放行：已完成录制的已录区间可导（停录不取消已提交的落地面）；直接 API 仍仅录中。 */
+      allowCompleted?: boolean;
+      /** 编码策略快照（队列提交时定格）；缺省=全局设置。 */
+      encodeMode?: 'auto' | 'software';
+      /** 队列路径：等导出链完成再返回（写点落定后 clip 行含编码面真值）。 */
+      awaitCompletion?: boolean;
+      signal?: AbortSignal;
+      onCreated?: (clipId: string) => void;
+    } = {},
   ): Promise<{
     source: import("../types/index.js").Recording;
     clip: import("../types/index.js").Recording;
   }> {
-    const source = this.services.recordings.get(recordingId);
-    if (
-      !source ||
-      (source.state !== "recording" && source.state !== "reconnecting")
-    ) {
+    let currentSource = this.services.recordings.get(recordingId);
+    if (!currentSource) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", {recordingId});
+    const initialSource = currentSource;
+    const sourceOk =
+      initialSource &&
+      (initialSource.state === "recording" ||
+        initialSource.state === "reconnecting" ||
+        (opts.allowCompleted && ["completed", "processing", "awaiting_confirmation"].includes(initialSource.state)));
+    if (!sourceOk) {
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
         "仅录制中的录像可导出选区",
@@ -2701,19 +2748,17 @@ export class RecorderManager {
       );
     }
     const title = validateClipName(name, recordingId);
-    const elapsed = Math.max(
-      0,
-      Math.floor(
-        (this.services.clock.now() - Date.parse(source.startedAt)) / 1000,
-      ),
-    );
-    if (!Number.isFinite(startSecond) || !Number.isFinite(endSecond) || startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
-      throw new AppError(
-        "CONFIG_INVALID",
-        "选区必须在当前已录制时长内，且至少为 1 秒",
-        { recordingId },
-      );
+    const elapsed = await recordedSeconds(this.services, initialSource);
+    if (opts.allowCompleted) {
+      currentSource = this.services.recordings.get(recordingId);
+      if (!currentSource || !currentSource.filePath) throw new AppError('RECORDING_NOT_AVAILABLE', '录像文件不可读', {recordingId});
     }
+    const source = currentSource;
+    if (opts.signal?.aborted) throw new AppError('RECORDING_NOT_AVAILABLE', '已取消', {recordingId});
+    // Validation can await a duration probe; recheck the shared reservation afterwards.
+    if (this.clipExports.has(selectionKey) || !this.canStartClipExport())
+      throw new AppError('CONCURRENT_LIMIT_REACHED', '请等待其他片段导出完成', {recordingId});
+    assertSegmentRange(startSecond, endSecond, elapsed, recordingId);
     if (!source.filePath) {
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
@@ -2752,6 +2797,10 @@ export class RecorderManager {
     this.clipExports.set(selectionKey, clip.id);
     const abort = new AbortController();
     this.clipExportAborts.set(clip.id, abort);
+    const externalAbort = () => abort.abort();
+    opts.signal?.addEventListener('abort', externalAbort, {once:true});
+    if (opts.signal?.aborted) abort.abort();
+    opts.onCreated?.(clip.id);
     const job = (async () => {
       const selectionMs = (endSecond - startSecond) * 1000;
       // 进度节流：整数百分比变化才发、间隔 ≥500ms（onProgress 是高频回调，直接进 SSE 会刷屏）。
@@ -2765,7 +2814,9 @@ export class RecorderManager {
           endSecond,
           {
             signal: abort.signal,
+            // 坑点：对象字面量后键胜——快照参数必须排在全局回退之后，否则执行层快照被覆盖。
             encodingMode: this.services.settings.load()?.encodingMode ?? "auto",
+            ...(opts.encodeMode ? { encodingMode: opts.encodeMode } : {}),
             onEncoder: ({ actualEncoder, fallbackReason }) => {
               if (abort.signal.aborted || !this.services.recordings.get(clip.id)) return;
               const row = this.services.recordings.update(clip.id, { metadata: {
@@ -2899,6 +2950,7 @@ export class RecorderManager {
         }
       } finally {
         // 解除在途占位；源录制全程不碰（导出不停录）。
+        opts.signal?.removeEventListener("abort", externalAbort);
         this.clipExports.delete(selectionKey);
         this.clipExportAborts.delete(clip.id);
         this.clipExportJobs.delete(clip.id);
@@ -2907,6 +2959,23 @@ export class RecorderManager {
     })();
     this.clipExportJobs.set(clip.id, job);
     this.services.events.emit({ type: "recording:updated", data: pending });
+    if (opts.awaitCompletion) {
+      // 队列路径：等导出链写点落定再返回（坑点：exportClip 交互路是火即忘——
+      // 不 await 的调用方拿到的 clip 是写点前旧引用，编码面/终态都会失真）。
+      await job;
+      const settled = this.services.recordings.get(clip.id);
+      if (abort.signal.aborted || !settled || settled.state === 'failed' || settled.state === 'processing' && !settled.endReason) {
+        if (abort.signal.aborted && settled) {
+          this.services.recordings.update(clip.id, {state:'failed', failureReason:new AppError('RECORDING_NOT_AVAILABLE', '片段导出已取消', {recordingId:clip.id}).toObject()});
+          this.services.events.emit({type:'recording:updated', data:this.services.recordings.get(clip.id)!});
+        }
+        throw new AppError('RECORDING_NOT_AVAILABLE', abort.signal.aborted ? '已取消' : settled?.failureReason?.message ?? '片段导出失败', {recordingId:clip.id});
+      }
+      return {
+        source: this.services.recordings.get(recordingId)!,
+        clip: this.services.recordings.get(clip.id) ?? pending,
+      };
+    }
     return {
       source: this.services.recordings.get(recordingId)!,
       clip: pending,
