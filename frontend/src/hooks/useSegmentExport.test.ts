@@ -58,6 +58,8 @@ const markers: RecordingMarker[] = [
 ];
 function render(id = "r", items = markers) {
   h.cursor = 0;
+  // React is mocked above; this helper drives the simulated hook state.
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
   return useSegmentExport(id, items);
 }
 beforeEach(() => {

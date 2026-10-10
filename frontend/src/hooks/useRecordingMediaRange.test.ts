@@ -21,6 +21,8 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup?.(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function start(id = "rec") {
+  // React is mocked above; this helper runs the captured effect explicitly.
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
   useRecordingMediaRange(id, null);
   cleanup = hooks.effect?.();
   await Promise.resolve();

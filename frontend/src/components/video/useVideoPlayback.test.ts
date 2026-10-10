@@ -59,6 +59,8 @@ import { useVideoPlayback } from "./useVideoPlayback";
 
 function render(props: VideoPlayerProps, video: HTMLVideoElement) {
   h.cursor = 0;
+  // React is mocked above; this helper drives the simulated hook lifecycle.
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
   const result = useVideoPlayback(props);
   result.attachVideoRef(video);
   h.effects.splice(0).forEach((effect) => effect());
