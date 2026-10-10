@@ -50,6 +50,7 @@ function localTime(iso: string): string {
 }
 
 export function markerTime(seconds: number): string {
+  seconds = Math.floor(seconds);
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
@@ -104,8 +105,6 @@ async function writeMarkerSidecar(
       ...(marker.endPositionSeconds != null
         ? {
             endTime: markerTime(marker.endPositionSeconds),
-            startSecond: marker.positionSeconds,
-            endSecond: marker.endPositionSeconds,
           }
         : {}),
       createdAt: localTime(marker.createdAt),

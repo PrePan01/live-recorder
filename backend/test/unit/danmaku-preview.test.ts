@@ -103,7 +103,8 @@ it('closing preview preserves recording, and multiple preview leases share one b
   const fake = transport(), instance = manager(fake);
   const dir = await mkdtemp(path.join(tmpdir(), 'lr-live-recording-'));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
-  instance.startForRecording('rec', path.join(dir, 'rec.flv'), room, () => 1000);
+  const file = path.join(dir, 'rec.flv');
+  instance.startForRecording('rec', file, room, () => 1000);
   await vi.waitFor(() => expect(instance.statusFor('rec')?.state).toBe('collecting'));
   instance.subscribePreview(room, token); instance.subscribePreview(room, token + '-2');
   await vi.waitFor(() => expect(instance.readPreview(room.id, token, 0).status.state).toBe('collecting'));
@@ -112,7 +113,14 @@ it('closing preview preserves recording, and multiple preview leases share one b
   expect(instance.readPreview(room.id, token + '-2', 0).status.state).toBe('collecting');
   await instance.unsubscribePreview(room.id, token + '-2');
   expect(fake.active()).toBe(1);
-  fake.publish('还在录制'); await instance.stopForRecording('rec');
+  fake.publish('还在录制');
+  await vi.waitFor(async () => {
+    const data = await instance.readRange('rec', file, 0, 2000);
+    expect(data.messages).toMatchObject([{ tMs: 1000, text: '还在录制' }]);
+  });
+  await instance.stopForRecording('rec');
+  const store = (await DanmakuStore.openExisting(file))!;
+  expect((await store.readRange(0, 2000)).messages).toMatchObject([{ tMs: 1000, text: '还在录制' }]);
   await vi.waitFor(() => expect(fake.active()).toBe(0));
 });
 
@@ -129,6 +137,77 @@ it('expires abandoned leases and immediately cancels a stalled credential reques
   await stalled.unsubscribePreview(room.id, token);
   await stalled.shutdown();
   expect(fake.active()).toBe(0);
+});
+
+it('keeps persisting when preview starts first and is repeatedly hidden and reopened', async () => {
+  const fake = transport(), instance = manager(fake);
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-toggle-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rec.flv');
+  instance.subscribePreview(room, token);
+  await vi.waitFor(() => expect(fake.active()).toBe(1));
+  instance.startForRecording('rec', file, room, () => 1000);
+  await vi.waitFor(() => expect(instance.statusFor('rec')?.state).toBe('collecting'));
+  for (let i = 0; i < 3; i++) {
+    await instance.unsubscribePreview(room.id, token);
+    fake.publish(`隐藏后${i}`);
+    await vi.waitFor(async () => {
+      expect((await instance.readRange('rec', file, 0, 2000)).messages).toHaveLength(i + 1);
+    });
+    instance.subscribePreview(room, token);
+    await vi.waitFor(() => expect(instance.readPreview(room.id, token, 0).status.state).toBe('collecting'));
+  }
+  expect(fake.calls()).toBe(1);
+  await instance.unsubscribePreview(room.id, token);
+  await instance.stopForRecording('rec');
+  const store = (await DanmakuStore.openExisting(file))!;
+  expect((await store.readRange(0, 2000)).messages.map(m => m.text)).toEqual(['隐藏后0', '隐藏后1', '隐藏后2']);
+});
+
+it('closing preview during recording startup does not cancel the pending recording collector', async () => {
+  const fake = transport();
+  let resolveCookie!: (cookie: string) => void;
+  const cookie = new Promise<string>(resolve => { resolveCookie = resolve; });
+  const services = {
+    settings: { load: () => ({ danmaku: { enabled: false } }) },
+    platformCookie: vi.fn().mockResolvedValueOnce('').mockReturnValue(cookie),
+    events: { emit: vi.fn() },
+  } as unknown as Services;
+  const instance = new DanmakuManager(services, () => fake.adapter);
+  cleanup.push(() => instance.shutdown());
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-startup-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rec.flv');
+  instance.subscribePreview(room, token);
+  await vi.waitFor(() => expect(fake.active()).toBe(1));
+  instance.startForRecording('rec', file, room, () => 1000);
+  await vi.waitFor(() => expect(services.platformCookie).toHaveBeenCalledTimes(2));
+  await instance.unsubscribePreview(room.id, token);
+  await vi.waitFor(() => expect(fake.active()).toBe(0));
+  resolveCookie('');
+  await vi.waitFor(() => expect(instance.statusFor('rec')?.state).toBe('collecting'));
+  fake.publish('启动后仍录制');
+  await vi.waitFor(async () => {
+    expect((await instance.readRange('rec', file, 0, 2000)).messages).toMatchObject([{ text: '启动后仍录制' }]);
+  });
+  await instance.stopForRecording('rec');
+  const store = (await DanmakuStore.openExisting(file))!;
+  expect((await store.readRange(0, 2000)).messages).toMatchObject([{ text: '启动后仍录制' }]);
+});
+
+it('room recording preference disables persistence even while preview displays messages', async () => {
+  const fake = transport(), instance = manager(fake);
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-disabled-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const disabledRoom = { ...room, danmakuEnabled: false };
+  instance.startForRecording('rec', path.join(dir, 'rec.flv'), disabledRoom, () => 1000);
+  instance.subscribePreview(disabledRoom, token);
+  await vi.waitFor(() => expect(fake.active()).toBe(1));
+  fake.publish('只展示');
+  await vi.waitFor(() => expect(instance.readPreview(room.id, token, 0).messages).toHaveLength(1));
+  expect(instance.statusFor('rec')).toBeNull();
+  await instance.unsubscribePreview(room.id, token);
+  expect(await readdir(dir)).toEqual([]);
 });
 
 it('rejects excess leases and can recover an expired subscription without retaining prior history', async () => {

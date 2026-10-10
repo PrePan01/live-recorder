@@ -4,7 +4,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { buildServices } from "../../src/core/services.js";
 import { buildApp } from "../../src/api/server.js";
-import { keptMarkerSidecarPath } from "../../src/storage/recording-markers.js";
+import { keptMarkerSidecarPath, markerTime } from "../../src/storage/recording-markers.js";
 let services: ReturnType<typeof buildServices>;
 let app: ReturnType<typeof buildApp>["app"];
 let dir: string;
@@ -50,6 +50,29 @@ const create = (payload: Record<string, unknown>) =>
     payload,
   });
 describe("point labels and persistent range markers share the API", () => {
+  it.each([
+    [0.999, "0秒"],
+    [59.999, "59秒"],
+    [60, "1分"],
+    [78.596000000000004, "1分18秒"],
+    [3599.999, "59分59秒"],
+    [3600.999, "1时"],
+  ])("formats %s seconds without fractions as %s", (seconds, expected) => {
+    expect(markerTime(seconds as number)).toBe(expected);
+  });
+  it("exports integer time text and omits numeric segment boundaries", async () => {
+    services.recordings.update(id, {
+      metadata: { durationMs: 120000, segmentCount: 1, quality: null, size: 5 },
+    });
+    expect((await create({ text: "label", positionSeconds: 78.596000000000004 })).statusCode).toBe(201);
+    expect((await create({ text: "片段 1", positionSeconds: 88.667, endPositionSeconds: 94.75 })).statusCode).toBe(201);
+    const sidecar = JSON.parse(await readFile(keptMarkerSidecarPath(file), "utf8"));
+    expect(sidecar.markers).toEqual([
+      { time: "1分18秒", text: "label", createdAt: expect.any(String), updatedAt: expect.any(String) },
+      { time: "1分28秒", text: "片段 1", endTime: "1分34秒", createdAt: expect.any(String), updatedAt: expect.any(String) },
+    ]);
+    expect(services.recordingMarkers.list(id)[1]).toMatchObject({ positionSeconds: 88.667, endPositionSeconds: 94.75 });
+  });
   it("preserves click-time subsecond precision when saving and editing a point label", async () => {
     const response = await create({ text: "accurate", positionSeconds: 10.125 });
     expect(response.statusCode).toBe(201);
@@ -86,9 +109,11 @@ describe("point labels and persistent range markers share the API", () => {
     );
     expect(sidecar.markers[1]).toMatchObject({
       text: "changed",
-      startSecond: 5,
-      endSecond: 9,
+      time: "5秒",
+      endTime: "9秒",
     });
+    expect(sidecar.markers[1]).not.toHaveProperty("startSecond");
+    expect(sidecar.markers[1]).not.toHaveProperty("endSecond");
     const moved = await app.inject({
       method: "PATCH",
       url: `/api/v1/recordings/${id}/markers/${point.json().marker.id}`,

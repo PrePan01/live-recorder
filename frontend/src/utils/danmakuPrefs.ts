@@ -2,7 +2,7 @@ import { readPref, writePref } from './prefStorage';
 
 const LS_PREFIX = 'lr-danmaku-player';
 
-/** 弹幕显示偏好（播放器与预览共用一套）；内核走 prefStorage 共享容错。 */
+/** 弹幕显示偏好存储；预览与文件回放使用独立的显示开关键。 */
 export function loadDanmakuPref<T>(key: string, fallback: T): T {
   return readPref(`${LS_PREFIX}:${key}`, fallback);
 }

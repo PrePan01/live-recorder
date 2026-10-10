@@ -39,6 +39,22 @@ describe('弹幕显示偏好持久化', () => {
     expect(useDanmakuPrefsStore.getState()).toMatchObject({ visible: false, opacity: 0.9, density: 40 });
   });
 
+  it('预览显示开关与文件回放独立保存和恢复', async () => {
+    const { useDanmakuPrefsStore } = await import('./danmakuPrefsStore');
+    useDanmakuPrefsStore.getState().setPreviewVisible(false);
+    expect(useDanmakuPrefsStore.getState()).toMatchObject({ previewVisible: false, visible: true });
+    expect(saved.get('lr-danmaku-player:previewVisible')).toBe('false');
+    expect(saved.has('lr-danmaku-player:visible')).toBe(false);
+
+    vi.resetModules();
+    const restored = (await import('./danmakuPrefsStore')).useDanmakuPrefsStore;
+    expect(restored.getState()).toMatchObject({ previewVisible: false, visible: true });
+    restored.getState().setPreviewVisible(true);
+    restored.getState().setVisible(false);
+    expect(restored.getState()).toMatchObject({ previewVisible: true, visible: false });
+    expect(saved.get('lr-danmaku-player:previewVisible')).toBe('true');
+  });
+
   it('存储不可用时仍保留当前会话设置', async () => {
     vi.stubGlobal('window', { get localStorage() { throw new Error('unavailable'); } });
     const { useDanmakuPrefsStore } = await import('./danmakuPrefsStore');

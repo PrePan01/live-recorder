@@ -3,20 +3,24 @@ import { loadDanmakuPref, saveDanmakuPref, DANMUKU_DENSITY_OPTIONS } from '../ut
 
 interface DanmakuPrefsState {
   visible: boolean;
+  previewVisible: boolean;
   opacity: number;
   density: number;
   setVisible: (value: boolean) => void;
+  setPreviewVisible: (value: boolean) => void;
   setOpacity: (value: number) => void;
   setDensity: (value: number) => void;
 }
 
 const savedVisible = loadDanmakuPref<unknown>('visible', true);
+const savedPreviewVisible = loadDanmakuPref<unknown>('previewVisible', true);
 const savedOpacity = loadDanmakuPref<unknown>('opacity', 0.9);
 const savedDensity = loadDanmakuPref<unknown>('density', 40);
 
-/** 所有预览共用显示偏好；修改立即保存，应用启动时恢复原有偏好键。 */
+/** 预览与文件回放分别保存显示开关，共用透明度和密度；均不影响录制采集。 */
 export const useDanmakuPrefsStore = create<DanmakuPrefsState>((set) => ({
   visible: typeof savedVisible === 'boolean' ? savedVisible : true,
+  previewVisible: typeof savedPreviewVisible === 'boolean' ? savedPreviewVisible : true,
   opacity: typeof savedOpacity === 'number' && Number.isFinite(savedOpacity)
     && savedOpacity >= 0.2 && savedOpacity <= 1 ? savedOpacity : 0.9,
   density: typeof savedDensity === 'number' && DANMUKU_DENSITY_OPTIONS.includes(savedDensity)
@@ -24,6 +28,10 @@ export const useDanmakuPrefsStore = create<DanmakuPrefsState>((set) => ({
   setVisible(value) {
     saveDanmakuPref('visible', value);
     set({ visible: value });
+  },
+  setPreviewVisible(value) {
+    saveDanmakuPref('previewVisible', value);
+    set({ previewVisible: value });
   },
   setOpacity(value) {
     saveDanmakuPref('opacity', value);

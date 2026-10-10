@@ -21,12 +21,12 @@ export function usePreviewDanmaku(
   previewVideo: HTMLVideoElement | null,
   previewFrameGenerationRef: RefObject<number | null>,
 ) {
-  // 显示偏好与回看共用；隐藏时释放直播订阅，录制采集独立继续。
+  // 预览显示开关独立于文件回放；隐藏时释放直播订阅，录制采集独立继续。
   const {
-    visible: danmakuVisible,
+    previewVisible: danmakuVisible,
     opacity: danmakuOpacity,
     density: danmakuDensity,
-    setVisible: setDanmakuVisible,
+    setPreviewVisible: setDanmakuVisible,
     setOpacity: setDanmakuOpacity,
     setDensity: setDanmakuDensity,
   } = useDanmakuPrefsStore();
