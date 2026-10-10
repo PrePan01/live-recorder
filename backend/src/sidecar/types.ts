@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.2.5';
+export const APP_VERSION = '1.3.0';
 export const API_VERSION = 'v1' as const;
 export const DEFAULT_HOST = '127.0.0.1';
 
