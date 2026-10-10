@@ -302,6 +302,9 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
 
 test('draft lookup uses the release list without a redundant by-tag request', () => {
   const remote = new ReleaseRemote('unused', state.version);
+  // This fixture has no internal checkpoint. Model that explicitly so a CI
+  // GITHUB_SHA does not trigger an unrelated Actions artifact lookup.
+  remote.journalBundle = () => null;
   const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
   const reads = [];
   remote.api = (path) => {
