@@ -111,6 +111,7 @@ export function DanmakuPlayerModal({
     () => (videoRef.current?.currentTime ?? 0) * 1000,
     [],
   );
+  const getDanmakuVideo = useCallback(() => videoRef.current, []);
 
   const reload = useCallback(
     async (atMs: number) => {
@@ -456,6 +457,7 @@ export function DanmakuPlayerModal({
           messages={messages}
           gaps={gaps}
           getTimeMs={getTimeMs}
+          getVideo={getDanmakuVideo}
           maxBullets={density}
           opacity={opacity}
           visible={visible}

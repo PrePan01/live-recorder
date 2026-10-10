@@ -1,142 +1,185 @@
 import type { DanmakuGap, DanmakuMessage } from '../types/danmaku';
 
-const SPEED = 0.16;
+const SPEED = 0.16; // CSS pixels per media millisecond; all lanes share the same speed.
 const ROW_HEIGHT = 28;
 const FONT = '18px system-ui, sans-serif';
-const PAD = 6;
-const CACHE_BYTES = 8 * 1024 * 1024;
-interface Sprite { canvas: HTMLCanvasElement; width: number; bytes: number }
-interface Bullet { id: string; text: string; tMs: number; width: number; row: number; sprite: Sprite | null | undefined }
+const GAP = 24;
+const MAX_ADMISSIONS = 4;
+const MAX_TEXT_WIDTH = 4096;
+const MAX_ACTIVE = 80;
+// Bound promoted text layers by CSS area as well as count (device scaling is browser-owned).
+const MAX_LAYER_AREA = 1024 * 1024;
+
 export interface RenderInput {
   messages: DanmakuMessage[];
   gaps: DanmakuGap[];
   maxBullets: number;
   opacity: number;
 }
+interface Bullet {
+  id: string;
+  width: number;
+  row: number;
+  node: HTMLElement;
+  animation: Animation;
+  fade?: Animation;
+}
 
-/** Text and blur are rasterized once; animation only composites bounded bitmap sprites. */
+/** JS schedules admissions only. Transform animations own the entire visible lifetime. */
 export class DanmakuRenderer {
-  private bullets: Bullet[] = [];
-  private cursor = 0;
-  private rows: number[] = [];
-  private spawned = new Set<string>();
+  private active = new Map<string, Bullet>();
+  private rows: (Bullet | undefined)[] = [];
+  private seen = new Set<string>();
   private messages: DanmakuMessage[] | undefined;
-  private cache = new Map<string, Sprite>();
-  private cacheBytes = 0;
+  private pending: DanmakuMessage[] = [];
+  private cursor = 0;
+  private restoreTime = NaN;
   private lastTime = NaN;
-  private lastOpacity = NaN;
-  private dirty = true;
-  private painted = false;
+  private rate = 0;
+  private layerArea = 0;
   private width = 1;
   private height = 1;
-  private dpr = 1;
+  private widths = new Map<string, number>();
+  private container: HTMLElement;
+  private measure: (text: string) => number;
 
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private createCanvas: () => HTMLCanvasElement;
-  constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D,
-    createCanvas: () => HTMLCanvasElement = () => document.createElement('canvas')) {
-    this.canvas = canvas; this.ctx = ctx; this.createCanvas = createCanvas;
+  constructor(container: HTMLElement, measure?: (text: string) => number) {
+    this.container = container;
+    const ctx = measure ? null : container.ownerDocument.createElement('canvas').getContext('2d');
+    if (ctx) ctx.font = FONT;
+    this.measure = measure ?? (text => ctx?.measureText(text).width ?? text.length * 18);
   }
 
-  resize(width: number, height: number, dpr: number) {
-    dpr = Math.max(1, Math.min(2, dpr || 1));
-    width = Math.max(1, Math.floor(width)); height = Math.max(1, Math.floor(height));
-    if (width === this.width && height === this.height && dpr === this.dpr) return;
-    if (dpr !== this.dpr) {
-      this.cache.clear(); this.cacheBytes = 0;
-      for (const bullet of this.bullets) bullet.sprite = undefined;
+  resize(width: number, height: number) {
+    width = Math.max(1, width); height = Math.max(1, height);
+    if (width === this.width && height === this.height) return;
+    const oldWidth = this.width;
+    this.width = width; this.height = height;
+    for (const bullet of this.active.values()) {
+      if (bullet.row >= this.rowCount()) { this.remove(bullet); continue; }
+      if (width === oldWidth) continue;
+      // Resize is the only operation that retargets a running trajectory. Preserve its x.
+      const x = oldWidth - this.age(bullet) * SPEED;
+      const effect = bullet.animation.effect as KeyframeEffect;
+      effect.setKeyframes(this.keyframes(bullet.width));
+      effect.updateTiming({ duration: this.duration(bullet.width) });
+      bullet.animation.currentTime = Math.max(0, (width - x) / SPEED);
     }
-    this.width = width; this.height = height; this.dpr = dpr;
-    this.canvas.width = Math.ceil(width * dpr); this.canvas.height = Math.ceil(height * dpr);
-    this.canvas.style.width = `${width}px`; this.canvas.style.height = `${height}px`;
-    this.dirty = true;
   }
 
   reset() {
-    this.bullets = []; this.cursor = 0; this.rows = []; this.spawned.clear();
-    this.lastTime = NaN; this.dirty = true;
+    for (const bullet of this.active.values()) this.remove(bullet);
+    this.rows = []; this.seen.clear(); this.messages = undefined;
+    this.pending = []; this.cursor = 0; this.restoreTime = this.lastTime = NaN;
   }
 
-  private sprite(text: string, width?: number): Sprite | null {
-    const existing = this.cache.get(text);
-    if (existing) {
-      this.cache.delete(text); this.cache.set(text, existing);
-      return existing;
-    }
-    this.ctx.font = FONT;
-    const textWidth = width ?? this.ctx.measureText(text).width;
-    const pixelWidth = Math.ceil((textWidth + PAD * 2) * this.dpr);
-    const pixelHeight = Math.ceil((ROW_HEIGHT + PAD * 2) * this.dpr);
-    const bytes = pixelWidth * pixelHeight * 4;
-    // Very long messages use the bounded main canvas instead of huge bitmap allocations.
-    if (bytes > CACHE_BYTES / 2 || pixelWidth > 8192) return null;
-    const pinned = new Set(this.bullets.map(b => b.sprite));
-    for (const [key, sprite] of this.cache) {
-      if (this.cacheBytes + bytes <= CACHE_BYTES && this.cache.size < 128) break;
-      if (pinned.has(sprite)) continue;
-      this.cacheBytes -= sprite.bytes; this.cache.delete(key);
-    }
-    // Active bullets pin their images; fall back rather than exceeding the total budget.
-    if (this.cacheBytes + bytes > CACHE_BYTES || this.cache.size >= 128) return null;
-    const canvas = this.createCanvas(); canvas.width = pixelWidth; canvas.height = pixelHeight;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.scale(this.dpr, this.dpr); ctx.font = FONT; ctx.fillStyle = '#fff';
-    ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 3;
-    ctx.fillText(text, PAD, PAD + 18);
-    const result = { canvas, width: textWidth, bytes };
-    this.cache.set(text, result); this.cacheBytes += bytes;
-    return result;
-  }
+  destroy() { this.reset(); this.widths.clear(); }
 
-  render(t: number, input: RenderInput) {
-    const { messages, gaps, maxBullets, opacity } = input;
-    if (messages !== this.messages) {
-      this.messages = messages; this.cursor = 0;
-      const ids = new Set([...messages.map(m => m.id), ...this.bullets.map(b => b.id)]);
-      for (const id of this.spawned) if (!ids.has(id)) this.spawned.delete(id);
-      this.dirty = true;
-    }
-    if (!Number.isFinite(t)) {
-      if (this.painted) this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.painted = false; return;
-    }
-    if (Number.isFinite(this.lastTime) && t < this.lastTime) this.reset();
-    if (t === this.lastTime && opacity === this.lastOpacity && !this.dirty) return;
-    this.lastTime = t; this.lastOpacity = opacity;
-    this.bullets = this.bullets.filter(b => this.width - (t - b.tMs) * SPEED + b.width >= 0);
-    while (this.cursor < messages.length && (messages[this.cursor].tMs == null || messages[this.cursor].tMs! <= t)) {
-      const m = messages[this.cursor++];
-      if (m.tMs == null || m.unmappable || this.spawned.has(m.id)) continue;
-      this.spawned.add(m.id);
-      if (this.bullets.length >= maxBullets || gaps.some(g => m.tMs! >= g.fromMs && m.tMs! < g.toMs)) continue;
-      this.ctx.font = FONT;
-      const width = this.ctx.measureText(m.text).width;
-      if ((t - m.tMs) * SPEED > this.width + width) continue;
-      const rowCount = Math.max(1, Math.floor(this.height / ROW_HEIGHT));
-      let row = -1;
-      for (let r = 0; r < rowCount; r++) if (this.rows[r] == null || this.rows[r] <= m.tMs) { row = r; break; }
-      if (row < 0) continue;
-      this.rows[row] = m.tMs + (width + 24) / SPEED;
-      this.bullets.push({ id: m.id, text: m.text, tMs: m.tMs, width, row, sprite: this.sprite(m.text, width) });
-    }
-    // An empty overlay, paused video, or unloaded media need no repeated canvas uploads.
-    if (!this.bullets.length && !this.painted) { this.dirty = false; return; }
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.save(); this.ctx.scale(this.dpr, this.dpr); this.ctx.globalAlpha = opacity;
-    this.ctx.imageSmoothingEnabled = false;
-    for (const bullet of this.bullets) {
-      const x = Math.round((this.width - (t - bullet.tMs) * SPEED) * this.dpr) / this.dpr;
-      const sprite = bullet.sprite !== undefined ? bullet.sprite : (bullet.sprite = this.sprite(bullet.text, bullet.width));
-      if (sprite) this.ctx.drawImage(sprite.canvas, x - PAD, bullet.row * ROW_HEIGHT - PAD,
-        sprite.canvas.width / this.dpr, sprite.canvas.height / this.dpr);
+  setPlaybackRate(rate: number) {
+    rate = Number.isFinite(rate) && rate > 0 ? rate : 0;
+    if (rate === this.rate) return;
+    this.rate = rate;
+    for (const bullet of this.active.values()) {
+      if (rate === 0) bullet.animation.pause();
       else {
-        this.ctx.font = FONT; this.ctx.fillStyle = '#fff';
-        // Avoid the expensive per-frame blur even for oversized uncached text.
-        this.ctx.fillText(bullet.text, x, bullet.row * ROW_HEIGHT + 18);
+        bullet.animation.updatePlaybackRate(rate);
+        if (bullet.animation.playState === 'paused') bullet.animation.play();
       }
     }
-    this.ctx.restore(); this.painted = this.bullets.length > 0; this.dirty = false;
+  }
+
+  tick(t: number, input: RenderInput, rate: number) {
+    if (!Number.isFinite(t)) {
+      this.container.style.visibility = 'hidden'; this.setPlaybackRate(0); return;
+    }
+    this.container.style.visibility = 'visible';
+    this.container.style.opacity = String(Math.max(0, Math.min(1, input.opacity)));
+    if (Number.isFinite(this.lastTime) && t < this.lastTime - 250) this.reset();
+    this.lastTime = t;
+    if (!Number.isFinite(this.restoreTime)) this.restoreTime = t;
+    this.setPlaybackRate(rate);
+    if (input.messages !== this.messages) {
+      this.messages = input.messages;
+      const ids = new Set(input.messages.map(m => m.id));
+      for (const id of this.seen) if (!ids.has(id) && !this.active.has(id)) this.seen.delete(id);
+      // Filter once on a window update, rather than repeatedly walking already played history.
+      this.pending = input.messages.filter(m => !this.seen.has(m.id));
+      this.cursor = 0;
+    }
+    // Finished callbacks may be delayed by a long task. Their retained end position is offscreen.
+    for (const bullet of this.active.values()) {
+      if (bullet.animation.playState === 'finished') this.remove(bullet);
+    }
+    const limit = Math.min(MAX_ACTIVE, Math.max(0, input.maxBullets));
+    while (this.active.size > limit) this.remove(Array.from(this.active.values()).at(-1)!);
+    let admitted = 0;
+    while (admitted < MAX_ADMISSIONS && this.cursor < this.pending.length) {
+      const message = this.pending[this.cursor];
+      if (message.tMs != null && message.tMs > t) break;
+      this.cursor++;
+      if (this.seen.has(message.id)) continue;
+      this.seen.add(message.id);
+      if (message.tMs == null || message.unmappable || this.active.size >= limit
+        || input.gaps.some(g => message.tMs! >= g.fromMs && message.tMs! < g.toMs)) continue;
+      const restoring = message.tMs < this.restoreTime;
+      const age = restoring ? t - message.tMs : 0;
+      // A late delivery starts at the edge; old messages outside the query's visible lifetime expire.
+      if ((t - message.tMs) * SPEED > this.width + MAX_TEXT_WIDTH) continue;
+      const text = message.text.replace(/[\r\n]/g, ' ');
+      let width = this.widths.get(text);
+      if (width == null) {
+        width = Math.min(MAX_TEXT_WIDTH, Math.ceil(this.measure(text)) + 2);
+        if (this.widths.size >= 256) this.widths.delete(this.widths.keys().next().value!);
+        this.widths.set(text, width);
+      }
+      if ((t - message.tMs) * SPEED >= this.width + width) continue;
+      if (this.layerArea + width * ROW_HEIGHT > MAX_LAYER_AREA) continue;
+      let row = -1;
+      for (let r = 0; r < this.rowCount(); r++) {
+        const ahead = this.rows[r];
+        if (!ahead || (this.age(ahead) - age) * SPEED >= ahead.width + GAP) { row = r; break; }
+      }
+      if (row < 0) continue;
+      this.admit(message.id, text, width, row, age, restoring);
+      admitted++;
+    }
+  }
+
+  private rowCount() { return Math.max(1, Math.floor(this.height / ROW_HEIGHT)); }
+  private age(bullet: Bullet) { return Number(bullet.animation.currentTime ?? 0); }
+  private duration(width: number) { return (this.width + width + 6) / SPEED; }
+  private keyframes(width: number): Keyframe[] {
+    return [{ transform: `translate3d(${this.width}px,0,0)` }, { transform: `translate3d(${-width - 6}px,0,0)` }];
+  }
+  private admit(id: string, text: string, width: number, row: number, age: number, restoring: boolean) {
+    const node = this.container.ownerDocument.createElement('span');
+    node.textContent = text;
+    node.className = 'lr-danmaku-bullet';
+    Object.assign(node.style, {
+      position: 'absolute', left: '0', top: `${row * ROW_HEIGHT}px`, width: `${width}px`,
+      font: FONT, lineHeight: `${ROW_HEIGHT}px`, whiteSpace: 'pre', color: '#fff',
+      textShadow: '0 1px 2px rgba(0,0,0,.7)', pointerEvents: 'none', userSelect: 'none',
+      overflow: 'hidden', textOverflow: 'ellipsis', willChange: 'transform',
+      transform: `translate3d(${this.width}px,0,0)`,
+    });
+    this.container.appendChild(node);
+    const animation = node.animate(this.keyframes(width), {
+      duration: this.duration(width), easing: 'linear', fill: 'both',
+    });
+    animation.playbackRate = this.rate || 1;
+    if (age > 0) animation.currentTime = age;
+    if (this.rate === 0) animation.pause();
+    const bullet: Bullet = { id, width, row, node, animation };
+    if (restoring) bullet.fade = node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, fill: 'forwards' });
+    this.active.set(id, bullet); this.rows[row] = bullet;
+    this.layerArea += width * ROW_HEIGHT;
+    animation.onfinish = () => this.remove(bullet);
+  }
+  private remove(bullet: Bullet) {
+    if (!this.active.delete(bullet.id)) return;
+    this.layerArea -= bullet.width * ROW_HEIGHT;
+    if (this.rows[bullet.row] === bullet) this.rows[bullet.row] = undefined;
+    bullet.animation.onfinish = null;
+    bullet.animation.cancel(); bullet.fade?.cancel(); bullet.node.remove();
   }
 }

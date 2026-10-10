@@ -439,6 +439,7 @@ export default function PreviewModal({
                 getTimeMs={
                   seekPlayback ? getDanmakuTimeMs : liveDanmaku.getTimeMs
                 }
+                getVideo={() => previewVideo}
                 maxBullets={danmakuDensity}
                 opacity={danmakuOpacity}
                 resetKey={

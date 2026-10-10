@@ -4,7 +4,7 @@ import {
   DeleteOutlined,
   ForwardOutlined,
   ExportOutlined,
-  PlusOutlined,
+  TagOutlined,
   PushpinOutlined,
 } from "@ant-design/icons";
 import { Button, Input, Modal, Popconfirm, Tooltip } from "antd";
@@ -157,7 +157,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
             {editable && (
               <Button
                 size="small"
-                icon={<PlusOutlined />}
+                icon={<TagOutlined />}
                 disabled={quickAddDisabled}
                 onClick={() => openEdit()}
               >

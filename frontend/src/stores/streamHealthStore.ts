@@ -44,7 +44,6 @@ let generation = 0;
 let inFlight: Promise<void> | null = null;
 let pendingRemovals: Set<string> | null = null;
 
-/** 多个卡片和预览共享一次批量快照；新 SSE 数据不能被旧快照覆盖。 */
 export function refreshStreamHealth(): Promise<void> {
   if (inFlight) return inFlight;
   const base = EndpointResolver.base;
@@ -84,7 +83,6 @@ export function selectStreamHealth(
   return recordingId ? (state.byRecording[recordingId] ?? null) : null;
 }
 
-/** 语义态 → 显示词（悬停/无障碍面）。 */
 export function streamHealthText(health: StreamHealth): string {
   switch (health.state) {
     case "good":

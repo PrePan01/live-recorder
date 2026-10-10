@@ -218,7 +218,7 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
         </div>
         <div className="lr-settings-section">
           <Typography.Title className="lr-settings-section__title" level={4}>
-            录制行为
+            录制
           </Typography.Title>
           <Form.Item
             label="录制完成后询问是否保留"
