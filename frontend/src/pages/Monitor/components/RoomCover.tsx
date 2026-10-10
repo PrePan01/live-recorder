@@ -19,12 +19,19 @@ import { hoverPreview } from "../../../utils/hoverPreview";
 
 const VideoPlayer = lazy(() => import("../../../components/VideoPlayer"));
 
-// Parent keys this component by the cover URL, so a new cover gets a fresh load state.
+// Keep the last loaded cover visible while its replacement loads in the background.
 export default function RoomCover({ room }: { room: Room }) {
   const { message } = App.useApp();
-  const [status, setStatus] = useState<"loading" | "ready" | "failed">(
-    room.liveCoverUrl ? "loading" : "failed",
-  );
+  const src = room.liveCoverUrl
+    ? liveCoverSrc(room.id, room.liveCoverUrl)
+    : undefined;
+  const [displayedSrc, setDisplayedSrc] = useState<string>();
+  const [failedSrc, setFailedSrc] = useState<string>();
+  const status = displayedSrc
+    ? "ready"
+    : src && failedSrc !== src
+      ? "loading"
+      : "failed";
   const [saving, setSaving] = useState(false);
   const pending = useRef(false);
   const coverRef = useRef<HTMLDivElement>(null);
@@ -64,9 +71,6 @@ export default function RoomCover({ room }: { room: Room }) {
   useEffect(() => {
     if (room.lastLiveStatus !== "live" || status !== "ready") stopPreview();
   }, [room.lastLiveStatus, status, stopPreview]);
-  const src = room.liveCoverUrl
-    ? liveCoverSrc(room.id, room.liveCoverUrl)
-    : undefined;
   const save = async () => {
     if (pending.current || status !== "ready") return;
     pending.current = true;
@@ -110,26 +114,42 @@ export default function RoomCover({ room }: { room: Room }) {
         onKeyDown={(event) => event.stopPropagation()}
         aria-busy={saving || status === "loading"}
       >
-        {src ? (
+        {displayedSrc ? (
           <>
-            {status === "ready" ? (
-              <img
-                className="lr-room-cover__backdrop"
-                src={src}
-                alt=""
-                aria-hidden="true"
-              />
-            ) : null}
+            <img
+              className="lr-room-cover__backdrop"
+              src={displayedSrc}
+              alt=""
+              aria-hidden="true"
+            />
             <img
               className="lr-room-cover__image"
-              src={src}
+              src={displayedSrc}
               alt={`${room.displayName} 的直播封面`}
-              loading="lazy"
               decoding="async"
-              onLoad={() => setStatus("ready")}
-              onError={() => setStatus("failed")}
             />
           </>
+        ) : null}
+        {src && src !== displayedSrc ? (
+          <img
+            key={src}
+            src={src}
+            alt=""
+            aria-hidden="true"
+            style={{
+              visibility: "hidden",
+              position: "absolute",
+              width: 1,
+              height: 1,
+            }}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => {
+              setDisplayedSrc(src);
+              setFailedSrc(undefined);
+            }}
+            onError={() => setFailedSrc(src)}
+          />
         ) : null}
         {previewing ? (
           <div

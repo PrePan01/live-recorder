@@ -256,7 +256,7 @@ export const RoomCard = memo(function RoomCard({
         {onAir && layout === "card" ? (
           <>
             <RoomCover
-              key={`${room.id}:${room.liveCoverUrl ?? ""}`}
+              key={room.id}
               room={room}
             />
           </>
