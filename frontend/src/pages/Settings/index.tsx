@@ -51,6 +51,7 @@ import { ApiError } from "../../types/error";
 import { formatBytes } from "../../utils/format";
 import type { SettingsInput } from "../../types/settings";
 import { recentErrorDiagnostics } from "../../utils/errorDiagnostics";
+import { useTagStore } from "../../stores/tagStore";
 
 const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
 const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
@@ -135,7 +136,7 @@ export default function SettingsPage() {
           ? "bilibili-cookie"
           : hash === "#pipeline"
             ? "pipeline"
-          : null;
+            : null;
     if (!target) return;
     const frame = requestAnimationFrame(() => {
       document.getElementById(target)?.scrollIntoView({
@@ -154,7 +155,10 @@ export default function SettingsPage() {
         checkIntervalSec: { ...settings.checkIntervalSec },
         quality: settings.quality,
         autoRecord: settings.autoRecord ?? false,
+        danmaku: { enabled: settings.danmaku?.enabled ?? false },
+        encodingMode: settings.encodingMode ?? 'auto',
         confirmAfterComplete: settings.confirmAfterComplete ?? false,
+        preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
         highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
         highlightEnabled: settings.highlightEnabled ?? true,
         theme: settings.theme ?? preference,
@@ -198,7 +202,6 @@ export default function SettingsPage() {
       setChecking(false);
     }
   };
-
 
   const persist = async (
     values: SettingsInput,
@@ -339,7 +342,11 @@ export default function SettingsPage() {
         parts.push(`录制历史 ${result.recordings.recordings} 条`);
       }
       message.success(`导入完成：${parts.join("，")}`);
-      await load();
+      await Promise.all([
+        load(),
+        useRoomStore.getState().fetchRooms(true),
+        useTagStore.getState().load(),
+      ]);
     } catch (e) {
       message.error(
         e instanceof ApiError
@@ -375,7 +382,7 @@ export default function SettingsPage() {
             导出配置
           </Button>
           <Popconfirm
-            title="导入将应用备份中的设置并合并房间/告警等数据，当前设置可能被覆盖。选择备份文件？"
+            title="导入将应用备份中的设置并合并数据，当前设置可能被覆盖"
             okText="选择文件"
             cancelText="取消"
             onConfirm={() => fileRef.current?.click()}

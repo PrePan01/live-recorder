@@ -76,6 +76,11 @@ export class FlvTimestampNormalizer {
   /** 本段最后一个媒体时间戳（毫秒，含续录偏移）。 */
   get hasMedia(): boolean { return this.rawByTrack.size > 0; }
 
+  /** Exact translation from the preview stream clock to the written file. */
+  get timestampOffsetMs(): number | null {
+    return this.base == null ? null : (this.options.offsetMs ?? 0) - this.base + this.epochShift;
+  }
+
   get lastTimestampMs(): number {
     return this.maxTs;
   }
@@ -232,12 +237,20 @@ export class FlvTimestampNormalizer {
  * FLV 标签时间戳在写盘/转发前归一化（抖音等 CDN 绝对 PTS → 相对），保证时长与可播正确。
  */
 export class StreamRecordingEngine implements RecordingEngine {
+  private downloadObserver: ((bytes: number) => void) | undefined;
+
+  setDownloadObserver(observer: (bytes: number) => void): void {
+    this.downloadObserver = observer;
+  }
   private stopped = false;
   private recordingActive = false;
   private controller: AbortController | null = null;
   /** 本段写出的最大媒体时间戳；随 error/completed 上报，供上层计算下一段续录偏移。 */
   private lastTimestampMs = 0;
   private hlsCursor: HlsCursor | undefined;
+  private dataIntervalMs = 0;
+
+  expectedDataIntervalMs(): number { return this.dataIntervalMs; }
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -259,6 +272,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
     this.stopped = false;
+    this.dataIntervalMs = input.format === "hls" ? 10_000 : 0;
     // 本段一个字节都没拿到就中断时，把传入的偏移原样带回，
     // 避免上层把续录偏移重置为 0、导致下一段时间轴跳回开头。
     this.lastTimestampMs = resume?.timestampOffsetMs ?? 0;
@@ -366,13 +380,17 @@ export class StreamRecordingEngine implements RecordingEngine {
         const receivedAt = Date.now();
         const previousTs = normalizer.lastTimestampMs;
         const chunk = Buffer.from(value);
+        this.downloadObserver?.(chunk.length);
         // 写盘归一器会原地修改时间戳，观看支路须先处理自己的副本。
         // 每个新上游都发送 FLV 头并从本段起播，绝不沿用文件的续录偏移。
-        if (previewNormalizer) {
-          for (const part of previewNormalizer.push(Buffer.from(chunk)))
-            yield { type: "preview_data", chunk: part };
-        }
+        const previewParts = previewNormalizer?.push(Buffer.from(chunk));
         const parts = normalizer.push(chunk);
+        if (previewParts && previewNormalizer) {
+          const fileOffset = normalizer.timestampOffsetMs;
+          const previewOffset = previewNormalizer.timestampOffsetMs;
+          const recordingOffsetMs = fileOffset == null || previewOffset == null ? null : fileOffset - previewOffset;
+          for (const part of previewParts) yield { type: "preview_data", chunk: part, recordingOffsetMs };
+        }
         health.received(normalizer.lastTimestampMs > previousTs, Boolean(outputPath || this.recordingActive) && normalizer.hasMedia);
         const normalized = Buffer.concat(parts);
         const tags = pendingTags.splice(0);
@@ -443,6 +461,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         const text = await this.fetchText(input.url, input.headers);
         quietMs += performance.now() - waitingAt;
         const parsed = parseM3u8(text, input.url);
+        this.dataIntervalMs = (parsed.targetDuration || 10) * 1000;
         if (parsed.mediaSequence !== null && this.hlsCursor &&
             parsed.discontinuitySequence !== this.hlsCursor.discontinuitySequence &&
             parsed.mediaSequence + parsed.segments.length - 1 < this.hlsCursor.sequence) {
@@ -561,6 +580,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         finally { health.pause(); }
         health.check();
         if (result.done) break;
+        this.downloadObserver?.(result.value.byteLength);
         health.received(false);
         yield Buffer.from(result.value);
       }

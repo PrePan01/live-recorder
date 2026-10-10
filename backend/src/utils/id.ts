@@ -14,7 +14,7 @@ export function ulid(now: number = Date.now()): string {
   return time + rand;
 }
 
-export function newId(prefix: 'room' | 'rec' | 'lev' | 'alr' | 'tag' | 'mark' | 'diag' | 'act' | 'prun' | 'part' | 'upl' | 'sch' | 'exp' | 'gap'): string {
+export function newId(prefix: 'room' | 'rec' | 'lev' | 'alr' | 'tag' | 'mark' | 'diag' | 'act' | 'prun' | 'part' | 'upl' | 'sch' | 'exp' | 'gap' | 'cq'): string {
   return `${prefix}_${ulid()}`;
 }
 

@@ -11,38 +11,26 @@ import {
   Typography,
 } from "antd";
 import {
+  PlayCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
   FolderOpenOutlined,
   InfoCircleOutlined,
-  PlayCircleOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../types/error";
-import { playRecording } from "../api/recordings";
 import { failurePrimaryText } from "./failureReason";
 import { describeError } from "./errorMap";
 import { formatBytes, formatDurationMs, formatTime } from "./format";
-import {
-  IntegrityTag,
-  RecordingStateTag,
-} from "../components/StatusTags";
+import { IntegrityTag, RecordingStateTag } from "../components/StatusTags";
 import { PlatformLogoTag } from "../components/PlatformLogo";
-import {
-  describeEndReason,
-  isInterruptedEnd,
-} from "./recordingEndReason";
-import {
-  uploadPhaseLabel,
-  uploadPhaseText,
-} from "./uploadProgress";
-import {
-  describeUploadError,
-  classifyUploadError,
-} from "./uploadError";
+import { describeEndReason, isInterruptedEnd } from "./recordingEndReason";
+import { uploadPhaseLabel, uploadPhaseText } from "./uploadProgress";
+import { describeUploadError, classifyUploadError } from "./uploadError";
 import type { Recording } from "../types/recording";
+import { recordingOutcome } from "./recordingOutcome";
 import GapDetail from "../pages/History/components/GapDetail";
 import EditableRecordingTitle from "../pages/History/components/EditableRecordingTitle";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
@@ -61,6 +49,7 @@ export interface RecordingColumnsDeps {
   setRenameValue: Dispatch<SetStateAction<string>>;
   setPipelineRec: Dispatch<SetStateAction<Recording | null>>;
   retryUploadFor: (recordingId: string) => Promise<void>;
+  openDanmakuPlayer: (r: Recording, atSecond?: number) => void;
 }
 
 export function buildRecordingColumns(
@@ -86,7 +75,9 @@ export function buildRecordingColumns(
       width: 200,
       ellipsis: true,
       render: (_id: string, r) => (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}
+        >
           <PlatformLogoTag platform={r.platform} />
           <Typography.Text ellipsis style={{ flex: 1, minWidth: 0 }}>
             {roomLabel(r)}
@@ -125,7 +116,9 @@ export function buildRecordingColumns(
       width: 85,
       render: (_, r) =>
         // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
-        r.metadata?.durationMs != null ? formatDurationMs(r.metadata.durationMs) : "—",
+        r.metadata?.durationMs != null
+          ? formatDurationMs(r.metadata.durationMs)
+          : "—",
     },
     {
       title: "清晰度",
@@ -150,15 +143,27 @@ export function buildRecordingColumns(
     {
       title: "完整性",
       dataIndex: "integrity",
-      width: 80,
+      width: 160,
       render: (v: Recording["integrity"], r) => (
-        <Space size={4}>
+        <Space orientation="vertical" size={4}>
           <IntegrityTag
             integrity={v}
             integrityState={r.integrityState}
             verifyQueuePosition={r.verifyQueuePosition}
             integrityError={r.integrityError}
           />
+          {recordingOutcome(r) ? (
+            <Typography.Text
+              type={
+                (r.gapSummary?.totalMissingMs ?? r.missingMs ?? 0) > 0
+                  ? "warning"
+                  : "secondary"
+              }
+              style={{ fontSize: 12 }}
+            >
+              {recordingOutcome(r)}
+            </Typography.Text>
+          ) : null}
           {v === "failed" && r.failureReason ? (
             <Tooltip title={`${r.failureReason.message}`}>
               <WarningOutlined style={{ color: "#ff4d4f" }} />
@@ -337,11 +342,17 @@ export function buildRecordingColumns(
       dataIndex: "failureReason",
       width: 180,
       render: (f: Recording["failureReason"], r: Recording) => {
-        const missingSeconds =
-          r.missingMs && r.missingMs >= 1000
-            ? Math.round(r.missingMs / 1000)
-            : 0;
-        if (!f && missingSeconds === 0) return "-";
+        const gap = r.gapSummary ?? {
+          gapCount: r.gapCount ?? 0,
+          totalMissingMs: r.missingMs ?? 0,
+          estimated: true,
+        };
+        if (
+          !f &&
+          !(gap && (gap.gapCount > 0 || gap.totalMissingMs > 0)) &&
+          !r.systemSleepInterrupted
+        )
+          return "-";
         return (
           <Space direction="vertical" size={0}>
             {f ? (
@@ -349,11 +360,24 @@ export function buildRecordingColumns(
                 {failurePrimaryText(f)}
               </Typography.Text>
             ) : null}
-            {missingSeconds > 0 ? (
+            {r.systemSleepInterrupted &&
+            f?.code !== "SYSTEM_SLEEP_INTERRUPTED" ? (
+              <Typography.Text type="warning">
+                系统休眠，录制中断
+              </Typography.Text>
+            ) : null}
+            {gap && (gap.gapCount > 0 || gap.totalMissingMs > 0) ? (
               <GapDetail
                 recordingId={r.id}
-                missingSeconds={missingSeconds}
-                gapCount={r.gapCount}
+                recordingStartedAt={r.startedAt}
+                missingMs={gap.totalMissingMs}
+                gapCount={gap.gapCount}
+                estimated={gap.estimated}
+                onLocate={
+                  r.state === "completed" && r.filePath
+                    ? (sec) => deps.openDanmakuPlayer(r, sec)
+                    : undefined
+                }
               />
             ) : null}
           </Space>
@@ -366,7 +390,7 @@ export function buildRecordingColumns(
       fixed: "right",
       render: (_, r) => (
         <Space size={0} wrap>
-          <Button
+          {/*<Button
             size="small"
             type="link"
             icon={<PlayCircleOutlined />}
@@ -386,7 +410,18 @@ export function buildRecordingColumns(
             }}
           >
             播放
-          </Button>
+          </Button>*/}
+          <Tooltip title="播放录像">
+            <Button
+              size="small"
+              type="link"
+              icon={<PlayCircleOutlined />}
+              disabled={r.state !== "completed" || !r.filePath}
+              onClick={() => deps.openDanmakuPlayer(r)}
+            >
+              播放
+            </Button>
+          </Tooltip>
           <Button
             size="small"
             type="link"

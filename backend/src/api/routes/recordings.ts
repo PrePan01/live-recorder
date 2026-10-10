@@ -1,3 +1,4 @@
+import { recordedSeconds, assertSegmentRange } from '../../core/recording-range.js';
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
@@ -5,10 +6,12 @@ import { open, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
 import { renameRecordingWithBuffer, removeRecordingBuffer } from "../../recorder/buffered-writer.js";
+import { DanmakuStore } from "../../danmaku/store.js";
+import { exportDanmakuFiles } from "../../danmaku/export.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
 import type { Services } from "../../core/services.js";
-import type { RecordingState } from "../../types/index.js";
+import type { Recording, RecordingState } from "../../types/index.js";
 import { CsvExportWorkerPool } from "../csv-export-worker-pool.js";
 import {
   moveMarkerSidecar,
@@ -90,118 +93,87 @@ export function registerRecordingRoutes(
       ? null
       : new CsvExportWorkerPool(services.db.name);
 
-  const activeMarkerRecording = (id: string) => {
-    const recording = services.recordings.get(id);
-    if (!recording)
-      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
-        recordingId: id,
-      });
-    if (recording.state !== "recording" && recording.state !== "reconnecting") {
-      throw new AppError(
-        "RECORDING_NOT_AVAILABLE",
-        "仅录制中的录像可编辑标记",
-        { recordingId: id },
-      );
-    }
-    return recording;
+  const editableMarkerRecording = (id: string) => {
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", { recordingId: id });
+    if (!["recording", "reconnecting", "completed"].includes(rec.state))
+      throw new AppError("RECORDING_NOT_AVAILABLE", "录像当前不可编辑标记", { recordingId: id });
+    return rec;
   };
-
+  const markerText = (text: unknown, id: string) => {
+    if (typeof text !== "string" || !text.trim() || text.trim().length > 200)
+      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", { recordingId: id });
+    return text.trim();
+  };
+  app.get("/api/v1/recordings/:id/marker-position", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = editableMarkerRecording(id);
+    const durationSeconds = await recordedSeconds(services, rec);
+    const lag = Number((req.query as { lagSeconds?: string }).lagSeconds ?? 0);
+    if (!Number.isFinite(lag) || lag < 0) throw new AppError("CONFIG_INVALID", "播放位置非法", { recordingId: id });
+    return reply.send({ durationSeconds, positionSeconds: Math.max(0, durationSeconds - lag),
+      previewOffsetSeconds: services.manager.recordingPreviewOffsetSeconds(rec.roomId, id),
+    });
+  });
   app.get("/api/v1/recordings/:id/markers", async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!services.recordings.get(id))
-      throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", {
-        recordingId: id,
-      });
+    if (!services.recordings.get(id)) throw new AppError("RESOURCE_NOT_FOUND", "录制不存在", { recordingId: id });
     return reply.send({ markers: services.recordingMarkers.list(id) });
   });
-
   app.post("/api/v1/recordings/:id/markers", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const recording = activeMarkerRecording(id);
-    const body = (req.body ?? {}) as {
-      text?: unknown;
-      positionSeconds?: unknown;
-    };
-    const text = typeof body.text === "string" ? body.text.trim() : "";
-    if (!text || text.length > 200)
-      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
-        recordingId: id,
-      });
-    // 位置：客户端可带当前预览播放头秒（与 PATCH 同款校验）；不带则回退「当前已录尾」（直播语义不变）。
-    const recordedSeconds = Math.max(
-      0,
-      Math.floor(
-        (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
-      ),
-    );
-    const rawPosition = body.positionSeconds;
-    if (
-      rawPosition !== undefined &&
-      (typeof rawPosition !== "number" ||
-        !Number.isInteger(rawPosition) ||
-        rawPosition < 0 ||
-        rawPosition > recordedSeconds)
-    ) {
-      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
-        recordingId: id,
-      });
-    }
-    const positionSeconds =
-      rawPosition !== undefined ? rawPosition : recordedSeconds;
-    const marker = services.recordingMarkers.create(id, positionSeconds, text);
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    const rec = editableMarkerRecording(id);
+    const body = (req.body ?? {}) as { text?: unknown; positionSeconds?: unknown; endPositionSeconds?: unknown };
+    const text = markerText(body.text, id);
+    const segment = body.endPositionSeconds !== undefined && body.endPositionSeconds !== null;
+    if (rec.state === "completed" && body.positionSeconds === undefined)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择标记位置", { recordingId: id });
+    const tail = await recordedSeconds(services, rec);
+    const position = body.positionSeconds ?? Math.floor(tail);
+    if (segment) assertSegmentRange(position, body.endPositionSeconds, tail, id);
+    else if (typeof position !== "number" || !Number.isFinite(position) || position < 0 || position > tail)
+      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", { recordingId: id });
+    const marker = services.recordingMarkers.create(id, position as number, text, segment ? body.endPositionSeconds as number : null);
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.status(201).send({ marker });
   });
-
   app.patch("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
     const { id, markerId } = req.params as { id: string; markerId: string };
-    const recording = activeMarkerRecording(id);
-    const body = (req.body ?? {}) as {
-      text?: unknown;
-      positionSeconds?: unknown;
-    };
-    const text = typeof body.text === "string" ? body.text.trim() : undefined;
-    const positionSeconds = body.positionSeconds;
-    if (text !== undefined && (!text || text.length > 200))
-      throw new AppError("CONFIG_INVALID", "标记文字需为 1-200 个字符", {
-        recordingId: id,
-      });
-    if (
-      positionSeconds !== undefined &&
-      (typeof positionSeconds !== "number" ||
-        !Number.isInteger(positionSeconds) ||
-        positionSeconds < 0 ||
-        positionSeconds >
-          Math.floor(
-            (services.clock.now() - Date.parse(recording.startedAt)) / 1000,
-          ))
-    ) {
-      throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", {
-        recordingId: id,
-      });
+    const rec = editableMarkerRecording(id);
+    const existing = services.recordingMarkers.get(id, markerId);
+    if (!existing) throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", { recordingId: id });
+    const body = (req.body ?? {}) as { text?: unknown; positionSeconds?: unknown; endPositionSeconds?: unknown };
+    if (body.text === undefined && body.positionSeconds === undefined && body.endPositionSeconds === undefined)
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择需要修改的标记内容", { recordingId: id });
+    const text = body.text === undefined ? undefined : markerText(body.text, id);
+    if (body.endPositionSeconds !== undefined && (existing.endPositionSeconds == null || body.endPositionSeconds === null))
+      throw new AppError("CONFIG_INVALID", "标记类型不可更改", { recordingId: id });
+    if (body.positionSeconds !== undefined || body.endPositionSeconds !== undefined) {
+      const tail = await recordedSeconds(services, rec);
+      const position = body.positionSeconds ?? existing.positionSeconds;
+      if (existing.endPositionSeconds != null) assertSegmentRange(position, body.endPositionSeconds ?? existing.endPositionSeconds, tail, id);
+      else if (typeof position !== "number" || !Number.isFinite(position) || position < 0 || position > tail)
+        throw new AppError("CONFIG_INVALID", "标记时间必须在当前已录制范围内", { recordingId: id });
     }
     const marker = services.recordingMarkers.update(id, markerId, {
       ...(text !== undefined ? { text } : {}),
-      ...(positionSeconds !== undefined
-        ? { positionSeconds: positionSeconds as number }
-        : {}),
+      ...(body.positionSeconds !== undefined ? { positionSeconds: body.positionSeconds as number } : {}),
+      ...(body.endPositionSeconds !== undefined ? { endPositionSeconds: body.endPositionSeconds as number } : {}),
     });
-    if (!marker)
-      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
-        recordingId: id,
-      });
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.send({ marker });
   });
-
   app.delete("/api/v1/recordings/:id/markers/:markerId", async (req, reply) => {
     const { id, markerId } = req.params as { id: string; markerId: string };
-    const recording = activeMarkerRecording(id);
-    if (!services.recordingMarkers.remove(id, markerId))
-      throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", {
-        recordingId: id,
-      });
-    await syncMarkerSidecar(recording, services.recordingMarkers.list(id));
+    const rec = editableMarkerRecording(id);
+    if (!services.recordingMarkers.remove(id, markerId)) throw new AppError("RESOURCE_NOT_FOUND", "标记不存在", { recordingId: id });
+    await syncMarkerSidecar(rec, services.recordingMarkers.list(id)).catch((error) => {
+      app.log.error({ error, recordingId: id }, "标记已保存，但标签文件同步失败");
+    });
     return reply.status(204).send();
   });
 
@@ -231,6 +203,14 @@ export function registerRecordingRoutes(
     );
     return reply.status(201).send(result);
   });
+  async function hasDanmakuRows(filePath: string | null | undefined): Promise<boolean> {
+    if (!filePath) return false;
+    const { stat } = await import("node:fs/promises");
+    const store = await DanmakuStore.openExisting(filePath);
+    const info = store ? await stat(store.filePath).catch(() => null) : null;
+    return Boolean(info && info.size > 0);
+  }
+
   app.get("/api/v1/recordings", async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const page = Number(q.page ?? "1");
@@ -292,10 +272,22 @@ export function registerRecordingRoutes(
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
     });
+    const gapSummaries = services.recordings.gapSummaries(rawResult.items.map(item => item.id));
     const result = {
       ...rawResult,
-      items: rawResult.items.map((item) => ({
+      items: await Promise.all(rawResult.items.map(async (item) => ({
         ...item,
+        // 弹幕记账：sidecar 存在且非空=该录像有弹幕（列表入口灰/亮的依据）。
+        hasDanmaku: await hasDanmakuRows(item.filePath),
+        // 中断记账：次数与累计缺失分开出（历史列「N 次中断·共 X 秒」直接渲染）。
+        gapSummary: (() => {
+          const detail = gapSummaries.get(item.id);
+          return {
+            gapCount: detail?.gapCount ?? item.gapCount ?? 0,
+            totalMissingMs: Math.max(item.missingMs ?? 0, detail?.totalMissingMs ?? 0),
+            estimated: item.missingMs == null,
+          };
+        })(),
         verifyQueuePosition: services.verificationQueue.positionOf(item.id),
         progressPercent:
           item.origin === "clip" && item.state === "processing"
@@ -313,9 +305,77 @@ export function registerRecordingRoutes(
             : services.manager.clipExportProgress(item.id),
         // 跳播索引状态：仅录制中的 FLV 行携带（ready/building/missing）。
         ...(services.seek.seekInfo(item) ?? {}),
-      })),
+      }))),
     };
     return reply.send(result);
+  });
+
+  app.post("/api/v1/recordings/:id/danmaku-export", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec?.filePath || rec.state !== "completed") {
+      throw new AppError("RECORDING_NOT_AVAILABLE", "请选择已完成的录像");
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { directory, durationMs, width, height, opacity, density } = body;
+    if (typeof directory !== "string" || !directory.trim() ||
+      typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) || durationMs <= 0 ||
+      typeof width !== "number" || !Number.isInteger(width) || width < 1 || width > 16384 ||
+      typeof height !== "number" || !Number.isInteger(height) || height < 1 || height > 16384 ||
+      typeof opacity !== "number" || !Number.isFinite(opacity) || opacity < 0.2 || opacity > 1 ||
+      typeof density !== "number" || ![20, 40, 80].includes(density)) {
+      throw new AppError("CONFIG_INVALID", "弹幕导出参数无效");
+    }
+    try {
+      const result = await exportDanmakuFiles(rec.filePath, { directory, durationMs, width, height, opacity, density });
+      return reply.send(result);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("RECORDING_WRITE_FAILED", "弹幕导出失败，请检查目录权限和磁盘空间");
+    }
+  });
+
+  app.get("/api/v1/recordings/:id/danmaku", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rec = services.recordings.get(id);
+    if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", { recordingId: id });
+    const q = req.query as Record<string, string | undefined>;
+    const fromMs = Number(q.fromMs ?? 0);
+    const endMs = q.toMs === undefined ? Number.MAX_SAFE_INTEGER : Number(q.toMs);
+    if (!Number.isFinite(fromMs) || fromMs < 0 || !Number.isFinite(endMs) || endMs < fromMs) throw new AppError("CONFIG_INVALID", "弹幕时间区间无效");
+    // 缺省窗=全量（裸参不带 toMs 时按上界过滤会恒空——默认取最大值兜底）。
+    const toMs = endMs;
+    const limit = q.limit ? Number(q.limit) : undefined;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20000)) throw new AppError("CONFIG_INVALID", "弹幕条数必须为 1-20000");
+    if (q.cursor !== undefined && (!/^\d+$/.test(q.cursor) || !Number.isSafeInteger(Number(q.cursor)))) throw new AppError("CONFIG_INVALID", "弹幕游标无效");
+    const includeUnmappable = q.includeUnmappable === "1";
+    const result = await services.danmaku.readRange(
+      id,
+      rec.filePath ?? "",
+      fromMs,
+      toMs,
+      { ...(limit ? { limit } : {}), ...(q.cursor !== undefined ? { cursor: q.cursor } : {}), includeUnmappable },
+    );
+    return reply.send(result);
+  });
+
+  function estimatePositionMs(
+    rec: { startedAt: string } | null | undefined,
+    gapStartedAt: string,
+    previousMissingMs: number,
+  ): number {
+    if (!rec?.startedAt) return 0;
+    const pos = Date.parse(gapStartedAt) - Date.parse(rec.startedAt) - previousMissingMs;
+    return Math.max(0, pos);
+  }
+
+  app.get("/api/v1/recordings/quality", async (_req, reply) => {
+    return reply.send({ health: services.quality.snapshotAll() });
+  });
+
+  app.get("/api/v1/recordings/:id/quality", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send(services.quality.snapshot(id));
   });
 
   app.get("/api/v1/recordings/:id/gaps", async (req, reply) => {
@@ -325,7 +385,47 @@ export function registerRecordingRoutes(
       throw new AppError("RECORDING_NOT_AVAILABLE", "录制不存在", {
         details: { recordingId: id },
       });
-    return reply.send({ gaps: services.recordings.listGaps(id) });
+    const rawGaps = services.recordings.listGaps(id);
+    let previousMissingMs = 0;
+    const gaps = rawGaps.map((g) => {
+      let mediaPositionMs: number | null = null;
+      try {
+        mediaPositionMs = g.evidence
+          ? ((JSON.parse(g.evidence) as { mediaPositionMs?: number }).mediaPositionMs ?? null)
+          : null;
+      } catch {
+        mediaPositionMs = null;
+      }
+      if (mediaPositionMs !== null && (!Number.isFinite(mediaPositionMs) || mediaPositionMs < 0)) mediaPositionMs = null;
+      const positionMs = mediaPositionMs ?? estimatePositionMs(rec, g.startedAt, previousMissingMs);
+      previousMissingMs += Math.max(0, g.missingMs);
+      return {
+        evidence: g.evidence,
+        id: g.id,
+        startedAt: g.startedAt,
+        endedAt: g.endedAt,
+        missingMs: g.missingMs,
+        kind: g.kind,
+        // 位置=证据里的媒体锚点；旧记录无锚=墙钟估算位（FE 悬停带「约」）。
+        positionMs,
+        estimated: mediaPositionMs === null,
+      };
+    });
+    const detailSum = gaps.reduce((acc, g) => acc + g.missingMs, 0);
+    const totalMissingMs = Math.max(rec?.missingMs ?? 0, detailSum);
+    // 两账分立：文件状态只判文件面（可播/损坏），缺失一律走 gapSummary——不再混判打脸。
+    const fileStatus =
+      rec?.integrity === "verified" ? "playable" : rec?.integrity === "failed" ? "corrupt" : "unknown";
+    return reply.send({
+      gaps,
+      summary: {
+        gapCount: gaps.length,
+        totalMissingMs,
+        unlocatedMissingMs: Math.max(0, totalMissingMs - detailSum),
+        fileStatus,
+        integrity: rec?.integrity ?? "unknown",
+      },
+    });
   });
 
   // 跳播起流：从索引命中关键帧字节偏移直通 FLV 字节流（FLV 头+序列头+标签到已写尾部即止）。
@@ -593,6 +693,7 @@ export function registerRecordingRoutes(
       const nextPath = join(dir, nextName);
       try {
         await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
+        await services.danmaku.moveSidecar(id, rec.filePath, nextPath);
         await moveMarkerSidecar(rec.filePath, nextPath);
         await moveSeekIndexSidecar(rec.filePath, nextPath);
         services.recordings.update(id, {
@@ -631,6 +732,9 @@ export function registerRecordingRoutes(
     }
     await services.manager.cancelHighlightExport(id);
     await services.manager.stopActiveSessionForDeletion(id);
+    await services.danmaku.stopForRecording(id);
+    await services.danmaku.removeSidecar(rec.filePath);
+    await services.clipQueueManager.removeByRecording(id);
     services.pipeline.cancel(id, "录制已删除");
     services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
@@ -772,6 +876,9 @@ export function registerRecordingRoutes(
       }
       await services.manager.cancelHighlightExport(id);
       await services.manager.stopActiveSessionForDeletion(id);
+      await services.danmaku.stopForRecording(id);
+      await services.danmaku.removeSidecar(rec.filePath);
+      await services.clipQueueManager.removeByRecording(id);
       services.pipeline.cancel(id, "录制已删除");
       services.manager.cancelClipExport(id);
       if (rec.filePath) {

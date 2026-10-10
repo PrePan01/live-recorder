@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import { WebSocket } from 'ws';
 import { buildApp } from '../../src/api/server.js';
@@ -64,12 +64,12 @@ describe('SSE events', () => {
   it('streams room:updated frames to subscribers', async () => {
     const server = await listen();
     const stream = openEventStream(server.url);
-    await new Promise((r) => setTimeout(r, 100));
+    await vi.waitFor(() => expect(stream.frames.some((f) => f.includes(': connected'))).toBe(true));
 
     const injectCreate = await server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/555', displayName: 'sse' });
     server.services.events.emit({ type: 'room:updated', data: injectCreate });
-    await new Promise((r) => setTimeout(r, 100));
-    expect(stream.frames.some((f) => f.includes('event: room:updated') && f.includes('"id":"room_'))).toBe(true);
+    await vi.waitFor(() => expect(stream.frames.some((f) =>
+      f.includes('event: room:updated') && f.includes(injectCreate.id))).toBe(true));
 
     stream.req.destroy();
     await stream.done;

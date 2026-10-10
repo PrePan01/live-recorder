@@ -32,8 +32,9 @@ interface PreviewRoom {
 const PREVIEW_HEADER_MAX = 64 * 1024;
 
 /** 近期尾部滚动缓冲上限：接近实时位置的最近媒体（含近期关键帧），让重开预览可从实时附近起播且时间戳连续。 */
-const PREVIEW_TAIL_MAX = 1024 * 1024;
-const PREVIEW_SOCKET_MAX_PENDING_BYTES = 4 * 1024 * 1024;
+// 1 MB 连常见高清直播的一个 GOP 都放不下，晚加入会反复等下一个关键帧。
+export const PREVIEW_TAIL_MAX = 16 * 1024 * 1024;
+const PREVIEW_SOCKET_MAX_PENDING_BYTES = PREVIEW_TAIL_MAX + 4 * 1024 * 1024;
 /**
  * 关闭/重开弹窗、播放器自愈重连时，旧 WebSocket 会短暂先于新连接关闭。
  * 保留上游流一小段时间，避免“停止旧流”和“启动新流”交错后新客户端无帧可收。
@@ -188,6 +189,8 @@ export class PreviewManager {
       try {
         ws.send(bootstrap);
         if (room.header && room.tail.length > 0) ws.send(Buffer.concat(room.tail));
+        // 后续网络块可能从标签中间开始；补齐已收到的前缀，保持 FLV 字节连续。
+        if (room.header && room.pendingTags.length > 0) ws.send(room.pendingTags);
       } catch {
         // 写失败由 close 事件回收
       }
@@ -444,7 +447,12 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
     // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：启动 preview-only 拉流
     // （#163：预览=纯观看，不触发录制、不生成录制文件），让预览有数据流。异步执行不阻塞 upgrade。
     if (!isRecording && isLive) {
-      void services.manager.ensurePreviewStream(room.id);
+      void services.manager.ensurePreviewStream(room.id).then(() => {
+        // Hover previews can leave while platform URL resolution is still pending.
+        // The earlier empty-room callback cannot stop a stream that did not exist yet.
+        if (!preview.hasClients(room.id))
+          return services.manager.stopPreviewStream(room.id);
+      }).catch(() => undefined);
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       preview.addClient(roomId, ws);

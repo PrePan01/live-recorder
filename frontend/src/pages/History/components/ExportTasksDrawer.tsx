@@ -9,6 +9,7 @@ import {
 } from "antd";
 import { formatTime } from "../../../utils/format";
 import { EXPORT_STATUS_COLOR } from "../../../utils/historyUtils";
+import { encoderLabel } from "../../../utils/encoderText";
 import type { ExportJob } from "../../../types/export";
 
 export default function ExportTasksDrawer({
@@ -37,6 +38,12 @@ export default function ExportTasksDrawer({
             <div key={j.id}>
               <Space size={8} wrap>
                 <Tag color={EXPORT_STATUS_COLOR[j.status]}>{j.status}</Tag>
+                {j.actualEncoder ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    编码方式：{encoderLabel(j.actualEncoder)}
+                    {j.fallbackReason ? `（${j.fallbackReason}）` : ""}
+                  </Typography.Text>
+                ) : null}
                 {j.status === "running" ? (
                   <Progress
                     percent={j.progress}

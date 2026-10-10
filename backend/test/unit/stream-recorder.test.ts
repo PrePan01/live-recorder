@@ -38,6 +38,33 @@ function mockFetch(
 }
 
 describe("StreamRecordingEngine (HTTP)", () => {
+  it("samples raw network chunks before FLV normalization, including incomplete data", async () => {
+    const flv = buildMinimalFlv();
+    const chunks = [flv.subarray(0, 5), flv.subarray(5), Buffer.from([9, 0, 0])];
+    const engine = new StreamRecordingEngine(mockFetch(200, () => chunksBody(chunks)));
+    const received: number[] = [];
+    engine.setDownloadObserver(bytes => received.push(bytes));
+    for await (const _event of engine.start({ url: "https://example.test/live.flv", format: "flv" }, null)) {
+      // Drain the stream; sampling must include bytes that never become complete FLV tags.
+    }
+    expect(received).toEqual(chunks.map(chunk => chunk.length));
+  });
+
+  it("samples HLS playlist and segment downloads without recounting staged data", async () => {
+    const playlist = "#EXTM3U\n#EXTINF:1,\nsegment.ts\n#EXT-X-ENDLIST\n";
+    const segment = Buffer.alloc(188, 0x47);
+    const fetcher = (async (url: string | URL | Request) => new Response(
+      String(url).endsWith("segment.ts") ? segment : playlist,
+    )) as typeof fetch;
+    const engine = new StreamRecordingEngine(fetcher);
+    let received = 0;
+    engine.setDownloadObserver(bytes => { received += bytes; });
+    for await (const _event of engine.start({ url: "https://example.test/live.m3u8", format: "hls" }, null)) {
+      // Drain the stream through HLS staging and replay.
+    }
+    expect(received).toBe(Buffer.byteLength(playlist) + segment.length);
+  });
+
   it("writes the stream to disk and yields data/completed", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-engine-"));
     const out = path.join(dir, "a.flv");
@@ -710,7 +737,10 @@ describe('recording and preview timelines', () => {
     for await (const event of engine.start({ url: 'https://x/live.flv', format: 'flv' }, out, {
       append: true, timestampOffsetMs: 2_400_000,
     })) {
-      if (event.type === 'preview_data') previews.push(event.chunk);
+      if (event.type === 'preview_data') {
+        previews.push(event.chunk);
+        if (event.recordingOffsetMs != null) expect(event.recordingOffsetMs).toBe(2_400_000);
+      }
       if (event.type === 'data') {
         expect(event.previewForwarded).toBe(true);
         disk.push(event.chunk);
@@ -741,6 +771,14 @@ describe('recording continuity regressions', () => {
     b[11] = type === 9 ? 0x17 : 0xaf; b[12] = sequence ? 0 : 1; b.writeUInt32BE(17, 17); return b;
   }
   const ts = (b: Buffer) => b.readUIntBE(4, 3) + b[7]! * 0x1000000;
+
+  it('maps a pre-existing preview clock to a new recording clock exactly', () => {
+    const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });
+    expect(n.timestampOffsetMs).toBeNull();
+    n.push(Buffer.concat([head, tag(0, 9, true), tag(45000), tag(55000)]));
+    expect(n.timestampOffsetMs).toBe(-45000);
+    expect(55000 + n.timestampOffsetMs!).toBe(n.lastTimestampMs);
+  });
 
   it('preserves audio/video alignment and rebases a source clock reset without unsigned underflow', () => {
     const n = new FlvTimestampNormalizer({ rebaseFromFirstMedia: true });

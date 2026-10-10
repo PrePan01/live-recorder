@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { availableParallelism } from 'node:os';
 import { discardTemp, finalizeMp4, runFfmpegTracked, type FfmpegRunOptions } from './ffmpeg-run.js';
+import { encodeWithFallback } from './hw-encode.js';
+
 import { uniqueTargetPath } from '../storage/file-organizer.js';
 import { encodingWorkQueue } from './media-work-queue.js';
 export { exportClipFile } from './clip-export.js';
@@ -134,6 +136,8 @@ export async function exportAudioToMp3(inputPath: string): Promise<AudioExportRe
 }
 
 export interface CompressResult {
+  actualEncoder?: string;
+  fallbackReason?: string | null;
   outPath: string;
   sizeBytes: number;
 }
@@ -178,24 +182,63 @@ export async function compressOrRemux(
   crf: number | null,
   options: FfmpegRunOptions = {},
 ): Promise<CompressResult | null> {
+  const mode = options.encodingMode ?? "auto";
   if (crf === null) return null;
   const preferredPath = inputPath.replace(/\.(flv|ts|mp4)$/i, '_c.mp4');
   if (preferredPath === inputPath) return null;
   const outPath = await unusedPath(preferredPath);
   const tempPath = `${outPath}.part`;
   await discardTemp(tempPath);
-  const res = await encodingWorkQueue.run(
-    () => runFfmpeg(['-y', '-i', inputPath, '-c:v', 'libx264', '-threads', String(ffmpegThreadCount()), '-crf', String(crf), '-preset', 'medium', '-c:a', 'aac', '-f', 'mp4', tempPath], options),
-    options.signal,
-    () => options.onProgress?.({ outTimeMs: 0, speed: null }),
-  ).catch(() => ({ ok: false, code: null, stderr: 'Media job cancelled' }));
-  if (!res.ok) {
+  const outcome = await encodeWithFallback({
+    mode,
+    ...(options.onEncoder ? { onEncoder: options.onEncoder } : {}),
+    crf,
+    ...(options.signal ? { signal: options.signal } : {}),
+    onWaiting: () => options.onProgress?.({ outTimeMs: 0, speed: null }),
+    isCancelled: () => options.signal?.aborted ?? false,
+    attempt: async (encoder, quality) => {
+      await discardTemp(tempPath);
+      let progressed = false;
+      const runOptions: FfmpegRunOptions = {
+        ...options,
+        onProgress: (info) => {
+          if (info.outTimeMs > 0) progressed = true;
+          options.onProgress?.(info);
+        },
+      };
+      const res = await encodingWorkQueue.run(
+        () => runFfmpeg(
+          ['-y', '-i', inputPath, '-c:v', encoder, ...quality, '-threads', String(ffmpegThreadCount()), '-c:a', 'aac', '-f', 'mp4', tempPath],
+          runOptions,
+        ),
+        options.signal,
+        () => options.onProgress?.({ outTimeMs: 0, speed: null }),
+      ).catch(() => ({ ok: false, code: null, stderr: 'Media job cancelled' }));
+      if (options.signal?.aborted) return '中途失败';
+      if (!res.ok) {
+        // 失败分类：进程没起来=启动失败；起来了但零进度=无进度；中途死=中途失败。
+        if (res.code === null && !progressed && /cancel/i.test(res.stderr)) return '启动失败';
+        return progressed ? '中途失败' : res.code === null ? '启动失败' : '无进度';
+      }
+      if (!(await finalizeMp4(tempPath, outPath))) return '产物校验失败';
+      return null;
+    },
+  });
+  if (options.signal?.aborted) {
     await discardTemp(tempPath);
     return null;
   }
-  if (!(await finalizeMp4(tempPath, outPath))) return null;
   const st = await stat(outPath).catch(() => null);
-  return st ? { outPath, sizeBytes: st.size } : null;
+  if (!st) {
+    await discardTemp(tempPath);
+    return null;
+  }
+  return {
+    outPath,
+    sizeBytes: st.size,
+    actualEncoder: outcome.actualEncoder,
+    fallbackReason: outcome.fallbackReason,
+  };
 }
 
 /** 归档：复制到归档目录（保留相对子路径），失败不删除源文件。分块复制带进度回调（长步骤心跳数据源）。 */

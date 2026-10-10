@@ -302,6 +302,8 @@ describe('Scheduler', () => {
 
   it('checks each platform at its own interval and reschedules serially', async () => {
     const { services, clock } = newServices();
+    // 本例只计调度器定时任务，健康采样使用同一可控时钟。
+    services.quality.stop();
     services.settings.save(baseSettings());
     const r1 = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'B' });
     const r2 = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/2', displayName: 'D' });

@@ -25,17 +25,19 @@ import PreviewModal from "./PreviewModal";
 import { usePreviewStore } from "../stores/previewStore";
 import { useRoomStore } from "../stores/roomStore";
 
+import { readPref, writePref, type PrefCodec } from "../utils/prefStorage";
+
 const { Sider, Content, Footer } = Layout;
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "lr-sidebar-collapsed";
 
+const sidebarCollapsedCodec: PrefCodec<boolean> = {
+  read: (raw) => raw === "true",
+  write: (value) => String(value),
+};
+
 function readSidebarCollapsed() {
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
-  } catch {
-    // Storage can be unavailable in restricted WebViews; keep the default UI.
-    return false;
-  }
+  return readPref(SIDEBAR_COLLAPSED_STORAGE_KEY, false, sidebarCollapsedCodec);
 }
 
 const ITEMS = [
@@ -68,13 +70,6 @@ const ITEMS = [
     icon: <BarChartOutlined />,
     label: <span onPointerEnter={() => preloadRoute("/stats")}>统计看板</span>,
   },
-  /*{
-    key: "/recovery",
-    icon: <ToolOutlined />,
-    label: (
-      <span onPointerEnter={() => preloadRoute("/recovery")}>自愈工作台</span>
-    ),
-  },*/
   {
     key: "/settings",
     icon: <SettingOutlined />,
@@ -124,12 +119,7 @@ export default function AppLayout() {
     if (type !== "clickTrigger") return;
 
     setSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
-    } catch {
-      // Storage can be unavailable in restricted WebViews; state still works
-      // for the current session.
-    }
+    writePref(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed, sidebarCollapsedCodec);
   };
 
   return (

@@ -30,8 +30,9 @@ class FakeRemote {
   readObject(key) { return this.objects.get(key); }
   ensureDraft(commit) { this.event('draft'); this.tag ??= commit; }
   isDraft() { return this.draft; }
-  readAsset(name) { return this.assets.get(name); }
-  uploadState(saved) { this.event('journal'); this.assets.set('release-state.json', JSON.stringify(saved)); }
+  release() { return { draft: this.draft }; }
+  readAsset(name) { return name === 'release-state.json' ? this.journal ?? this.assets.get(name) : this.assets.get(name); }
+  requireCheckpoint(saved) { this.event('journal'); this.journal = JSON.stringify(saved); }
   ensureAsset(name, digest) {
     this.event(`asset:${name}`);
     if (this.assets.has(name)) assert.equal(this.assets.get(name), digest);
@@ -93,7 +94,7 @@ test('partial asset upload resumes without changing the frozen identity', async 
   const remote = new FakeRemote();
   remote.fail = 'asset:app.exe';
   await assert.rejects(() => publishRelease(state, remote), /Injected failure/);
-  assert(remote.assets.has('release-state.json'));
+  assert(remote.journal);
   assert(!remote.objects.has('latest.json'));
   assert(!remote.events.includes('publish'));
   remote.fail = null;
@@ -234,7 +235,7 @@ test('CDN uploads use one recursive AWS batch, native progress and transfer defa
     const metadata = { 'release-set-sha256': createHash('sha256').update(JSON.stringify([
       ['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash'],
     ].sort())).digest('hex') };
-    remote.objectHead = () => ({ Metadata: metadata });
+    remote.objectHead = key => ({ Metadata: metadata, ContentLength: key === 'app.dmg' ? 9 : 2 });
     await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
     assert.equal(calls.length, 1);
     remote.objectHead = () => ({ Metadata: { sha256: 'mac-hash' } });
@@ -243,7 +244,7 @@ test('CDN uploads use one recursive AWS batch, native progress and transfer defa
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('fresh manifests, checksums and journal share digests of the real installer bytes', async () => {
+test('public allowlist contains only two installers and required manifests', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'lr-digests-'));
   const mac = 'Live.Recorder_1.2.3_aarch64.dmg';
   const win = 'Live.Recorder_1.2.3_x64-setup.exe';
@@ -262,10 +263,10 @@ test('fresh manifests, checksums and journal share digests of the real installer
       for (const [name, digest] of Object.entries(files)) {
         assert.equal(digest, createHash('sha256').update(readFileSync(join(directory, name))).digest('hex'));
       }
-      const sums = readFileSync(join(directory, 'SHA256SUMS.txt'), 'utf8');
-      assert(!sums.includes('SHA256SUMS.txt'));
-      assert(!sums.includes('release-state.json'));
-      for (const name of [mac, win, 'latest.json', 'releases.json', `${win}.sig`]) assert(sums.includes(`${files[name]}  ${name}\n`));
+      assert.deepEqual(Object.keys(files).sort(), [mac, win, 'latest.json', 'releases.json'].sort());
+      rmSync(join(directory, `${mac}.sig`));
+      rmSync(join(directory, `${win}.sig`));
+      assert.deepEqual(await verifyFrozenFiles(directory, '1.2.3', pubkey), files);
       writeFileSync(join(directory, mac), 'tampered installer');
       await assert.rejects(verifyFrozenFiles(directory, '1.2.3', pubkey), /Frozen installer mismatch/);
     } finally { rmSync(notes, { force: true }); }
@@ -290,7 +291,7 @@ test('checks can be reused only from the exact trusted release run with all plat
 test('release snapshot avoids repeated reads and refreshes only when requested', () => {
   const remote = new ReleaseRemote('unused', state.version);
   let reads = 0;
-  remote.api = () => { reads++; return { draft: true, assets: [] }; };
+  remote.api = () => { reads++; return [{ tag_name: remote.tag, draft: true, assets: [] }]; };
   try {
     remote.release(); remote.release(); remote.isDraft(); remote.readAsset('missing');
     assert.equal(reads, 1);
@@ -299,13 +300,15 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
   } finally { remote.close(); }
 });
 
-test('draft hidden from the by-tag endpoint is found in the release list and reused', () => {
+test('draft lookup uses the release list without a redundant by-tag request', () => {
   const remote = new ReleaseRemote('unused', state.version);
+  // This fixture has no internal checkpoint. Model that explicitly so a CI
+  // GITHUB_SHA does not trigger an unrelated Actions artifact lookup.
+  remote.journalBundle = () => null;
   const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
   const reads = [];
   remote.api = (path) => {
     reads.push(path);
-    if (path === 'releases/tags/v1.2.3') return null;
     if (path === 'releases?per_page=100&page=1') return [draft];
     throw new Error(`Unexpected API access: ${path}`);
   };
@@ -313,11 +316,11 @@ test('draft hidden from the by-tag endpoint is found in the release list and reu
     assert.equal(remote.release(), draft);
     assert.equal(remote.isDraft(), true);
     assert.equal(remote.readAsset('release-state.json'), null);
-    assert.equal(reads.length, 2);
+    assert.equal(reads.length, 1);
     // Existing drafts must not be recreated or mistaken for published releases.
     remote.ensureDraft(state.commit);
     assert.equal(remote.release(), draft);
-    assert.equal(reads.length, 4);
+    assert.equal(reads.length, 2);
   } finally { remote.close(); }
 });
 
@@ -328,7 +331,6 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
   const reads = [];
   remote.api = (path) => {
     reads.push(path);
-    if (path === 'releases/tags/v1.2.3') return null;
     if (path === 'releases?per_page=100&page=1') {
       return visible ? Array.from({ length: 100 }, (_, i) => ({ tag_name: `other-${i}` })) : [];
     }
@@ -339,7 +341,7 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
     assert.equal(remote.release(), null);
     visible = true;
     assert.equal(remote.release(), null);
-    assert.equal(reads.length, 2);
+    assert.equal(reads.length, 1);
     assert.equal(remote.release(true), draft);
     assert(reads.includes('releases?per_page=100&page=2'));
   } finally { remote.close(); }
@@ -347,12 +349,68 @@ test('draft lookup paginates and refreshes after a cached missing release', () =
 
 test('invalid release-list responses cannot be cached as a missing draft', () => {
   const remote = new ReleaseRemote('unused', state.version);
-  remote.api = (path) => path.startsWith('releases/tags/') ? null : { message: 'Not Found' };
+  remote.api = () => ({ message: 'Not Found' });
   try {
     assert.throws(() => remote.release(), /Unable to list releases/);
     assert.equal(remote.releaseSnapshot, undefined);
   } finally { remote.close(); }
 });
+
+test('published releases also use the list and retain snapshot caching', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  const published = { tag_name: remote.tag, draft: false, assets: [] };
+  let calls = 0;
+  remote.api = path => {
+    assert.equal(path, 'releases?per_page=100&page=1');
+    calls++;
+    return [published];
+  };
+  try {
+    assert.equal(remote.release(), published);
+    assert.equal(remote.release(), published);
+    assert.equal(calls, 1);
+  } finally { remote.close(); }
+});
+
+for (const missing of [true, false]) {
+  test(`CLI ${missing ? '404 probes remain quiet' : 'permission errors remain fatal'}`, () => {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+      import { tmpdir } from 'node:os';
+      import { join } from 'node:path';
+      import { ReleaseRemote } from './scripts/release-pipeline.mjs';
+      const directory = mkdtempSync(join(tmpdir(), 'lr-cli-probes-'));
+      const missing = ${missing};
+      for (const name of ['gh', 'aws']) {
+        const file = join(directory, name);
+        const message = name === 'gh'
+          ? (missing ? 'gh: Not Found (HTTP 404)' : 'gh: Forbidden (HTTP 403)')
+          : (missing ? 'An error occurred (404) when calling the HeadObject operation: Not Found'
+                     : 'An error occurred (AccessDenied) when calling the HeadObject operation: Forbidden');
+        writeFileSync(file, '#!' + process.execPath + '\\nprocess.stderr.write(' + JSON.stringify(message + '\\n') + ');process.exit(1);');
+        chmodSync(file, 0o755);
+      }
+      process.env.PATH = directory + ':' + process.env.PATH;
+      process.env.GITHUB_REPOSITORY = 'fixture/repository';
+      process.env.QINIU_ENDPOINT = 'https://fixture.invalid';
+      process.env.QINIU_BUCKET = 'fixture';
+      const remote = new ReleaseRemote(directory, '1.2.3');
+      try {
+        if (missing) {
+          assert.equal(remote.api('git/ref/tags/v1.2.3'), null);
+          assert.equal(remote.objectHead('app.dmg'), null);
+        } else {
+          assert.throws(() => remote.api('git/ref/tags/v1.2.3'), /HTTP 403/);
+          assert.throws(() => remote.objectHead('app.dmg'), /AccessDenied/);
+        }
+      } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+    `], { encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  });
+}
 
 
 test('failed CDN verification or a changed tag blocks publication', async () => {
@@ -454,23 +512,26 @@ test('a partially completed AWS batch retries only missing files', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'lr-partial-batch-'));
   const uploaded = new Map();
   const batches = [];
+  const reads = [];
   for (const name of ['app.dmg', 'app.exe']) writeFileSync(join(directory, name), name);
   const remote = new ReleaseRemote(directory, state.version, async (program, args) => {
     const staging = args[args.indexOf('cp') + 1];
-    const metadata = { 'release-set-sha256': createHash('sha256').update(JSON.stringify([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']].sort())).digest('hex') };
+    assert(!args.includes('--metadata'));
     const names = ['app.dmg', 'app.exe'].filter(name => {
       try { readFileSync(join(staging, name)); return true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
     });
     batches.push(names);
-    uploaded.set(names[0], { Metadata: metadata });
+    // Native uploads carry no custom metadata; retries must verify their bytes.
+    uploaded.set(names[0], { ContentLength: Buffer.byteLength(names[0]) });
     if (batches.length === 1) throw new Error('connection interrupted after first file');
   });
   remote.objectHead = key => uploaded.get(key) ?? null;
-  remote.readObject = () => { throw new Error('completed batch files should not be downloaded again'); };
+  remote.readObject = key => { reads.push(key); return Buffer.from(key); };
   try {
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']]);
+    await remote.ensureObjects(['app.dmg', 'app.exe'].map(name => [name, name, createHash('sha256').update(name).digest('hex')]));
     assert.deepEqual(batches, [['app.dmg', 'app.exe'], ['app.exe']]);
+    assert.deepEqual(reads, ['app.dmg']);
     assert.equal(uploaded.size, 2);
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });

@@ -66,7 +66,18 @@ jobs:
           try {
             let ref = remote.api(`git/ref/tags/v${version}`)?.object;
             while (ref?.type === 'tag') ref = remote.api(`git/tags/${ref.sha}`)?.object;
-            if (ref?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(ref.sha)) throw new Error('Missing release tag');
+            if (!ref) {
+              // A checkpoint can survive a failure before draft/tag creation.
+              const prefix = `release-state-v${version}-`;
+              for (let page = 1; ; page++) {
+                const result = remote.api(`actions/artifacts?per_page=100&page=${page}`);
+                if (!Array.isArray(result?.artifacts)) throw new Error('Unable to query frozen checkpoints');
+                const artifact = result.artifacts.find(a => !a.expired && a.name === prefix + a.workflow_run?.head_sha);
+                if (artifact) { ref = { type: 'commit', sha: artifact.workflow_run.head_sha }; break; }
+                if (result.artifacts.length < 100) break;
+              }
+            }
+            if (ref?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(ref.sha)) throw new Error('Missing release tag and checkpoint');
             console.log(`version=${version}\ntag=v${version}\nsource_commit=${ref.sha}\nshould_release=true\nreuse_release=true\nreuse_checks=true`);
           } finally { remote.close(); }
           NODE
@@ -292,9 +303,10 @@ jobs:
           needs.prepare.outputs.should_release == 'true' &&
           (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: write
+      actions: read
     env:
       # Artifacts retain their original source identity; upload tooling may be newer.
       RESUME_VERSION: ${{ inputs.resume_version }}
@@ -325,32 +337,6 @@ jobs:
         with:
           node-version: 24.20.0
 
-      - name: Verify original frozen release and quality gates
-        if: inputs.resume_version != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { ReleaseRemote } from './release-tools/scripts/release-pipeline.mjs';
-          const version = process.env.RESUME_VERSION;
-          if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid resume version');
-          const remote = new ReleaseRemote('release-assets', version);
-          try {
-            const release = remote.release();
-            const journal = remote.readAsset('release-state.json');
-            if (!journal) throw new Error('Resume requires a frozen release journal');
-            const saved = JSON.parse(journal);
-            if (saved.version !== version || saved.commit !== process.env.RELEASE_SOURCE_COMMIT || !/^[a-f0-9]{40}$/.test(saved.commit))
-              throw new Error('Invalid frozen release identity');
-            remote.assertTag(saved.commit);
-            if (!Object.keys(saved.files).length || !Object.keys(saved.files).every(name => release.assets.some(asset => asset.name === name)))
-              throw new Error('Frozen assets are incomplete; resume cannot rebuild them');
-            if (!remote.canReuseChecks(saved, saved.commit))
-              throw new Error('Original release quality and native checks must have passed');
-            console.log('Frozen assets and original quality gates verified');
-          } finally { remote.close(); }
-          NODE
-
       # Re-read here: a failed-job rerun may retain prepare outputs from before
       # publication. Do not restore/upload large installers merely to fix CDN.
       - name: Inspect current publication state
@@ -361,21 +347,16 @@ jobs:
         run: node "$RELEASE_PIPELINE" status release-assets "$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Restore frozen release assets
-        if: needs.prepare.outputs.reuse_release == 'true' || steps.publication.outputs.published == 'true'
+        if: needs.prepare.outputs.reuse_release == 'true' || steps.publication.outputs.frozen == 'true' || steps.publication.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           ALREADY_PUBLISHED: ${{ steps.publication.outputs.published }}
         shell: bash
-        run: |
-          if [ "$ALREADY_PUBLISHED" = "true" ]; then
-            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets --pattern latest.json --pattern releases.json --pattern release-state.json
-          else
-            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
-          fi
+        run: node "$RELEASE_PIPELINE" restore release-assets "${{ needs.prepare.outputs.version }}"
 
       - name: Download installers
-        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.published != 'true'
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.frozen != 'true' && steps.publication.outputs.published != 'true'
         uses: actions/download-artifact@v8
         with:
           pattern: live-recorder-*-${{ needs.prepare.outputs.version }}
@@ -386,7 +367,7 @@ jobs:
       # Normalize the staging names first, so latest.json records the exact
       # public URL that will be served by the release.
       - name: Normalize release asset names
-        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.published != 'true'
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.frozen != 'true' && steps.publication.outputs.published != 'true'
         shell: bash
         run: |
           shopt -s nullglob
@@ -398,13 +379,30 @@ jobs:
             fi
           done
 
+      - name: Freeze signed assets and internal release checkpoint
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.frozen != 'true' && steps.publication.outputs.published != 'true'
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: node "$RELEASE_PIPELINE" prepare release-assets "$RELEASE_VERSION"
+
+      - name: Save internal release checkpoint before uploads
+        if: needs.prepare.outputs.reuse_release != 'true' && steps.publication.outputs.frozen != 'true' && steps.publication.outputs.published != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-state-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.source_commit }}
+          path: |
+            release-assets/release-state.json
+            release-assets/latest.json
+            release-assets/releases.json
+          if-no-files-found: error
+          retention-days: 90
+
       # GitHub publication is the formal release commit point.
       - name: Verify staged assets and publish GitHub Release
         if: steps.publication.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          PREPARE_RELEASE_ASSETS: ${{ needs.prepare.outputs.reuse_release != 'true' }}
           AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
           AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1

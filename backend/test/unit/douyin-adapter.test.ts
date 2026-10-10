@@ -793,3 +793,18 @@ describe('recording recovery source', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe('live cover metadata', () => {
+  it('extracts cover.url_list without additional requests', async () => {
+    const fetcher = vi.fn(mockFetcher(() => livePayload({
+      cover: { url_list: ['bad', 'https://p3.douyinpic.com/cover.webp'] },
+      user: { nickname: '主播', avatar_large: { url_list: ['https://p3.douyinpic.com/avatar.jpg'] } },
+    })));
+    expect((await new DouyinAdapter(fetcher).checkLiveStatus('https://live.douyin.com/123', 'sessionid=x')).liveCoverUrl).toBe('https://p3.douyinpic.com/cover.webp');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('omits missing cover data', async () => {
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload()));
+    expect((await adapter.checkLiveStatus('https://live.douyin.com/123', 'sessionid=x')).liveCoverUrl).toBeUndefined();
+  });
+});

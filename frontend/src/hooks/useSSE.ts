@@ -10,10 +10,13 @@ import type { DiskSpace, ServiceStatus } from '../types/service';
 import type { Diagnostic } from '../types/diagnostic';
 import type { UploadJob } from '../api/openlist';
 import type { PipelineArtifact, PipelineRun } from '../types/pipeline';
+import type { DanmakuStatus } from '../types/danmaku';
+import type { StreamHealth } from '../types/streamHealth';
 import { applyServerEvent } from '../stores/applyEvent';
 import { bridge, useBootStore } from '../stores/bootStore';
 import { useServiceStore } from '../stores/serviceStore';
 import { useRoomStore } from '../stores/roomStore';
+import { refreshStreamHealth, useStreamHealthStore } from '../stores/streamHealthStore';
 
 const RECONNECT_DELAYS_MS = [5_000, 15_000, 45_000];
 
@@ -53,6 +56,12 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, diagnostic: payload as unknown as Diagnostic };
     case 'upload:updated':
       return { type, upload: payload as unknown as UploadJob };
+    case 'danmaku:status':
+      return { type, status: payload as unknown as DanmakuStatus };
+    case 'stream-health':
+      return { type, health: payload as unknown as StreamHealth };
+    case 'clip-queue:updated':
+      return { type };
   }
 }
 
@@ -104,6 +113,7 @@ export function useSSE() {
           // must never hide state that changed while SSE was disconnected.
           useRoomStore.getState().fetchRooms(true),
           useServiceStore.getState().fetchStatus(),
+          refreshStreamHealth(),
         ]).catch(() => undefined).finally(() => {
           if (disposed) return;
           applyingSnapshot = false;
@@ -132,6 +142,7 @@ export function useSSE() {
       if (disposed) return;
       if (base === lastBase) return;
       lastBase = base;
+      useStreamHealthStore.getState().reset();
       if (timer) clearTimeout(timer);
       attempt = 0;
       connect();

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
@@ -20,6 +20,117 @@ import { diskDisplay } from "../utils/diskDisplay";
 import { alertSourceText } from "../utils/alertText";
 import GlobalSearch from "./GlobalSearch";
 import { TaskProgressEntry } from "./TaskProgressEntry";
+import { fetchRecordingDownloadSpeed } from "../api/service";
+import { EndpointResolver } from "../api/endpoint";
+import { stopAllRecordings } from "../api/rooms";
+
+function RecordingDownloadSpeed() {
+  const sseConnected = useServiceStore((s) => s.sseConnected);
+  const [downloadSpeed, setDownloadSpeed] = useState(0);
+
+  useEffect(() => {
+    if (!sseConnected) return;
+    let disposed = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      const endpoint = EndpointResolver.base;
+      try {
+        const speed = await fetchRecordingDownloadSpeed();
+        if (!disposed && endpoint === EndpointResolver.base) setDownloadSpeed(speed);
+      } catch {
+        if (!disposed) setDownloadSpeed(0);
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 1000);
+    const onVisibilityChange = () => void refresh();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [sseConnected]);
+
+  const speed = sseConnected ? downloadSpeed : 0;
+  return (
+    <span style={{ marginLeft: 16, fontVariantNumeric: "tabular-nums" }} title="录制任务总下载速度">
+      ↓ {speed > 0 ? formatBytes(speed) : "0 B"}/s
+    </span>
+  );
+}
+
+function RecordingStatusTag({ count }: { count: number | undefined }) {
+  const [open, setOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const active = (count ?? 0) > 0;
+
+  const stopAll = async () => {
+    if (stopping) return;
+    setStopping(true);
+    setError(null);
+    try {
+      const result = await stopAllRecordings();
+      if (result.failed.length) {
+        setError(`${result.failed.length} 个直播间停止失败，请重试。`);
+      } else {
+        setOpen(false);
+      }
+    } catch {
+      setError("停止录制失败，请重试。");
+    } finally {
+      setStopping(false);
+      void useServiceStore.getState().fetchStatus();
+      void useRoomStore.getState().fetchRooms(true).catch(() => undefined);
+    }
+  };
+
+  return (
+    <Popover
+      trigger={active ? "click" : []}
+      placement="topLeft"
+      open={active && open}
+      onOpenChange={(next) => {
+        if (stopping) return;
+        setOpen(active && next);
+        setError(null);
+      }}
+      content={
+        <div style={{ minWidth: 180 }}>
+          <div>是否停止全部录制？</div>
+          {error && <div style={{ marginTop: 8 }}><Typography.Text type="danger">{error}</Typography.Text></div>}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <Button size="small" disabled={stopping} onClick={() => setOpen(false)}>取消</Button>
+            <Button size="small" type="primary" danger loading={stopping} onClick={() => void stopAll()}>确认</Button>
+          </div>
+        </div>
+      }
+    >
+      <Tag
+        color={active ? "red" : "default"}
+        style={{ cursor: active ? "pointer" : "default" }}
+        role={active ? "button" : undefined}
+        tabIndex={active ? 0 : undefined}
+        aria-expanded={active ? open : undefined}
+        onKeyDown={(event) => {
+          if (active && !stopping && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            setOpen((value) => !value);
+            setError(null);
+          }
+        }}
+      >
+        {count !== undefined ? `录制中 ${count}` : "录制中 -"}
+        {active && <RecordingDownloadSpeed />}
+      </Tag>
+    </Popover>
+  );
+}
 
 export default function StatusBar() {
   const { pathname } = useLocation();
@@ -82,9 +193,7 @@ export default function StatusBar() {
               ? "服务正常"
               : "服务已断开"}
         </Typography.Text>
-        <Tag color={status && status.activeRecordings > 0 ? "red" : "default"}>
-          {status ? `录制中 ${status.activeRecordings}` : "录制中 -"}
-        </Tag>
+        <RecordingStatusTag key={(status?.activeRecordings ?? 0) > 0 ? "active" : "idle"} count={status?.activeRecordings} />
       </Space>
       {showGlobalSearch ? (
         <div className="lr-statusbar__search" style={{ marginLeft: "auto" }}>

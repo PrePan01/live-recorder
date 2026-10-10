@@ -118,7 +118,10 @@ export function useRoomSortableItem(id: string, mode: SortMode) {
   };
 
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform:
+      mode === "card"
+        ? CSS.Translate.toString(transform)
+        : CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.38 : undefined,
     position: "relative",
@@ -126,6 +129,7 @@ export function useRoomSortableItem(id: string, mode: SortMode) {
   };
 
   return {
+    disabled,
     setNodeRef,
     style,
     attributes,
@@ -148,7 +152,7 @@ export function SortableRoomTableRow(
       {...sortable.listeners}
       ref={sortable.setNodeRef}
       style={{ ...props.style, ...sortable.style }}
-      className={`${props.className ?? ""} lr-sortable-row ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
+      className={`${props.className ?? ""} lr-sortable-row ${sortable.disabled ? "lr-sortable-row--disabled" : ""} ${sortable.isDragging ? "lr-sort-dragging" : ""}`}
     />
   );
   /* oxlint-enable react/refs */

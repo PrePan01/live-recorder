@@ -4,6 +4,7 @@ import type { Services } from '../core/services.js';
 import { registerRoomRoutes } from './routes/rooms.js';
 import { registerRecordingRoutes } from './routes/recordings.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerClipQueueRoutes } from './routes/clip-queue.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerServiceRoutes } from './routes/service.js';
@@ -152,6 +153,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
 
   registerRoomRoutes(app, services);
   registerRecordingRoutes(app, services);
+  registerClipQueueRoutes(app, services);
   registerTaskRoutes(app, services);
   registerSettingsRoutes(app, services);
   registerAlertRoutes(app, services);
@@ -181,6 +183,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   });
   app.addHook('onClose', async () => {
     services.scheduler.stop();
+    services.quality.stop();
     // 关库之前先把正在录制的会话收尾：停拉流并等写流落盘关闭。
     // 否则退出时最后几秒数据还在缓冲里就没了，记录也会留在"录制中"。
     await services.manager.shutdown();

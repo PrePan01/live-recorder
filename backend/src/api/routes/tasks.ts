@@ -16,6 +16,11 @@ export interface TaskItem {
   etaSeconds?: number | null;
   error?: string | null;
   updatedAt: string;
+
+  /** 实际编码方式（任务显示面），无编码语义的任务=null。 */
+  actualEncoder?: string | null;
+  /** 回退原因人话（未回退=null）。 */
+  fallbackReason?: string | null;
 }
 
 export function registerTaskRoutes(
@@ -61,9 +66,12 @@ export function registerTaskRoutes(
           hasPostPhase: services.pipeline.pipelineConfig().enabled,
           now: Date.now(),
         });
+        const clipMeta = (rec.metadata ?? {}) as { actualEncoder?: string | null; fallbackReason?: string | null };
         tasks.push({
           id: rec.id,
           kind: "clip",
+          actualEncoder: clipMeta.actualEncoder ?? null,
+          fallbackReason: clipMeta.fallbackReason ?? null,
           recordingId: rec.id,
           title: rec.streamTitle,
           state: exporting ? "exporting" : "post_processing",
@@ -85,9 +93,14 @@ export function registerTaskRoutes(
       for (const run of activeRuns.values()) {
         const rec = services.recordings.get(run.recordingId);
         if (rec?.origin === "clip") continue;
+        const encArtifact = services.pipeline.repo
+          .listArtifacts(run.id)
+          .find((a) => a.actualEncoder);
         tasks.push({
           id: run.id,
           kind: "pipeline",
+          actualEncoder: encArtifact?.actualEncoder ?? null,
+          fallbackReason: encArtifact?.fallbackReason ?? null,
           recordingId: run.recordingId,
           title: rec?.streamTitle ?? "",
           state: run.status,

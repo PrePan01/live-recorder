@@ -9,12 +9,20 @@ import {
   type LivePrediction,
 } from "../../core/live-prediction.js";
 
+import { registerRoomCoverRoutes } from "./room-cover.js";
+
 const PLATFORMS: Platform[] = ["bilibili", "douyin"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 /** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
 const MANUAL_LIVE_FRESH_MS = 10_000;
 
 export interface RoomInsight {
+  sorting: {
+    lastRecordedAt: string | null;
+    lastLiveAt: string | null;
+    totalDurationMs: number;
+    totalRecordings: number;
+  };
   totalRecordings: number;
   totalBytes: number;
   successRate: number;
@@ -27,6 +35,29 @@ export function registerRoomRoutes(
   app: FastifyInstance,
   services: Services,
 ): void {
+  registerRoomCoverRoutes(app, services);
+  const danmakuPreview = (req: { params: unknown }) => {
+    const { id, token } = req.params as { id: string; token: string };
+    if (!/^[a-zA-Z0-9-]{16,96}$/.test(token)) throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");
+    return { id, token };
+  };
+  app.post("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    const room = services.rooms.get(id);
+    if (!room) throw new AppError("RESOURCE_NOT_FOUND", "直播间不存在");
+    return reply.send(services.danmaku.subscribePreview(room, token));
+  });
+  app.get("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    const { cursor = "0" } = req.query as { cursor?: string };
+    if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
+    return reply.send(services.danmaku.readPreview(id, token, Number(cursor)));
+  });
+  app.delete("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    await services.danmaku.unsubscribePreview(id, token);
+    return reply.send({ ok: true });
+  });
   const enrich = (room: import("../../types/index.js").Room) =>
     services.manager.enrichRoom(room);
   let insightCache:
@@ -88,6 +119,39 @@ export function registerRoomRoutes(
       stream_session_id: string | null;
     }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
+    // Sorting uses all retained history, independently of seven-day card stats.
+    const recordingTotals = services.db
+      .prepare(`SELECT room_id,
+      MAX(started_at) AS lastRecordedAt, COUNT(*) AS totalRecordings,
+      COALESCE(SUM(CASE WHEN ended_at IS NOT NULL THEN
+        MAX(0, CAST(ROUND((julianday(ended_at) - julianday(started_at)) * 86400000.0) AS INTEGER))
+        ELSE 0 END), 0) AS totalDurationMs
+      FROM recordings WHERE room_id IN (${placeholders}) GROUP BY room_id`)
+      .all(...roomIds) as Array<{
+      room_id: string;
+      lastRecordedAt: string;
+      totalRecordings: number;
+      totalDurationMs: number;
+    }>;
+    // Legacy/manual checks may have a persisted cycle without an event. Only
+    // use that boundary when newer than the observations, so a matching event's
+    // platform opening time is not replaced by the later local detection time.
+    const liveTotals = services.db
+      .prepare(`SELECT rooms.id AS room_id,
+      CASE WHEN rooms.live_started_at IS NOT NULL AND
+        (history.lastDetectedAt IS NULL OR julianday(rooms.live_started_at) > julianday(history.lastDetectedAt))
+        THEN rooms.live_started_at ELSE history.lastLiveAt END AS lastLiveAt
+      FROM rooms LEFT JOIN (
+        SELECT room_id, MAX(detected_at) AS lastDetectedAt,
+          MAX(COALESCE(platform_started_at, detected_at)) AS lastLiveAt
+        FROM live_events WHERE room_id IN (${placeholders}) GROUP BY room_id
+      ) AS history ON history.room_id = rooms.id
+      WHERE rooms.id IN (${placeholders})`)
+      .all(...roomIds, ...roomIds) as Array<{ room_id: string; lastLiveAt: string | null }>;
+    const totalsByRoom = new Map(recordingTotals.map((row) => [row.room_id, row]));
+    const latestLiveByRoom = new Map(
+      liveTotals.map((row) => [row.room_id, row.lastLiveAt]),
+    );
     const calibrationProfiles = services.predictionCalibration.profiles(
       roomIds,
       localDateFromMs(now - 60 * 24 * 60 * 60 * 1000),
@@ -114,6 +178,12 @@ export function registerRoomRoutes(
       ).length;
       const failed = week.filter((record) => record.state === "failed").length;
       insights[id] = {
+        sorting: {
+          lastRecordedAt: totalsByRoom.get(id)?.lastRecordedAt ?? null,
+          lastLiveAt: latestLiveByRoom.get(id) ?? null,
+          totalDurationMs: totalsByRoom.get(id)?.totalDurationMs ?? 0,
+          totalRecordings: totalsByRoom.get(id)?.totalRecordings ?? 0,
+        },
         totalRecordings: week.length,
         totalBytes: week.reduce(
           (sum, record) => sum + (record.file_size_bytes ?? 0),
@@ -164,6 +234,17 @@ export function registerRoomRoutes(
 
   app.post("/api/v1/rooms/check-enabled", async (_req, reply) => {
     return reply.send({ ok: true, ...services.scheduler.queueEnabledRoomChecks() });
+  });
+
+  app.post("/api/v1/rooms/stop-recording-all", async (_req, reply) => {
+    const roomIds = services.manager.activeRoomIds();
+    const results = await Promise.allSettled(
+      roomIds.map((id) => services.manager.stopRecording(id)),
+    );
+    return reply.send({
+      stopped: roomIds.filter((_, index) => results[index]!.status === "fulfilled"),
+      failed: roomIds.filter((_, index) => results[index]!.status === "rejected"),
+    });
   });
 
   app.post("/api/v1/rooms", async (req, reply) => {
@@ -291,7 +372,7 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null;
+      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
     };
     const patch: {
       url?: string;
@@ -299,7 +380,7 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null;
+      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
     } = {};
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
@@ -333,6 +414,17 @@ export function registerRoomRoutes(
         );
       }
       patch.liveNotificationEnabled = body.liveNotificationEnabled;
+    }
+    if (body.danmakuEnabled !== undefined) {
+      // null=恢复继承全局；布尔=单独覆盖（与 autoRecord 同语义）。
+      if (body.danmakuEnabled !== null && typeof body.danmakuEnabled !== "boolean") {
+        throw new AppError(
+          "ROOM_LINK_INVALID",
+          "danmakuEnabled 必须为布尔值或 null",
+          { roomId: id },
+        );
+      }
+      patch.danmakuEnabled = body.danmakuEnabled;
     }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。

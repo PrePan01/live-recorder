@@ -373,3 +373,19 @@ describe('recording recovery source', () => {
     expect(await adapter.resolveRecordingSource('https://live.bilibili.com/123', 'original')).toEqual({ status: 'offline' });
   });
 });
+
+describe('live cover metadata', () => {
+  it('prefers user_cover and falls back to keyframe without extra requests', async () => {
+    for (const [user_cover, expected] of [['https://i0.hdslb.com/cover.jpg', 'https://i0.hdslb.com/cover.jpg'], ['', 'https://i0.hdslb.com/frame.jpg']]) {
+      let calls = 0;
+      const fetcher = routeFetcher(livePayload(), undefined, { code: 0, data: { user_cover, keyframe: 'https://i0.hdslb.com/frame.jpg' } });
+      const adapter = new BilibiliAdapter(async (...args) => { calls++; return fetcher(...args); });
+      expect((await adapter.checkLiveStatus('https://live.bilibili.com/1')).liveCoverUrl).toBe(expected);
+      expect(calls).toBe(3);
+    }
+  });
+  it('omits a missing or invalid cover', async () => {
+    const adapter = new BilibiliAdapter(routeFetcher(livePayload(), undefined, { code: 0, data: { user_cover: 'javascript:bad' } }));
+    expect((await adapter.checkLiveStatus('https://live.bilibili.com/1')).liveCoverUrl).toBeUndefined();
+  });
+});

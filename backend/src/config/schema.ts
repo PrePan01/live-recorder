@@ -1,6 +1,7 @@
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
 import path from 'node:path';
+import { validatePipelineConfig } from './pipeline.js';
 
 /** 配置校验（阶段 B 手写检查；阶段 B-E4 路由层补 JSON Schema）。 */
 export function validateSettings(input: unknown): AppSettings {
@@ -30,6 +31,9 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.confirmAfterComplete !== undefined && typeof s.confirmAfterComplete !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'confirmAfterComplete 必须为布尔值');
   }
+  if (s.preventSleepWhileRecording !== undefined && typeof s.preventSleepWhileRecording !== 'boolean') {
+    throw new AppError('CONFIG_INVALID', '录制中防止系统休眠必须为布尔值');
+  }
   if (s.highlightBufferSeconds !== undefined && (!Number.isInteger(s.highlightBufferSeconds) || s.highlightBufferSeconds < 5 || s.highlightBufferSeconds > 600)) {
     throw new AppError('CONFIG_INVALID', '精彩时刻缓存时长需为 5 秒至 10 分钟');
   }
@@ -57,6 +61,10 @@ export function validateSettings(input: unknown): AppSettings {
   const m = s.mail;
   if (m && (typeof m.host !== 'string' || typeof m.port !== 'number' || !Array.isArray(m.recipients))) {
     throw new AppError('CONFIG_INVALID', '邮件配置非法');
+  }
+  if (s.pipeline !== undefined) {
+    const error = validatePipelineConfig(s.pipeline);
+    if (error) throw error;
   }
   return s as AppSettings;
 }

@@ -38,14 +38,7 @@ export default function AppVersion() {
         content: (
           <div>
             {snapshot.update.notes.length > 0 && (
-              <div>
-                <strong>本次更新</strong>
-                <ul>
-                  {snapshot.update.notes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              </div>
+              <ReleaseNotes notes={snapshot.update.notes} />
             )}
             {recordingNames.length > 0 && (
               <Typography.Text type="danger">
@@ -91,16 +84,9 @@ export default function AppVersion() {
       title: `发现新版本 ${snapshot.update.version}`,
       content: (
         <div>
-          <p>当前版本 {snapshot.currentVersion}，下载完成后可选择立即安装。</p>
+          <p>当前版本 {snapshot.currentVersion}</p>
           {snapshot.update.notes.length > 0 && (
-            <div>
-              <strong>本次更新</strong>
-              <ul>
-                {snapshot.update.notes.map((note) => (
-                  <li key={note}>{note}</li>
-                ))}
-              </ul>
-            </div>
+            <ReleaseNotes notes={snapshot.update.notes} />
           )}
         </div>
       ),
@@ -193,6 +179,19 @@ export default function AppVersion() {
           )}
         </button>
       </Tooltip>
+    </div>
+  );
+}
+
+function ReleaseNotes({ notes }: { notes: string[] }) {
+  return (
+    <div>
+      <strong>本次更新</strong>
+      <ul>
+        {notes.map((note) => (
+          <li key={note}>{note}</li>
+        ))}
+      </ul>
     </div>
   );
 }

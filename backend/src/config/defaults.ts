@@ -47,6 +47,7 @@ export const DEFAULT_SETTINGS = {
   pipeline: DEFAULT_PIPELINE_CONFIG,
   namingRule: '{room}_{date}_{time}',
   confirmAfterComplete: false,
+  preventSleepWhileRecording: true,
   highlightBufferSeconds: 300,
   highlightEnabled: true,
 };

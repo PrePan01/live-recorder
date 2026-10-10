@@ -41,6 +41,10 @@ export interface Settings {
   quality: Quality;
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
+  /** 弹幕采集全局开关；房间可单独覆盖（danmakuEnabled null=跟随全局）。 */
+  danmaku: { enabled: boolean };
+  /** 编码方式：自动=硬编优先失败回退软编；软件=只软编。 */
+  encodingMode?: 'auto' | 'software';
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
@@ -55,6 +59,7 @@ export interface Settings {
   notifications?: NotificationPreference;
   /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
   highlightEnabled?: boolean;
 }
@@ -78,6 +83,8 @@ export interface SettingsInput {
   quality?: Quality;
   recordingFormat?: RecordingFormat;
   autoRecord?: boolean;
+  danmaku?: { enabled: boolean };
+  encodingMode?: 'auto' | 'software';
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;
@@ -88,6 +95,7 @@ export interface SettingsInput {
   floatingRecorderSize?: number;
   /** #220/#221：录制完成后询问是否保留 */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
   highlightEnabled?: boolean;
 }

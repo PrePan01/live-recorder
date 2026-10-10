@@ -54,6 +54,7 @@ export default function Rooms() {
     toggleRoom,
     favoriteRoom,
     setAutoRecord,
+    setDanmakuEnabled,
     setLiveNotification,
     updateRoomTags,
     checkRoomNow,
@@ -450,6 +451,7 @@ export default function Rooms() {
   const columns = buildRoomColumns({
     favoriteRoom,
     setAutoRecord,
+    setDanmakuEnabled,
     setLiveNotification,
     toggleRoom,
     editingDisplayName,

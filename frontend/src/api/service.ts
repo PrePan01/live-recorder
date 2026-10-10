@@ -16,6 +16,11 @@ export async function fetchServiceStatus(): Promise<ServiceStatus> {
   return data.serviceStatus;
 }
 
+export async function fetchRecordingDownloadSpeed(): Promise<number> {
+  const { data } = await http.get<{ bytesPerSecond: number }>('/service/download-speed');
+  return data.bytesPerSecond;
+}
+
 export async function fetchSelfCheck(): Promise<SelfCheckItem[]> {
   const { data } = await http.get<{ items: SelfCheckItem[] }>('/service/self-check');
   return data.items;

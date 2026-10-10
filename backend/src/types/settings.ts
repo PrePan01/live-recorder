@@ -65,12 +65,17 @@ export interface AppSettings {
   namingRule?: string;
   /** 录制完成后是否询问保留：默认关；开启后完成进入待确认态并挂起管线/上传，保留则恢复、不保留则删除。 */
   confirmAfterComplete?: boolean;
+  preventSleepWhileRecording?: boolean;
   /** 普通观看的精彩时刻缓存上限（秒），默认 5 分钟。 */
   highlightBufferSeconds?: number;
   /** 精彩时刻总开关；关闭时普通观看不写入回溯缓存。 */
   highlightEnabled?: boolean;
   /** V5 OpenList 上传配置。 */
   openlist?: OpenListConfig;
+  /** 编码方式：auto=硬编优先失败回退软编（默认）；software=只软编。作用于后处理压缩与片段重编码。 */
+  encodingMode?: 'auto' | 'software';
+  /** 弹幕采集总开关（默认关）；房间可用 danmakuEnabled 单独覆盖。 */
+  danmaku?: { enabled: boolean };
 }
 
 export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';
@@ -169,6 +174,11 @@ export interface SettingsView {
   namingRule: string;
   /** 录制完成后是否询问保留。 */
   confirmAfterComplete: boolean;
+  preventSleepWhileRecording: boolean;
   highlightBufferSeconds: number;
   highlightEnabled: boolean;
+  /** 编码方式：auto=硬编优先失败回退（默认）；software=只软编。 */
+  encodingMode: 'auto' | 'software';
+  /** 弹幕采集开关（回传面），房间覆盖在 room.danmakuEnabled。 */
+  danmaku: { enabled: boolean };
 }

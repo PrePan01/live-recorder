@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { PreviewManager } from '../../src/api/websocket.js';
+import { PreviewManager, PREVIEW_TAIL_MAX } from '../../src/api/websocket.js';
 import type { Services } from '../../src/core/services.js';
 
 const header = Buffer.from([70, 76, 86, 1, 5, 0, 0, 0, 9, 0, 0, 0, 0]);
@@ -99,9 +99,27 @@ describe('preview initialization across source changes', () => {
     expect(late.sent[1]).toEqual(frame());
   });
 
+  it('replays a high bitrate GOP larger than the old 1 MB limit without waiting for another keyframe', () => {
+    const preview = manager();
+    const gop = Buffer.concat([frame(), frame(false, 1_100_000), frame(false, 1_100_000)]);
+    preview.broadcastFrame('r', Buffer.concat([init(), gop]));
+    const late = socket(); preview.addClient('r', late.ws);
+    expect(late.sent).toEqual([init(), gop]);
+  });
+
+  it('replays the partial tag prefix when joining between network chunks', () => {
+    const preview = manager();
+    const key = frame();
+    const next = frame(false);
+    preview.broadcastFrame('r', Buffer.concat([init(), key, next.subarray(0, 23)]));
+    const late = socket(); preview.addClient('r', late.ws);
+    preview.broadcastFrame('r', next.subarray(23));
+    expect(Buffer.concat(late.sent)).toEqual(Buffer.concat([init(), key, next]));
+  });
+
   it('bounds the first media batch and waits for a keyframe after GOP overflow', () => {
     const preview = manager();
-    preview.broadcastFrame('r', Buffer.concat([init(), frame(), frame(false, 1_100_000)]));
+    preview.broadcastFrame('r', Buffer.concat([init(), frame(), frame(false, PREVIEW_TAIL_MAX - 64)]));
     const late = socket(); preview.addClient('r', late.ws);
     expect(late.sent).toHaveLength(1);
     preview.broadcastFrame('r', frame(false));

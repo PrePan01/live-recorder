@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, App, Button, Empty, Row, Table } from "antd";
+import { Alert, App, Button, Empty, Table } from "antd";
 import { bridge } from "../../stores/bootStore";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
@@ -21,6 +21,13 @@ import { credentialStatus } from "../../utils/credentialStatus";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import type { Platform, Room } from "../../types/room";
+import RoomMasonry from "./components/RoomMasonry";
+import RoomGrid from "./components/RoomGrid";
+import {
+  isMonitorSort,
+  sortMonitorRooms,
+  type MonitorSort,
+} from "../../utils/monitorSort";
 import { RoomCard, SortableRoomCardItem } from "./components/RoomCard";
 import { buildMonitorListColumns } from "../../utils/monitorListColumns";
 import { MonitorToolbar } from "./components/MonitorToolbar";
@@ -32,6 +39,7 @@ import {
 let startupLiveCheck: Promise<void> | null = null;
 
 type SavedMonitorFilters = {
+  sort?: MonitorSort;
   filter?: "全部" | "开播中" | "录制中" | "收藏";
   platformFilter?: "全部" | Platform;
   tagIds?: string[];
@@ -44,6 +52,7 @@ function readSavedMonitorFilters(): SavedMonitorFilters {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: SavedMonitorFilters = {};
+    if (isMonitorSort(parsed.sort)) out.sort = parsed.sort;
     if (
       parsed.filter === "全部" ||
       parsed.filter === "开播中" ||
@@ -110,6 +119,11 @@ export default function Monitor() {
     () => readSavedMonitorFilters().tagIds ?? [],
   );
   const [keyword, setKeyword] = useState("");
+  const [sort, setSort] = useState<MonitorSort>(
+    () => readSavedMonitorFilters().sort ?? "manual",
+  );
+  const manualSort = sort === "manual";
+  const CardLayout = manualSort ? RoomGrid : RoomMasonry;
   const tags = useTagStore((st) => st.tags);
   const loadTags = useTagStore((st) => st.load);
   useEffect(() => {
@@ -125,19 +139,20 @@ export default function Monitor() {
       return known.length === prev.length ? prev : known;
     });
   }, [tags]);
-  // 状态/平台/标签跨刷新记忆；关键词不记
   useEffect(() => {
     try {
       localStorage.setItem(
         "lr-monitor-filters",
-        JSON.stringify({ filter, platformFilter, tagIds }),
+        JSON.stringify({ filter, platformFilter, tagIds, sort }),
       );
     } catch {
       /* 存储不可用时筛选仍可用，仅不跨刷新记忆 */
     }
-  }, [filter, platformFilter, tagIds]);
+  }, [filter, platformFilter, tagIds, sort]);
   const [refreshing, setRefreshing] = useState(false);
   const [recentStop, setRecentStop] = useState<Record<string, number>>({});
+  const [insightsLoading, setInsightsLoading] = useState(true);
+  const [insightsFailed, setInsightsFailed] = useState(false);
   const [insights, setInsights] = useState<Record<string, RoomInsight>>({});
   const [floatingRoomId, setFloatingRoomId] = useState<string | null>(null);
 
@@ -222,17 +237,29 @@ export default function Monitor() {
     const ids = rooms.filter((room) => room.enabled).map((room) => room.id);
     if (ids.length === 0) {
       setInsights({});
+      setInsightsLoading(false);
+      setInsightsFailed(false);
       return;
     }
     let disposed = false;
+    setInsightsLoading(true);
     // Coalesce room events from the same polling batch into one insight request.
     const timer = setTimeout(() => {
       void fetchRoomInsights(ids)
         .then((next) => {
-          if (!disposed) setInsights(next);
+          if (!disposed) {
+            setInsights(next);
+            setInsightsFailed(false);
+          }
         })
         .catch(() => {
-          if (!disposed) setInsights({});
+          if (!disposed) {
+            setInsights({});
+            setInsightsFailed(true);
+          }
+        })
+        .finally(() => {
+          if (!disposed) setInsightsLoading(false);
         });
     }, 250);
     return () => {
@@ -275,7 +302,7 @@ export default function Monitor() {
   };
   const tagsMatch = (r: Room) =>
     tagIds.length === 0 || r.tags.some((t) => tagIds.includes(t.id));
-  const monitorRooms = rooms
+  const filteredRooms = rooms
     .filter((r) => r.enabled)
     .filter((r) => platformFilter === "全部" || r.platform === platformFilter)
     .filter((r) => {
@@ -289,16 +316,18 @@ export default function Monitor() {
     })
     .filter(keywordMatches)
     .filter(tagsMatch);
+  const monitorRooms = sortMonitorRooms(filteredRooms, insights, sort);
 
   const commitRoomOrder = useCallback(
     async (roomIds: string[]) => {
+      if (!manualSort) return;
       try {
         await reorderRooms(roomIds);
       } catch {
         message.error("排序保存失败，已恢复服务端顺序");
       }
     },
-    [message, reorderRooms],
+    [message, reorderRooms, manualSort],
   );
 
   // 渐进分片渲染：首屏同步出前 20 张卡，其余每片 6 张在帧间隙挂载——
@@ -444,6 +473,8 @@ export default function Monitor() {
   return (
     <div className="lr-page lr-monitor-page">
       <MonitorToolbar
+        sort={sort}
+        setSort={setSort}
         filter={filter}
         setFilter={setFilter}
         platformFilter={platformFilter}
@@ -461,6 +492,14 @@ export default function Monitor() {
         refreshing={refreshing}
         handleRefresh={handleRefresh}
       />
+      {!manualSort && insightsFailed ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="排序数据加载失败，暂按手动顺序展示"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
       {directoryUnavailable ? (
         <Alert
           className="lr-directory-warning"
@@ -496,7 +535,7 @@ export default function Monitor() {
           allRooms={rooms}
           visibleRooms={monitorRooms}
           mode="table"
-          disabled={reorderBusy}
+          disabled={reorderBusy || !manualSort}
           onReorder={commitRoomOrder}
         >
           <Table
@@ -516,10 +555,10 @@ export default function Monitor() {
           allRooms={rooms}
           visibleRooms={monitorRooms}
           mode="card"
-          disabled={reorderBusy}
+          disabled={reorderBusy || !manualSort}
           onReorder={commitRoomOrder}
         >
-          <Row gutter={[16, 16]}>
+          <CardLayout>
             {monitorRooms.slice(0, shown).map((room) => (
               <SortableRoomCardItem key={room.id} roomId={room.id}>
                 <RoomCard
@@ -538,6 +577,8 @@ export default function Monitor() {
                     room.autoRecord ?? settings?.autoRecord ?? false
                   }
                   insight={insights[room.id]}
+                  insightsLoading={insightsLoading}
+                  insightsFailed={insightsFailed}
                   qualityPreference={settings?.quality ?? null}
                   bilibiliAuthorized={bilibiliAuthorized}
                   floatingEnabled={floatingRoomId === room.id}
@@ -549,7 +590,7 @@ export default function Monitor() {
                 />
               </SortableRoomCardItem>
             ))}
-          </Row>
+          </CardLayout>
         </RoomSortableProvider>
       )}
     </div>

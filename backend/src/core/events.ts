@@ -1,4 +1,5 @@
 import type { Alert, Diagnostic, ExportJob, PipelineArtifact, PipelineRun, Recording, RecordingSchedule, Room, SettingsView, UploadJob } from '../types/index.js';
+import type { DanmakuStatus } from '../danmaku/types.js';
 
 export type AppEvent =
   | { type: 'room:updated'; data: Room }
@@ -14,7 +15,10 @@ export type AppEvent =
   | { type: 'diagnostic:updated'; data: Diagnostic }
   | { type: 'upload:updated'; data: UploadJob }
   | { type: 'schedule:updated'; data: RecordingSchedule }
-  | { type: 'export:updated'; data: ExportJob };
+  | { type: 'export:updated'; data: ExportJob }
+  | { type: 'danmaku:status'; data: DanmakuStatus }
+  | { type: 'stream-health'; data: import('./quality-health.js').StreamHealth }
+  | { type: 'clip-queue:updated'; data: { recordingId: string } };
 
 export interface ServiceStatusPayload {
   state: 'running' | 'starting' | 'offline' | 'restarting';

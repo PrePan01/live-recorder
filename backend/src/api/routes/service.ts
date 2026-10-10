@@ -3,6 +3,7 @@ import { access, constants, stat } from 'node:fs/promises';
 import type { Services } from '../../core/services.js';
 import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { resolveBin } from '../../utils/ffmpeg.js';
+import { AppError } from '../../types/error.js';
 
 const CHECK_TIMEOUT_MS = 3_000;
 
@@ -32,6 +33,24 @@ export async function isDirectoryAvailable(directory: string | undefined | null)
 }
 
 export function registerServiceRoutes(app: FastifyInstance, services: Services): void {
+  // 高频轻量采样，不触发磁盘检测或数据库查询。
+  app.get('/api/v1/service/download-speed', async (_req, reply) => reply.send({
+    bytesPerSecond: services.manager.recordingDownloadBytesPerSecond(),
+  }));
+  // 桌面原生电源控制使用独立轻量端点，不依赖磁盘检测或 WebView 是否可见。
+  app.get('/api/v1/service/power', async (_req, reply) => reply.send({
+    preventSleep: services.manager.shouldPreventSystemSleep(),
+  }));
+  app.post('/api/v1/service/system-sleep', async (req, reply) => {
+    const { startedAt, endedAt } = (req.body ?? {}) as { startedAt?: unknown; endedAt?: unknown };
+    if (typeof startedAt !== 'number' || typeof endedAt !== 'number' ||
+        !Number.isFinite(startedAt) || !Number.isFinite(endedAt) || startedAt < 0 ||
+        endedAt <= startedAt || endedAt > services.clock.now() + 10_000) {
+      throw new AppError('CONFIG_INVALID', '系统休眠时间无效');
+    }
+    services.manager.recordSystemSleep(startedAt, endedAt);
+    return reply.send({ ok: true });
+  });
   app.get('/api/v1/service/status', async (_req, reply) => {
     const stored = services.settings.load();
     const disk = stored && stored.recordingDirectory
@@ -40,7 +59,7 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
     return reply.send({
       serviceStatus: {
         state: 'running',
-        version: '1.2.5',
+        version: '1.3.0',
         uptimeSeconds: Math.round((services.clock.now() - services.startedAt) / 1000),
         setupCompleted: Boolean(stored?.recordingDirectory?.length),
         directoryAvailable: await isDirectoryAvailable(stored?.recordingDirectory),
