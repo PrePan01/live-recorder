@@ -693,9 +693,8 @@ export class ReleaseRemote {
         "--endpoint-url", process.env.QINIU_ENDPOINT,
         "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
         "--cache-control", "public, max-age=31536000, immutable",
-        "--metadata", `release-set-sha256=${fingerprint}`,
       ], {
-        label: "CDN batch upload", liveOutput: true, timeout: remaining,
+        label: "CDN batch upload", liveOutput: true, timeout: remaining, idleTimeout: 180000,
       });
     });
   }

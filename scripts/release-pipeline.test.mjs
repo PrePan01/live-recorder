@@ -219,10 +219,10 @@ test('CDN uploads use one recursive AWS batch, native progress and transfer defa
     assert.equal(args[args.indexOf('s3') + 1], 'cp');
     assert(!args.includes('--cli-connect-timeout'));
     assert(!args.includes('--cli-read-timeout'));
-    assert(args.includes('--metadata'));
+    assert(!args.includes('--metadata'));
     assert(!args.includes('--only-show-errors'));
     assert(options.timeout > 19 * 60 * 1000);
-    assert.equal(options.idleTimeout, undefined);
+    assert.equal(options.idleTimeout, 180000);
     assert(args.includes('--recursive'));
     assert.equal(options.liveOutput, true);
     const staging = args[args.indexOf('cp') + 1];
@@ -512,25 +512,26 @@ test('a partially completed AWS batch retries only missing files', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'lr-partial-batch-'));
   const uploaded = new Map();
   const batches = [];
+  const reads = [];
   for (const name of ['app.dmg', 'app.exe']) writeFileSync(join(directory, name), name);
   const remote = new ReleaseRemote(directory, state.version, async (program, args) => {
     const staging = args[args.indexOf('cp') + 1];
-    const metadataArg = args[args.indexOf('--metadata') + 1];
-    assert.match(metadataArg, /^release-set-sha256=[a-f0-9]{64}$/);
-    const metadata = { 'release-set-sha256': metadataArg.split('=')[1] };
+    assert(!args.includes('--metadata'));
     const names = ['app.dmg', 'app.exe'].filter(name => {
       try { readFileSync(join(staging, name)); return true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
     });
     batches.push(names);
-    uploaded.set(names[0], { Metadata: metadata, ContentLength: Buffer.byteLength(names[0]) });
+    // Native uploads carry no custom metadata; retries must verify their bytes.
+    uploaded.set(names[0], { ContentLength: Buffer.byteLength(names[0]) });
     if (batches.length === 1) throw new Error('connection interrupted after first file');
   });
   remote.objectHead = key => uploaded.get(key) ?? null;
-  remote.readObject = () => { throw new Error('completed batch files should not be downloaded again'); };
+  remote.readObject = key => { reads.push(key); return Buffer.from(key); };
   try {
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']]);
+    await remote.ensureObjects(['app.dmg', 'app.exe'].map(name => [name, name, createHash('sha256').update(name).digest('hex')]));
     assert.deepEqual(batches, [['app.dmg', 'app.exe'], ['app.exe']]);
+    assert.deepEqual(reads, ['app.dmg']);
     assert.equal(uploaded.size, 2);
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });
