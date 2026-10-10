@@ -1,3 +1,4 @@
+import { assertSegmentRange, recordedSeconds } from './recording-range.js';
 import { createWriteStream, statSync, type WriteStream } from "node:fs";
 import { access, mkdir, open, rename, unlink, stat } from "node:fs/promises";
 import { once } from "node:events";
@@ -47,6 +48,8 @@ import { HighlightBuffer } from "../recorder/highlight-buffer.js";
 import { exportClipFile } from "../recorder/pipeline-ffmpeg.js";
 import type { Notifier } from "./notifier.js";
 import type { Services } from "./services.js";
+import type { HealthProbe } from "./quality-health.js";
+import { DownloadSpeed } from "./download-speed.js";
 import {
   PerformanceDiagnostics,
   type PerformanceTrace,
@@ -114,6 +117,14 @@ function withClipFinalizeLock<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * 收尾时仍未结算的静默时长（毫秒）。录制期间累计缺失只在"恢复拿到数据"时才结算，
  */
+/**
+ * 停流合成因判定：连接断（stream_disconnect）与源停吐（source_stall）分名——
+ * 悬停原因要能区分「断网」和「主播端没货」两种缺失。
+ */
+export function isStallCause(cause: { message?: string } | null | undefined): boolean {
+  return Boolean(cause?.message?.includes("静默超时"));
+}
+
 function tailSilenceMs(
   session: ActiveSession | undefined,
   now: number,
@@ -127,7 +138,7 @@ function tailSilenceMs(
  * 片段命名校验：必填 1-120 字、文件名非法字符直接拒绝（用户重输），
  * 兼容误带的视频扩展名（与历史改名同口径去掉后缀）。
  */
-function validateClipName(raw: string, recordingId: string): string {
+export function validateClipName(raw: string, recordingId: string): string {
   const base = (typeof raw === "string" ? raw : "")
     .trim()
     .replace(/\.(?:flv|mp4|mkv|ts|webm)$/i, "")
@@ -148,6 +159,7 @@ function validateClipName(raw: string, recordingId: string): string {
 }
 
 interface ActiveSession {
+  downloadSpeed: DownloadSpeed;
   recordingId: string;
   roomId: string;
   streamSessionId: string | null;
@@ -166,6 +178,9 @@ interface ActiveSession {
   segments: number;
   /** 续录时间偏移：本段媒体时间戳接在上一段结尾之后，保证拼接处播放连续。 */
   timestampOffsetMs: number;
+  /** 已写入录像的媒体位置，用于历史页标注中断发生在录像何处。 */
+  mediaPositionMs?: number;
+  previewOffsetMs?: number | null;
   hlsCursor?: import("../recorder/engine.js").HlsCursor;
   /** 最后一次收到数据的时刻；中断造成的缺失时长从它算起。 */
   lastDataAt: number;
@@ -259,8 +274,9 @@ export class RecorderManager {
    * （标记为"服务重启中断"，并重跑校验 / mp4_after 转封装 / 管线 / 上传）。
    */
   async shutdown(): Promise<void> {
+    await this.services.clipQueueManager?.shutdown();
     this.shuttingDown = true;
-    const pending: Promise<void>[] = [];
+    const pending: Promise<void>[] = [this.services.danmaku.shutdown()];
     for (const abort of this.clipExportAborts.values()) abort.abort();
     pending.push(...this.clipExportJobs.values());
     for (const session of [...this.active.values()]) {
@@ -340,6 +356,80 @@ export class RecorderManager {
     return this.starting.has(roomId);
   }
 
+  shouldPreventSystemSleep(): boolean {
+    return !this.shuttingDown && this.settings().preventSleepWhileRecording !== false &&
+      (this.active.size > 0 || this.starting.size > 0);
+  }
+
+  private systemSleepIntervals: Array<{ startedAt: number; endedAt: number }> = [];
+
+  /** 只以原生系统睡眠通知归因，不能把长时间网络中断猜成系统休眠。 */
+  recordSystemSleep(startedAt: number, endedAt: number): void {
+    const existing = this.systemSleepIntervals.find(interval => interval.startedAt === startedAt);
+    if (existing) existing.endedAt = endedAt;
+    else this.systemSleepIntervals.push({ startedAt, endedAt });
+    this.systemSleepIntervals = this.systemSleepIntervals.slice(-64);
+    const changed = this.services.recordings.markSystemSleepGaps(
+      new Date(startedAt).toISOString(), new Date(endedAt).toISOString(),
+    );
+    for (const session of this.active.values()) {
+      if (Date.parse(session.startedAt) >= endedAt) continue;
+      if (session.lastDataAt < endedAt) {
+        session.gapStartAt ??= session.lastDataAt;
+      } else if (!changed.includes(session.recordingId) && session.gapStartAt === null) {
+        // 唤醒后媒体先到、原生通知稍后送达时，补记确实发生过的睡眠，避免共享预览支路漏记。
+        const missingMs = endedAt - Math.max(startedAt, Date.parse(session.startedAt));
+        if (missingMs > 0) {
+          this.services.recordings.insertGap({ recordingId: session.recordingId,
+            startedAt: new Date(startedAt).toISOString(), endedAt: new Date(endedAt).toISOString(),
+            missingMs, kind: "system_sleep" });
+          session.missingMs += missingMs;
+          this.services.recordings.update(session.recordingId, { missingMs: session.missingMs });
+          changed.push(session.recordingId);
+        }
+      }
+    }
+    for (const id of changed) {
+      const recording = this.services.recordings.get(id);
+      if (recording) this.services.events.emit({ type: "recording:updated", data: recording });
+    }
+  }
+
+  private isSystemSleepGap(startedAt: number, endedAt: number): boolean {
+    return this.systemSleepIntervals.some(interval => interval.startedAt < endedAt && interval.endedAt > startedAt);
+  }
+
+  private settleRecordingGap(session: ActiveSession, now: number): void {
+    // kind 分名：连接断/源停吐/休眠/尾部四值（悬停原因可辨，判不出=粗归因不猜）。
+    if (session.gapStartAt === null) return;
+    const gapMs = Math.max(0, now - session.gapStartAt);
+    session.missingMs += gapMs;
+    if (gapMs >= GAP_ROW_MIN_MS) {
+      this.services.recordings.insertGap({
+        recordingId: session.recordingId,
+        startedAt: new Date(session.gapStartAt).toISOString(), endedAt: new Date(now).toISOString(),
+        missingMs: gapMs,
+        kind: this.isSystemSleepGap(session.gapStartAt, now)
+          ? "system_sleep"
+          : isStallCause(session.gapCause)
+            ? "source_stall"
+            : "stream_disconnect",
+        evidence: JSON.stringify({ gapStartAt: session.gapStartAt, size: session.size,
+          cause: session.gapCause, mediaPositionMs: session.mediaPositionMs }),
+      });
+    }
+    session.gapStartAt = null;
+    // 取到地址或打开文件不代表恢复；收到媒体后再同步记录与监控卡片。
+    const recording = this.services.recordings.update(session.recordingId, {
+      state: "recording",
+      failureReason: null,
+    });
+    this.services.rooms.setState(session.roomId, "recording", { lastError: null });
+    const room = this.services.rooms.get(session.roomId);
+    if (room) this.services.events.emit({ type: "room:updated", data: this.enrichRoom(room) });
+    this.services.events.emit({ type: "recording:updated", data: recording });
+  }
+
   /** 新建录制会话：续录/缺失时长相关的状态集中在这里初始化。 */
   private newSession(
     recordingId: string,
@@ -350,6 +440,7 @@ export class RecorderManager {
   ): ActiveSession {
     const now = this.services.clock.now();
     return {
+      downloadSpeed: new DownloadSpeed(),
       recordingId,
       roomId,
       streamSessionId,
@@ -375,6 +466,49 @@ export class RecorderManager {
 
   activeRoomIds(): string[] {
     return [...this.active.keys()];
+  }
+
+  recordingDownloadBytesPerSecond(): number {
+    const now = this.services.clock.now();
+    let speed = 0;
+    for (const session of this.active.values()) {
+      speed += session.downloadSpeed.bytesPerSecond(now);
+    }
+    return speed;
+  }
+
+  private recordingMediaNow(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId || session.gapStartAt !== null || session.stopRequested) return null;
+    return session.mediaPositionMs ?? null;
+  }
+
+  /** 标记采用文件媒体时间；断流期间沿用最后收到的媒体位置。 */
+  recordingMarkerTail(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    if (session.mediaPositionMs != null) return Math.floor(session.mediaPositionMs / 1000);
+    if (session.size === 0) return 0;
+    // 无媒体时钟的源按有效接收时间估计，扣除已结束和正在发生的断流。
+    const now = this.services.clock.now();
+    const pendingGap = session.gapStartAt == null ? 0 : Math.max(0, now - session.gapStartAt);
+    return Math.max(0, Math.floor((now - Date.parse(session.startedAt) - session.missingMs - pendingGap) / 1000));
+  }
+
+  recordingPreviewOffsetSeconds(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    const shared = this.previewSessions.get(roomId)?.recording;
+    if (!shared || shared.session !== session) return session.previewOffsetMs == null ? null : session.previewOffsetMs / 1000;
+    const offset = shared.normalizer.timestampOffsetMs;
+    return offset == null ? null : offset / 1000;
+  }
+
+  recordingMediaTailSeconds(roomId: string, recordingId: string): number | null {
+    const session = this.active.get(roomId);
+    if (!session || session.recordingId !== recordingId) return null;
+    // Range boundaries must use received media, including the last frame during reconnects.
+    return Math.max(0, (session.mediaPositionMs ?? 0) / 1000);
   }
 
   /** 当前录制会话信息（未录制返回 null），供监控总览显示录制时长。 */
@@ -916,6 +1050,7 @@ export class RecorderManager {
         return;
       }
       await renameRecordingWithBuffer(this.services.recordingBufferDirectory, rec.filePath, nextPath);
+      await this.services.danmaku.moveSidecar(recordingId, rec.filePath, nextPath);
       await moveMarkerSidecar(rec.filePath, nextPath);
       await moveSeekIndexSidecar(rec.filePath, nextPath);
       // 确认改名即保留：标签数据归位到 标签/（改名已完成、用新名落位）。
@@ -987,6 +1122,9 @@ export class RecorderManager {
         startupTrace,
       };
       this.previewSessions.set(roomId, session);
+      engine.setDownloadObserver?.((bytes) => {
+        session.recording?.session.downloadSpeed.add(bytes, this.services.clock.now());
+      });
       session.done = (async () => {
         let streamError: ErrorObject | null = null;
         let gotData = false;
@@ -1014,6 +1152,8 @@ export class RecorderManager {
               }
               const sharedRecording = session.recording;
               if (sharedRecording) {
+                if (!engine.setDownloadObserver)
+                  sharedRecording.session.downloadSpeed.add(event.chunk.length, this.services.clock.now());
                 try {
                   await this.appendSharedPreviewRecording(
                     sharedRecording,
@@ -1193,11 +1333,13 @@ export class RecorderManager {
     const tags = recording.pendingTags.splice(0);
     const timestamp = recording.normalizer.lastTimestampMs;
     // Upstream arrival and durable file progress are separate facts.
+    this.settleRecordingGap(recording.session, receivedAt);
     recording.session.lastDataAt = receivedAt;
     if (!data.length) return;
     await recording.bufferedWriter.write(data, () => {
       recording.session.size += data.length;
       recording.session.timestampOffsetMs = timestamp;
+      recording.session.mediaPositionMs = timestamp;
       for (const info of tags) recording.seekWriter?.note(info.seqHeader
         ? { t: info.ts, b: info.fileOffset, s: 1, k: info.tagType }
         : { t: info.ts, b: info.fileOffset });
@@ -1336,6 +1478,11 @@ export class RecorderManager {
     previewSession.engine.setRecordingActive?.(true);
     previewSession.recording = sharedRecording;
     this.active.set(room.id, session);
+    // 弹幕采集随录制启动（异步起、失败只降级弹幕自身，不阻塞录制路径）。
+    {
+      this.services.danmaku.startForRecording(recording.id, filePath, room,
+        () => this.recordingMediaNow(room.id, recording.id));
+    }
     this.services.recordings.update(recording.id, {
       state: "recording",
       filePath,
@@ -1765,8 +1912,11 @@ export class RecorderManager {
     const engine = this.services.engineFor();
     const generation = session.generation;
     session.engine = engine;
+    engine.setDownloadObserver?.((bytes) => {
+      if (session.generation === generation && !session.stopRequested)
+        session.downloadSpeed.add(bytes, this.services.clock.now());
+    });
     session.filePath = filePath;
-    this.services.rooms.setState(room.id, "recording");
     this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
@@ -1807,15 +1957,21 @@ export class RecorderManager {
         if (session.stopRequested) break;
         switch (event.type) {
           case "preview_data": {
+            if (event.recordingOffsetMs !== undefined) session.previewOffsetMs = event.recordingOffsetMs;
             this.preview?.broadcastFrame(room.id, event.chunk);
             break;
           }
           case "file_created": {
+            session.previewOffsetMs = null;
             startedConfirmed = true;
             this.services.recordings.update(recordingId, {
-              state: "recording",
+              state: session.gapStartAt === null ? "recording" : "reconnecting",
               filePath: event.filePath,
             });
+            {
+              this.services.danmaku.startForRecording(recordingId, event.filePath, room,
+                () => this.recordingMediaNow(room.id, recordingId));
+            }
             this.services.events.emit({
               type: "recording:updated",
               data: this.services.recordings.get(recordingId)!,
@@ -1823,6 +1979,8 @@ export class RecorderManager {
             break;
           }
           case "data": {
+            if (!engine.setDownloadObserver)
+              session.downloadSpeed.add(event.chunk.length, this.services.clock.now());
             if (!gotData && (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls")) {
               gotData = true;
               clearTimeout2(this.services, pendingTimeout);
@@ -1830,34 +1988,17 @@ export class RecorderManager {
             }
             session.size += event.chunk.length;
             const now = event.receivedAt ?? this.services.clock.now();
-            // 恢复后拿到第一份数据：把中断期间的缺失时长结算到本次录制上。
-            if (session.gapStartAt !== null && (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls")) {
-              const gapMs = Math.max(0, now - session.gapStartAt);
-              session.missingMs += gapMs;
-              if (gapMs < GAP_ROW_MIN_MS) {
-                console.log(`[recording ${new Date().toISOString()}] short-gap ${gapMs}ms（不记条目，时长已累计）`);
-              } else {
-              // 中断事件存证：先存证据再定归因（kind 为当前可判的粗归因，数据层留给后续细分）。
-              this.services.recordings.insertGap({
-                recordingId: session.recordingId,
-                startedAt: new Date(session.gapStartAt).toISOString(),
-                endedAt: new Date(now).toISOString(),
-                missingMs: gapMs,
-                kind: this.shuttingDown
-                  ? "service_restart"
-                  : "stream_disconnect",
-                evidence: JSON.stringify({
-                  gapStartAt: session.gapStartAt,
-                  size: session.size,
-                  cause: session.gapCause,
-                }),
-              });
-              }
-              session.gapStartAt = null;
+            if (event.mediaTimestampMs !== undefined || this.services.mode === "fake" || stream.format === "hls") {
+              this.settleRecordingGap(session, now);
+            }
+            if (event.mediaTimestampMs !== undefined) {
+              session.mediaPositionMs = event.mediaTimestampMs;
             }
             session.lastDataAt = now;
-            if (!event.previewForwarded)
+            if (!event.previewForwarded) {
+              session.previewOffsetMs = 0;
               this.preview?.broadcastFrame(room.id, event.chunk);
+            }
             break;
           }
           case "stream_format_changed": {
@@ -1985,6 +2126,7 @@ export class RecorderManager {
     // 本段写到哪：下一段时间戳从这里接着走，拼接处不会跳回开头。
     if (endTimestampMs > session.timestampOffsetMs)
       session.timestampOffsetMs = endTimestampMs;
+    if (endTimestampMs > 0) session.mediaPositionMs = endTimestampMs;
     // 缺失时长从"最后一次收到数据"算起，恢复拿到数据时结算。
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
@@ -2386,6 +2528,7 @@ export class RecorderManager {
     err: AppError,
     preservePreview = false,
   ): Promise<void> {
+    await this.services.danmaku.stopForRecording(recordingId, this.active.get(room.id)?.mediaPositionMs);
     const session = this.active.get(room.id);
     const size = session?.size ?? 0;
     // 失败原因落库统一富化（reasonCategory）+落日志（[record] 同 [verify] 款，诊断盲区教训）。
@@ -2418,7 +2561,32 @@ export class RecorderManager {
     );
   }
 
-  /** 删除联动兜底：行被删而会话仍在录=停捕获拆链+清房间录制态，房间不留残影。 */
+  /** 读取当前健康事实，历史恢复次数不代表当前写入故障。 */
+  healthProbe(): HealthProbe[] {
+    return [...this.active].map(([roomId, session]) => {
+      const rec = this.services.recordings.get(session.recordingId);
+      return {
+        recordingId: session.recordingId,
+        roomId,
+        bytes: session.size,
+        mediaTsMs: session.mediaPositionMs ?? null,
+        lastDataAt: session.lastDataAt,
+        writeError:
+          session.writeRestartPending ||
+          Boolean(this.previewSessions.get(roomId)?.recording?.writeError),
+        qualityFallback: Boolean(
+          rec?.expectedQuality &&
+          rec.quality &&
+          rec.expectedQuality !== rec.quality,
+        ),
+        recovering: session.gapStartAt != null || session.writeRestartPending,
+        missingMs: session.missingMs,
+        dataIntervalMs: session.engine?.expectedDataIntervalMs?.() ?? 0,
+      };
+    });
+  }
+
+  /** 删除联动兜底：停捕获拆链并清房间录制态。 */
   async stopActiveSessionForDeletion(recordingId: string): Promise<void> {
     const entry = [...this.active.entries()].find(
       ([, s]) => s.recordingId === recordingId,
@@ -2512,6 +2680,8 @@ export class RecorderManager {
 
   /** 片段导出进度快照（0-100）：导出进行中为数字，供历史列表显示「导出中 x%」。 */
   /** 删除联动：取消该片段的在途导出（立即真停，不留孤儿任务）。 */
+  canStartClipExport(): boolean { return !this.shuttingDown && this.clipExports.size < MAX_PARALLEL_CLIP_EXPORTS; }
+
   cancelClipExport(recordingId: string): void {
     const abort = this.clipExportAborts.get(recordingId);
     if (!abort) return;
@@ -2532,15 +2702,29 @@ export class RecorderManager {
     startSecond: number,
     endSecond: number,
     name: string,
+    opts: {
+      /** 队列面放行：已完成录制的已录区间可导（停录不取消已提交的落地面）；直接 API 仍仅录中。 */
+      allowCompleted?: boolean;
+      /** 编码策略快照（队列提交时定格）；缺省=全局设置。 */
+      encodeMode?: 'auto' | 'software';
+      /** 队列路径：等导出链完成再返回（写点落定后 clip 行含编码面真值）。 */
+      awaitCompletion?: boolean;
+      signal?: AbortSignal;
+      onCreated?: (clipId: string) => void;
+    } = {},
   ): Promise<{
     source: import("../types/index.js").Recording;
     clip: import("../types/index.js").Recording;
   }> {
-    const source = this.services.recordings.get(recordingId);
-    if (
-      !source ||
-      (source.state !== "recording" && source.state !== "reconnecting")
-    ) {
+    let currentSource = this.services.recordings.get(recordingId);
+    if (!currentSource) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", {recordingId});
+    const initialSource = currentSource;
+    const sourceOk =
+      initialSource &&
+      (initialSource.state === "recording" ||
+        initialSource.state === "reconnecting" ||
+        (opts.allowCompleted && ["completed", "processing", "awaiting_confirmation"].includes(initialSource.state)));
+    if (!sourceOk) {
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
         "仅录制中的录像可导出选区",
@@ -2564,19 +2748,17 @@ export class RecorderManager {
       );
     }
     const title = validateClipName(name, recordingId);
-    const elapsed = Math.max(
-      0,
-      Math.floor(
-        (this.services.clock.now() - Date.parse(source.startedAt)) / 1000,
-      ),
-    );
-    if (!Number.isFinite(startSecond) || !Number.isFinite(endSecond) || startSecond < 0 || endSecond <= startSecond || endSecond > elapsed) {
-      throw new AppError(
-        "CONFIG_INVALID",
-        "选区必须在当前已录制时长内，且至少为 1 秒",
-        { recordingId },
-      );
+    const elapsed = await recordedSeconds(this.services, initialSource);
+    if (opts.allowCompleted) {
+      currentSource = this.services.recordings.get(recordingId);
+      if (!currentSource || !currentSource.filePath) throw new AppError('RECORDING_NOT_AVAILABLE', '录像文件不可读', {recordingId});
     }
+    const source = currentSource;
+    if (opts.signal?.aborted) throw new AppError('RECORDING_NOT_AVAILABLE', '已取消', {recordingId});
+    // Validation can await a duration probe; recheck the shared reservation afterwards.
+    if (this.clipExports.has(selectionKey) || !this.canStartClipExport())
+      throw new AppError('CONCURRENT_LIMIT_REACHED', '请等待其他片段导出完成', {recordingId});
+    assertSegmentRange(startSecond, endSecond, elapsed, recordingId);
     if (!source.filePath) {
       throw new AppError(
         "RECORDING_NOT_AVAILABLE",
@@ -2615,6 +2797,10 @@ export class RecorderManager {
     this.clipExports.set(selectionKey, clip.id);
     const abort = new AbortController();
     this.clipExportAborts.set(clip.id, abort);
+    const externalAbort = () => abort.abort();
+    opts.signal?.addEventListener('abort', externalAbort, {once:true});
+    if (opts.signal?.aborted) abort.abort();
+    opts.onCreated?.(clip.id);
     const job = (async () => {
       const selectionMs = (endSecond - startSecond) * 1000;
       // 进度节流：整数百分比变化才发、间隔 ≥500ms（onProgress 是高频回调，直接进 SSE 会刷屏）。
@@ -2628,6 +2814,17 @@ export class RecorderManager {
           endSecond,
           {
             signal: abort.signal,
+            // 坑点：对象字面量后键胜——快照参数必须排在全局回退之后，否则执行层快照被覆盖。
+            encodingMode: this.services.settings.load()?.encodingMode ?? "auto",
+            ...(opts.encodeMode ? { encodingMode: opts.encodeMode } : {}),
+            onEncoder: ({ actualEncoder, fallbackReason }) => {
+              if (abort.signal.aborted || !this.services.recordings.get(clip.id)) return;
+              const row = this.services.recordings.update(clip.id, { metadata: {
+                ...(this.services.recordings.get(clip.id)?.metadata ?? { durationMs: null, segmentCount: 1, quality: null, size: 0 }),
+                actualEncoder, fallbackReason,
+              } });
+              this.services.events.emit({ type: "recording:updated", data: row });
+            },
             onProgress: ({ outTimeMs }) => {
               if (abort.signal.aborted || this.shuttingDown) return;
               const pct = Math.max(
@@ -2717,6 +2914,17 @@ export class RecorderManager {
           ).toISOString(),
           fileSizeBytes: result.sizeBytes,
           filePath: landed,
+          // 编码面记账：任务显示实际编码方式与回退原因（设计第 3 项显示面）。元数据整替=先并后写。
+          metadata: {
+            ...(this.services.recordings.get(clip.id)?.metadata ?? {
+              durationMs: null,
+              segmentCount: 1,
+              quality: null,
+              size: 0,
+            }),
+            actualEncoder: (result as { actualEncoder?: string }).actualEncoder ?? null,
+            fallbackReason: (result as { fallbackReason?: string | null }).fallbackReason ?? null,
+          },
           ...(finalTitle !== undefined ? { streamTitle: finalTitle } : {}),
         });
         this.clipProgress.delete(clip.id);
@@ -2742,6 +2950,7 @@ export class RecorderManager {
         }
       } finally {
         // 解除在途占位；源录制全程不碰（导出不停录）。
+        opts.signal?.removeEventListener("abort", externalAbort);
         this.clipExports.delete(selectionKey);
         this.clipExportAborts.delete(clip.id);
         this.clipExportJobs.delete(clip.id);
@@ -2750,6 +2959,23 @@ export class RecorderManager {
     })();
     this.clipExportJobs.set(clip.id, job);
     this.services.events.emit({ type: "recording:updated", data: pending });
+    if (opts.awaitCompletion) {
+      // 队列路径：等导出链写点落定再返回（坑点：exportClip 交互路是火即忘——
+      // 不 await 的调用方拿到的 clip 是写点前旧引用，编码面/终态都会失真）。
+      await job;
+      const settled = this.services.recordings.get(clip.id);
+      if (abort.signal.aborted || !settled || settled.state === 'failed' || settled.state === 'processing' && !settled.endReason) {
+        if (abort.signal.aborted && settled) {
+          this.services.recordings.update(clip.id, {state:'failed', failureReason:new AppError('RECORDING_NOT_AVAILABLE', '片段导出已取消', {recordingId:clip.id}).toObject()});
+          this.services.events.emit({type:'recording:updated', data:this.services.recordings.get(clip.id)!});
+        }
+        throw new AppError('RECORDING_NOT_AVAILABLE', abort.signal.aborted ? '已取消' : settled?.failureReason?.message ?? '片段导出失败', {recordingId:clip.id});
+      }
+      return {
+        source: this.services.recordings.get(recordingId)!,
+        clip: this.services.recordings.get(clip.id) ?? pending,
+      };
+    }
     return {
       source: this.services.recordings.get(recordingId)!,
       clip: pending,
@@ -2803,6 +3029,7 @@ export class RecorderManager {
     }
     if (endTimestampMs > session.timestampOffsetMs)
       session.timestampOffsetMs = endTimestampMs;
+    if (endTimestampMs > 0) session.mediaPositionMs = endTimestampMs;
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
     const effective =
@@ -2892,6 +3119,7 @@ export class RecorderManager {
       failure?: ErrorObject | null;
     } = {},
   ): Promise<void> {
+    await this.services.danmaku.stopForRecording(recordingId, this.active.get(room.id)?.mediaPositionMs);
     // 退出中：只放掉会话，不改库、不发通知、不起后处理——状态交给下次启动的恢复流程统一收口。
     if (this.shuttingDown) {
       this.active.get(room.id)?.resolveDone?.();
@@ -2921,9 +3149,22 @@ export class RecorderManager {
       return;
     }
     const session = this.active.get(room.id);
+    const endedAtMs = this.services.clock.now();
+    const tailMs = tailSilenceMs(session, endedAtMs);
+    // 末尾未恢复的缺失也要存证，否则主表累计值会大于历史页中断明细之和。
+    if (session && tailMs > 0) {
+      this.services.recordings.insertGap({
+        recordingId,
+        startedAt: new Date(endedAtMs - tailMs).toISOString(),
+        endedAt: new Date(endedAtMs).toISOString(),
+        missingMs: tailMs,
+        kind: this.isSystemSleepGap(endedAtMs - tailMs, endedAtMs) ? "system_sleep" : "recording_tail",
+        evidence: JSON.stringify({ mediaPositionMs: session.mediaPositionMs }),
+      });
+    }
     const rec = this.services.recordings.update(recordingId, {
       state: "completed",
-      endedAt: this.services.clock.iso(),
+      endedAt: new Date(endedAtMs).toISOString(),
       fileSizeBytes: size,
       // 结束原因与缺失时长随录制落库：历史页据此标注"中途缺失 N 秒"，去重据此判断能否续录。
       endReason:
@@ -2931,10 +3172,7 @@ export class RecorderManager {
         (endReason === "stream_lost" ? "interrupted" : "natural"),
       // 收尾时若已经静默很久（断网后连接没断、或重连期间），把这段也算进缺失：
       // 否则用户点了停止只会看到一条"手动停止"，完全不知道最后一段没录进去。
-      missingMs: Math.round(
-        (session?.missingMs ?? 0) +
-          tailSilenceMs(session, this.services.clock.now()),
-      ),
+      missingMs: Math.round((session?.missingMs ?? 0) + tailMs),
       failureReason: options.failure ?? null,
     });
     // 中断收尾要用 4004（stream_lost）告知观看端：这不是正常结束，流是断的。
@@ -3064,6 +3302,8 @@ export class RecorderManager {
     this.services.pipeline.cancel(recordingId, "录制已删除");
     this.cancelClipExport(recordingId);
     if (rec.filePath) {
+      void this.services.danmaku.stopForRecording(recordingId)
+        .then(() => this.services.danmaku.removeSidecar(rec.filePath)).catch(() => undefined);
       void unlink(rec.filePath).catch(() => undefined);
       void removeMarkerSidecar(rec.filePath);
       void removeSeekIndexSidecar(rec.filePath);

@@ -9,6 +9,9 @@ import { useNotificationStore } from "./notificationStore";
 import { useUploadStore } from "./uploadStore";
 import { usePipelineStore } from "./pipelineStore";
 import { useTasksStore } from "./tasksStore";
+import { useDanmakuStore } from "./danmakuStore";
+import { useStreamHealthStore } from "./streamHealthStore";
+import { useClipQueueStore } from "./clipQueueStore";
 
 export function applyServerEvent(e: ServerEvent) {
   switch (e.type) {
@@ -27,6 +30,12 @@ export function applyServerEvent(e: ServerEvent) {
       useRoomStore.getState().upsertRoom(e.room);
       break;
     case "recording:updated":
+      if (
+        ["completed", "failed", "processing", "awaiting_confirmation"].includes(
+          e.recording.state,
+        )
+      )
+        useStreamHealthStore.getState().remove(e.recording.id);
       useTasksStore.getState().settleRecording(e.recording);
       useRecordingStore.getState().upsertRecordingFromEvent(e.recording);
       break;
@@ -34,6 +43,7 @@ export function applyServerEvent(e: ServerEvent) {
       usePipelineStore.getState().upsert(e.pipeline);
       break;
     case "recording:deleted":
+      useStreamHealthStore.getState().remove(e.recordingId);
       useRecordingStore.getState().removeRecordingFromEvent(e.recordingId);
       break;
     case "alert:created":
@@ -65,6 +75,15 @@ export function applyServerEvent(e: ServerEvent) {
         error: e.upload.error,
         updatedAt: e.upload.updatedAt,
       });
+      break;
+    case "danmaku:status":
+      useDanmakuStore.getState().applyStatus(e.status);
+      break;
+    case "stream-health":
+      useStreamHealthStore.getState().applyHealth(e.health);
+      break;
+    case "clip-queue:updated":
+      useClipQueueStore.getState().touch();
       break;
   }
 }

@@ -1,4 +1,5 @@
 mod backend;
+mod power;
 mod contract;
 mod updates;
 
@@ -836,6 +837,7 @@ pub fn run() {
             quit_app,
         ])
         .setup(|app| {
+            power::start(app.handle().clone());
             // This runs before the event loop begins, so the saved dimensions
             // are applied as the native window is being brought up.
             #[cfg(any(target_os = "macos", target_os = "windows"))]

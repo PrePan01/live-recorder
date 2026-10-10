@@ -53,6 +53,10 @@ async function makeServices() {
   const dir = await mkdtemp(path.join(tmpdir(), 'lr-clip-confirm-'));
   const services = buildServices({ dbPath: ':memory:', clock });
   services.settings.save(baseSettings(dir));
+  // This suite mocks encoding and uses a synthetic engine without real DTS.
+  // Declare received file-media time explicitly instead of relying on a wall clock.
+  vi.spyOn(services.manager, 'recordingMediaTailSeconds').mockReturnValue(60);
+
   return { clock, dir, services };
 }
 
@@ -110,6 +114,19 @@ beforeEach(() => {
 });
 
 describe('片段导出（保存命名→后台导出）', () => {
+  it('validates the legacy direct export against received media, including cached GOP and stalled sources', async () => {
+    const { services, source } = await startRecording();
+    mockExportOk(512);
+    vi.mocked(services.manager.recordingMediaTailSeconds).mockReturnValue(7.25);
+    const exported = await services.manager.exportClip(source.id, 5.125, 7.125, '缓存范围', { awaitCompletion: true });
+    expect(exported.clip.id).toBeTruthy();
+    expect(exportClipFileMock.mock.calls[0]?.slice(2, 4)).toEqual([5.125, 7.125]);
+    vi.mocked(services.manager.recordingMediaTailSeconds).mockReturnValue(2);
+    await expect(services.manager.exportClip(source.id, 3, 4, '尚未录到')).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    await expect(services.manager.exportClip(source.id, 0, 0.5, '太短')).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+    await services.manager.shutdown();
+  });
+
   it('完成即终态：标题=文件名、不进确认链、endReason=clip_export、导出不停录', async () => {
     const { services, source } = await startRecording();
     mockExportOk(2048);

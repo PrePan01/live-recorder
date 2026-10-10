@@ -1,5 +1,6 @@
 import { http } from "./client";
 import { EndpointResolver } from "./endpoint";
+import type { StreamHealth } from "../types/streamHealth";
 import type {
   PagedRecordings,
   Recording,
@@ -20,10 +21,11 @@ export async function createRecordingMarker(
   id: string,
   text: string,
   positionSeconds?: number,
+  endPositionSeconds?: number,
 ): Promise<RecordingMarker> {
   const { data } = await http.post<{ marker: RecordingMarker }>(
     `/recordings/${id}/markers`,
-    positionSeconds !== undefined ? { text, positionSeconds } : { text },
+    { text, ...(positionSeconds !== undefined ? {positionSeconds} : {}), ...(endPositionSeconds !== undefined ? {endPositionSeconds} : {}) },
   );
   return data.marker;
 }
@@ -31,7 +33,7 @@ export async function createRecordingMarker(
 export async function updateRecordingMarker(
   id: string,
   markerId: string,
-  patch: { text?: string; positionSeconds?: number },
+  patch: { text?: string; positionSeconds?: number; endPositionSeconds?: number },
 ): Promise<RecordingMarker> {
   const { data } = await http.patch<{ marker: RecordingMarker }>(
     `/recordings/${id}/markers/${markerId}`,
@@ -60,6 +62,27 @@ export async function exportRecordingClip(
   return data;
 }
 
+/** 流健康快照口（质量灯双读点之一；SSE stream-health 为另一读点）。 */
+export async function fetchRecordingQuality(
+  id: string,
+): Promise<StreamHealth | null> {
+  // 契约：路由直接回 StreamHealth 裸对象（非 { quality } 包装）——解包口径勿错。
+  const { data } = await http.get<StreamHealth>(`/recordings/${id}/quality`);
+  return data ?? null;
+}
+
+export async function fetchActiveRecordingHealth(): Promise<StreamHealth[]> {
+  const { data } = await http.get<{ health: StreamHealth[] }>(
+    "/recordings/quality",
+  );
+  return data.health;
+}
+
+/** 完成态文件播放地址（Range 支持）；必须走 EndpointResolver.base 绝对地址。 */
+export function recordingFileUrl(id: string): string {
+  return `${EndpointResolver.base}/recordings/${id}/file`;
+}
+
 /** 跳播起流地址：GET 流式 fMP4，从目标点前关键帧起切；每次请求即一个新代际。 */
 export function recordingSeekStreamUrl(
   id: string,
@@ -67,7 +90,9 @@ export function recordingSeekStreamUrl(
   streamToken?: string,
 ): string {
   const url = `${EndpointResolver.base}/recordings/${id}/seek-stream?second=${Math.max(0, Math.floor(startSecond))}`;
-  return streamToken ? `${url}&snapshot=${encodeURIComponent(streamToken)}` : url;
+  return streamToken
+    ? `${url}&snapshot=${encodeURIComponent(streamToken)}`
+    : url;
 }
 
 /** 跳播预热（pointerdown/提交时）：后端零进程准备（开句柄+查索引）；
@@ -77,9 +102,15 @@ export async function prewarmRecordingSeek(
   startSecond: number,
   options: { signal?: AbortSignal; prepareStream?: boolean } = {},
 ): Promise<{ startSecond?: number; streamToken?: string } | null> {
-  const { data } = await http.post<{ startSecond?: number; streamToken?: string } | null>(
+  const { data } = await http.post<{
+    startSecond?: number;
+    streamToken?: string;
+  } | null>(
     `/recordings/${id}/seek-prewarm`,
-    { second: Math.max(0, Math.floor(startSecond)), prepareStream: options.prepareStream ?? false },
+    {
+      second: Math.max(0, Math.floor(startSecond)),
+      prepareStream: options.prepareStream ?? false,
+    },
     { signal: options.signal },
   );
   return data ?? null;
@@ -172,4 +203,8 @@ export async function confirmRecordingKeep(
     { keep, ...(keep && fileName ? { fileName } : {}) },
   );
   return data?.recording ?? null;
+}
+
+export async function fetchRecordingPosition(id: string, lagSeconds = 0): Promise<{durationSeconds:number; positionSeconds:number; previewOffsetSeconds:number|null}> {
+  const {data} = await http.get(`/recordings/${id}/marker-position`, {params:{lagSeconds}}); return data;
 }

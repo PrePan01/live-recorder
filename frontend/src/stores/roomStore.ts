@@ -25,6 +25,7 @@ function normalizeRoom(room: Room): Room {
     autoRecord: room.autoRecord ?? null,
     liveNotificationEnabled: room.liveNotificationEnabled ?? false,
     lastLiveStatus: room.lastLiveStatus ?? null,
+    liveCoverUrl: room.liveCoverUrl ?? null,
     currentStreamTitle: room.currentStreamTitle ?? null,
     availableQualities: room.availableQualities ?? [],
     activeRecording: room.activeRecording ?? null,
@@ -64,6 +65,7 @@ interface RoomState {
   toggleRoom: (id: string, enabled: boolean) => Promise<void>;
   favoriteRoom: (id: string, favorited: boolean) => Promise<void>;
   setAutoRecord: (id: string, value: boolean | null) => Promise<void>;
+  setDanmakuEnabled: (id: string, value: boolean | null) => Promise<void>;
   setLiveNotification: (id: string, value: boolean) => Promise<void>;
   checkRoomNow: (id: string) => Promise<void>;
   startRoomRecording: (id: string) => Promise<void>;
@@ -149,6 +151,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
     );
   },
+  async setDanmakuEnabled(id, value) {
+    invalidateRoomsRequest();
+    get().upsertRoom(
+      normalizeRoom(await roomsApi.updateRoom(id, { danmakuEnabled: value })),
+    );
+  },
   async setLiveNotification(id, value) {
     invalidateRoomsRequest();
     get().upsertRoom(
@@ -181,18 +189,17 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     set({ actingRoomId: id, actingAction: "record" });
     try {
       await roomsApi.startRoomRecording(id);
-      // 乐观更新：成功后先本地标记录制中，等待 SSE room:updated 校正。
+      // 乐观更新只标状态，不伪造 recordingId：身份字段造假会毒化质量灯等按
+      // 身份查询的下游（空串≠无主，取真值靠随后的强刷，SSE 校正作兜底）。
       const room = get().rooms.find((r) => r.id === id);
       if (room) {
         get().upsertRoom({
           ...room,
           monitorState: "recording",
-          activeRecording: room.activeRecording ?? {
-            recordingId: "",
-            startedAt: new Date().toISOString(),
-          },
+          activeRecording: room.activeRecording,
         });
       }
+      void get().fetchRooms(true).catch(() => undefined);
     } finally {
       set({ actingRoomId: null, actingAction: null });
     }

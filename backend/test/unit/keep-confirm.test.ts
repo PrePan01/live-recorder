@@ -303,9 +303,11 @@ describe('#220 录制完成「询问是否保留」', () => {
       return originalUpdate(id, patch);
     }) as typeof services.recordings.update;
     completeExport();
-    await sleep(20);
-
-    expect(services.recordings.get(recordingId)!.state).toBe('failed');
+    // Failure cleanup awaits filesystem I/O; wait for the terminal state rather
+    // than assuming it finishes within 20 ms while the full suite is running.
+    await vi.waitFor(() => {
+      expect(services.recordings.get(recordingId)!.state).toBe('failed');
+    });
   });
 
   it('重启不会把尚在导出的精彩时刻误标为 completed；已排队的不保留会被兑现', async () => {

@@ -9,6 +9,7 @@ import { useUploadStore } from '../stores/uploadStore';
 import { useDiagnosticStore } from '../stores/diagnosticStore';
 import type { TaskItem } from '../types/tasks';
 import { pipelineStepText } from '../utils/pipelineStepText';
+import { encoderLabel } from '../utils/encoderText';
 
 /**
  * 任务进度入口：告警按钮右侧同构三件套——按钮＋右上角小角标＋点击弹层。
@@ -73,6 +74,12 @@ function TaskCard({ task }: { task: TaskItem }) {
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
         {task.title}
       </div>
+      {task.actualEncoder ? (
+        <div style={{ fontSize: 11, opacity: 0.65 }}>
+          编码方式：{encoderLabel(task.actualEncoder)}
+          {task.fallbackReason ? `（${task.fallbackReason}）` : ''}
+        </div>
+      ) : null}
       {/* 第二行两端对齐：左=状态（百分比）、右=处理阶段-步骤 */}
       <div
         style={{

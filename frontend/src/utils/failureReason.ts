@@ -83,6 +83,7 @@ export function failurePrimaryText(
   failure: ApiErrorEnvelope | null | undefined,
 ): string {
   if (!failure) return GROUP_TEXT.internal;
+  if (failure.code === "SYSTEM_SLEEP_INTERRUPTED") return "系统休眠，录制中断";
   const details = failure.details;
   const technical =
     readDetail(details, "technicalMessage") ??

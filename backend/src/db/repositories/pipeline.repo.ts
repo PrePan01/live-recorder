@@ -26,6 +26,8 @@ interface PipelineArtifactRow {
   error: string | null;
   started_at: string | null;
   ended_at: string | null;
+  actual_encoder: string | null;
+  fallback_reason: string | null;
 }
 
 function parseSnapshot(raw: string): Record<string, unknown> {
@@ -96,9 +98,23 @@ export class PipelineRepository {
   }
 
   listArtifacts(runId: string): PipelineArtifact[] {
-    return this.db
+    const rows = this.db
       .prepare('SELECT * FROM pipeline_artifacts WHERE run_id = ? ORDER BY rowid')
-      .all(runId) as PipelineArtifact[];
+      .all(runId) as Record<string, unknown>[];
+    // 显式驼峰映射：库列 snake_case 与消费面 camelCase 对齐（含编码面两列）。
+    return rows.map((r) => ({
+      id: r.id as string,
+      runId: r.run_id as string,
+      step: r.step as PipelineArtifact['step'],
+      status: r.status as PipelineArtifact['status'],
+      path: (r.path ?? null) as string | null,
+      sizeBytes: (r.size_bytes ?? null) as number | null,
+      error: (r.error ?? null) as string | null,
+      startedAt: (r.started_at ?? null) as string | null,
+      endedAt: (r.ended_at ?? null) as string | null,
+      actualEncoder: (r.actual_encoder ?? null) as string | null,
+      fallbackReason: (r.fallback_reason ?? null) as string | null,
+    }));
   }
 
   setRunStatus(id: string, status: PipelineRunStatus, endedAt: string | null = null): void {
@@ -120,7 +136,7 @@ export class PipelineRepository {
     return row ? rowToArtifact(row) : null;
   }
 
-  setArtifact(id: string, patch: { status?: PipelineArtifactStatus; path?: string | null; sizeBytes?: number | null; error?: string | null; startedAt?: string | null; endedAt?: string | null }): void {
+  setArtifact(id: string, patch: { status?: PipelineArtifactStatus; path?: string | null; sizeBytes?: number | null; error?: string | null; startedAt?: string | null; endedAt?: string | null; actualEncoder?: string | null; fallbackReason?: string | null }): void {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.status !== undefined) {
@@ -147,6 +163,14 @@ export class PipelineRepository {
       sets.push('ended_at = ?');
       params.push(patch.endedAt);
     }
+    if (patch.actualEncoder !== undefined) {
+      sets.push('actual_encoder = ?');
+      params.push(patch.actualEncoder);
+    }
+    if (patch.fallbackReason !== undefined) {
+      sets.push('fallback_reason = ?');
+      params.push(patch.fallbackReason);
+    }
     if (sets.length) {
       this.db.prepare(`UPDATE pipeline_artifacts SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     }
@@ -164,5 +188,7 @@ function rowToArtifact(row: PipelineArtifactRow): PipelineArtifact {
     error: row.error,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    actualEncoder: row.actual_encoder ?? null,
+    fallbackReason: row.fallback_reason ?? null,
   };
 }

@@ -36,6 +36,10 @@ export interface RecordingMetadata {
   segmentCount: number;
   quality: string | null;
   size: number;
+  /** 实际编码方式（导出/转码任务显示面），未编码任务=null。 */
+  actualEncoder?: string | null;
+  /** 回退原因人话（未回退=null）。 */
+  fallbackReason?: string | null;
 }
 
 export interface Recording {
@@ -52,6 +56,7 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ErrorObject | null;
   retryCount: number;
+  systemSleepInterrupted?: boolean;
   createdAt: string;
   origin?: RecordingOrigin;
   quality?: Quality;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildServices } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
@@ -32,7 +32,9 @@ async function setup() {
   services.db
     .prepare('UPDATE recordings SET started_at = ? WHERE id = ?')
     .run(new Date(clock.now()).toISOString(), rec.id);
-  clock.advance(60_000); // 已录制 60 秒
+  clock.advance(60_000);
+  // 媒体已写到 60 秒；墙钟不能作为录像时长的替身。
+  vi.spyOn(services.manager, "recordingMediaTailSeconds").mockReturnValue(60);
   const { app } = buildApp(services);
   return { services, app, rec };
 }
@@ -58,10 +60,10 @@ describe('标记时间点=预览播放头秒（#95 BE 协助面）', () => {
     await app.close();
   });
 
-  it('越界/非法 positionSeconds=422（沿 PATCH 同款校验：0≤整数≤已录时长）', async () => {
+  it('越界/非法 positionSeconds=422（沿 PATCH 同款校验：0≤有限秒数≤已录时长）', async () => {
     const { app, rec } = await setup();
     const inj = host(app);
-    for (const bad of [61, -1, 3.5, '30']) {
+    for (const bad of [61, -1, '30']) {
       const res = await inj({
         method: 'POST',
         url: `/api/v1/recordings/${rec.id}/markers`,

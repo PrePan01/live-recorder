@@ -10,9 +10,11 @@ const META: Record<LiveStatus, { colorClass: string; text: string }> = {
 export default function LiveStatusTag({
   status,
   streamTitle,
+  titleOnly = false,
 }: {
   status: LiveStatus | null;
   streamTitle?: string | null;
+  titleOnly?: boolean;
 }) {
   const titleRef = useRef<HTMLSpanElement>(null);
   const [marquee, setMarquee] = useState(false);
@@ -47,6 +49,7 @@ export default function LiveStatusTag({
   }, [title]);
 
   if (!status) {
+    if (titleOnly) return null;
     return (
       <span className="lr-live-status-tag">
         <span className="lr-live-status-dot lr-live-status-dot--offline" />
@@ -59,10 +62,16 @@ export default function LiveStatusTag({
   const meta = META[status];
   return (
     <span className="lr-live-status-tag">
-      <span className={`lr-live-status-dot lr-live-status-dot--${status}`} />
-      <span className={`lr-live-status-text ${meta.colorClass}`}>
-        {meta.text}
-      </span>
+      {!titleOnly ? (
+        <>
+          <span
+            className={`lr-live-status-dot lr-live-status-dot--${status}`}
+          />
+          <span className={`lr-live-status-text ${meta.colorClass}`}>
+            {meta.text}
+          </span>
+        </>
+      ) : null}
       {title ? (
         <span
           ref={titleRef}

@@ -52,12 +52,18 @@ export interface RecordingGap {
   /** 归因分类：服务重启/控制重连/流断档/写盘异常等，取值由服务端判定。 */
   kind: string;
   evidence: string | null;
+  /** 缺口在播放轨道的媒体时间位置（拼接位）；尾缺=片尾可播时长处。 */
+  positionMs?: number;
+  /** 位置来源精度：true=仅墙钟换算（旧录估算，显示带「约」）。 */
+  estimated?: boolean;
 }
 
 export interface RecordingMarker {
   id: string;
   recordingId: string;
   positionSeconds: number;
+  /** Null/absent for a point label; otherwise the end of a persistent segment. */
+  endPositionSeconds?: number | null;
   text: string;
   createdAt: string;
   updatedAt: string;
@@ -94,8 +100,13 @@ export interface Recording {
   fileSizeBytes: number;
   failureReason: ApiErrorEnvelope | null;
   retryCount: number;
+  systemSleepInterrupted?: boolean;
   /** 片段导出进行中的进度百分比（0-100）；无后台导出或终态时为空。 */
   progressPercent?: number | null;
+  hasDanmaku?: boolean;
+  danmakuCount?: number;
+  /** 缺失账摘要（列表直渲）：次数/总缺失毫秒/旧记录估算位。 */
+  gapSummary?: { gapCount: number; totalMissingMs: number; estimated?: boolean };
   /** 跳播定位索引状态：ready=可跳播、building=建立中（入口显式禁用）、missing=未建（兕底回扫）。 */
   seekIndexState?: "ready" | "building" | "missing";
   /** 索引建立进度（0-100，可选展示用）。 */

@@ -1,10 +1,10 @@
+import { readPreviewElapsed } from "./previewMediaClock";
 /** 只读媒体进度，不调用 play/pause，也不写入 currentTime。 */
 export function observePreviewProgress(
   video: HTMLVideoElement,
   onProgress: (elapsed: number) => void,
   isCurrentSource: () => boolean = () => true,
 ): () => void {
-  let mediaStart: number | null = null;
   let metadataReady = video.readyState >= 2;
   const report = () => {
     if (
@@ -14,12 +14,11 @@ export function observePreviewProgress(
       video.buffered.length === 0
     )
       return;
-    mediaStart ??= video.buffered.start(0);
-    onProgress(Math.max(0, video.currentTime - mediaStart));
+    const elapsed = readPreviewElapsed(video);
+    if (elapsed != null) onProgress(elapsed);
   };
   const metadata = () => {
     metadataReady = true;
-    mediaStart = null;
     report();
   };
   video.addEventListener("loadedmetadata", metadata);

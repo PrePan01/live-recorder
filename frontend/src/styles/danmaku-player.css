@@ -1,0 +1,341 @@
+.lr-danmaku-settings {
+  padding: 16px 0 0;
+  margin-top: 16px;
+  border-top: 1px dashed var(--lr-ink);
+  color: var(--lr-text);
+}
+.lr-danmaku-settings__heading,
+.lr-danmaku-settings__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lr-danmaku-settings__heading {
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-weight: 700;
+}
+.lr-danmaku-settings__status {
+  color: var(--lr-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.lr-danmaku-settings__fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(
+      180px,
+      1fr
+    );
+  gap: 24px;
+  align-items: start;
+}
+.lr-danmaku-settings__field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 10px;
+  font-size: 13px;
+}
+.lr-danmaku-settings__visibility {
+  align-items: flex-start;
+}
+.lr-danmaku-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.lr-danmaku-settings__heading:has(.lr-danmaku-settings__actions) {
+  justify-content: flex-start;
+}
+.lr-danmaku-settings__label output {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lr-danmaku-settings .ant-slider {
+  margin: 0 8px;
+  padding-block: 8px;
+}
+.lr-danmaku-settings .ant-slider-rail,
+.lr-danmaku-settings .ant-slider-track {
+  height: 8px !important;
+  border-radius: 0 !important;
+}
+.lr-danmaku-settings .ant-slider-rail {
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-surface-alt) !important;
+}
+.lr-danmaku-settings .ant-slider-track {
+  background: var(--lr-primary) !important;
+}
+.lr-danmaku-settings .ant-slider-handle {
+  translate: 0 4px;
+}
+.lr-danmaku-settings .ant-slider-handle::after {
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-primary) !important;
+}
+.lr-danmaku-settings .ant-slider-handle:focus-visible::after {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 3px;
+}
+.lr-danmaku-settings--compact {
+  width: min(280px, calc(100vw - 64px));
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.lr-danmaku-settings--compact .lr-danmaku-settings__fields {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.lr-danmaku-settings--compact .lr-danmaku-settings__visibility {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.lr-danmaku-player__rate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+}
+.lr-danmaku-player__rate .ant-select {
+  width: 80px;
+}
+.lr-danmaku-player__export.ant-btn,
+.lr-danmaku-player__export.ant-btn .anticon {
+  font-size: 12px;
+}
+.lr-danmaku-player__export.ant-btn {
+  padding: 0 6px;
+  gap: 4px;
+}
+/* 文件回放弹窗独立排版，避免改变录制中预览和共用弹幕设置。 */
+.lr-danmaku-player__panel {
+  padding-top: 12px;
+}
+.lr-danmaku-player-modal .lr-recording-track {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.lr-danmaku-player-modal .lr-recording-track__toolbar {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+}
+.lr-danmaku-player__section-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.lr-danmaku-player-modal .lr-recording-track__canvas {
+  --lr-recording-track-rail-top: 24px;
+  --lr-recording-track-rail-height: 12px;
+  height: 58px;
+}
+.lr-danmaku-player-modal .lr-recording-track__summary {
+  padding-top: 4px;
+}
+.lr-danmaku-player-modal .lr-recording-track__toggle.ant-btn {
+  width: 24px;
+  min-width: 24px;
+}
+.lr-danmaku-player-modal .lr-recording-track__preview-legend {
+  margin-left: 0;
+}
+.lr-danmaku-player-modal .lr-danmaku-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--lr-border);
+}
+.lr-danmaku-player-modal .lr-danmaku-settings__heading {
+  min-height: 24px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.lr-danmaku-player-modal .lr-danmaku-settings__fields {
+  grid-template-columns: minmax(100px, 0.6fr) minmax(160px, 1fr) minmax(160px, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+.lr-danmaku-player-modal .lr-danmaku-settings__field {
+  gap: 8px;
+  font-size: 12px;
+}
+.lr-danmaku-player-modal .lr-danmaku-settings .ant-switch {
+  margin-block: 1px;
+}
+.lr-danmaku-player-modal .lr-danmaku-settings .ant-slider {
+  box-sizing: border-box;
+  height: 24px;
+  margin-block: 0;
+}
+.lr-danmaku-player-modal .ant-btn:not(.lr-danmaku-player__toggle),
+.lr-danmaku-player-modal .lr-danmaku-player__rate .ant-select,
+.lr-danmaku-player-modal .lr-memphis-radio-group {
+  box-sizing: border-box;
+  height: 24px;
+  min-height: 24px;
+  font-size: 12px;
+}
+.lr-danmaku-player-modal .lr-memphis-radio-group .ant-radio-button-wrapper {
+  height: 16px;
+  min-height: 16px;
+  min-width: 0;
+  padding-inline: 8px !important;
+  font-size: 12px;
+}
+.lr-danmaku-player-modal .lr-danmaku-player__rate .ant-select.ant-select-single {
+  height: 24px;
+  min-height: 24px;
+  padding-block: 0;
+}
+.lr-danmaku-player-modal .ant-modal-footer {
+  margin-top: 16px;
+  padding: 0 24px 16px;
+  border-top: 0;
+}
+@media (max-width: 640px) {
+  .lr-danmaku-player-modal .lr-danmaku-settings__fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .lr-danmaku-player-modal .lr-danmaku-settings__visibility {
+    min-height: 24px;
+  }
+}
+.lr-danmaku-player__video {
+  position: relative;
+  background: #000;
+  aspect-ratio: 16 / 9;
+}
+.lr-danmaku-player__error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  color: rgba(255, 255, 255, 0.85);
+  background: #000;
+  z-index: 2;
+}
+@media (max-width: 640px) {
+  .lr-danmaku-settings__fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .lr-danmaku-settings__visibility {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.lr-preview-danmaku-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.lr-danmaku-player__toggle.ant-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  z-index: 1;
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  padding: 0;
+  border: 3px solid var(--lr-ink) !important;
+  border-radius: 50% !important;
+  background: #ffd500 !important;
+  color: var(--lr-ink) !important;
+  box-shadow: none !important;
+  font-size: 28px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.lr-danmaku-player__video:hover .lr-danmaku-player__toggle,
+.lr-danmaku-player__video:focus-within .lr-danmaku-player__toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+.lr-danmaku-player__video .lr-danmaku-player__toggle.ant-btn:is(:hover, :focus-visible, :active):not(:disabled) {
+  background: #ffd500 !important;
+}
+.lr-danmaku-player__toggle.ant-btn:focus-visible {
+  outline: 3px solid var(--lr-primary);
+  outline-offset: 6px;
+}
+.lr-danmaku-player__volume {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.75);
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.lr-danmaku-player__video:hover .lr-danmaku-player__volume,
+.lr-danmaku-player__video:focus-within .lr-danmaku-player__volume {
+  opacity: 1;
+  pointer-events: auto;
+}
+.lr-danmaku-player__volume .ant-btn {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  color: #fff !important;
+  background: transparent !important;
+  transform: none !important;
+}
+.lr-danmaku-player__volume .ant-btn .anticon {
+  font-size: 16px;
+}
+.lr-danmaku-player__volume input {
+  width: 100px;
+  height: 24px;
+  margin: 0;
+  accent-color: #ffd500;
+  cursor: pointer;
+}
+.lr-danmaku-player__volume output {
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.lr-danmaku-player__volume :focus-visible {
+  outline: 2px solid #ffd500;
+  outline-offset: 2px;
+}
+@media (hover: none) {
+  .lr-danmaku-player__toggle.ant-btn,
+  .lr-danmaku-player__volume {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-danmaku-player__toggle.ant-btn,
+  .lr-danmaku-player__volume {
+    transition: none !important;
+  }
+}

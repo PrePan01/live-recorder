@@ -4,6 +4,88 @@
   animation: lr-recording-track-reveal 1000ms cubic-bezier(0.2, 0.8, 0.2, 1)
     both;
 }
+
+.lr-quality-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lr-quality-light > i {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.lr-quality-light__fallback {
+  color: var(--lr-muted);
+}
+.lr-marker-nav {
+  border-top: 1px solid var(--lr-border);
+  margin-top: 8px;
+  background: var(--lr-surface);
+}
+.lr-marker-nav__list {
+  height: 60px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.lr-marker-nav__row {
+  height: 24px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.lr-marker-nav__row--current {
+  background: color-mix(in srgb, var(--lr-primary) 15%, transparent);
+}
+.lr-marker-nav__seek {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  text-align: left;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lr-marker-nav__seek:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.lr-marker-nav__seek > time {
+  width: 48px;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lr-marker-nav__selection {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.lr-marker-nav__seek > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .lr-recording-track-reveal--closing {
   pointer-events: none;
   animation: lr-recording-track-reveal-out 1000ms cubic-bezier(0.4, 0, 1, 1)
@@ -14,12 +96,12 @@
     max-height: 0;
   }
   to {
-    max-height: 240px;
+    max-height: 480px;
   }
 }
 @keyframes lr-recording-track-reveal-out {
   from {
-    max-height: 240px;
+    max-height: 480px;
   }
   to {
     max-height: 0;
@@ -75,14 +157,12 @@
     max-height 1000ms cubic-bezier(0.2, 0.8, 0.2, 1),
     opacity 180ms linear;
 }
-.lr-recording-track--collapsed .lr-recording-track__canvas-wrap {
-  max-height: 0;
-  opacity: 0;
-  pointer-events: none;
-}
+
 .lr-recording-track__actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
   flex-shrink: 0;
   margin-left: auto;
   gap: 4px;
@@ -131,7 +211,10 @@
   --lr-recording-track-rail-top: 41px;
   --lr-recording-track-rail-height: 18px;
   position: relative;
-  height: 79px;
+  height: calc(
+    var(--lr-recording-track-rail-top) + var(--lr-recording-track-rail-height) +
+      24px
+  );
   padding-top: var(--lr-recording-track-rail-top);
 }
 .lr-recording-track__rail {
@@ -182,7 +265,8 @@
   top: -5px;
   bottom: -5px;
   width: 16px;
-  background: linear-gradient(var(--lr-ink), var(--lr-ink)) center / 2px 100% no-repeat;
+  background: linear-gradient(var(--lr-ink), var(--lr-ink)) center / 2px 100%
+    no-repeat;
   transform: translateX(-50%);
   cursor: ew-resize;
   touch-action: none;
@@ -284,22 +368,22 @@
   font-variant-numeric: tabular-nums;
 }
 .lr-recording-track__markers {
-  /* 标记叠加在轨道上方（钉在轨道上沿），不再占下方独立行。 */
+  /* 标记与轨道垂直居中重叠；空白区域穿透点击，选区手柄保留更高层级。 */
   position: absolute;
   left: 0;
   right: 0;
-  top: 0;
-  height: var(--lr-recording-track-rail-top);
+  top: var(--lr-recording-track-rail-top);
+  height: var(--lr-recording-track-rail-height);
   pointer-events: none;
 }
 .lr-recording-track__marker {
   position: absolute;
-  bottom: 1px;
+  top: 50%;
   display: grid;
   place-items: center;
   width: 18px;
   height: 21px;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   padding: 0;
   border: 0;
   background: transparent;
@@ -317,6 +401,10 @@
 }
 .lr-recording-track__marker::before {
   content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 7px;
   height: 12px;
   border: 1px solid var(--lr-ink);
@@ -324,7 +412,7 @@
 }
 .lr-recording-track__marker:is(:hover, :focus-visible)::before {
   background: var(--lr-pink);
-  transform: rotate(-8deg);
+  transform: translate(-50%, -50%) rotate(-8deg);
 }
 .lr-recording-track__marker:is(:hover, :focus-visible, :active) {
   z-index: 5;
@@ -390,9 +478,133 @@
 .lr-recording-track__duration {
   white-space: nowrap;
 }
-.lr-recording-track--collapsed .lr-recording-track__summary {
-  max-height: 0;
-  padding-top: 0;
+
+/* 中断缺口标记：中段=拼接位灰断点；尾缺=片尾外沿宽标。只画标记不画空白段。 */
+.lr-recording-track__gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: rgba(120, 120, 130, 0.85);
+  border-radius: 1px;
+  cursor: help;
+  z-index: 2;
+}
+.lr-recording-track__gap--tail {
+  width: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(120, 120, 130, 0.9),
+    rgba(120, 120, 130, 0.9) 2px,
+    rgba(120, 120, 130, 0.35) 2px,
+    rgba(120, 120, 130, 0.35) 4px
+  );
+}
+
+.lr-marker-nav .ant-btn {
+  height: 28px;
+  min-width: 28px;
+  padding-inline: 8px;
+  font-size: 12px;
+}
+.lr-marker-nav .ant-btn-icon-only {
+  width: 28px;
+  padding: 0;
+}
+.lr-marker-nav__row > .ant-btn {
+  flex-shrink: 0;
+  height: 24px;
+  min-height: 24px;
+  width: 24px;
+  min-width: 24px;
+}
+.lr-recording-track__marker-navigation {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lr-recording-track__topline .ant-btn {
+  height: 28px;
+}
+.lr-recording-track__actions {
+  gap: 8px;
+}
+.lr-recording-track__toolbar {
+  margin-right: auto;
+}
+.lr-quality-light:hover {
+  background: color-mix(in srgb, var(--lr-primary) 8%, transparent);
+}
+.lr-quality-light > span {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lr-marker-nav__count {
+  font-size: 12px;
+  color: var(--lr-muted);
+  white-space: nowrap;
+}
+.lr-recording-track__body {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 1000ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms linear;
+}
+.lr-recording-track__body-inner {
+  min-height: 0;
+  overflow: hidden;
+  /* 为两端的手柄和时间文字保留横向裁切空间。 */
+  margin-inline: -7px;
+  padding-inline: 7px;
+}
+.lr-recording-track--collapsed .lr-recording-track__body {
+  grid-template-rows: 0fr;
   opacity: 0;
   pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-recording-track__body {
+    transition: none;
+  }
+}
+
+/* Range markers reuse the point marker's yellow indicator and hover treatment. */
+.lr-recording-track__marker--segment {
+  min-width: 7px;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.lr-recording-track__marker--segment::before {
+  width: 100%;
+  box-sizing: border-box;
+}
+.lr-recording-track__marker--segment:is(:hover, :focus-visible)::before {
+  transform: translate(-50%, -50%);
+}
+.lr-recording-track__temporary-segment {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  height: 12px;
+  min-width: 7px;
+  transform: translateY(-50%);
+  border: 1px dashed var(--lr-ink);
+  background: color-mix(in srgb, var(--lr-yellow) 55%, transparent);
+  pointer-events: none;
+}
+.lr-clip-tasks {
+  margin-top: 8px;
+}
+.lr-clip-task-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.lr-clip-task-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--lr-border);
 }

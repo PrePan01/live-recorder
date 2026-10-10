@@ -218,7 +218,7 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
         </div>
         <div className="lr-settings-section">
           <Typography.Title className="lr-settings-section__title" level={4}>
-            录制行为
+            录制
           </Typography.Title>
           <Form.Item
             label="录制完成后询问是否保留"
@@ -226,6 +226,20 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
             valuePropName="checked"
           >
             <Switch aria-label="录制完成后询问是否保留" />
+          </Form.Item>
+          <Form.Item
+            label="录制中防止系统休眠"
+            name="preventSleepWhileRecording"
+            valuePropName="checked"
+          >
+            <Switch aria-label="录制中防止系统休眠" />
+          </Form.Item>
+          <Form.Item
+            label="录制弹幕"
+            name={["danmaku", "enabled"]}
+            valuePropName="checked"
+          >
+            <Switch aria-label="录制弹幕" />
           </Form.Item>
           <Row gutter={16}>
             <Col xs={24} md={8}>
@@ -251,6 +265,17 @@ export default function ServiceSettingsCard(props: ServiceSettingsCardProps) {
                     { value: "1080p", label: "1080p" },
                     { value: "720p", label: "720p" },
                     { value: "360p", label: "360p" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="编码方式" name="encodingMode">
+                <Select
+                  aria-label="编码方式"
+                  options={[
+                    { value: "auto", label: "自动（硬件优先）" },
+                    { value: "software", label: "仅软件" },
                   ]}
                 />
               </Form.Item>

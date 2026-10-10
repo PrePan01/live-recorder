@@ -70,3 +70,14 @@ describe('error code mapping', () => {
     expect(typeof obj.occurredAt).toBe('string');
   });
 });
+
+describe('pipeline settings share validation across all configuration entry points', () => {
+  const base = { ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r' };
+  it('keeps legacy omitted fields compatible with pipeline defaults', () => {
+    expect(() => validateSettings({ ...base, pipeline: {} })).not.toThrow();
+    expect(() => validateSettings({ ...base, pipeline: { maxConcurrency: 1, crf: 0, segmentSeconds: 86400 } })).not.toThrow();
+  });
+  it.each([null, [], false, 'pipeline', { maxConcurrency: 0 }, { maxConcurrency: 3 }, { maxConcurrency: 1.5 }, { maxConcurrency: NaN }, { maxConcurrency: Infinity }, { maxConcurrency: '2' }, { segmentSeconds: NaN }, { segmentSeconds: Infinity }, { segmentSeconds: -1 }, { segmentSeconds: 86401 }, { crf: NaN }, { crf: Infinity }, { crf: -1 }, { crf: 52 }, { crf: '23' }, { enabled: 1 }, { verify: null }, { exportCover: 'false' }, { exportAudio: 1 }, { deleteSourceAfterConvert: 'false' }, { outputFormat: 'avi' }, { archiveDirectory: null }])('rejects invalid pipeline %#', pipeline => {
+    expect(() => validateSettings({ ...base, pipeline })).toThrowError(AppError);
+  });
+});
