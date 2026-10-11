@@ -123,10 +123,7 @@ export default function AppLayout() {
   };
 
   return (
-    <Layout
-      className="lr-app-shell"
-      style={{ height: "100vh", overflow: "hidden" }}
-    >
+    <Layout className="lr-app-shell">
       <Layout>
         <Sider
           className="lr-app-sider"
@@ -138,10 +135,6 @@ export default function AppLayout() {
           collapsed={sidebarBelowBreakpoint || sidebarCollapsed}
           onCollapse={handleSidebarCollapse}
           onBreakpoint={setSidebarBelowBreakpoint}
-          style={{
-            borderRight: "1px solid var(--lr-border)",
-            overflow: "hidden",
-          }}
         >
           <div className="lr-app-brand">
             <img src="/icon1.png" alt="直播录制台" draggable={false} />
@@ -160,18 +153,13 @@ export default function AppLayout() {
                 startTransition(() => navigate(destination));
               }
             }}
-            style={{ paddingTop: 4 }}
+            className="lr-app-menu"
           />
           <AppVersion />
         </Sider>
         <Content
           ref={contentRef}
           className="lr-app-content"
-          style={{
-            overflow: "auto",
-            minWidth: 0,
-            position: "relative",
-          }}
         >
           <div className="lr-app-content__inner">
             {/* Keep navigation and the status bar alive when one page fails. */}
@@ -181,12 +169,7 @@ export default function AppLayout() {
                   <div
                     role="status"
                     aria-label="正在加载页面"
-                    style={{
-                      minHeight: 180,
-                      display: "grid",
-                      placeItems: "center",
-                      background: "var(--lr-surface)",
-                    }}
+                    className="lr-route-loading"
                   >
                     <Spin />
                   </div>
@@ -200,16 +183,7 @@ export default function AppLayout() {
             <div
               role="status"
               aria-label="正在加载页面"
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "grid",
-                placeItems: "center",
-                background:
-                  "color-mix(in srgb, var(--lr-surface) 0%, transparent)",
-                pointerEvents: "none",
-                zIndex: 2,
-              }}
+              className="lr-route-pending"
             >
               <Spin />
             </div>
@@ -218,13 +192,6 @@ export default function AppLayout() {
       </Layout>
       <Footer
         className="lr-app-footer"
-        style={{
-          padding: 0,
-          background: "var(--lr-surface)",
-          lineHeight: "normal",
-          flexShrink: 0,
-          height: 36,
-        }}
       >
         <StatusBar />
       </Footer>

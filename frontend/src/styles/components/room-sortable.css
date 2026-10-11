@@ -1,0 +1,49 @@
+.lr-sortable-card .ant-card-head {
+  cursor: grab;
+  user-select: none;
+}
+
+.lr-sortable-card .ant-card-head:active {
+  cursor: grabbing;
+}
+
+.lr-sortable-card,
+.lr-sortable-row {
+  position: relative;
+}
+
+.lr-sortable-card .ant-card-head,
+.lr-sortable-row {
+  touch-action: none;
+}
+
+.lr-sortable-row {
+  cursor: grab;
+}
+
+.lr-sortable-row:active {
+  cursor: grabbing;
+}
+
+.lr-sort-dragging {
+  opacity: 0.38;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lr-sortable-card,
+  .lr-sortable-row {
+    transition: none !important;
+  }
+}
+
+.lr-room-masonry > .lr-sortable-card {
+  position: absolute !important;
+}
+
+.lr-sortable-card--disabled .ant-card-head,
+.lr-sortable-card--disabled .ant-card-head:active,
+.lr-sortable-row--disabled,
+.lr-sortable-row--disabled:active {
+  cursor: default;
+  touch-action: auto;
+}

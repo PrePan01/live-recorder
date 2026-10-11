@@ -1,0 +1,62 @@
+/* Reusable segmented radio: its fill is themed, immediate and always centered. */
+
+.lr-memphis-radio-group {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(var(--lr-radio-count), minmax(0, 1fr));
+  isolation: isolate;
+  height: 36px;
+  min-height: 36px;
+  padding: 2px;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+
+.lr-memphis-radio-group::before {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--lr-radio-count));
+  background: var(--lr-primary);
+  content: "";
+  transform: translateX(calc(var(--lr-radio-index) * 100%));
+  transition: transform 180ms var(--lr-bounce);
+}
+
+.lr-memphis-radio-group .ant-radio-button-wrapper,
+.lr-memphis-radio-group .ant-radio-button-wrapper-checked {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 78px;
+  min-height: 30px;
+  height: 30px;
+  padding: 0 14px !important;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--lr-text) !important;
+  line-height: 1 !important;
+  transition: color 100ms linear !important;
+}
+
+.lr-memphis-radio-group .ant-radio-button-wrapper-checked {
+  color: #000 !important;
+  font-weight: 900;
+}
+
+.lr-memphis-radio-group .ant-radio-button-wrapper::before {
+  display: none !important;
+}
+
+.lr-platform-filter .ant-radio-button-wrapper,
+.lr-platform-filter .ant-radio-button-wrapper-checked,
+.lr-monitor-view-toggle .ant-radio-button-wrapper,
+.lr-monitor-view-toggle .ant-radio-button-wrapper-checked {
+  min-width: 36px;
+  padding: 0 6px !important;
+}

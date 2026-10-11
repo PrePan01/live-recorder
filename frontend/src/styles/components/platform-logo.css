@@ -1,0 +1,19 @@
+.lr-platform-logo-tag {
+  display: inline-grid !important;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 !important;
+  place-items: center;
+  border-radius: 0 !important;
+  line-height: 0 !important;
+  vertical-align: middle;
+}
+
+.lr-platform-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}

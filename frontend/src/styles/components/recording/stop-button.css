@@ -1,0 +1,43 @@
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled),
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #fff !important;
+  border-color: var(--lr-ink) !important;
+  background-color: var(--lr-error) !important;
+}
+
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled)::before,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled)::before {
+  position: absolute;
+  z-index: 0;
+  top: -50%;
+  right: -50%;
+  bottom: -50%;
+  left: -50%;
+  content: "";
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.48) 0 3px,
+    transparent 3px 10px
+  );
+  animation: lr-record-stop-warning-stripes 4000ms linear infinite !important;
+}
+
+.lr-record-stop-button.ant-btn-dangerous:hover:not(:disabled) > *,
+.lr-record-stop-button.ant-btn-dangerous:focus-visible:not(:disabled) > * {
+  position: relative;
+  z-index: 1;
+  color: inherit !important;
+}
+
+@keyframes lr-record-stop-warning-stripes {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-56px);
+  }
+}

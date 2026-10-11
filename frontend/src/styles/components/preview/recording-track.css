@@ -1,0 +1,36 @@
+.lr-recording-track-reveal {
+  overflow: hidden;
+  will-change: max-height;
+  animation: lr-recording-track-reveal 1000ms cubic-bezier(0.2, 0.8, 0.2, 1)
+    both;
+}
+
+.lr-recording-track-reveal--closing {
+  pointer-events: none;
+  animation: lr-recording-track-reveal-out 1000ms cubic-bezier(0.4, 0, 1, 1)
+    both;
+}
+
+@keyframes lr-recording-track-reveal {
+  from {
+    max-height: 0;
+  }
+  to {
+    max-height: 480px;
+  }
+}
+
+@keyframes lr-recording-track-reveal-out {
+  from {
+    max-height: 480px;
+  }
+  to {
+    max-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lr-recording-track-reveal {
+    animation: none;
+  }
+}

@@ -59,6 +59,5 @@ export function DanmakuLayer({ messages, gaps = EMPTY_GAPS, getTimeMs, getVideo,
     };
   }, [visible]);
 
-  return <div ref={containerRef} aria-hidden style={{ position: 'absolute', inset: 0,
-    overflow: 'hidden', pointerEvents: 'none', contain: 'layout paint style', display: visible ? undefined : 'none' }} />;
+  return <div ref={containerRef} aria-hidden className="lr-danmaku-layer" style={{ display: visible ? undefined : 'none' }} />;
 }

@@ -54,31 +54,6 @@
 .pipeline-progress-copy {
   font-size: 12px;
 }
-.pipeline-progress-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-}
-.pipeline-progress-track {
-  flex: 1;
-  height: 8px;
-  border: 1px solid var(--lr-border);
-  background: var(--lr-bg);
-}
-.pipeline-progress-track span {
-  display: block;
-  height: 100%;
-  background: var(--lr-primary);
-  transition: width var(--lr-motion) ease;
-}
-.pipeline-progress-percent {
-  min-width: 38px;
-  color: var(--lr-ink);
-  font-weight: 900;
-  font-size: 12px;
-  text-align: right;
-}
 .pipeline-progress-copy {
   display: block;
   padding: 8px 14px 0;
@@ -199,31 +174,6 @@
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
-.pipeline-step-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 9px;
-}
-.pipeline-step-progress-track {
-  flex: 1;
-  height: 6px;
-  border: 1px solid var(--lr-border);
-  background: var(--lr-bg);
-}
-.pipeline-step-progress-track span {
-  display: block;
-  height: 100%;
-  background: var(--lr-teal);
-  transition: width var(--lr-motion) ease;
-}
-.pipeline-step-progress-percent {
-  min-width: 34px;
-  color: var(--lr-ink);
-  font-size: 12px;
-  font-weight: 900;
-  text-align: right;
-}
 .pipeline-file-actions {
   display: flex;
   margin-top: 6px;
@@ -239,7 +189,8 @@
 .pipeline-upload-section {
   padding-bottom: 4px;
 }
-.pipeline-upload-empty {
+.pipeline-upload-empty,
+.pipeline-upload-list {
   display: flex;
   width: 100%;
   padding: 12px 14px;
@@ -252,11 +203,6 @@
   font-size: 12px;
   font-weight: 700 !important;
   line-height: 28px !important;
-}
-.pipeline-upload-list {
-  display: flex;
-  width: 100%;
-  padding: 12px 14px;
 }
 .pipeline-upload-job {
   padding: 10px;

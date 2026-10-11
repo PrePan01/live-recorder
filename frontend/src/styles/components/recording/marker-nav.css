@@ -1,0 +1,79 @@
+.lr-marker-nav {
+  border-top: 1px solid var(--lr-border);
+  margin-top: 8px;
+  background: var(--lr-surface);
+}
+
+.lr-marker-nav__list {
+  height: 60px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.lr-marker-nav__row {
+  height: 24px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lr-marker-nav__row--current {
+  background: color-mix(in srgb, var(--lr-primary) 15%, transparent);
+}
+
+.lr-marker-nav__seek {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  text-align: left;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lr-marker-nav__seek:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.lr-marker-nav__seek > time {
+  width: 48px;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lr-marker-nav__selection {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.lr-marker-nav .ant-btn {
+  height: 28px;
+  min-width: 28px;
+  padding-inline: 8px;
+  font-size: 12px;
+}
+
+.lr-marker-nav .ant-btn-icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+.lr-marker-nav__row > .ant-btn {
+  flex-shrink: 0;
+  height: 24px;
+  min-height: 24px;
+  width: 24px;
+  min-width: 24px;
+}

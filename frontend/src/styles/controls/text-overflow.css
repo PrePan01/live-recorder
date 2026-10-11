@@ -1,0 +1,13 @@
+.lr-text-ellipsis,
+.lr-recording-track__hint,
+.lr-quality-light > span,
+.lr-marker-nav__seek > span,
+.lr-tag-filter__option > span,
+.lr-tag-filter__tag > span,
+.lr-room-tag > span,
+.lr-history-title-cell > .ant-typography,
+.lr-preview-modal__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

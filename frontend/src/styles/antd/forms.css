@@ -1,0 +1,298 @@
+/* Form controls: one frame per semantic control. */
+
+.ant-input:not(textarea),
+.ant-input-affix-wrapper,
+.ant-input-number,
+.ant-picker,
+.ant-select:not(.ant-select-customize-input):not(.ant-select-multiple) {
+  display: inline-flex;
+  height: 36px;
+  min-height: 36px;
+  align-items: center;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+
+textarea.ant-input,
+.ant-select-multiple:not(.ant-select-customize-input) {
+  min-height: 36px;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+
+.ant-input,
+.ant-input-number-input,
+.ant-select-selection-item,
+.ant-picker-input > input {
+  font-family: var(--lr-body) !important;
+}
+
+.ant-input:not(textarea),
+.ant-input-number-input,
+.ant-picker-input > input {
+  height: 100%;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1.5 !important;
+}
+
+.ant-input-affix-wrapper .ant-input,
+.ant-input-number .ant-input-number-input-wrap,
+.ant-input-number .ant-input-number-input,
+.ant-picker .ant-picker-input > input,
+.ant-select .ant-select-content,
+.ant-select .ant-select-selection-search-input {
+  min-height: 0;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ant-input-affix-wrapper {
+  padding-block: 0 !important;
+}
+
+.ant-input-affix-wrapper .ant-input-suffix,
+.ant-input-affix-wrapper .ant-input-prefix,
+.ant-input-affix-wrapper .ant-input-clear-icon,
+.ant-input-number .ant-input-number-handler-wrap,
+.ant-picker .ant-picker-suffix,
+.ant-picker .ant-picker-prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.ant-input-affix-wrapper .ant-input-clear-icon {
+  width: 20px;
+  height: 20px;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.ant-input-affix-wrapper .ant-input-clear-icon > svg,
+.ant-input-affix-wrapper .ant-input-clear-icon > * {
+  display: block;
+}
+
+.ant-input:hover,
+.ant-input:focus,
+.ant-input-affix-wrapper:hover,
+.ant-input-affix-wrapper:focus-within,
+.ant-input-number:hover,
+.ant-input-number-focused,
+.ant-select-focused,
+.ant-picker-focused {
+  border-color: var(--lr-primary) !important;
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 1px;
+}
+
+/* AntD 6 composes inputs with actions using Space.Compact. Keep one shared
+   cross-axis center for the input, clear affordance, and action icon. */
+
+.ant-space-compact:has(
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  )
+) {
+  display: inline-flex;
+  overflow: hidden;
+  height: 36px;
+  min-height: 36px;
+  align-items: stretch;
+  border: 2px solid var(--lr-ink);
+  border-radius: 0;
+  background: var(--lr-surface);
+}
+
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  ):focus-within {
+  border-color: var(--lr-primary);
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 1px;
+}
+
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > :is(
+    .ant-input,
+    .ant-input-affix-wrapper,
+    .ant-input-number,
+    .ant-select,
+    .ant-picker
+  ) {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto !important;
+  min-height: 0;
+  margin: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+}
+
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > .ant-btn {
+  align-self: stretch;
+  min-width: 42px;
+  height: auto !important;
+  min-height: 0;
+  margin: 0 !important;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface) !important;
+  display: grid;
+  place-items: center;
+  transition: background var(--lr-motion) !important;
+}
+
+/* Search actions are icon-only controls: keep their painted box square even
+   when AntD's default button padding or the compact group adds width. */
+
+.ant-input-search.ant-space-compact > .ant-input-search-btn {
+  flex: 0 0 36px;
+  display: grid !important;
+  position: relative;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px !important;
+  padding-inline: 0 !important;
+  line-height: 0 !important;
+  box-sizing: border-box;
+}
+
+.ant-input-search.ant-space-compact > .ant-input-search-btn > .ant-btn-icon,
+.ant-input-search.ant-space-compact
+  > .ant-input-search-btn
+  > .ant-btn-loading-icon {
+  position: absolute;
+  inset: 0;
+  display: grid !important;
+  margin: 0 !important;
+  place-items: center;
+  transform: translateY(-1px);
+}
+
+.ant-input-search.ant-space-compact > .ant-input-search-btn .anticon,
+.ant-input-search.ant-space-compact > .ant-input-search-btn .anticon > svg {
+  display: block;
+  margin: 0 !important;
+}
+
+.ant-space-compact:has(
+    > :is(
+      .ant-input,
+      .ant-input-affix-wrapper,
+      .ant-input-number,
+      .ant-select,
+      .ant-picker
+    )
+  )
+  > .ant-btn:is(:hover, :focus-visible, :active) {
+  background: var(--lr-yellow) !important;
+  transform: none !important;
+}
+
+.ant-select-dropdown,
+.ant-picker-dropdown {
+  overflow: hidden;
+}
+
+.ant-select-item-option-active,
+.ant-select-item-option-selected,
+.ant-picker-cell-selected .ant-picker-cell-inner {
+  color: #000 !important;
+  background: var(--lr-yellow) !important;
+}
+
+/* Switch */
+
+.ant-switch {
+  min-width: 44px !important;
+  height: 24px !important;
+  padding: 2px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 999px !important;
+  background: #bdb4ca !important;
+}
+
+.ant-switch.ant-switch-checked {
+  background: var(--lr-teal) !important;
+}
+
+.ant-switch .ant-switch-handle,
+.ant-switch.ant-switch-checked .ant-switch-handle {
+  top: 2px !important;
+  left: 2px !important;
+  width: 16px !important;
+  height: 16px !important;
+  transition: transform var(--lr-motion) var(--lr-bounce) !important;
+}
+
+.ant-switch.ant-switch-checked .ant-switch-handle {
+  transform: translateX(20px) !important;
+}
+
+.ant-switch .ant-switch-handle::before {
+  border: 1px solid var(--lr-ink);
+  border-radius: 50% !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+}
+
+.ant-otp {
+  gap: 8px !important;
+  width: 100%;
+}
+
+.ant-otp .ant-otp-input {
+  height: 44px;
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+  box-shadow: none !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+
+.ant-otp .ant-otp-input:focus,
+.ant-otp .ant-otp-input-focused {
+  border-color: var(--lr-primary) !important;
+}

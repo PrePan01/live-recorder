@@ -1,4 +1,3 @@
-import { styles } from "./highlightStyles";
 import { ClearOutlined, ClockCircleOutlined } from "@ant-design/icons";
 import {
   Button,
@@ -27,9 +26,9 @@ export function HighlightActions({
       trigger={["click"]}
       placement="top"
       dropdownRender={() => (
-        <div style={styles.menu}>
+        <div className="lr-highlight__menu">
           <Space size={2} align="center">
-            <Typography.Text type="secondary" style={styles.secondaryText}>
+            <Typography.Text type="secondary" className="lr-highlight__secondary-text">
               当前已缓存
             </Typography.Text>
             <Tooltip title="清空当前直播缓存">
@@ -38,16 +37,16 @@ export function HighlightActions({
                 type="text"
                 aria-label="清空当前直播缓存"
                 icon={<ClearOutlined />}
-                style={styles.clearButton}
+                className="lr-highlight__clear-button"
                 disabled={highlightAvailableSeconds < 1}
                 onClick={clearHighlight}
               />
             </Tooltip>
           </Space>
-          <div style={styles.bufferedTime}>
+          <div className="lr-highlight__buffered-time">
             {formatSeconds(highlightAvailableSeconds)}
           </div>
-          <Typography.Text type="secondary" style={styles.secondaryText}>
+          <Typography.Text type="secondary" className="lr-highlight__secondary-text">
             {highlightAvailableSeconds > 0
               ? `缓存上限 ${formatSeconds(highlightMaxSeconds)}`
               : "正在接收直播帧，稍后即可保存"}
@@ -57,15 +56,15 @@ export function HighlightActions({
                 ? "；缓存写入失败，已暂停继续缓存（已完成片段仍可导出）"
                 : ""}
           </Typography.Text>
-          <div style={styles.divider} />
-          <Typography.Text strong style={styles.sectionTitle}>
+          <div className="lr-highlight__divider" />
+          <Typography.Text strong className="lr-highlight__section-title">
             保存最近片段
           </Typography.Text>
-          <Button.Group size="small" style={styles.quickButtons}>
+          <Button.Group size="small" className="lr-highlight__quick-buttons">
             {quickSeconds.map((seconds, index) => (
               <Button
                 key={`${seconds}-${index}`}
-                style={styles.fill}
+                className="lr-highlight__fill"
                 onClick={() => saveHighlight(seconds)}
                 disabled={exporting || highlightAvailableSeconds < seconds}
               >
@@ -73,14 +72,14 @@ export function HighlightActions({
               </Button>
             ))}
           </Button.Group>
-          <Space style={styles.row}>
+          <Space className="lr-highlight__row">
             <Tooltip title="当前已缓存时长">
               <Button
                 size="small"
                 type="text"
                 aria-label="填入当前已缓存时长"
                 icon={<ClockCircleOutlined />}
-                style={styles.fillTimeButton}
+                className="lr-highlight__fill-time-button"
                 disabled={highlightAvailableSeconds < 1}
                 onClick={() =>
                   setHighlightSeconds(
@@ -99,7 +98,7 @@ export function HighlightActions({
               onChange={(v) =>
                 setHighlightSeconds(Math.max(1, Math.round(Number(v ?? 30))))
               }
-              style={styles.fill}
+              className="lr-highlight__fill"
               addonAfter="秒"
             />
             <Button
@@ -119,7 +118,7 @@ export function HighlightActions({
       )}
     >
       <Button
-        style={styles.actionButton}
+        className="lr-highlight__action-button"
         size="small"
         icon={<ClockCircleOutlined />}
         disabled={exporting}

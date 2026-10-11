@@ -1,0 +1,34 @@
+.lr-quality-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lr-quality-light > i {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.lr-quality-light__fallback {
+  color: var(--lr-muted);
+}
+
+.lr-quality-light:hover {
+  background: color-mix(in srgb, var(--lr-primary) 8%, transparent);
+}
+
+.lr-quality-light > span {
+  max-width: 140px;
+}

@@ -1,7 +1,6 @@
 import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
 import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
-import { styles } from "./preview/previewStyles";
 import { playbackClock } from "../utils/playbackClock";
 import {
   CloseOutlined,
@@ -227,7 +226,7 @@ export default function PreviewModal({
         open={!pictureInPicture}
         aria-owns={playerPortalId}
         title={
-          <div style={styles.header}>
+          <div className="lr-preview-modal__header">
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
               <Popover
@@ -243,8 +242,8 @@ export default function PreviewModal({
                     speedMultiplier={danmakuSpeedMultiplier}
                     statusText={
                       displayedDanmakuStatus &&
-                      (recording ||
-                        displayedDanmakuStatus.state !== "collecting")
+                        (recording ||
+                          displayedDanmakuStatus.state !== "collecting")
                         ? danmakuStateText(displayedDanmakuStatus.state)
                         : undefined
                     }
@@ -297,8 +296,8 @@ export default function PreviewModal({
         closable={false}
         onCancel={handleClose}
       >
-        <div style={styles.body}>
-          <div style={styles.content}>
+        <div className="lr-preview-modal__body">
+          <div className="lr-preview-modal__content">
             <div
               style={{
                 position: "relative",
@@ -309,7 +308,7 @@ export default function PreviewModal({
                 minHeight: 0,
               }}
             >
-              <div ref={setPreviewPlayerSlot} style={styles.playerSlot} />
+              <div ref={setPreviewPlayerSlot} className="lr-preview-modal__player-slot" />
             </div>
             <PreviewRecordingTrack
               roomId={room.id}
@@ -336,7 +335,7 @@ export default function PreviewModal({
               setTrackCollapsed={setTrackCollapsed}
             />
           </div>
-          <div style={styles.footer}>
+          <div className="lr-preview-modal__footer">
             {recording ? (
               <Popconfirm title="确定停止当前录制？" onConfirm={handleStop}>
                 <Button
@@ -354,7 +353,7 @@ export default function PreviewModal({
               <Space>
                 <Tooltip title={!onAir ? "未开播，无法录制" : undefined}>
                   <Button
-                    style={styles.actionButton}
+                    className="lr-preview-modal__action-button"
                     size="small"
                     type="primary"
                     icon={<VideoCameraAddOutlined />}

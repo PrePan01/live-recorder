@@ -1,0 +1,57 @@
+
+.lr-highlight__menu {
+  width: 310px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0,0,0,.16);
+}
+
+.lr-highlight__secondary-text {
+  font-size: 12px;
+}
+
+.lr-highlight__clear-button.ant-btn {
+  padding-inline: 3px;
+  height: 20px;
+}
+
+.lr-highlight__buffered-time {
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 650;
+  color: #0958d9;
+  margin-top: 2px;
+}
+
+.lr-highlight__divider {
+  height: 1px;
+  background: #f0f0f0;
+  margin: 12px 0;
+}
+
+.lr-highlight__section-title {
+  font-size: 13px;
+}
+
+.lr-highlight__quick-buttons {
+  display: flex;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.lr-highlight__fill {
+  flex: 1;
+}
+
+.lr-highlight__row {
+  display: flex;
+}
+
+.lr-highlight__fill-time-button.ant-btn {
+  padding-inline: 5px;
+}
+
+.lr-highlight__action-button.ant-btn {
+  width: 100px;
+}

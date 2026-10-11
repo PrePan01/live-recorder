@@ -24,29 +24,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   } = useVideoPlayback(props);
   return (
     <div
-      style={{
-        position: "relative",
-        background: "#000",
-        overflow: "hidden",
-        ...(fill ? { height: "100%" } : null),
-      }}
+      className="lr-video-player" style={{ ...(fill ? { height: "100%" } : null) }}
     >
       {!thumbnail && state === "loading" && !hasEverPlayedRef.current && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 1,
-            display: "grid",
-            placeItems: "center",
-            pointerEvents: "none",
-          }}
-        >
+        <div className="lr-video-player__loading">
           <Spin description="连接预览流…" />
         </div>
       )}
       {!thumbnail && state === "error" && (
-        <div style={{ padding: 24 }}>
+        <div className="lr-video-player__message">
           <Alert
             type="error"
             showIcon
@@ -67,7 +53,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         </div>
       )}
       {state === "ended" && (
-        <div style={{ padding: 24 }}>
+        <div className="lr-video-player__message">
           <Alert type="info" showIcon message="本场录制已结束" />
         </div>
       )}
@@ -84,29 +70,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         onPlaying={() => {
           if (!seek) setState("playing");
         }}
-        style={{
-          width: "100%",
+        className="lr-video-player__video" style={{
           ...(fill
             ? { height: "100%", objectFit: "contain" as const }
-            : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }),
-          display: state === "error" || state === "ended" ? "none" : "block",
+            : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }), display: state === "error" || state === "ended" ? "none" : "block"
         }}
       />
       {preserveFrameOnSwitch && (
         <canvas
           ref={transitionRef}
           aria-hidden="true"
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "contain",
-            background: "#000",
-            pointerEvents: "none",
-            display: "none",
+          className="lr-video-player__transition" style={{
             visibility:
-              state === "error" || state === "ended" ? "hidden" : "visible",
+              state === "error" || state === "ended" ? "hidden" : "visible"
           }}
         />
       )}

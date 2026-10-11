@@ -1,0 +1,20 @@
+@media (max-width: 720px) {
+  .lr-app-content__inner {
+    padding: 12px !important;
+  }
+  .lr-page-header {
+    align-items: stretch;
+  }
+  .lr-page-header::after {
+    left: 120px;
+  }
+  .lr-page-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .lr-page-actions .ant-select,
+  .lr-page-actions .ant-picker,
+  .lr-filter-bar .ant-select {
+    width: 100% !important;
+  }
+}

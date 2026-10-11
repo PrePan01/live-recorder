@@ -101,3 +101,9 @@
 :global([data-wall-fullscreen]) .fullscreenButton {
   display: none;
 }
+
+.roomName {
+  composes: lr-text-ellipsis from global;
+  padding: 0 5px;
+  max-width: 8rem;
+}

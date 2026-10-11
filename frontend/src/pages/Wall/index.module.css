@@ -100,7 +100,5 @@
 }
 
 .roomOptionName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  composes: lr-text-ellipsis from global;
 }

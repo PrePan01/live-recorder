@@ -1,3 +1,4 @@
+import '../../styles/windows/platform-auth.css';
 import { invoke } from '@tauri-apps/api/core';
 
 const platform = document.documentElement.dataset.platform;

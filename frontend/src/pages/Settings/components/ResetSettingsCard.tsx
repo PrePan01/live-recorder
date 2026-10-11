@@ -81,10 +81,7 @@ export default function ResetSettingsCard({
     <>
       <Card
         title="重置应用"
-        style={{
-          marginTop: 16,
-          borderTopColor: "var(--lr-danger) !important",
-        }}
+        className="lr-settings-reset-card"
       >
         <Space orientation="vertical">
           <Typography.Text type="secondary">

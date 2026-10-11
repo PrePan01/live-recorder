@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { fetchRooms, startRoomRecording, stopRecording } from '../../api/rooms';
 import { EndpointResolver } from '../../api/endpoint';
 import type { Room } from '../../types/room';
-import '../../styles/floating-recorder.css';
+import '../../styles/windows/floating-recorder.css';
 
 interface FloatingState { targetRoomId: string | null; buttonSize: number }
 

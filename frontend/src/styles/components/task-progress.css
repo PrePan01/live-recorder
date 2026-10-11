@@ -1,0 +1,70 @@
+
+.lr-task-card {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(139,92,246,0.06);
+  margin-bottom: 8px;
+}
+
+.lr-task-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.lr-task-card__encoder {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.lr-task-card__status {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.lr-task-card__state {
+  min-width: 0;
+}
+
+.lr-task-card__stage {
+  flex-shrink: 0;
+}
+
+.lr-task-card__progress {
+  margin-top: 6px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(139,92,246,0.15);
+  overflow: hidden;
+}
+
+.lr-task-card__fill {
+  height: 100%;
+  background: #8b5cf6;
+  transition: width 300ms;
+}
+
+.lr-task-progress__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lr-task-progress__list {
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.lr-task-progress__trigger.ant-btn .lr-task-progress__icon {
+  font-size: 18px;
+}
+
+.lr-task-progress__trigger.ant-btn {
+  height: 28px;
+  width: 28px;
+  padding: 0;
+}
