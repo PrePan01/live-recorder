@@ -1,4 +1,5 @@
 import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
+import { normalizeDouyinUrl, parseDouyinRoomId } from './douyin-url.js';
 import { AppError } from "../types/error.js";
 import type { Quality } from "../types/index.js";
 import type {
@@ -344,21 +345,15 @@ export class DouyinAdapter implements PlatformAdapter {
   }
 
   normalizeUrl(raw: string): string {
-    return raw
-      .trim()
-      .replace(/[?#].*$/, "")
-      .replace(/\/+$/, "");
+    return normalizeDouyinUrl(raw);
   }
 
   validateUrl(raw: string): boolean {
-    return /^https?:\/\/(live\.douyin\.com)\/\d+/.test(raw.trim());
+    return this.parseRoomId(raw) !== null;
   }
 
   parseRoomId(roomUrl: string): string | null {
-    const m = /^https?:\/\/(?:live\.douyin\.com)\/(\d+)/.exec(
-      this.normalizeUrl(roomUrl),
-    );
-    return m?.[1] ?? null;
+    return parseDouyinRoomId(roomUrl);
   }
 
   /**

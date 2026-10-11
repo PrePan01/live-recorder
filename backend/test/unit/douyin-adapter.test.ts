@@ -40,6 +40,47 @@ function livePayload(overrides: Record<string, unknown> = {}): unknown {
 }
 
 describe("DouyinAdapter", () => {
+  it.each([
+    'https://www.douyin.com/root/live/123456',
+    ' https://www.douyin.com/root/live/123456/?from=web#live ',
+    'http://www.douyin.com/root/live/123456',
+    'https://live.douyin.com/123456/?from=web#live',
+  ])('accepts and canonicalizes the room link %s', (url) => {
+    const adapter = new DouyinAdapter();
+    expect(adapter.validateUrl(url)).toBe(true);
+    expect(adapter.parseRoomId(url)).toBe('123456');
+    expect(adapter.normalizeUrl(url)).toBe('https://live.douyin.com/123456');
+  });
+
+  it.each([
+    'https://www.douyin.com/root/live/abc',
+    'https://www.douyin.com/root/live/',
+    'https://www.douyin.com/root/live/123abc',
+    'https://www.douyin.com/root/live/123/extra',
+    'https://live.douyin.com/123abc',
+    'https://www.douyin.com/video/123',
+    'https://www.douyin.com.evil.test/root/live/123',
+  ])('rejects non-room links %s', (url) => {
+    const adapter = new DouyinAdapter();
+    expect(adapter.validateUrl(url)).toBe(false);
+    expect(adapter.parseRoomId(url)).toBeNull();
+  });
+
+  it('uses the root/live room id for status checks and stream resolution', async () => {
+    const roomIds: Array<string | null> = [];
+    const adapter = new DouyinAdapter(mockFetcher((url) => {
+      if (url.includes('/webcast/room/web/enter')) {
+        roomIds.push(new URL(url).searchParams.get('web_rid'));
+      }
+      return livePayload({ user: { nickname: '主播', avatar_large: { url_list: ['https://p9.douyinpic.com/avatar.jpeg'] } } });
+    }));
+    const url = 'https://www.douyin.com/root/live/123456?from=web';
+    expect((await adapter.checkLiveStatus(url, 'sessionid=x')).status).toBe('live');
+    expect((await adapter.getStreamUrl(url, '720p', 'sessionid=x')).url).toBe('https://pull.example.com/sd1.flv');
+    expect((await adapter.resolveRecordingSource(url, '720p', 'sessionid=x')).status).toBe('live');
+    expect(roomIds).toEqual(['123456', '123456', '123456']);
+  });
+
   it("validates, normalizes and parses room urls", () => {
     const a = new DouyinAdapter();
     expect(a.validateUrl("https://live.douyin.com/123")).toBe(true);

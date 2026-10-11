@@ -1,5 +1,6 @@
 import type { PlatformAdapter, LiveStatusResult, StreamUrlResult } from './adapter.js';
 import type { Quality } from '../types/index.js';
+import { normalizeDouyinUrl, parseDouyinRoomId } from './douyin-url.js';
 
 /**
  * Fake 平台适配器：可编程开播/未开播/受限/错误序列，并生成最小可播放 FLV。
@@ -31,6 +32,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   normalizeUrl(raw: string): string {
+    if (this.platform === 'douyin') return normalizeDouyinUrl(raw);
     return raw.trim().replace(/[?#].*$/, '').replace(/\/+$/, '');
   }
 
@@ -39,7 +41,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
     // 与真实适配器口径一致，便于 fake 模式下按 URL 自动识别平台。
     return this.platform === 'bilibili'
       ? /^https?:\/\/(live\.bilibili\.com|m\.live\.bilibili\.com|bilibili\.com)\/\d+/.test(url)
-      : /^https?:\/\/(live\.douyin\.com)\/\d+/.test(url);
+      : parseDouyinRoomId(url) !== null;
   }
 }
 

@@ -21,6 +21,45 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
 }
 
 describe("REST contract v1.1 (fake stack)", () => {
+  it('adds root/live Douyin links and deduplicates both webpage formats', async () => {
+    const { app } = buildApp(newServices());
+    const headers = { host: '127.0.0.1:43120' };
+    try {
+      const added = await app.inject({
+        method: 'POST', url: '/api/v1/rooms', headers,
+        payload: { url: 'https://www.douyin.com/root/live/123456/?from=web#live', displayName: '主播' },
+      });
+      expect(added.statusCode).toBe(201);
+      expect(added.json().room).toMatchObject({ platform: 'douyin', url: 'https://live.douyin.com/123456' });
+      const duplicate = await app.inject({
+        method: 'POST', url: '/api/v1/rooms', headers,
+        payload: { url: 'https://live.douyin.com/123456' },
+      });
+      expect(duplicate.statusCode).toBe(409);
+      expect(duplicate.json().error.code).toBe('ROOM_LINK_DUPLICATE');
+      const batch = await app.inject({
+        method: 'POST', url: '/api/v1/rooms/batch', headers,
+        payload: { urls: [
+          'https://www.douyin.com/root/live/123456',
+          'https://www.douyin.com/root/live/789',
+          'https://live.douyin.com/789',
+        ] },
+      });
+      expect(batch.statusCode).toBe(200);
+      expect(batch.json().succeeded).toHaveLength(1);
+      expect(batch.json().succeeded[0]).toMatchObject({ platform: 'douyin', url: 'https://live.douyin.com/789' });
+      expect(batch.json().failed).toHaveLength(2);
+      const edited = await app.inject({
+        method: 'PATCH', url: `/api/v1/rooms/${added.json().room.id}`, headers,
+        payload: { url: 'https://www.douyin.com/root/live/24680' },
+      });
+      expect(edited.statusCode).toBe(200);
+      expect(edited.json().room.url).toBe('https://live.douyin.com/24680');
+    } finally {
+      await app.close();
+    }
+  });
+
   it("health + service status", async () => {
     const { app } = buildApp(newServices());
     const res = await app.inject({
