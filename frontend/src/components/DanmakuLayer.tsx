@@ -12,19 +12,21 @@ interface DanmakuLayerProps {
   getVideo: () => HTMLVideoElement | null;
   maxBullets?: number;
   opacity?: number;
+  fontScale?: number;
+  speedMultiplier?: number;
   visible?: boolean;
   resetKey?: string | number;
 }
 
 /** Browser compositor animates each bullet. JS only handles admissions and playback changes. */
 export function DanmakuLayer({ messages, gaps = EMPTY_GAPS, getTimeMs, getVideo,
-  maxBullets = 60, opacity = 0.9, visible = true, resetKey = 0 }: DanmakuLayerProps) {
+  maxBullets = 60, opacity = 0.9, fontScale = 1, speedMultiplier = 1, visible = true, resetKey = 0 }: DanmakuLayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<DanmakuRenderer | null>(null);
   const updateRef = useRef<(() => void) | null>(null);
-  const propsRef = useRef({ messages, gaps, getTimeMs, getVideo, maxBullets, opacity });
+  const propsRef = useRef({ messages, gaps, getTimeMs, getVideo, maxBullets, opacity, fontScale, speedMultiplier });
   useLayoutEffect(() => {
-    propsRef.current = { messages, gaps, getTimeMs, getVideo, maxBullets, opacity };
+    propsRef.current = { messages, gaps, getTimeMs, getVideo, maxBullets, opacity, fontScale, speedMultiplier };
   });
   useLayoutEffect(() => { rendererRef.current?.reset(); }, [resetKey]);
   useLayoutEffect(() => { updateRef.current?.(); });

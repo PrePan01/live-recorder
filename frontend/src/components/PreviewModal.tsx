@@ -126,9 +126,13 @@ export default function PreviewModal({
     danmakuVisible,
     danmakuOpacity,
     danmakuDensity,
+    danmakuFontScale,
+    danmakuSpeedMultiplier,
     setDanmakuVisible,
     setDanmakuOpacity,
     setDanmakuDensity,
+    setDanmakuFontScale,
+    setDanmakuSpeedMultiplier,
     liveDanmaku,
     danmakuMessages,
     danmakuGaps,
@@ -235,6 +239,8 @@ export default function PreviewModal({
                     visible={danmakuVisible}
                     opacity={danmakuOpacity}
                     density={danmakuDensity}
+                    fontScale={danmakuFontScale}
+                    speedMultiplier={danmakuSpeedMultiplier}
                     statusText={
                       displayedDanmakuStatus &&
                       (recording ||
@@ -245,6 +251,8 @@ export default function PreviewModal({
                     onVisibleChange={setDanmakuVisible}
                     onOpacityChange={setDanmakuOpacity}
                     onDensityChange={setDanmakuDensity}
+                    onFontScaleChange={setDanmakuFontScale}
+                    onSpeedMultiplierChange={setDanmakuSpeedMultiplier}
                   />
                 }
               >
@@ -441,6 +449,8 @@ export default function PreviewModal({
                 }
                 getVideo={() => previewVideo}
                 maxBullets={danmakuDensity}
+                fontScale={danmakuFontScale}
+                speedMultiplier={danmakuSpeedMultiplier}
                 opacity={danmakuOpacity}
                 resetKey={
                   seekPlayback?.generation ?? `live:${liveDanmaku.resetKey}`

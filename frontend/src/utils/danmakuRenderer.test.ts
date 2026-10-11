@@ -170,3 +170,86 @@ describe('弹幕原生动画生命周期', () => {
     expect(nodes[0].textContent).toBe('<img src=x onerror=alert(1)>');
   });
 });
+
+
+describe('弹幕字号与速度调节', () => {
+  it('速度调整保持当前位置，暂停时保持冻结，恢复后与视频倍速叠加', () => {
+    const { renderer, nodes, input } = setup();
+    renderer.tick(0, input, 1);
+    const animation = nodes[0].animations[0];
+    animation.advance(1000);
+    renderer.tick(1000, { ...input, speedMultiplier: 2 }, 0);
+    expect(animation.currentTime).toBeCloseTo(500);
+    expect(960 - animation.currentTime * 0.32).toBeCloseTo(800);
+    expect(animation.effect.updateTiming).toHaveBeenLastCalledWith({ duration: (960 + 108) / 0.32 });
+    animation.advance(1000);
+    expect(animation.currentTime).toBeCloseTo(500);
+    renderer.tick(1000, { ...input, speedMultiplier: 2 }, 2);
+    animation.advance(100);
+    expect(960 - animation.currentTime * 0.32).toBeCloseTo(736);
+    expect(nodes[0].animate).toHaveBeenCalledTimes(1);
+    renderer.tick(1200, { ...input, speedMultiplier: 2 }, 2);
+    expect(animation.effect.updateTiming).toHaveBeenCalledTimes(1);
+    renderer.resize(1200, 540);
+    expect(1200 - animation.currentTime * 0.32).toBeCloseTo(736);
+  });
+
+  it('字号改变重新测量、调整行高并保持横向位置，不重复播放消息', () => {
+    const { renderer, nodes, measure, input } = setup();
+    renderer.tick(0, input, 1);
+    nodes[0].animations[0].advance(1000);
+    renderer.tick(1000, { ...input, fontScale: 2 }, 1);
+    expect(nodes[0].style.font).toBe('36px system-ui, sans-serif');
+    expect(nodes[0].style.lineHeight).toBe('56px');
+    expect(nodes[0].style.width).toBe('202px');
+    expect(nodes[0].animations[0].currentTime).toBe(1000);
+    expect(measure).toHaveBeenCalledTimes(2);
+    renderer.tick(1000, { ...input, fontScale: 2 }, 1);
+    expect(measure).toHaveBeenCalledTimes(2);
+    expect(nodes).toHaveLength(1);
+  });
+
+  it('字号变大后重排过近的弹幕，轨道不足时移除且不重新入场', () => {
+    const { renderer, nodes, input } = setup(); renderer.resize(960, 56);
+    renderer.tick(0, input, 1);
+    nodes[0].animations[0].advance(800);
+    const messages = [...input.messages, { id: 'b', text: '第二条', tMs: 0 }];
+    renderer.tick(800, { ...input, messages }, 1);
+    expect(nodes[1].style.top).toBe('0px');
+    renderer.tick(800, { ...input, messages, fontScale: 2 }, 1);
+    expect(nodes[0].removed).toBe(false);
+    expect(nodes[1].removed).toBe(true);
+    renderer.tick(800, { ...input, messages, fontScale: 2 }, 1);
+    expect(nodes).toHaveLength(2);
+  });
+
+  it('慢速恢复更早的历史弹幕，快速弹幕过期，未来消息仍按媒体时间入场', () => {
+    const { renderer, nodes, input } = setup();
+    renderer.tick(10000, { ...input, speedMultiplier: 0.5 }, 0);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].animations[0].currentTime).toBe(10000);
+    expect(nodes[0].animations[0].options.duration).toBe((960 + 108) / 0.08);
+    renderer.reset();
+    renderer.tick(4000, { ...input, speedMultiplier: 2 }, 1);
+    expect(nodes).toHaveLength(1);
+    renderer.reset();
+    const messages = [{ id: 'future', text: '未来', tMs: 5000 }];
+    renderer.tick(4000, { ...input, messages, speedMultiplier: 2 }, 1);
+    expect(nodes).toHaveLength(1);
+    renderer.tick(5000, { ...input, messages, speedMultiplier: 2 }, 1);
+    expect(nodes).toHaveLength(2);
+  });
+
+  it('新字号按图层面积限额，调整和销毁正确回收面积', () => {
+    const { renderer, nodes, measure, input } = setup(); renderer.resize(960, 3000);
+    measure.mockReturnValue(4000);
+    const messages = Array.from({ length: 80 }, (_, i) => ({ id: String(i), text: String(i), tMs: 0 }));
+    for (let i = 0; i < 20; i++) renderer.tick(0, { ...input, messages, maxBullets: 80 }, 1);
+    renderer.tick(0, { ...input, messages, fontScale: 2 }, 1);
+    const active = nodes.filter(node => !node.removed);
+    expect(active.length).toBeGreaterThan(0);
+    expect(active.reduce((area, node) => area + Number.parseFloat(node.style.width) * Number.parseFloat(node.style.lineHeight), 0)).toBeLessThanOrEqual(1024 * 1024);
+    renderer.destroy();
+    expect(nodes.every(node => node.removed)).toBe(true);
+  });
+});
