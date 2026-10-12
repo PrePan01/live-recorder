@@ -107,7 +107,7 @@ export default function DanmakuSettings({
           },
           {
             key: "speed",
-            label: compact ? "自动速度" : "移动速度",
+            label: "弹幕速度",
             value: speedMultiplier,
             format: (value: number) => `${Number(value.toFixed(1))} 倍`,
             onChange: onSpeedMultiplierChange,
