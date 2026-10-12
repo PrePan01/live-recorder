@@ -204,10 +204,6 @@ export function usePreviewLayout(
       Math.min(width, maxModalWidth),
     ),
   );
-  const trackWidth = Math.max(
-    videoBox.width,
-    Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
-  );
   const pictureBox = fitPreviewBox(
     layoutRatio,
     PICTURE_IN_PICTURE_WIDTH,
@@ -418,7 +414,6 @@ export function usePreviewLayout(
     modalWidth,
     modalHeight,
     videoBox,
-    trackWidth,
     pictureBox,
     portrait,
     trackRevealRef,

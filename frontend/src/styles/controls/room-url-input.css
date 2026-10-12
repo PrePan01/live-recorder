@@ -1,0 +1,13 @@
+.lr-room-url-paste.ant-btn {
+  height: 26px;
+  padding-inline: 8px;
+  color: var(--lr-primary);
+  font-weight: 500;
+  border-radius: 4px;
+}
+
+.lr-room-url-paste.ant-btn:hover,
+.lr-room-url-paste.ant-btn:focus-visible {
+  color: var(--lr-primary);
+  background: color-mix(in srgb, var(--lr-primary) 10%, transparent);
+}

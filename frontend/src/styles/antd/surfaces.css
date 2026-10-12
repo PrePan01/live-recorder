@@ -1,0 +1,110 @@
+/* Major surfaces */
+
+.ant-card,
+.ant-modal-content,
+.ant-drawer-content,
+.ant-popover-inner,
+.ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-picker-dropdown,
+.ant-message-notice-content,
+.ant-notification-notice,
+.ant-alert,
+.ant-result {
+  color: var(--lr-text) !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+
+.ant-card {
+  overflow: visible;
+  border-top-width: 5px !important;
+}
+
+.ant-statistic-title {
+  color: var(--lr-muted) !important;
+}
+
+/* 可访问性：占位符文本对比度达标（默认 #bfbfbf 仅 1.83:1，孟菲斯条款要求 4.5:1）。 */
+
+.ant-select-placeholder,
+.ant-select-selection-placeholder {
+  color: var(--lr-muted) !important;
+}
+
+.ant-card-head {
+  min-height: 45px !important;
+  padding: 0 14px !important;
+  border-bottom: 1px dashed var(--lr-ink) !important;
+  background: transparent !important;
+}
+
+.ant-card-head-title {
+  padding: 10px 0 !important;
+  color: var(--lr-text) !important;
+  font-family: var(--lr-display);
+  font-weight: 900 !important;
+}
+
+.ant-card-body {
+  padding: 15px !important;
+}
+
+.ant-card:nth-of-type(4n + 1) {
+  border-top-color: var(--lr-pink) !important;
+}
+
+.ant-card:nth-of-type(4n + 2) {
+  border-top-color: var(--lr-yellow) !important;
+}
+
+.ant-card:nth-of-type(4n + 3) {
+  border-top-color: var(--lr-teal) !important;
+}
+
+.ant-card:nth-of-type(4n) {
+  border-top-color: var(--lr-primary) !important;
+}
+
+.ant-modal-header,
+.ant-drawer-header {
+  border-bottom: 3px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-yellow) !important;
+}
+
+.ant-modal-title,
+.ant-drawer-title {
+  color: #000 !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+
+.ant-modal-footer {
+  border-top: 1px solid var(--lr-ink);
+  padding-top: 14px;
+}
+
+.ant-alert {
+  color: #000 !important;
+  background: var(--lr-yellow) !important;
+}
+
+.ant-alert-error {
+  background: var(--lr-pink) !important;
+}
+
+.ant-typography,
+.ant-typography-secondary,
+.ant-form-item-label > label {
+  color: var(--lr-text) !important;
+}
+
+.ant-typography.ant-typography-danger {
+  color: var(--lr-danger) !important;
+}
+
+.ant-form-item-label > label {
+  font-weight: 800;
+}

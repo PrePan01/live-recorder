@@ -2,7 +2,6 @@ import { useId, type ReactNode } from "react";
 import { Slider, Switch } from "antd";
 import MemphisRadioGroup from "./MemphisRadioGroup";
 import { DANMUKU_DENSITY_OPTIONS } from "../utils/danmakuPrefs";
-import "../styles/danmaku-player.css";
 
 const DENSITY_OPTIONS = DANMUKU_DENSITY_OPTIONS.map((value, index) => ({
   label: ["低", "中", "高"][index],
@@ -13,11 +12,15 @@ interface DanmakuSettingsProps {
   visible: boolean;
   opacity: number;
   density: number;
+  fontScale: number;
+  speedMultiplier: number;
   statusText?: string;
   compact?: boolean;
   actions?: ReactNode;
   onVisibleChange: (visible: boolean) => void;
   onOpacityChange: (opacity: number) => void;
+  onFontScaleChange: (value: number) => void;
+  onSpeedMultiplierChange: (value: number) => void;
   onDensityChange: (density: number) => void;
 }
 
@@ -26,14 +29,29 @@ export default function DanmakuSettings({
   visible,
   opacity,
   density,
+  fontScale,
+  speedMultiplier,
   statusText,
   compact = false,
   actions,
   onVisibleChange,
   onOpacityChange,
   onDensityChange,
+  onFontScaleChange,
+  onSpeedMultiplierChange,
 }: DanmakuSettingsProps) {
   const id = useId();
+  const densityField = (
+    <div className="lr-danmaku-settings__field">
+      <span id={`${id}-density`}>同屏密度</span>
+      <MemphisRadioGroup
+        aria-labelledby={`${id}-density`}
+        value={density}
+        options={DENSITY_OPTIONS}
+        onChange={(event) => onDensityChange(event.target.value)}
+      />
+    </div>
+  );
   return (
     <section
       className={`lr-danmaku-settings${compact ? " lr-danmaku-settings--compact" : ""}`}
@@ -78,15 +96,41 @@ export default function DanmakuSettings({
             onChange={onOpacityChange}
           />
         </div>
-        <div className="lr-danmaku-settings__field">
-          <span id={`${id}-density`}>同屏密度</span>
-          <MemphisRadioGroup
-            aria-labelledby={`${id}-density`}
-            value={density}
-            options={DENSITY_OPTIONS}
-            onChange={(event) => onDensityChange(event.target.value)}
-          />
-        </div>
+        {!compact && densityField}
+        {[
+          {
+            key: "font",
+            label: "文字大小",
+            value: fontScale,
+            format: (value: number) => `${Math.round(value * 100)}%`,
+            onChange: onFontScaleChange,
+          },
+          {
+            key: "speed",
+            label: "弹幕速度",
+            value: speedMultiplier,
+            format: (value: number) => `${Number(value.toFixed(1))} 倍`,
+            onChange: onSpeedMultiplierChange,
+          },
+        ].map(({ key, label, value, format, onChange }) => (
+          <div key={key} className="lr-danmaku-settings__field">
+            <div className="lr-danmaku-settings__label">
+              <span id={`${id}-${key}`}>{label}</span>
+              <output>{format(value)}</output>
+            </div>
+            <Slider
+              min={0.5}
+              max={2}
+              step={0.1}
+              value={value}
+              ariaLabelledByForHandle={`${id}-${key}`}
+              ariaValueTextFormatterForHandle={format}
+              tooltip={{ formatter: (value) => format(value ?? 1) }}
+              onChange={onChange}
+            />
+          </div>
+        ))}
+        {compact && densityField}
       </div>
     </section>
   );

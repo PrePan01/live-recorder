@@ -1,0 +1,13 @@
+.lr-clip-tasks {
+  margin-top: 8px;
+}
+
+.lr-clip-task-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.lr-clip-task-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--lr-border);
+}

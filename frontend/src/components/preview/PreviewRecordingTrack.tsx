@@ -28,7 +28,7 @@ type Props = Pick<
 > &
   Pick<
     ReturnType<typeof usePreviewLayout>,
-    "trackRevealRef" | "trackWidth" | "setTrackCollapsed"
+    "trackRevealRef" | "setTrackCollapsed"
   > &
   Pick<ReturnType<typeof usePreviewDanmaku>, "trackGaps" | "streamHealth"> &
   Pick<
@@ -54,7 +54,6 @@ export function PreviewRecordingTrack({
   displayedTrack,
   trackClosing,
   trackRevealRef,
-  trackWidth,
   trackGaps,
   trackElapsedSeconds,
   markers,
@@ -95,7 +94,8 @@ export function PreviewRecordingTrack({
     trackClosing ||
       displayPreview.loading ||
       !media.duration ||
-      editingRange != null || selectingRange,
+      editingRange != null ||
+      selectingRange,
   );
   const exports = useSegmentExport(id, markers);
   const changeRange = async (
@@ -123,18 +123,19 @@ export function PreviewRecordingTrack({
           ref={trackRevealRef}
           className={`lr-recording-track-reveal${trackClosing ? " lr-recording-track-reveal--closing" : ""}`}
           style={{
-            width: trackWidth,
-            margin: "0 auto",
             flexShrink: 0,
             minHeight: 0,
-            maxWidth: "100%",
           }}
         >
           <div>
             <RecordingTrack
               key={id}
-              onExport={(start, end) => promptRangeExport(displayedTrack.id, roomId, start, end)}
-              selectionDisabled={trackClosing || marking.saving || marking.start != null}
+              onExport={(start, end) =>
+                promptRangeExport(displayedTrack.id, roomId, start, end)
+              }
+              selectionDisabled={
+                trackClosing || marking.saving || marking.start != null
+              }
               onSelectionChange={setSelectingRange}
               segmentActions={
                 <SegmentMarkActions
@@ -144,7 +145,8 @@ export function PreviewRecordingTrack({
                     trackClosing ||
                     displayPreview.loading ||
                     !media.duration ||
-                    editingRange != null || selectingRange
+                    editingRange != null ||
+                    selectingRange
                   }
                 >
                   <SegmentExportActions
@@ -225,10 +227,13 @@ export function PreviewRecordingTrack({
                   }),
                 )
               }
-              onMove={(markerId, positionSeconds) =>
+              onMove={(markerId, positionSeconds, endPositionSeconds) =>
                 updateMarkers(() =>
                   updateRecordingMarker(displayedTrack.id, markerId, {
                     positionSeconds,
+                    ...(endPositionSeconds !== undefined
+                      ? { endPositionSeconds }
+                      : {}),
                   }),
                 )
               }
@@ -261,11 +266,17 @@ export function PreviewRecordingTrack({
                 onSeek={(second) => handleSeekCommit(second)}
                 onDelete={removeMarker}
                 onRangeEdit={changeRange}
-                onAdjustRange={marking.start != null || marking.saving ? undefined : (marker) =>
-                  setEditingRange({
-                    marker,
-                    range: [marker.positionSeconds, marker.endPositionSeconds!],
-                  })
+                onAdjustRange={
+                  marking.start != null || marking.saving
+                    ? undefined
+                    : (marker) =>
+                        setEditingRange({
+                          marker,
+                          range: [
+                            marker.positionSeconds,
+                            marker.endPositionSeconds!,
+                          ],
+                        })
                 }
                 onPreview={onPreviewSegment}
                 selectingSegments={exports.selecting}

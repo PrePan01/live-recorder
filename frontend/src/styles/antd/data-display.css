@@ -1,0 +1,70 @@
+.ant-tag {
+  margin-inline-end: 0;
+  padding: 2px 6px;
+  color: #000;
+  border: 0;
+  border-radius: 0;
+  background: var(--lr-yellow);
+  font-weight: 800;
+}
+
+.ant-tag-blue,
+.ant-tag-geekblue,
+.ant-tag-green {
+  background: var(--lr-teal);
+}
+
+.ant-tag-red,
+.ant-tag-error {
+  background: var(--lr-pink);
+  /* 孟菲斯粉底禁白字/暗红字：黑字在粉底两主题下均 ≥4.5:1（axe 实测错误态红标超阈）。 */
+  color: #000 !important;
+}
+
+.ant-table-wrapper {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.ant-table,
+.ant-table-container,
+.ant-table-content,
+.ant-table-thead > tr > th,
+.ant-table-tbody > tr > td {
+  color: var(--lr-text) !important;
+  background: var(--lr-surface) !important;
+}
+
+.ant-table-thead > tr > th {
+  border-bottom: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface-alt) !important;
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid color-mix(in srgb, var(--lr-ink) 42%, transparent) !important;
+}
+
+.ant-table-tbody > tr:last-child > td {
+  border-bottom: 0 !important;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: #fff4a7 !important;
+}
+
+:root[data-theme="dark"] .ant-table-tbody > tr:hover > td {
+  background: #3b3152 !important;
+}
+
+.ant-progress-inner {
+  border: 2px solid var(--lr-ink);
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+
+.ant-progress-bg {
+  border-radius: 0 !important;
+  background: var(--lr-pink) !important;
+}

@@ -58,7 +58,7 @@ function RecordingDownloadSpeed() {
 
   const speed = sseConnected ? downloadSpeed : 0;
   return (
-    <span style={{ marginLeft: 16, fontVariantNumeric: "tabular-nums" }} title="录制任务总下载速度">
+    <span className="lr-statusbar__download-speed" title="录制任务总下载速度">
       ↓ {speed > 0 ? formatBytes(speed) : "0 B"}/s
     </span>
   );
@@ -101,10 +101,10 @@ function RecordingStatusTag({ count }: { count: number | undefined }) {
         setError(null);
       }}
       content={
-        <div style={{ minWidth: 180 }}>
+        <div className="lr-statusbar__recording-popover">
           <div>是否停止全部录制？</div>
-          {error && <div style={{ marginTop: 8 }}><Typography.Text type="danger">{error}</Typography.Text></div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+          {error && <div className="lr-statusbar__recording-error"><Typography.Text type="danger">{error}</Typography.Text></div>}
+          <div className="lr-statusbar__recording-actions">
             <Button size="small" disabled={stopping} onClick={() => setOpen(false)}>取消</Button>
             <Button size="small" type="primary" danger loading={stopping} onClick={() => void stopAll()}>确认</Button>
           </div>
@@ -169,19 +169,7 @@ export default function StatusBar() {
   const isSettingsPage = pathname.startsWith("/settings");
 
   return (
-    <div
-      className="lr-statusbar"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        padding: "0 clamp(12px, 2vw, 24px)",
-        background: "var(--lr-surface)",
-        borderBottom: "1px solid var(--lr-border)",
-        gap: 20,
-        height: 36,
-        minWidth: 0,
-      }}
-    >
+    <div className="lr-statusbar">
       <Space>
         <CloudServerOutlined
           style={{ color: online ? "#52c41a" : "#ff4d4f" }}
@@ -196,17 +184,11 @@ export default function StatusBar() {
         <RecordingStatusTag key={(status?.activeRecordings ?? 0) > 0 ? "active" : "idle"} count={status?.activeRecordings} />
       </Space>
       {showGlobalSearch ? (
-        <div className="lr-statusbar__search" style={{ marginLeft: "auto" }}>
+        <div className="lr-statusbar__search">
           <GlobalSearch />
         </div>
       ) : null}
-      <div
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          marginLeft: "auto",
-        }}
-      >
+      <div className="lr-statusbar__tools">
         <div className="lr-statusbar__disk">
           <Typography.Text type={disk.danger ? "danger" : "secondary"}>
             {disk.text}
@@ -217,7 +199,7 @@ export default function StatusBar() {
               percent={Math.round(freeRatio * 100)}
               status={disk.spaceDanger ? "exception" : "normal"}
               size="small"
-              style={{ width: 120 }}
+              className="lr-statusbar__disk-progress"
               format={() => formatBytes(free)}
             />
           ) : null}
@@ -229,7 +211,7 @@ export default function StatusBar() {
           content={
             <List
               size="small"
-              style={{ width: 360, maxHeight: 400, overflow: "auto" }}
+              className="lr-statusbar__alerts"
               header={
                 <Space>
                   <Typography.Text strong>告警</Typography.Text>
@@ -261,30 +243,30 @@ export default function StatusBar() {
                     isAlertRead(a)
                       ? []
                       : [
-                          a.roomId && a.errorCode ? (
-                            <Button
-                              key="retry"
-                              size="small"
-                              type="link"
-                              loading={retryingId === a.id}
-                              onClick={() =>
-                                void retryFailure(a).catch(() => undefined)
-                              }
-                            >
-                              重试
-                            </Button>
-                          ) : null,
+                        a.roomId && a.errorCode ? (
                           <Button
-                            key="read"
+                            key="retry"
                             size="small"
                             type="link"
-                            onClick={() => {
-                              void markRead(a.id).catch(() => undefined);
-                            }}
+                            loading={retryingId === a.id}
+                            onClick={() =>
+                              void retryFailure(a).catch(() => undefined)
+                            }
                           >
-                            已读
-                          </Button>,
-                        ]
+                            重试
+                          </Button>
+                        ) : null,
+                        <Button
+                          key="read"
+                          size="small"
+                          type="link"
+                          onClick={() => {
+                            void markRead(a.id).catch(() => undefined);
+                          }}
+                        >
+                          已读
+                        </Button>,
+                      ]
                   }
                 >
                   <List.Item.Meta
@@ -305,7 +287,7 @@ export default function StatusBar() {
             <Button
               type="text"
               aria-label="告警"
-              icon={<WarningOutlined style={{ fontSize: 18 }} />}
+              icon={<WarningOutlined className="lr-statusbar__alert-icon" />}
             />
           </Badge>
         </Popover>

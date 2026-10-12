@@ -1,0 +1,73 @@
+/* Buttons */
+
+.ant-btn {
+  display: inline-flex !important;
+  height: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  color: var(--lr-text) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-family: var(--lr-body);
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  transition:
+    transform var(--lr-motion) var(--lr-bounce),
+    background var(--lr-motion) !important;
+}
+
+.ant-btn > .ant-btn-icon,
+.ant-btn > .anticon,
+.ant-btn .ant-btn-icon .anticon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.ant-btn > .ant-btn-icon > svg,
+.ant-btn > .anticon > svg,
+.ant-btn .ant-btn-icon .anticon > svg {
+  display: block;
+}
+
+.ant-btn:hover:not(:disabled),
+.ant-btn:focus-visible:not(:disabled) {
+  color: #000 !important;
+  background: var(--lr-surface-alt) !important;
+  transform: translateY(-2px) rotate(-0.6deg);
+}
+
+:root[data-theme="dark"] .ant-btn:hover:not(:disabled),
+:root[data-theme="dark"] .ant-btn:focus-visible:not(:disabled) {
+  color: var(--lr-text) !important;
+}
+
+.ant-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.ant-btn-primary,
+.ant-btn-default {
+  border: 2px solid var(--lr-ink) !important;
+  background: var(--lr-surface) !important;
+}
+
+.ant-btn-dangerous {
+  border: 2px solid var(--lr-ink) !important;
+  color: #fff !important;
+  background: var(--lr-danger) !important;
+}
+
+.ant-btn-primary {
+  color: #000 !important;
+  background: var(--lr-pink) !important;
+}
+
+.ant-btn:disabled {
+  color: var(--lr-muted) !important;
+  opacity: 0.7;
+}

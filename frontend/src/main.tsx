@@ -9,13 +9,7 @@ import App from './App';
 import { AppThemeProvider } from './theme';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import ReactMountedMarker from './components/ReactMountedMarker';
-import './styles/tokens.css';
-import './styles/layout.css';
-import './styles/antd-overrides.css';
-import './styles/patterns.css';
-import './styles/recording-track.css';
-import './styles/motion.css';
-import './styles/legacy.css';
+import './styles/index.css';
 
 dayjs.locale('zh-cn');
 

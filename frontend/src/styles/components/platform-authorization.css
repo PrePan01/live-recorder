@@ -1,0 +1,67 @@
+.lr-credential-list {
+  border: 1px solid var(--lr-ink);
+}
+
+.lr-credential-row {
+  scroll-margin-top: 20px;
+}
+
+.lr-credential-row + .lr-credential-row {
+  border-top: 1px solid var(--lr-ink);
+}
+
+.lr-credential-row__main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.lr-credential-row__platform {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  align-content: center;
+  min-width: 88px;
+}
+
+.lr-credential-row__name {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lr-credential-row__state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.lr-credential-row__state > .ant-typography {
+  font-size: 12px;
+}
+
+.lr-credential-row__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lr-credential-list__privacy.ant-typography {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .lr-credential-row__main {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+  .lr-credential-row__actions > .ant-btn:first-child {
+    flex: 1;
+  }
+}

@@ -69,6 +69,11 @@
   object-fit: contain;
 }
 
+:global(.lr-app-content__inner):has(.fillPage) {
+  height: 100%;
+  box-sizing: border-box;
+}
+
 .fillPage {
   display: flex;
   flex-direction: column;
@@ -100,7 +105,5 @@
 }
 
 .roomOptionName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  composes: lr-text-ellipsis from global;
 }

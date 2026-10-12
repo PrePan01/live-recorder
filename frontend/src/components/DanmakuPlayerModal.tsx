@@ -90,8 +90,10 @@ export function DanmakuPlayerModal({
   const loadingRef = useRef(false);
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [gaps, setGaps] = useState<DanmakuGap[]>([]);
-  const { visible, opacity, density, setVisible, setOpacity, setDensity } =
-    useDanmakuPrefsStore();
+  const {
+    visible, opacity, density, fontScale, speedMultiplier,
+    setFontScale, setSpeedMultiplier, setVisible, setOpacity, setDensity,
+  } = useDanmakuPrefsStore();
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -460,6 +462,8 @@ export function DanmakuPlayerModal({
           getVideo={getDanmakuVideo}
           maxBullets={density}
           opacity={opacity}
+          fontScale={fontScale}
+          speedMultiplier={speedMultiplier}
           visible={visible}
           resetKey={seekTick}
         />
@@ -560,9 +564,12 @@ export function DanmakuPlayerModal({
             const marker = markers.find((m) => m.id === id);
             if (marker) await updateMarker(marker, { text });
           }}
-          onMove={async (id, positionSeconds) => {
+          onMove={async (id, positionSeconds, endPositionSeconds) => {
             const marker = markers.find((m) => m.id === id);
-            if (marker) await updateMarker(marker, { positionSeconds });
+            if (marker) await updateMarker(marker, {
+              positionSeconds,
+              ...(endPositionSeconds !== undefined ? { endPositionSeconds } : {}),
+            });
           }}
           onDelete={async (id) => {
             const marker = markers.find((m) => m.id === id);
@@ -642,11 +649,15 @@ export function DanmakuPlayerModal({
         <DanmakuSettings
           visible={visible}
           opacity={opacity}
+          fontScale={fontScale}
+          speedMultiplier={speedMultiplier}
           density={density}
           statusText={danmakuStatusText}
           onVisibleChange={setVisible}
           onOpacityChange={setOpacity}
           onDensityChange={setDensity}
+          onFontScaleChange={setFontScale}
+          onSpeedMultiplierChange={setSpeedMultiplier}
           actions={hasDanmaku ? (
             <Button
               size="small"

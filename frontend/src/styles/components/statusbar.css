@@ -1,0 +1,117 @@
+.lr-statusbar__disk {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 10px;
+}
+.lr-statusbar__search {
+  display: flex;
+  align-self: stretch;
+  height: 100%;
+  min-width: 0;
+}
+.lr-statusbar .lr-globalsearch .ant-input-search.ant-space-compact {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  border-right: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-surface) !important;
+}
+.lr-statusbar .lr-globalsearch .ant-input-search.ant-space-compact > .ant-input,
+.lr-statusbar
+  .lr-globalsearch
+  .ant-input-search.ant-space-compact
+  > .ant-input-affix-wrapper {
+  height: auto !important;
+  min-height: 0 !important;
+  align-self: stretch;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+.lr-statusbar .lr-globalsearch .ant-input-search-btn {
+  flex: 0 0 36px !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding-inline: 0 !important;
+  border: 0 !important;
+  border-left: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+@media (max-width: 720px) {
+  .lr-statusbar__disk {
+    display: none !important;
+  }
+}
+
+.lr-statusbar__download-speed {
+  margin-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lr-statusbar__recording-popover {
+  min-width: 180px;
+}
+
+.lr-statusbar__recording-error {
+  margin-top: 8px;
+}
+
+.lr-statusbar__recording-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lr-statusbar {
+  display: flex;
+  align-items: center;
+  padding: 0 clamp(12px, 2vw, 24px);
+  background: var(--lr-surface);
+  border-bottom: 1px solid var(--lr-border);
+  gap: 20px;
+  height: 36px;
+  min-width: 0;
+}
+
+.lr-statusbar__search {
+  margin-left: auto;
+}
+
+.lr-statusbar__tools {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.lr-statusbar__disk-progress.ant-progress {
+  width: 120px;
+}
+
+.lr-statusbar__alerts {
+  width: 360px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.lr-statusbar .ant-btn .lr-statusbar__alert-icon {
+  font-size: 18px;
+}

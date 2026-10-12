@@ -1,7 +1,6 @@
 import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
 import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
-import { styles } from "./preview/previewStyles";
 import { playbackClock } from "../utils/playbackClock";
 import {
   CloseOutlined,
@@ -69,7 +68,10 @@ export default function PreviewModal({
     handleStart,
     handleStop,
   } = usePreviewRecording(room);
-  const mediaClock = useRecordingMediaRange(activeRecordingId ?? displayedTrack?.id, previewVideo);
+  const mediaClock = useRecordingMediaRange(
+    activeRecordingId ?? displayedTrack?.id,
+    previewVideo,
+  );
   const trackElapsedSeconds = mediaClock.durationSeconds;
   const {
     pictureInPicture,
@@ -84,7 +86,6 @@ export default function PreviewModal({
     modalWidth,
     modalHeight,
     videoBox,
-    trackWidth,
     pictureBox,
     portrait,
     trackRevealRef,
@@ -126,9 +127,13 @@ export default function PreviewModal({
     danmakuVisible,
     danmakuOpacity,
     danmakuDensity,
+    danmakuFontScale,
+    danmakuSpeedMultiplier,
     setDanmakuVisible,
     setDanmakuOpacity,
     setDanmakuDensity,
+    setDanmakuFontScale,
+    setDanmakuSpeedMultiplier,
     liveDanmaku,
     danmakuMessages,
     danmakuGaps,
@@ -223,7 +228,7 @@ export default function PreviewModal({
         open={!pictureInPicture}
         aria-owns={playerPortalId}
         title={
-          <div style={styles.header}>
+          <div className="lr-preview-modal__header">
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
               <Popover
@@ -235,6 +240,8 @@ export default function PreviewModal({
                     visible={danmakuVisible}
                     opacity={danmakuOpacity}
                     density={danmakuDensity}
+                    fontScale={danmakuFontScale}
+                    speedMultiplier={danmakuSpeedMultiplier}
                     statusText={
                       displayedDanmakuStatus &&
                       (recording ||
@@ -245,6 +252,8 @@ export default function PreviewModal({
                     onVisibleChange={setDanmakuVisible}
                     onOpacityChange={setDanmakuOpacity}
                     onDensityChange={setDanmakuDensity}
+                    onFontScaleChange={setDanmakuFontScale}
+                    onSpeedMultiplierChange={setDanmakuSpeedMultiplier}
                   />
                 }
               >
@@ -289,26 +298,34 @@ export default function PreviewModal({
         closable={false}
         onCancel={handleClose}
       >
-        <div style={styles.body}>
-          <div style={styles.content}>
+        <div className="lr-preview-modal__body">
+          <div
+            className="lr-preview-modal__content"
+            style={{
+              width: videoBox.width,
+              maxWidth: "100%",
+              marginInline: "auto",
+            }}
+          >
             <div
               style={{
                 position: "relative",
-                margin: "0 auto",
-                width: videoBox.width,
+                width: "100%",
                 height: videoBox.height,
                 flexShrink: 1,
                 minHeight: 0,
               }}
             >
-              <div ref={setPreviewPlayerSlot} style={styles.playerSlot} />
+              <div
+                ref={setPreviewPlayerSlot}
+                className="lr-preview-modal__player-slot"
+              />
             </div>
             <PreviewRecordingTrack
               roomId={room.id}
               displayedTrack={displayedTrack}
               trackClosing={trackClosing}
               trackRevealRef={trackRevealRef}
-              trackWidth={trackWidth}
               trackGaps={trackGaps}
               trackElapsedSeconds={trackElapsedSeconds}
               markers={markers}
@@ -328,7 +345,7 @@ export default function PreviewModal({
               setTrackCollapsed={setTrackCollapsed}
             />
           </div>
-          <div style={styles.footer}>
+          <div className="lr-preview-modal__footer">
             {recording ? (
               <Popconfirm title="确定停止当前录制？" onConfirm={handleStop}>
                 <Button
@@ -346,7 +363,7 @@ export default function PreviewModal({
               <Space>
                 <Tooltip title={!onAir ? "未开播，无法录制" : undefined}>
                   <Button
-                    style={styles.actionButton}
+                    className="lr-preview-modal__action-button"
                     size="small"
                     type="primary"
                     icon={<VideoCameraAddOutlined />}
@@ -441,6 +458,8 @@ export default function PreviewModal({
                 }
                 getVideo={() => previewVideo}
                 maxBullets={danmakuDensity}
+                fontScale={danmakuFontScale}
+                speedMultiplier={danmakuSpeedMultiplier}
                 opacity={danmakuOpacity}
                 resetKey={
                   seekPlayback?.generation ?? `live:${liveDanmaku.resetKey}`

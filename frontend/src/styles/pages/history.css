@@ -1,0 +1,32 @@
+.lr-history-page .ant-table-tbody > tr {
+  height: 70px;
+}
+
+.lr-history-page .ant-table-tbody > tr > td {
+  height: 70px;
+  padding-block: 6px !important;
+  vertical-align: middle;
+}
+
+.lr-history-page .ant-table-tbody .ant-btn.ant-btn-sm {
+  height: 24px;
+  min-height: 24px;
+  padding-block: 0;
+}
+
+.lr-history-title-cell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+  align-items: center;
+}
+
+.lr-history-title-cell > .ant-typography {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.lr-history-title-cell > .ant-btn {
+  flex: 0 0 auto;
+}

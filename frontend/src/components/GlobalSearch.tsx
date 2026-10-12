@@ -131,11 +131,6 @@ export default function GlobalSearch() {
   return (
     <div
       className="lr-globalsearch"
-      style={{
-        position: "relative",
-        width: "clamp(160px, 24vw, 280px)",
-        minWidth: 0,
-      }}
       onKeyDown={onKeyDown}
     >
       <Input.Search
@@ -150,27 +145,8 @@ export default function GlobalSearch() {
         onBlur={() => setTimeout(() => !q && setOpen(false), 50)}
       />
       {open ? (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "100%",
-            left: 0,
-            right: 0,
-            marginBottom: 4,
-            zIndex: 1000,
-            background: "var(--lr-surface)",
-            border: "1px solid var(--lr-border)",
-            borderRadius: 8,
-            boxShadow: "var(--lr-shadow)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "8px 12px",
-              borderBottom: "1px solid var(--lr-border)",
-            }}
-          >
+        <div className="lr-globalsearch__popup">
+          <div className="lr-globalsearch__filters">
             <Segmented
               size="small"
               options={TYPE_OPTIONS}
@@ -182,12 +158,12 @@ export default function GlobalSearch() {
           {q.trim().length < 1 ? (
             <Typography.Paragraph
               type="secondary"
-              style={{ padding: "12px", margin: 0 }}
+              className="lr-globalsearch__empty"
             >
               输入关键词开始搜索
             </Typography.Paragraph>
           ) : (
-            <div ref={listRef} style={{ maxHeight: 320, overflow: "auto" }}>
+            <div ref={listRef} className="lr-globalsearch__list">
               <List
                 size="small"
                 loading={loading}
@@ -198,11 +174,9 @@ export default function GlobalSearch() {
                 renderItem={(item, i) => (
                   <List.Item
                     data-idx={i}
-                    style={{
-                      cursor: "pointer",
-                      padding: "6px 12px",
+                    className="lr-globalsearch__result" style={{
                       background:
-                        i === activeIdx ? "var(--lr-hover-bg)" : "transparent",
+                        i === activeIdx ? "var(--lr-hover-bg)" : "transparent"
                     }}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => goTo(item)}
@@ -212,7 +186,7 @@ export default function GlobalSearch() {
                         <Typography.Text
                           strong
                           ellipsis
-                          style={{ maxWidth: 220 }}
+                          className="lr-globalsearch__title"
                         >
                           {itemTitle(item)}
                         </Typography.Text>
@@ -221,7 +195,7 @@ export default function GlobalSearch() {
                         <Space size={8} wrap>
                           <Typography.Text
                             type="secondary"
-                            style={{ fontSize: 12 }}
+                            className="lr-globalsearch__description"
                           >
                             {item.type === "room"
                               ? "房间"
@@ -232,7 +206,7 @@ export default function GlobalSearch() {
                           {item.occurredAt ? (
                             <Typography.Text
                               type="secondary"
-                              style={{ fontSize: 12 }}
+                              className="lr-globalsearch__description"
                             >
                               {formatRelative(item.occurredAt)}
                             </Typography.Text>
@@ -246,7 +220,7 @@ export default function GlobalSearch() {
               {total > results.length ? (
                 <Typography.Paragraph
                   type="secondary"
-                  style={{ padding: "4px 12px 8px", margin: 0, fontSize: 12 }}
+                  className="lr-globalsearch__more"
                 >
                   共 {total} 条，↑↓ 选择 · Enter 跳转
                 </Typography.Paragraph>

@@ -22,9 +22,14 @@ import type { RecordingTrackProps } from "./types";
 import { useLocalPref } from "../../hooks/useLocalPref";
 import type { PrefCodec } from "../../utils/prefStorage";
 type Drag =
-  { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
-// 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
-// 存储格式="1"/"0"（历史键，codec 保持原格式防丢用户已存选择）。
+  | { kind: "start" | "end" | "playhead"; pointerOffset?: number }
+  | {
+      markerId: string;
+      start: number;
+      pointerStart: number;
+      duration?: number;
+    }
+  | null;
 const TRACK_COLLAPSED_KEY = "lr-recording-track-collapsed";
 const trackCollapsedCodec: PrefCodec<boolean> = {
   read: (raw) => raw === "1",
@@ -100,12 +105,23 @@ export function useRecordingTrack({
   });
   const recordingEnd = elapsedSeconds;
   const timelineEnd = recordingTimelineEnd(recordingEnd, mode);
-  const showSelection = rangeSelection != null || (!!onExport && !selectionDisabled);
+  const showSelection =
+    rangeSelection != null || (!!onExport && !selectionDisabled);
   useLayoutEffect(() => {
-    onSelectionChange?.(!rangeSelection && dragging != null && "kind" in dragging && dragging.kind !== "playhead");
+    onSelectionChange?.(
+      !rangeSelection &&
+        dragging != null &&
+        "kind" in dragging &&
+        dragging.kind !== "playhead",
+    );
     return () => onSelectionChange?.(false);
   }, [dragging, rangeSelection, onSelectionChange]);
-  useEffect(() => { if (rangeSelection) { touchedRef.current = true; setRange(rangeSelection); } }, [rangeSelection]);
+  useEffect(() => {
+    if (rangeSelection) {
+      touchedRef.current = true;
+      setRange(rangeSelection);
+    }
+  }, [rangeSelection]);
 
   useLayoutEffect(() => {
     if (rangeSelection) {
@@ -179,8 +195,8 @@ export function useRecordingTrack({
     [recordingEnd, timelineEnd],
   );
   const setRangeAt = useCallback(
-    (kind: "start" | "end", clientX: number) => {
-      const value = positionAt(clientX);
+    (kind: "start" | "end", clientX: number, pointerOffset = 0) => {
+      const value = positionAt(clientX) - pointerOffset;
       const next = rangeAtSecond(rangeRef.current, kind, value, recordingEnd);
       rangeRef.current = next;
       setRange(next);
@@ -193,16 +209,35 @@ export function useRecordingTrack({
     if (!dragging) return;
     let frame: number | null = null;
     let latestX = 0;
+    const markerPositionAt = (clientX: number) => {
+      if ("kind" in dragging) return 0;
+      if (dragging.duration == null) return positionAt(clientX);
+      return Math.max(
+        0,
+        Math.min(
+          recordingEnd - dragging.duration,
+          dragging.start + positionAt(clientX) - dragging.pointerStart,
+        ),
+      );
+    };
     const paint = () => {
       frame = null;
       if ("kind" in dragging) {
         if (dragging.kind === "playhead")
-          setPlayheadSecond(positionAt(latestX));
-        else setRangeAt(dragging.kind, latestX);
+          setPlayheadSecond(
+            Math.max(
+              0,
+              Math.min(
+                recordingEnd,
+                positionAt(latestX) - (dragging.pointerOffset ?? 0),
+              ),
+            ),
+          );
+        else setRangeAt(dragging.kind, latestX, dragging.pointerOffset);
       } else
         setMarkerPositions((current) => ({
           ...current,
-          [dragging.markerId]: positionAt(latestX),
+          [dragging.markerId]: markerPositionAt(latestX),
         }));
     };
     const cancelFrame = () => {
@@ -222,8 +257,14 @@ export function useRecordingTrack({
         // 不拿指针原始落点冒充。
         const clamped =
           dragging.kind === "playhead"
-            ? positionAt(event.clientX)
-            : setRangeAt(dragging.kind, event.clientX);
+            ? Math.max(
+                0,
+                Math.min(
+                  recordingEnd,
+                  positionAt(event.clientX) - (dragging.pointerOffset ?? 0),
+                ),
+              )
+            : setRangeAt(dragging.kind, event.clientX, dragging.pointerOffset);
         const target = recordingSeekTarget(
           mode,
           dragging.kind,
@@ -231,7 +272,10 @@ export function useRecordingTrack({
           recordingEnd,
           seekDisabled,
         );
-        if (target !== undefined && (!rangeSelection || dragging.kind === "playhead"))
+        if (
+          target !== undefined &&
+          (!rangeSelection || dragging.kind === "playhead")
+        )
           onSeekCommit?.(
             target,
             dragging.kind === "playhead" ? clamped : undefined,
@@ -239,9 +283,15 @@ export function useRecordingTrack({
         setPlayheadSecond(null);
       }
       if (dragging && !("kind" in dragging)) {
-        const position = positionAt(event.clientX);
+        const position = markerPositionAt(event.clientX);
         if (movedRef.current)
-          void onMove?.(dragging.markerId, position)
+          void onMove?.(
+            dragging.markerId,
+            position,
+            dragging.duration == null
+              ? undefined
+              : position + dragging.duration,
+          )
             .catch(() => undefined)
             .finally(() =>
               setMarkerPositions((current) => {
@@ -298,32 +348,44 @@ export function useRecordingTrack({
     event.stopPropagation();
     movedRef.current = false;
     touchedRef.current = true;
-    if (!rangeSelection && mode === "recording") onSeekIntent?.(positionAt(event.clientX));
-    setDragging({ kind });
+    const second = rangeRef.current[kind === "start" ? 0 : 1];
+    if (!rangeSelection && mode === "recording") onSeekIntent?.(second);
+    setDragging({ kind, pointerOffset: positionAt(event.clientX) - second });
   };
-  const beginPlayhead = (event: React.PointerEvent) => {
+  const beginPlayhead = (event: React.PointerEvent, keepPosition = false) => {
     event.preventDefault();
     event.stopPropagation();
     if (seekDisabled || recordingEnd <= 0) return;
     movedRef.current = false;
-    const second = positionAt(event.clientX);
+    const pointerSecond = positionAt(event.clientX);
+    const second = keepPosition
+      ? (positionSecond ?? pointerSecond)
+      : pointerSecond;
     setPlayheadSecond(second);
     onSeekIntent?.(second);
-    setDragging({ kind: "playhead" });
+    setDragging({ kind: "playhead", pointerOffset: pointerSecond - second });
   };
   const beginMarker = (marker: RecordingMarker, event: React.PointerEvent) => {
     if (markerClickTimer.current) clearTimeout(markerClickTimer.current);
     markerClickTimer.current = null;
-    // 片段不参与点标记拖动，但也不能把按下事件传给轨道选区。
+    // 标记拖动独立于轨道选区；片段保留按下位置，整体平移。
     event.stopPropagation();
     movedRef.current = false;
-    if (!editable || marker.endPositionSeconds != null) return;
+    if (!editable || !onMove || recordingEnd <= 0) return;
     event.preventDefault();
     setMarkerPositions((current) => ({
       ...current,
       [marker.id]: marker.positionSeconds,
     }));
-    setDragging({ markerId: marker.id });
+    setDragging({
+      markerId: marker.id,
+      start: marker.positionSeconds,
+      pointerStart: positionAt(event.clientX),
+      duration:
+        marker.endPositionSeconds == null
+          ? undefined
+          : marker.endPositionSeconds - marker.positionSeconds,
+    });
   };
   const submit = async () => {
     const text = draft.trim();
@@ -349,7 +411,10 @@ export function useRecordingTrack({
       try {
         addPositionRef.current = getMarkerPosition
           ? await getMarkerPosition()
-          : Math.max(0, Math.floor(markerPositionSecond ?? positionSecond ?? 0));
+          : Math.max(
+              0,
+              Math.floor(markerPositionSecond ?? positionSecond ?? 0),
+            );
       } catch {
         message.error("播放位置尚未就绪，请稍后重试");
         return;
@@ -405,11 +470,11 @@ export function useRecordingTrack({
   const edgeGap = 4;
   const startLabelLeft =
     startPosition === 0
-      ? -7
+      ? 0
       : (labelMetrics.railWidth * startPosition) / 100 - labelMetrics.start / 2;
   const endLabelLeft =
     endPosition === 100
-      ? labelMetrics.railWidth + 7 - labelMetrics.end
+      ? labelMetrics.railWidth - labelMetrics.end
       : (labelMetrics.railWidth * endPosition) / 100 - labelMetrics.end / 2;
   let startLabelShift = 0;
   let endLabelShift = 0;
@@ -433,6 +498,23 @@ export function useRecordingTrack({
       endLabelShift =
         startLabelLeft + labelMetrics.start + edgeGap - endLabelLeft;
     }
+  }
+  // 靠近两端时将整段时间文字收进轨道，保留手柄本身的媒体位置。
+  if (labelMetrics.railWidth > 0) {
+    startLabelShift = Math.max(
+      -startLabelLeft,
+      Math.min(
+        startLabelShift,
+        labelMetrics.railWidth - labelMetrics.start - startLabelLeft,
+      ),
+    );
+    endLabelShift = Math.max(
+      -endLabelLeft,
+      Math.min(
+        endLabelShift,
+        labelMetrics.railWidth - labelMetrics.end - endLabelLeft,
+      ),
+    );
   }
   const timeLabelClass = (value: number) => {
     const position = pct(value);

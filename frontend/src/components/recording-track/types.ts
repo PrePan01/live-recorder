@@ -19,7 +19,7 @@ export type RecordingTrackProps = {
   addingMarker?: boolean;
   quickAddDisabled?: boolean;
   onEdit?: (id: string, text: string) => Promise<void>;
-  onMove?: (id: string, positionSeconds: number) => Promise<void>;
+  onMove?: (id: string, positionSeconds: number, endPositionSeconds?: number) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
   markerPositionSecond?: number;
   getMarkerPosition?: () => Promise<number>;

@@ -63,48 +63,32 @@ function TaskCard({ task }: { task: TaskItem }) {
       : null;
   return (
     <div
-      style={{
-        padding: '8px 12px',
-        borderRadius: 6,
-        background: 'rgba(139,92,246,0.06)',
-        marginBottom: 8,
-      }}
+      className="lr-task-card"
       data-testid="task-card"
     >
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
+      <div className="lr-task-card__title">
         {task.title}
       </div>
       {task.actualEncoder ? (
-        <div style={{ fontSize: 11, opacity: 0.65 }}>
+        <div className="lr-task-card__encoder">
           编码方式：{encoderLabel(task.actualEncoder)}
           {task.fallbackReason ? `（${task.fallbackReason}）` : ''}
         </div>
       ) : null}
       {/* 第二行两端对齐：左=状态（百分比）、右=处理阶段-步骤 */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          gap: 8,
-          fontSize: 12,
-          opacity: 0.75,
-        }}
-      >
-        <span style={{ minWidth: 0 }}>
+      <div className="lr-task-card__status">
+        <span className="lr-task-card__state">
           {stateText(task)}
           {percent != null ? `（${Math.round(percent)}%）` : ''}
         </span>
-        <span style={{ flexShrink: 0 }}>
+        <span className="lr-task-card__stage">
           {stageText(task)}
           {task.step ? ` - ${pipelineStepText(task.step)}` : ''}
         </span>
       </div>
       {percent != null ? (
-        <div
-          style={{ marginTop: 6, height: 4, borderRadius: 2, background: 'rgba(139,92,246,0.15)', overflow: 'hidden' }}
-        >
-          <div style={{ width: `${percent}%`, height: '100%', background: '#8b5cf6', transition: 'width 300ms' }} />
+        <div className="lr-task-card__progress">
+          <div className="lr-task-card__fill" style={{ width: `${percent}%` }} />
         </div>
       ) : null}
     </div>
@@ -165,9 +149,9 @@ export function TaskProgressEntry() {
       open={open}
       onOpenChange={setOpen}
       arrow={false}
-      title={<div style={{ fontSize: 13, fontWeight: 600 }}>任务进度</div>}
+      title={<div className="lr-task-progress__title">任务进度</div>}
       content={
-        <div style={{ width: 320, maxHeight: '60vh', overflowY: 'auto' }}>
+        <div className="lr-task-progress__list">
           {tasks.map((task) => (
             <TaskCard key={task.id} task={task} />
           ))}
@@ -178,8 +162,8 @@ export function TaskProgressEntry() {
         <Button
           type="text"
           aria-label="任务进度"
-          icon={<FieldTimeOutlined style={{ fontSize: 18 }} />}
-          style={{ height: 28, width: 28, padding: 0 }}
+          icon={<FieldTimeOutlined className="lr-task-progress__icon" />}
+          className="lr-task-progress__trigger"
         />
       </Badge>
     </Popover>

@@ -1,0 +1,66 @@
+.lr-tag-color-select {
+  flex: 0 0 112px !important;
+  width: 112px !important;
+}
+
+.lr-tag-color-option {
+  display: inline-flex;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.lr-tag-filter.ant-select-focused,
+.lr-tag-filter:focus-visible,
+.lr-tag-filter:has(.ant-select-input:focus-visible) {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+
+.lr-tag-filter .ant-select-input:focus-visible,
+.lr-tag-filter .ant-select-selection-search-input:focus-visible {
+  outline: 0 !important;
+  outline-offset: 0;
+}
+
+.lr-tag-filter .ant-select-content {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.lr-tag-filter .ant-select-content-item:not(.ant-select-content-item-suffix) {
+  padding-inline-end: 2px;
+}
+
+.lr-tag-filter .ant-select-selection-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lr-tag-filter__option,
+.lr-tag-filter__tag,
+.lr-room-tag {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.lr-tag-filter__option > span,
+.lr-tag-filter__tag > span,
+.lr-room-tag > span {
+  min-width: 0;
+}
+
+.lr-tag-filter__tag > span {
+  flex: 1 1 auto;
+}
+
+.lr-tag-filter__tag .ant-tag-close-icon {
+  flex: 0 0 auto;
+}
+
+.lr-room-tags,
+.lr-room-tags .ant-space-item {
+  max-width: 100%;
+}

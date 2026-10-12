@@ -1,0 +1,73 @@
+.lr-room-card .lr-room-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 2px solid var(--lr-border);
+  background: #ffd500;
+  color: #030303;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.lr-room-warning > .anticon {
+  flex-shrink: 0;
+}
+
+.lr-room-warning__viewport {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.lr-room-warning__viewport:focus-visible {
+  outline: 2px solid #030303;
+  outline-offset: 1px;
+}
+
+.lr-room-warning__track {
+  display: flex;
+  width: max-content;
+  animation: lr-room-warning-scroll var(--lr-warning-duration, 6s) linear
+    infinite;
+}
+
+.lr-room-warning__group {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: var(--lr-warning-width);
+  padding-right: 32px;
+  box-sizing: border-box;
+}
+
+.lr-room-warning:hover .lr-room-warning__track,
+.lr-room-warning:focus-within .lr-room-warning__track {
+  animation-play-state: paused;
+}
+
+.lr-room-warning__action {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #030303;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@keyframes lr-room-warning-scroll {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lr-room-warning__track {
+    animation: none;
+  }
+}

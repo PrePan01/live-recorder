@@ -89,13 +89,7 @@ export default function WallLiveCard({
       >
         <PlatformLogoTag platform={room.platform} />
         <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            padding: "0 5px",
-            maxWidth: "8rem",
-          }}
+          className={styles.roomName}
         >
           {room.displayName}
         </span>

@@ -1,0 +1,228 @@
+.lr-recording-track__canvas {
+  --lr-recording-track-rail-top: 41px;
+  --lr-recording-track-rail-height: 18px;
+  position: relative;
+  overflow: visible;
+  height: calc(
+    var(--lr-recording-track-rail-top) + var(--lr-recording-track-rail-height) +
+      24px
+  );
+  padding-top: var(--lr-recording-track-rail-top);
+}
+
+.lr-recording-track__viewport {
+  margin-inline: -16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.lr-recording-track__rail {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--lr-recording-track-rail-height);
+  border: 2px solid var(--lr-ink);
+  background: #fff;
+  cursor: crosshair;
+}
+
+.lr-recording-track__recorded {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--lr-primary) 20%, #fff);
+  pointer-events: none;
+}
+
+.lr-recording-track__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--lr-primary);
+}
+
+.lr-recording-track__selection::before,
+.lr-recording-track__selection::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--lr-ink);
+}
+
+.lr-recording-track__selection::before {
+  left: -1px;
+}
+
+.lr-recording-track__selection::after {
+  right: -1px;
+}
+
+.lr-recording-track__selection--at-start::before {
+  display: none;
+}
+
+.lr-recording-track__selection--at-end::after {
+  display: none;
+}
+
+.lr-recording-track__playhead {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 16px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 3;
+  transition: left 240ms ease-out;
+}
+
+.lr-recording-track__playhead--dragging {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lr-recording-track__playhead {
+    transition: none;
+  }
+}
+
+.lr-recording-track__playhead:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 2px;
+}
+
+.lr-recording-track__playhead::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--lr-ink);
+}
+
+.lr-recording-track__playhead::after {
+  content: "";
+  position: absolute;
+  bottom: -3px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-pink);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.lr-recording-track__playhead--live::after {
+  background: var(--lr-teal);
+}
+
+.lr-recording-track__handle {
+  position: absolute;
+  z-index: 4;
+  /* 图钉尖端停在轨道顶边上方 3px。 */
+  top: -29px;
+  width: 28px;
+  height: 30px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.lr-recording-track__handle:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 2px;
+}
+
+.lr-recording-track__handle-time {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  --lr-recording-track-label-shift: 0px;
+  transform: translateX(calc(-50% + var(--lr-recording-track-label-shift)));
+  font-size: 11px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.lr-recording-track__handle-time--inset-start {
+  /* 标签向轨道内对齐，手柄尖端位置保持不变。 */
+  left: 14px;
+  transform: translateX(var(--lr-recording-track-label-shift));
+}
+
+.lr-recording-track__handle-time--inset-end {
+  left: auto;
+  right: 14px;
+  transform: translateX(var(--lr-recording-track-label-shift));
+}
+
+.lr-recording-track__handle-shape {
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 14px;
+  height: 22px;
+  background: var(--lr-ink);
+  clip-path: polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%);
+}
+
+.lr-recording-track__handle-shape::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--lr-yellow);
+  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+}
+
+.lr-recording-track__handle--end .lr-recording-track__handle-shape::before {
+  background: var(--lr-pink);
+}
+
+.lr-recording-track__guide {
+  display: none;
+}
+
+.lr-recording-track__labels {
+  position: relative;
+  height: 14px;
+  margin-top: 5px;
+  color: var(--lr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lr-recording-track__labels > span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.lr-recording-track__gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: rgba(120, 120, 130, 0.85);
+  border-radius: 1px;
+  cursor: help;
+  z-index: 2;
+}
+
+.lr-recording-track__gap--tail {
+  width: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(120, 120, 130, 0.9),
+    rgba(120, 120, 130, 0.9) 2px,
+    rgba(120, 120, 130, 0.35) 2px,
+    rgba(120, 120, 130, 0.35) 4px
+  );
+}

@@ -1,0 +1,153 @@
+.lr-stat {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 0;
+}
+
+.lr-stat:nth-child(2) {
+  padding-left: 12px;
+  border-left: 2px solid var(--lr-ink);
+}
+
+.lr-stat--duration {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 240ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 280ms;
+}
+
+.lr-stat--duration-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition-delay: 0s;
+}
+
+.lr-stat__value {
+  font-family: var(--lr-display);
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.lr-stat__label {
+  color: var(--lr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lr-stat__recording-label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.lr-stat__recording-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #ff1f1f;
+  animation: lr-recording-indicator 1s infinite;
+}
+
+.lr-stat__value--recording {
+  color: var(--lr-success);
+}
+
+.lr-stat__value--rolling {
+  display: flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.lr-stat__rolling-number {
+  display: inline-flex;
+}
+
+.lr-stat__rolling-digit {
+  display: inline-grid;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+.lr-stat__rolling-digit > span {
+  grid-area: 1 / 1;
+  display: block;
+}
+
+.lr-stat__value--rolling-old {
+  animation: lr-value-roll-out 180ms linear forwards;
+}
+
+.lr-stat__value--rolling-new {
+  animation: lr-value-roll-in 180ms linear forwards;
+}
+
+.lr-stat__value--rolling > span:not(.lr-stat__rolling-number) {
+  display: inline-block;
+}
+
+.lr-stat__value--failed {
+  color: var(--lr-error);
+}
+
+.lr-room-stats {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.lr-room-stats .lr-stat {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.lr-room-stats .lr-stat + .lr-stat {
+  border-left: 2px solid var(--lr-border);
+  padding-left: 12px;
+}
+
+.lr-room-stats .lr-stat__label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lr-room-stats .lr-stat__value {
+  font-size: 25px;
+  font-weight: 900;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+@media (max-width: 380px) {
+  .lr-room-stats .lr-stat__value {
+    font-size: 22px;
+  }
+}
+
+@keyframes lr-recording-indicator {
+  50% {
+    background: #fff;
+  }
+}
+
+@keyframes lr-value-roll-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes lr-value-roll-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-100%);
+  }
+}

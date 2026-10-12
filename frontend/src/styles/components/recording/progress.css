@@ -1,0 +1,62 @@
+/* Shared by pipeline summaries, pipeline steps and recording table cells. */
+.pipeline-progress-row,
+.pipeline-step-progress {
+  display: flex;
+  align-items: center;
+}
+
+.pipeline-progress-row {
+  gap: 10px;
+  padding: 0 14px;
+}
+
+.pipeline-step-progress {
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.pipeline-progress-track,
+.pipeline-step-progress-track {
+  flex: 1;
+  border: 1px solid var(--lr-border);
+  background: var(--lr-bg);
+}
+
+.pipeline-progress-track {
+  height: 8px;
+}
+
+.pipeline-step-progress-track {
+  height: 6px;
+}
+
+.pipeline-progress-track span,
+.pipeline-step-progress-track span {
+  display: block;
+  height: 100%;
+  transition: width var(--lr-motion) ease;
+}
+
+.pipeline-progress-track span {
+  background: var(--lr-primary);
+}
+
+.pipeline-step-progress-track span {
+  background: var(--lr-teal);
+}
+
+.pipeline-progress-percent,
+.pipeline-step-progress-percent {
+  color: var(--lr-ink);
+  font-weight: 900;
+  font-size: 12px;
+  text-align: right;
+}
+
+.pipeline-progress-percent {
+  min-width: 38px;
+}
+
+.pipeline-step-progress-percent {
+  min-width: 34px;
+}
