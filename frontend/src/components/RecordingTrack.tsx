@@ -18,6 +18,8 @@ import { recordingSeekTarget } from "../utils/recordingTimeline";
 
 import type { RecordingTrackProps } from "./recording-track/types";
 import { useRecordingTrack } from "./recording-track/useRecordingTrack";
+import { useTimelineZoom } from "./recording-track/useTimelineZoom";
+import { TIMELINE_VISUAL_OVERFLOW } from "../utils/timelineZoom";
 export default function RecordingTrack(props: RecordingTrackProps) {
   const {
     mode = "recording",
@@ -81,10 +83,16 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     timeLabelStyle,
     selectionSeconds,
   } = useRecordingTrack(props);
+  const { viewportRef, rulerRef, zoom, onScroll, ticks } = useTimelineZoom(
+    timelineEnd,
+    dragging != null,
+  );
   const handle = (kind: "start" | "end", value: number) => (
     <div
       className={`lr-recording-track__handle lr-recording-track__handle--${kind}`}
-      style={{ left: `${pct(value)}%` }}
+      style={{
+        left: `${pct(value)}%`,
+      }}
       role="slider"
       tabIndex={0}
       aria-label={`选区${kind === "start" ? "起始" : "结束"}手柄`}
@@ -204,8 +212,20 @@ export default function RecordingTrack(props: RecordingTrackProps) {
         inert={collapsed}
       >
         <div className="lr-recording-track__body-inner">
-          <div className="lr-recording-track__canvas-wrap">
-            <div className="lr-recording-track__canvas">
+          <div
+            className="lr-recording-track__viewport"
+            ref={viewportRef}
+            onScroll={onScroll}
+            tabIndex={0}
+            aria-label="时间轴视图，可滚轮缩放或横向滚动"
+          >
+            <div
+              className="lr-recording-track__canvas"
+              style={{
+                width: `calc(${zoom * 100}% - ${TIMELINE_VISUAL_OVERFLOW * 2 * zoom}px)`,
+                marginInline: TIMELINE_VISUAL_OVERFLOW,
+              }}
+            >
               <div
                 className="lr-recording-track__rail"
                 ref={railRef}
@@ -283,7 +303,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                     aria-valuemax={recordingEnd}
                     aria-valuenow={positionSecond}
                     aria-valuetext={clock(Math.floor(positionSecond))}
-                    onPointerDown={beginPlayhead}
+                    onPointerDown={(event) => beginPlayhead(event, true)}
                     onKeyDown={(event) => {
                       const direction =
                         event.key === "ArrowLeft" || event.key === "ArrowDown"
@@ -315,6 +335,66 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                 )}
                 {showSelection && handle("start", range[0])}
                 {showSelection && handle("end", range[1])}
+                {markers.length > 0 && (
+                  <div className="lr-recording-track__markers">
+                    {markers.map((marker, index) => {
+                      const position =
+                        markerPositions[marker.id] ?? marker.positionSeconds;
+                      const endPosition =
+                        marker.endPositionSeconds == null
+                          ? null
+                          : position +
+                            marker.endPositionSeconds -
+                            marker.positionSeconds;
+                      return (
+                        <Tooltip
+                          key={marker.id}
+                          title={`${clock(position)}${endPosition != null ? `—${clock(endPosition)}` : ""} ${marker.text}`}
+                        >
+                          <button
+                            aria-label={`${clock(position)} · ${marker.text}`}
+                            className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}${marker.endPositionSeconds != null ? " lr-recording-track__marker--segment" : ""}`}
+                            style={{
+                              left: `${pct(position)}%`,
+                              ...(marker.endPositionSeconds != null
+                                ? {
+                                    width: `${Math.max(0, pct(endPosition!) - pct(position))}%`,
+                                  }
+                                : {}),
+                            }}
+                            onPointerDown={(event) =>
+                              beginMarker(marker, event)
+                            }
+                            onClick={(event) => {
+                              if (
+                                (event.detail > 0 && movedRef.current) ||
+                                seekDisabled
+                              )
+                                return;
+                              if (markerClickTimer.current)
+                                clearTimeout(markerClickTimer.current);
+                              if (editable && event.detail > 0) {
+                                markerClickTimer.current = setTimeout(() => {
+                                  markerClickTimer.current = null;
+                                  onSeekCommit?.(Math.floor(position));
+                                }, 500);
+                              } else onSeekCommit?.(Math.floor(position));
+                            }}
+                            onDoubleClick={() => {
+                              if (markerClickTimer.current)
+                                clearTimeout(markerClickTimer.current);
+                              markerClickTimer.current = null;
+                              if (editable && !movedRef.current)
+                                openEdit(marker);
+                            }}
+                          >
+                            {marker.text}
+                          </button>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               {dragging && (
                 <i
@@ -324,67 +404,24 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                   }}
                 />
               )}
-              <div className="lr-recording-track__labels">
-                <span>{clock(0)}</span>
-                <span>{clock(Math.floor(timelineEnd))}</span>
+              <div className="lr-recording-track__labels" ref={rulerRef}>
+                {ticks.map((second) => (
+                  <span
+                    key={second}
+                      data-timeline-second={second}
+                    style={{
+                      left: `${pct(second)}%`,
+                      ...(second === 0
+                        ? { transform: "none" }
+                        : second === timelineEnd
+                          ? { transform: "translateX(-100%)" }
+                          : {}),
+                    }}
+                  >
+                    {clock(second)}
+                  </span>
+                ))}
               </div>
-              {markers.length > 0 && (
-                <div className="lr-recording-track__markers">
-                  {markers.map((marker, index) => {
-                    const position =
-                      markerPositions[marker.id] ?? marker.positionSeconds;
-                    const endPosition =
-                      marker.endPositionSeconds == null
-                        ? null
-                        : position +
-                          marker.endPositionSeconds -
-                          marker.positionSeconds;
-                    return (
-                      <Tooltip
-                        key={marker.id}
-                        title={`${clock(position)}${endPosition != null ? `—${clock(endPosition)}` : ""} ${marker.text}`}
-                      >
-                        <button
-                          aria-label={`${clock(position)} · ${marker.text}`}
-                          className={`lr-recording-track__marker lr-recording-track__marker--${index % 3}${marker.endPositionSeconds != null ? " lr-recording-track__marker--segment" : ""}`}
-                          style={{
-                            left: `${pct(position)}%`,
-                            ...(marker.endPositionSeconds != null
-                              ? {
-                                  width: `${Math.max(0, pct(endPosition!) - pct(position))}%`,
-                                }
-                              : {}),
-                          }}
-                          onPointerDown={(event) => beginMarker(marker, event)}
-                          onClick={(event) => {
-                            if (
-                              (event.detail > 0 && movedRef.current) ||
-                              seekDisabled
-                            )
-                              return;
-                            if (markerClickTimer.current)
-                              clearTimeout(markerClickTimer.current);
-                            if (editable && event.detail > 0) {
-                              markerClickTimer.current = setTimeout(() => {
-                                markerClickTimer.current = null;
-                                onSeekCommit?.(Math.floor(position));
-                              }, 500);
-                            } else onSeekCommit?.(Math.floor(position));
-                          }}
-                          onDoubleClick={() => {
-                            if (markerClickTimer.current)
-                              clearTimeout(markerClickTimer.current);
-                            markerClickTimer.current = null;
-                            if (editable && !movedRef.current) openEdit(marker);
-                          }}
-                        >
-                          {marker.text}
-                        </button>
-                      </Tooltip>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           </div>
           <div className="lr-recording-track__summary">

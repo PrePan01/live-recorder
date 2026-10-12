@@ -61,6 +61,63 @@ beforeEach(() => {
 
 describe("marker click position", () => {
   it.each([
+    [0, 8, 8, 0], [0, 8, 18, 10],
+    [100, 92, 92, 100], [100, 92, 82, 90],
+  ])("keeps the endpoint playhead's grip offset at %s seconds", (second, press, release, expected) => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let cleanup: (() => void) | undefined;
+    const onSeekCommit = vi.fn();
+    const props = { mode: "playback" as const, elapsedSeconds: 100,
+      previewMode: "history" as const, previewSecond: second, onSeekCommit };
+    try {
+      let track = RecordingTrackHarness(props);
+      track.railRef.current = { offsetWidth: 100, clientWidth: 100, clientLeft: 0,
+        getBoundingClientRect: () => ({ left: 0, width: 100 }) } as HTMLDivElement;
+      track.beginPlayhead({ clientX: press, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.PointerEvent, true);
+      track = RecordingTrackHarness(props);
+      expect(track.positionSecond).toBe(second);
+      cleanup = hooks.effects.at(-1)!() as () => void;
+      const event = new Event("pointerup");
+      Object.defineProperty(event, "clientX", { value: release });
+      target.dispatchEvent(event);
+      expect(onSeekCommit).toHaveBeenCalledWith(expected, expected);
+    } finally {
+      cleanup?.();
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    ["start", 14, 14, [0, 100]],
+    ["start", 14, 24, [10, 100]],
+    ["end", 86, 86, [0, 100]],
+    ["end", 86, 76, [0, 90]],
+  ] as const)("preserves the grip offset of the inward %s handle", (kind, press, release, expected) => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let cleanup: (() => void) | undefined;
+    const props = { mode: "playback" as const, elapsedSeconds: 100, onExport: vi.fn() };
+    try {
+      let track = RecordingTrackHarness(props);
+      track.railRef.current = { offsetWidth: 100, clientWidth: 100, clientLeft: 0,
+        getBoundingClientRect: () => ({ left: 0, width: 100 }) } as HTMLDivElement;
+      track.beginRange(kind, { clientX: press, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.PointerEvent);
+      track = RecordingTrackHarness(props);
+      cleanup = hooks.effects.at(-1)!() as () => void;
+      const event = new Event("pointerup");
+      Object.defineProperty(event, "clientX", { value: release });
+      target.dispatchEvent(event);
+      track = RecordingTrackHarness(props);
+      expect(track.range).toEqual(expected);
+      expect(props.onExport).not.toHaveBeenCalled();
+    } finally {
+      cleanup?.();
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
     ["playback", 100, 40, 25, 45],
     ["playback", 100, -20, 0, 20],
     ["playback", 100, 150, 80, 100],

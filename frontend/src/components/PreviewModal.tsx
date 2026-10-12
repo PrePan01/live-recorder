@@ -68,7 +68,10 @@ export default function PreviewModal({
     handleStart,
     handleStop,
   } = usePreviewRecording(room);
-  const mediaClock = useRecordingMediaRange(activeRecordingId ?? displayedTrack?.id, previewVideo);
+  const mediaClock = useRecordingMediaRange(
+    activeRecordingId ?? displayedTrack?.id,
+    previewVideo,
+  );
   const trackElapsedSeconds = mediaClock.durationSeconds;
   const {
     pictureInPicture,
@@ -83,7 +86,6 @@ export default function PreviewModal({
     modalWidth,
     modalHeight,
     videoBox,
-    trackWidth,
     pictureBox,
     portrait,
     trackRevealRef,
@@ -242,8 +244,8 @@ export default function PreviewModal({
                     speedMultiplier={danmakuSpeedMultiplier}
                     statusText={
                       displayedDanmakuStatus &&
-                        (recording ||
-                          displayedDanmakuStatus.state !== "collecting")
+                      (recording ||
+                        displayedDanmakuStatus.state !== "collecting")
                         ? danmakuStateText(displayedDanmakuStatus.state)
                         : undefined
                     }
@@ -297,25 +299,33 @@ export default function PreviewModal({
         onCancel={handleClose}
       >
         <div className="lr-preview-modal__body">
-          <div className="lr-preview-modal__content">
+          <div
+            className="lr-preview-modal__content"
+            style={{
+              width: videoBox.width,
+              maxWidth: "100%",
+              marginInline: "auto",
+            }}
+          >
             <div
               style={{
                 position: "relative",
-                margin: "0 auto",
-                width: videoBox.width,
+                width: "100%",
                 height: videoBox.height,
                 flexShrink: 1,
                 minHeight: 0,
               }}
             >
-              <div ref={setPreviewPlayerSlot} className="lr-preview-modal__player-slot" />
+              <div
+                ref={setPreviewPlayerSlot}
+                className="lr-preview-modal__player-slot"
+              />
             </div>
             <PreviewRecordingTrack
               roomId={room.id}
               displayedTrack={displayedTrack}
               trackClosing={trackClosing}
               trackRevealRef={trackRevealRef}
-              trackWidth={trackWidth}
               trackGaps={trackGaps}
               trackElapsedSeconds={trackElapsedSeconds}
               markers={markers}

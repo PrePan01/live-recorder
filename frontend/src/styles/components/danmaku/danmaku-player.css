@@ -47,9 +47,8 @@
 }
 
 .lr-danmaku-player-modal .lr-recording-track__canvas {
-  --lr-recording-track-rail-top: 24px;
+  --lr-recording-track-rail-top: 41px;
   --lr-recording-track-rail-height: 12px;
-  height: 58px;
 }
 
 .lr-danmaku-player-modal .lr-recording-track__summary {
@@ -115,7 +114,9 @@
   font-size: 12px;
 }
 
-.lr-danmaku-player-modal .lr-danmaku-player__rate .ant-select.ant-select-single {
+.lr-danmaku-player-modal
+  .lr-danmaku-player__rate
+  .ant-select.ant-select-single {
   height: 24px;
   min-height: 24px;
   padding-block: 0;
@@ -181,7 +182,10 @@
   pointer-events: auto;
 }
 
-.lr-danmaku-player__video .lr-danmaku-player__toggle.ant-btn:is(:hover, :focus-visible, :active):not(:disabled) {
+.lr-danmaku-player__video
+  .lr-danmaku-player__toggle.ant-btn:is(:hover, :focus-visible, :active):not(
+    :disabled
+  ) {
   background: #ffd500 !important;
 }
 
