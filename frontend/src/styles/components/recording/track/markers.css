@@ -66,7 +66,7 @@
 .lr-recording-track__marker--segment {
   min-width: 7px;
   transform: translateY(-50%);
-  cursor: pointer;
+  cursor: grab;
 }
 
 .lr-recording-track__marker--segment::before {

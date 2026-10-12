@@ -564,9 +564,12 @@ export function DanmakuPlayerModal({
             const marker = markers.find((m) => m.id === id);
             if (marker) await updateMarker(marker, { text });
           }}
-          onMove={async (id, positionSeconds) => {
+          onMove={async (id, positionSeconds, endPositionSeconds) => {
             const marker = markers.find((m) => m.id === id);
-            if (marker) await updateMarker(marker, { positionSeconds });
+            if (marker) await updateMarker(marker, {
+              positionSeconds,
+              ...(endPositionSeconds !== undefined ? { endPositionSeconds } : {}),
+            });
           }}
           onDelete={async (id) => {
             const marker = markers.find((m) => m.id === id);

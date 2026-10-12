@@ -225,10 +225,11 @@ export function PreviewRecordingTrack({
                   }),
                 )
               }
-              onMove={(markerId, positionSeconds) =>
+              onMove={(markerId, positionSeconds, endPositionSeconds) =>
                 updateMarkers(() =>
                   updateRecordingMarker(displayedTrack.id, markerId, {
                     positionSeconds,
+                    ...(endPositionSeconds !== undefined ? { endPositionSeconds } : {}),
                   }),
                 )
               }

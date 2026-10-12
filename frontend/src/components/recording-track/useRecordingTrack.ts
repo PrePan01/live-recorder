@@ -22,7 +22,12 @@ import type { RecordingTrackProps } from "./types";
 import { useLocalPref } from "../../hooks/useLocalPref";
 import type { PrefCodec } from "../../utils/prefStorage";
 type Drag =
-  { kind: "start" | "end" | "playhead" } | { markerId: string } | null;
+  { kind: "start" | "end" | "playhead" } | {
+    markerId: string;
+    start: number;
+    pointerStart: number;
+    duration?: number;
+  } | null;
 // 展开/收起全局记忆一个状态（不区分直播间）；脏值/存储不可用一律展开兑底。
 // 存储格式="1"/"0"（历史键，codec 保持原格式防丢用户已存选择）。
 const TRACK_COLLAPSED_KEY = "lr-recording-track-collapsed";
@@ -193,6 +198,14 @@ export function useRecordingTrack({
     if (!dragging) return;
     let frame: number | null = null;
     let latestX = 0;
+    const markerPositionAt = (clientX: number) => {
+      if ("kind" in dragging) return 0;
+      if (dragging.duration == null) return positionAt(clientX);
+      return Math.max(0, Math.min(
+        recordingEnd - dragging.duration,
+        dragging.start + positionAt(clientX) - dragging.pointerStart,
+      ));
+    };
     const paint = () => {
       frame = null;
       if ("kind" in dragging) {
@@ -202,7 +215,7 @@ export function useRecordingTrack({
       } else
         setMarkerPositions((current) => ({
           ...current,
-          [dragging.markerId]: positionAt(latestX),
+          [dragging.markerId]: markerPositionAt(latestX),
         }));
     };
     const cancelFrame = () => {
@@ -239,9 +252,10 @@ export function useRecordingTrack({
         setPlayheadSecond(null);
       }
       if (dragging && !("kind" in dragging)) {
-        const position = positionAt(event.clientX);
+        const position = markerPositionAt(event.clientX);
         if (movedRef.current)
-          void onMove?.(dragging.markerId, position)
+          void onMove?.(dragging.markerId, position,
+            dragging.duration == null ? undefined : position + dragging.duration)
             .catch(() => undefined)
             .finally(() =>
               setMarkerPositions((current) => {
@@ -314,16 +328,23 @@ export function useRecordingTrack({
   const beginMarker = (marker: RecordingMarker, event: React.PointerEvent) => {
     if (markerClickTimer.current) clearTimeout(markerClickTimer.current);
     markerClickTimer.current = null;
-    // 片段不参与点标记拖动，但也不能把按下事件传给轨道选区。
+    // 标记拖动独立于轨道选区；片段保留按下位置，整体平移。
     event.stopPropagation();
     movedRef.current = false;
-    if (!editable || marker.endPositionSeconds != null) return;
+    if (!editable || !onMove || recordingEnd <= 0) return;
     event.preventDefault();
     setMarkerPositions((current) => ({
       ...current,
       [marker.id]: marker.positionSeconds,
     }));
-    setDragging({ markerId: marker.id });
+    setDragging({
+      markerId: marker.id,
+      start: marker.positionSeconds,
+      pointerStart: positionAt(event.clientX),
+      duration: marker.endPositionSeconds == null
+        ? undefined
+        : marker.endPositionSeconds - marker.positionSeconds,
+    });
   };
   const submit = async () => {
     const text = draft.trim();

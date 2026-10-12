@@ -181,9 +181,19 @@ export default function RecordingTrack(props: RecordingTrackProps) {
               </>
             ) : null}
             {onExport ? (
-              <Button size="small" icon={<ExportOutlined />}
-                disabled={selectionSeconds < 1 || busy || selectionDisabled || rangeSelection != null}
-                onClick={() => onExport(range[0], range[1])}>导出选区</Button>
+              <Button
+                size="small"
+                icon={<ExportOutlined />}
+                disabled={
+                  selectionSeconds < 1 ||
+                  busy ||
+                  selectionDisabled ||
+                  rangeSelection != null
+                }
+                onClick={() => onExport(range[0], range[1])}
+              >
+                导出选区
+              </Button>
             ) : null}
           </span>
         )}
@@ -323,10 +333,16 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                   {markers.map((marker, index) => {
                     const position =
                       markerPositions[marker.id] ?? marker.positionSeconds;
+                    const endPosition =
+                      marker.endPositionSeconds == null
+                        ? null
+                        : position +
+                          marker.endPositionSeconds -
+                          marker.positionSeconds;
                     return (
                       <Tooltip
                         key={marker.id}
-                        title={`${clock(position)}${marker.endPositionSeconds != null ? `—${clock(marker.endPositionSeconds)}` : ""}：${marker.text}${editable ? "（单击回看，双击编辑）" : ""}`}
+                        title={`${clock(position)}${endPosition != null ? `—${clock(endPosition)}` : ""} ${marker.text}`}
                       >
                         <button
                           aria-label={`${clock(position)} · ${marker.text}`}
@@ -335,7 +351,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                             left: `${pct(position)}%`,
                             ...(marker.endPositionSeconds != null
                               ? {
-                                  width: `${Math.max(0, pct(marker.endPositionSeconds) - pct(position))}%`,
+                                  width: `${Math.max(0, pct(endPosition!) - pct(position))}%`,
                                 }
                               : {}),
                           }}
