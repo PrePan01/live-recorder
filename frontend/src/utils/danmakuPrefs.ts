@@ -1,6 +1,6 @@
-import { readPref, writePref } from './prefStorage';
+import { readPref, writePref } from "./prefStorage";
 
-const LS_PREFIX = 'lr-danmaku-player';
+const LS_PREFIX = "lr-danmaku-player";
 
 /** 弹幕显示偏好存储；预览与文件回放使用独立的显示开关键。 */
 export function loadDanmakuPref<T>(key: string, fallback: T): T {
@@ -12,3 +12,12 @@ export function saveDanmakuPref(key: string, value: unknown): void {
 }
 
 export const DANMUKU_DENSITY_OPTIONS = [20, 40, 80];
+
+export function normalizeDanmakuScale(value: unknown): number {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0.5 &&
+    value <= 2
+    ? value
+    : 1;
+}

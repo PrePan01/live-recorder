@@ -6,7 +6,7 @@ import { usePreviewMarkers } from "./usePreviewMarkers";
 import { useRecordingMediaPosition } from "../../hooks/useRecordingMediaPosition";
 
 // Keep hook state across renders without requiring a browser or DOM renderer.
-const hooks = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0 }));
+const hooks = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0, effects: [] as (() => unknown)[] }));
 vi.mock("react", () => ({
   useState: (initial: unknown) => {
     const index = hooks.cursor++;
@@ -25,7 +25,7 @@ vi.mock("react", () => ({
     return (hooks.slots[index] ??= { current: initial });
   },
   useCallback: (callback: unknown) => callback,
-  useEffect: () => undefined,
+  useEffect: (effect: () => unknown) => { hooks.effects.push(effect); },
   useLayoutEffect: () => undefined,
 }));
 vi.mock("../../hooks/useLocalPref", () => ({
@@ -45,6 +45,7 @@ import { createRecordingMarker } from "../../api/recordings";
 
 function RecordingTrackHarness(props: Partial<RecordingTrackProps> = {}) {
   hooks.cursor = 0;
+  hooks.effects = [];
   return useRecordingTrack({
     elapsedSeconds: 93,
     markers: [],
@@ -59,6 +60,113 @@ beforeEach(() => {
 });
 
 describe("marker click position", () => {
+  it.each([
+    [0, 8, 8, 0], [0, 8, 18, 10],
+    [100, 92, 92, 100], [100, 92, 82, 90],
+  ])("keeps the endpoint playhead's grip offset at %s seconds", (second, press, release, expected) => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let cleanup: (() => void) | undefined;
+    const onSeekCommit = vi.fn();
+    const props = { mode: "playback" as const, elapsedSeconds: 100,
+      previewMode: "history" as const, previewSecond: second, onSeekCommit };
+    try {
+      let track = RecordingTrackHarness(props);
+      track.railRef.current = { offsetWidth: 100, clientWidth: 100, clientLeft: 0,
+        getBoundingClientRect: () => ({ left: 0, width: 100 }) } as HTMLDivElement;
+      track.beginPlayhead({ clientX: press, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.PointerEvent, true);
+      track = RecordingTrackHarness(props);
+      expect(track.positionSecond).toBe(second);
+      cleanup = hooks.effects.at(-1)!() as () => void;
+      const event = new Event("pointerup");
+      Object.defineProperty(event, "clientX", { value: release });
+      target.dispatchEvent(event);
+      expect(onSeekCommit).toHaveBeenCalledWith(expected, expected);
+    } finally {
+      cleanup?.();
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    ["start", 14, 14, [0, 100]],
+    ["start", 14, 24, [10, 100]],
+    ["end", 86, 86, [0, 100]],
+    ["end", 86, 76, [0, 90]],
+  ] as const)("preserves the grip offset of the inward %s handle", (kind, press, release, expected) => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let cleanup: (() => void) | undefined;
+    const props = { mode: "playback" as const, elapsedSeconds: 100, onExport: vi.fn() };
+    try {
+      let track = RecordingTrackHarness(props);
+      track.railRef.current = { offsetWidth: 100, clientWidth: 100, clientLeft: 0,
+        getBoundingClientRect: () => ({ left: 0, width: 100 }) } as HTMLDivElement;
+      track.beginRange(kind, { clientX: press, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.PointerEvent);
+      track = RecordingTrackHarness(props);
+      cleanup = hooks.effects.at(-1)!() as () => void;
+      const event = new Event("pointerup");
+      Object.defineProperty(event, "clientX", { value: release });
+      target.dispatchEvent(event);
+      track = RecordingTrackHarness(props);
+      expect(track.range).toEqual(expected);
+      expect(props.onExport).not.toHaveBeenCalled();
+    } finally {
+      cleanup?.();
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    ["playback", 100, 40, 25, 45],
+    ["playback", 100, -20, 0, 20],
+    ["playback", 100, 150, 80, 100],
+    ["recording", 120, 40, 25, 45],
+    ["recording", 120, -20, 0, 20],
+    ["recording", 120, 150, 80, 100],
+    ["playback", 100, 150, 79.125, 99.125],
+  ] as const)("moves a whole segment in %s mode without changing its duration", async (mode, width, pointerEnd, start, end) => {
+    const marker = { id: "segment", recordingId: "r", text: "片段", positionSeconds: 10, endPositionSeconds: 30, createdAt: "", updatedAt: "" };
+    const onMove = vi.fn().mockResolvedValue(undefined);
+    const onSeekCommit = vi.fn();
+    const props = { mode, elapsedSeconds: end === 99.125 ? end : 100, markers: [marker], editable: true, onMove, onSeekCommit };
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    let frame: (() => void) | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => { frame = callback; return 1; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let cleanup: (() => void) | undefined;
+    try {
+      let track = RecordingTrackHarness(props);
+      const timelineEnd = mode === "recording" ? 120 : props.elapsedSeconds;
+      track.railRef.current = { offsetWidth: width, clientWidth: width, clientLeft: 0,
+        getBoundingClientRect: () => ({ left: 0, width }) } as HTMLDivElement;
+      track.beginMarker(marker, { clientX: 25 * width / timelineEnd, stopPropagation: vi.fn(), preventDefault: vi.fn() } as unknown as React.PointerEvent);
+      track = RecordingTrackHarness(props);
+      expect(track.dragging).toMatchObject({ markerId: "segment", duration: 20 });
+      cleanup = hooks.effects.at(-1)!() as () => void;
+      const dispatch = (type: string) => {
+        const event = new Event(type);
+        Object.defineProperty(event, "clientX", { value: pointerEnd * width / timelineEnd });
+        target.dispatchEvent(event);
+      };
+      dispatch("pointermove");
+      frame!();
+      track = RecordingTrackHarness(props);
+      expect(track.markerPositions.segment).toBe(start);
+      dispatch("pointerup");
+      expect(onMove).toHaveBeenCalledWith("segment", start, end);
+      expect(onSeekCommit).not.toHaveBeenCalled();
+      await Promise.resolve();
+      await Promise.resolve();
+      track = RecordingTrackHarness(props);
+      expect(track.markerPositions.segment).toBeUndefined();
+      expect(track.dragging).toBeNull();
+    } finally {
+      cleanup?.();
+      vi.unstubAllGlobals();
+    }
+  });
   it("isolates a segment press from the rail and clears stale drag state before double-click editing", async () => {
     const marker = { id: "segment", recordingId: "r", text: "片段", positionSeconds: 3, endPositionSeconds: 8, createdAt: "", updatedAt: "" };
     let track = RecordingTrackHarness({ editable: true });

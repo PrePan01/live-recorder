@@ -1,0 +1,91 @@
+.lr-recording-track__markers {
+  /* 标记与轨道垂直居中重叠；空白区域穿透点击，选区手柄保留更高层级。 */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+}
+
+.lr-recording-track__marker {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 21px;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+  font-size: 0;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.lr-recording-track__marker:is(:hover, :focus-visible) {
+  /* 标记互叠时悬停/聚焦的一枚升到最上层，点击命中不被同位标记抢走。 */
+  z-index: 5;
+}
+
+.lr-recording-track__marker::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px;
+  height: 12px;
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-yellow);
+}
+
+.lr-recording-track__marker:is(:hover, :focus-visible)::before {
+  background: var(--lr-pink);
+  transform: translate(-50%, -50%) rotate(-8deg);
+}
+
+.lr-recording-track__marker:is(:hover, :focus-visible, :active) {
+  z-index: 5;
+}
+
+.lr-recording-track__marker:focus-visible {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: -2px;
+}
+
+.lr-recording-track__marker:active {
+  cursor: grabbing;
+}
+
+.lr-recording-track__marker--segment {
+  min-width: 7px;
+  transform: translateY(-50%);
+  cursor: grab;
+}
+
+.lr-recording-track__marker--segment::before {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lr-recording-track__marker--segment:is(:hover, :focus-visible)::before {
+  transform: translate(-50%, -50%);
+}
+
+.lr-recording-track__temporary-segment {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  height: 12px;
+  min-width: 7px;
+  transform: translateY(-50%);
+  border: 1px dashed var(--lr-ink);
+  background: color-mix(in srgb, var(--lr-yellow) 55%, transparent);
+  pointer-events: none;
+}

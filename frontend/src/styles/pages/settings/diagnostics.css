@@ -1,0 +1,7 @@
+.lr-self-check-card .ant-list-item {
+  padding-block: 12px;
+}
+
+.lr-self-check-card .ant-list-item:first-child {
+  padding-top: 0;
+}

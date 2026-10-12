@@ -1,0 +1,95 @@
+.lr-stats-grid > .ant-col {
+  display: flex;
+}
+.lr-stats-grid > .ant-col > .ant-card {
+  width: 100%;
+}
+.lr-stats-kpi__sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+.lr-stats-heat__month {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  min-width: 84px;
+  justify-content: center;
+  text-align: center;
+}
+.lr-stats-heat__month-nav.ant-btn {
+  display: inline-flex !important;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0;
+  line-height: 0;
+}
+.lr-stats-heat__month-nav.ant-btn > .ant-btn-icon {
+  display: grid;
+  place-items: center;
+  margin: 0 !important;
+  line-height: 0;
+}
+.lr-stats-heat__month-nav.ant-btn .anticon {
+  display: block;
+  font-size: 12px;
+  transform: scale(1.12);
+}
+.lr-stats-card-extra.ant-space {
+  align-items: center;
+  white-space: nowrap;
+}
+.lr-stats-page .lr-page-actions {
+  flex-wrap: nowrap;
+}
+.lr-stats-range-picker {
+  width: 320px;
+}
+.lr-stats-range-picker-popup .ant-picker-panel-container,
+.lr-stats-range-picker-popup .ant-picker-panel-layout,
+.lr-stats-range-picker-popup .ant-picker-panel-container > div {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.lr-stats-range-picker-popup .ant-picker-footer {
+  display: none !important;
+}
+
+.lr-stats-metric-toggle {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 2px !important;
+}
+.lr-stats-metric-toggle .ant-radio-button-wrapper,
+.lr-stats-metric-toggle .ant-radio-button-wrapper-checked {
+  display: flex !important;
+  min-width: 42px;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 8px !important;
+  font-size: 12px;
+  text-align: center;
+}
+.lr-stats-metric-toggle .ant-radio-button-wrapper > .ant-radio-button-label {
+  display: flex;
+  flex: 1 1 auto;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.lr-stats-room-expand.ant-btn {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 10px;
+  font-size: 12px !important;
+  line-height: 1 !important;
+}

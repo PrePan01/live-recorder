@@ -1,0 +1,123 @@
+.lr-settings-card {
+  margin-top: 16px;
+}
+
+.lr-settings-reset-card.ant-card {
+  margin-top: 16px;
+  border-top-color: var(--lr-danger) !important;
+}
+
+.lr-settings-section {
+  padding: 12px 0 0;
+}
+
+.lr-settings-section--credential {
+  scroll-margin-top: 20px;
+}
+
+.lr-settings-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+  margin-top: -20px;
+}
+
+.lr-settings-section__title.ant-typography {
+  font-family: var(--lr-display);
+  font-weight: 900;
+}
+
+.lr-settings-card .ant-card-head .ant-card-head-title {
+  font-size: 16px;
+}
+
+.lr-settings-grid .lr-settings-section__title.ant-typography {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.lr-settings-grid .ant-form-item .ant-form-item-label {
+  padding-bottom: 4px;
+}
+
+.lr-settings-grid .ant-form-item-label > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lr-settings-grid
+  .ant-col
+  .ant-form-item:not(.lr-pipeline-step .ant-form-item) {
+  margin-bottom: 16px;
+}
+
+.lr-settings-grid .ant-form-item-extra {
+  padding-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--lr-muted);
+}
+
+.lr-settings-card > .ant-card-body {
+  padding: 16px !important;
+}
+
+.lr-settings-grid .lr-settings-section {
+  padding-top: 16px;
+}
+
+.lr-settings-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.lr-settings-form .ant-form-item-label {
+  padding-bottom: 6px;
+}
+
+.lr-settings-form .ant-form-item-label > label {
+  font-size: 13px;
+}
+
+.lr-settings-form .ant-form-item-extra {
+  padding-top: 5px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.lr-settings-grid > .ant-col > .ant-card + .ant-card {
+  margin-top: 20px;
+}
+
+.lr-settings-grid > .ant-col > .ant-card + .lr-settings-reset-card {
+  margin-top: 16px;
+}
+
+.lr-settings-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+  padding: 4px 0 12px;
+  color: var(--lr-text-secondary);
+}
+
+.lr-settings-footer .ant-typography {
+  font-size: 13px;
+}
+
+.lr-settings-support-links a.ant-typography {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  transition: background-color 0.16s ease;
+}
+
+.lr-settings-support-links a.ant-typography:not(.ant-typography-disabled):hover {
+  background: var(--lr-surface-hover, rgba(127, 127, 127, 0.12));
+}
+
+.lr-settings-section__hint.ant-typography {
+  margin: 0 0 18px;
+  font-size: 12px;
+  line-height: 1.65;
+}

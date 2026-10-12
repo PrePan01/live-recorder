@@ -62,4 +62,34 @@ describe('弹幕显示偏好持久化', () => {
     useDanmakuPrefsStore.getState().setOpacity(0.4);
     expect(useDanmakuPrefsStore.getState()).toMatchObject({ visible: false, opacity: 0.4 });
   });
+  it('字号与速度在预览和历史回看中独立保存，重启后恢复', async () => {
+    const prefs = (await import('./danmakuPrefsStore')).useDanmakuPrefsStore.getState();
+    expect(prefs).toMatchObject({ fontScale: 1, speedMultiplier: 1, previewFontScale: 1, previewSpeedMultiplier: 1 });
+    prefs.setPreviewFontScale(2);
+    prefs.setPreviewSpeedMultiplier(0.5);
+    expect((await import('./danmakuPrefsStore')).useDanmakuPrefsStore.getState()).toMatchObject({ fontScale: 1, speedMultiplier: 1 });
+    prefs.setFontScale(0.7);
+    prefs.setSpeedMultiplier(1.8);
+    vi.resetModules();
+    expect((await import('./danmakuPrefsStore')).useDanmakuPrefsStore.getState()).toMatchObject({
+      fontScale: 0.7, speedMultiplier: 1.8, previewFontScale: 2, previewSpeedMultiplier: 0.5,
+    });
+  });
+
+  it('新增偏好的非法值回退到 1，存储不可用也可调整', async () => {
+    saved.set('lr-danmaku-player:fontScale', '0.4');
+    saved.set('lr-danmaku-player:speedMultiplier', '3');
+    saved.set('lr-danmaku-player:previewFontScale', '"bad"');
+    saved.set('lr-danmaku-player:previewSpeedMultiplier', 'null');
+    const store = (await import('./danmakuPrefsStore')).useDanmakuPrefsStore;
+    expect(store.getState()).toMatchObject({ fontScale: 1, speedMultiplier: 1, previewFontScale: 1, previewSpeedMultiplier: 1 });
+    store.getState().setFontScale(NaN);
+    store.getState().setSpeedMultiplier(Infinity);
+    expect(store.getState()).toMatchObject({ fontScale: 1, speedMultiplier: 1 });
+    vi.stubGlobal('window', { get localStorage() { throw new Error('unavailable'); } });
+    store.getState().setPreviewFontScale(1.5);
+    store.getState().setPreviewSpeedMultiplier(0.8);
+    expect(store.getState()).toMatchObject({ previewFontScale: 1.5, previewSpeedMultiplier: 0.8 });
+  });
+
 });

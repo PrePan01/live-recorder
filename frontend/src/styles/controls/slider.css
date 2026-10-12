@@ -1,0 +1,39 @@
+/* Shared Ant Design slider geometry; margins belong to each host. */
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider {
+  padding-block: 8px;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-rail,
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-track {
+  height: 8px !important;
+  border-radius: 0 !important;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-rail {
+  border: 1px solid var(--lr-ink);
+  background: var(--lr-surface-alt) !important;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-track {
+  background: var(--lr-primary) !important;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-handle {
+  /* The thicker custom rail needs the handle offset from Ant Design's 4px
+     rail calculation so their visual centers stay aligned. */
+  translate: 0 4px;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-handle::after {
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid var(--lr-ink) !important;
+  border-radius: 0 !important;
+  background: var(--lr-primary) !important;
+}
+
+:is(.lr-floating-recorder-size__control, .lr-danmaku-settings) .ant-slider-handle:focus-visible::after {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 3px;
+}

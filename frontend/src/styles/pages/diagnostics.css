@@ -1,0 +1,23 @@
+.lr-diagnostics-page {
+  min-height: 100dvh;
+  padding: clamp(12px, 3vw, 32px);
+  overflow: auto;
+  background: var(--lr-bg);
+}
+
+.lr-diagnostics-page > .ant-card {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  border-color: var(--lr-border);
+}
+
+.lr-diagnostics-page .ant-card-head-wrapper {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.lr-diagnostics-page .ant-card-extra {
+  width: 100%;
+  margin-inline-start: 0;
+}

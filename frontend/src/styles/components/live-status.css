@@ -1,0 +1,148 @@
+/* Tags, tables and status */
+
+.lr-live-status-tag {
+  display: inline-flex;
+  align-items: center;
+}
+
+.lr-live-status-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.lr-live-status-dot--live {
+  background: var(--lr-success);
+  color: var(--lr-success);
+}
+
+.lr-live-status-dot--live::before {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  content: "";
+  opacity: 0.7;
+  animation: lr-status-ripple 2.4s ease-out infinite;
+}
+
+.lr-live-status-dot--live::after {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  content: "";
+  opacity: 0.7;
+  animation: lr-status-ripple 2.4s 1.2s ease-out infinite;
+}
+
+.lr-live-status-dot--restricted {
+  background: #c98a00;
+}
+
+.lr-live-status-text {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.lr-live-status-text--live {
+  color: var(--lr-success);
+  font-weight: 600;
+}
+
+.lr-live-status-text--offline {
+  color: var(--lr-muted);
+}
+
+.lr-live-status-text--restricted {
+  color: #c98a00;
+}
+
+.lr-live-status-tag {
+  min-width: 0;
+  gap: 6px;
+}
+
+.lr-room-card__status .lr-live-status-tag {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.lr-live-status-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.lr-live-status-title {
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  white-space: nowrap;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: var(--lr-success);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 26px;
+}
+
+:root[data-theme="dark"] .lr-room-card .lr-live-status-title {
+  color: #102d24;
+}
+
+.lr-live-status-title__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 6px;
+}
+
+.lr-live-status-title__content {
+  display: inline-block;
+}
+
+.lr-live-status-title__marquee {
+  display: flex;
+  width: max-content;
+  padding-right: 8px;
+  gap: 2rem;
+  animation: lr-live-title-marquee 12s linear infinite;
+}
+
+@keyframes lr-live-title-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 1rem));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lr-live-status-title__marquee {
+    animation: none;
+  }
+}
+
+@keyframes lr-status-ripple {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.55);
+  }
+  65% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.2);
+  }
+}
