@@ -72,10 +72,13 @@ export function MarkerNavPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = null;
-  }, [markers]);
+  useEffect(
+    () => () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    },
+    [markers],
+  );
   const openEditor = (marker: RecordingMarker) => {
     if (!onEdit || saving) return;
     if (clickTimer.current) clearTimeout(clickTimer.current);
@@ -97,11 +100,18 @@ export function MarkerNavPanel({
   );
   const { current } = markerNeighbors(sorted, currentSecond, liveMode);
   const timeWidth = useMemo(
-    () => sorted.reduce((width, marker) => Math.max(
-      width,
-      markerClock(marker.positionSeconds).length +
-        (marker.endPositionSeconds != null ? 1 + markerClock(marker.endPositionSeconds).length : 0),
-    ), 5) + 1,
+    () =>
+      sorted.reduce(
+        (width, marker) =>
+          Math.max(
+            width,
+            markerClock(marker.positionSeconds).length +
+              (marker.endPositionSeconds != null
+                ? 1 + markerClock(marker.endPositionSeconds).length
+                : 0),
+          ),
+        5,
+      ) + 1,
     [sorted],
   );
   useEffect(() => {
@@ -157,7 +167,9 @@ export function MarkerNavPanel({
                       aria-label={`选择 ${marker.text}`}
                       disabled={exportBusy}
                       checked={selectedSegmentIds?.has(marker.id) ?? false}
-                      onChange={(e) => onSelectSegment(marker.id, e.target.checked)}
+                      onChange={(e) =>
+                        onSelectSegment(marker.id, e.target.checked)
+                      }
                     />
                   ) : null}
                 </span>
@@ -221,7 +233,7 @@ export function MarkerNavPanel({
               ) : null}
               {onDelete ? (
                 <Popconfirm
-                  title={`删除${segment ? "片段" : "标签"}标记？导出文件不受影响。`}
+                  title={`删除${segment ? "片段" : "标签"}标记？`}
                   onConfirm={() => onDelete(marker)}
                 >
                   <Button

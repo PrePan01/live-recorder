@@ -6,10 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  fitPreviewBox,
-  fitPreviewBoxByHeight,
-} from "../../utils/previewLayout";
+import { fitPreviewBox, fitPreviewContent } from "../../utils/previewLayout";
 
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
@@ -87,6 +84,7 @@ export function usePreviewLayout(
 
   const lastStreamRatioRef = useRef<number | null>(null);
   const handleStreamAspectRatio = useCallback((ratio: number) => {
+    if (!Number.isFinite(ratio) || ratio <= 0) return;
     const previous = lastStreamRatioRef.current;
     if (previous === ratio) return;
     lastStreamRatioRef.current = ratio;
@@ -165,38 +163,6 @@ export function usePreviewLayout(
     viewportWidth - MODAL_VIEWPORT_GUTTER_X,
   );
   const maxVideoWidth = Math.max(1, maxModalWidth - MODAL_BODY_PADDING_X);
-  const layoutRatio = streamRatio ?? 16 / 9;
-  const portrait = layoutRatio < 1;
-  const maxModalHeight = Math.max(0, viewportHeight - 32);
-  const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
-  const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
-  const occupiedTrackHeight = displayedTrack && trackNode ? trackOccupied : 0;
-  const reservedVideoCap = Math.max(0, baseVideoHeight - measuredTrackHeight);
-  const naturalVideoHeight = portrait
-    ? (portraitHeight ?? reservedVideoCap)
-    : fitPreviewBox(
-        layoutRatio,
-        Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
-        reservedVideoCap,
-      ).height;
-  const contentTotalHeight =
-    Math.min(naturalVideoHeight, reservedVideoCap) + measuredTrackHeight;
-  const maxVideoHeight = Math.max(0, baseVideoHeight - occupiedTrackHeight);
-  const videoRenderHeight = Math.max(
-    0,
-    contentTotalHeight - occupiedTrackHeight,
-  );
-  const videoBox = portrait
-    ? fitPreviewBoxByHeight(layoutRatio, videoRenderHeight, videoRenderHeight)
-    : fitPreviewBox(
-        layoutRatio,
-        Math.min(Math.max(1, width - MODAL_BODY_PADDING_X), maxVideoWidth),
-        videoRenderHeight,
-      );
-  const modalHeight = Math.min(
-    maxModalHeight,
-    Math.ceil(contentTotalHeight + MODAL_CHROME_HEIGHT),
-  );
   const modalWidth = Math.min(
     maxModalWidth,
     Math.max(
@@ -204,11 +170,52 @@ export function usePreviewLayout(
       Math.min(width, maxModalWidth),
     ),
   );
+  const layoutRatio = streamRatio ?? 16 / 9;
+  const portrait = layoutRatio < 1;
+  const maxModalHeight = Math.max(0, viewportHeight - 32);
+  const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
+  const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
+  const occupiedTrackHeight = displayedTrack && trackNode ? trackOccupied : 0;
+  const { videoBox, contentHeight, trackWidth } = fitPreviewContent({
+    ratio: layoutRatio,
+    availableWidth: modalWidth - MODAL_BODY_PADDING_X,
+    availableHeight: baseVideoHeight,
+    trackHeight: measuredTrackHeight,
+    occupiedTrackHeight,
+    preferredVideoHeight: portrait ? (portraitHeight ?? undefined) : undefined,
+  });
+  const maxVideoHeight = Math.max(0, baseVideoHeight - occupiedTrackHeight);
+  const modalHeight = Math.min(
+    maxModalHeight,
+    Math.ceil(contentHeight + MODAL_CHROME_HEIGHT),
+  );
   const pictureBox = fitPreviewBox(
     layoutRatio,
-    PICTURE_IN_PICTURE_WIDTH,
-    Math.max(120, viewportHeight - 20),
+    Math.max(0, Math.min(PICTURE_IN_PICTURE_WIDTH, viewportWidth - 20)),
+    Math.max(0, viewportHeight - 20),
   );
+
+  // 窗口缩小或直播比例变化时，将画中画重新约束在视口内。
+  useEffect(() => {
+    if (!pictureInPicture) return;
+    setPicturePosition((current) => {
+      const x = Math.max(
+        0,
+        Math.min(current.x, viewportWidth - pictureBox.width),
+      );
+      const y = Math.max(
+        0,
+        Math.min(current.y, viewportHeight - pictureBox.height),
+      );
+      return x === current.x && y === current.y ? current : { x, y };
+    });
+  }, [
+    pictureInPicture,
+    viewportWidth,
+    viewportHeight,
+    pictureBox.width,
+    pictureBox.height,
+  ]);
 
   // 视口变化时重算画面边界，避免横屏拖大后再缩小窗口时视频越界。
   useEffect(() => {
@@ -413,6 +420,7 @@ export function usePreviewLayout(
     handleStreamAspectRatio,
     modalWidth,
     modalHeight,
+    trackWidth,
     videoBox,
     pictureBox,
     portrait,
