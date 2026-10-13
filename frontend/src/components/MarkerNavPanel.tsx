@@ -6,6 +6,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -13,6 +14,7 @@ import {
   DeleteOutlined,
   PlayCircleOutlined,
   ExpandOutlined,
+  ExportOutlined,
 } from "@ant-design/icons";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { markerNeighbors } from "../utils/markerNavigation";
@@ -37,6 +39,7 @@ interface MarkerNavPanelProps {
   ) => Promise<void>;
   onAdjustRange?: (marker: RecordingMarker) => void;
   onPreview?: (marker: RecordingMarker) => void;
+  onExport?: (marker: RecordingMarker) => Promise<void>;
   selectingSegments?: boolean;
   selectedSegmentIds?: ReadonlySet<string>;
   onSelectSegment?: (id: string, checked: boolean) => void;
@@ -55,6 +58,7 @@ export function MarkerNavPanel({
   onDelete,
   onAdjustRange,
   onPreview,
+  onExport,
   selectingSegments = false,
   selectedSegmentIds,
   onSelectSegment,
@@ -195,46 +199,66 @@ export function MarkerNavPanel({
                 <span>{marker.text}</span>
               </button>
               {onEdit ? (
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label={`编辑 ${marker.text}`}
-                  icon={<EditOutlined />}
-                  onClick={() => openEditor(marker)}
-                />
-              ) : null}
-              {segment && onPreview ? (
-                <Button
-                  type="text"
-                  size="small"
-                  disabled={disabled}
-                  aria-label={`预览 ${marker.text}`}
-                  icon={<PlayCircleOutlined />}
-                  onClick={() => onPreview(marker)}
-                />
-              ) : null}
-              {segment && onAdjustRange ? (
-                <Button
-                  type="text"
-                  size="small"
-                  disabled={saving}
-                  aria-label={`调整 ${marker.text} 范围`}
-                  icon={<ExpandOutlined />}
-                  onClick={() => onAdjustRange(marker)}
-                />
-              ) : null}
-              {onDelete ? (
-                <Popconfirm
-                  title={`删除${segment ? "片段" : "标签"}标记？`}
-                  onConfirm={() => onDelete(marker)}
-                >
+                <Tooltip title="编辑">
                   <Button
                     type="text"
                     size="small"
-                    aria-label={`删除 ${marker.text}`}
-                    icon={<DeleteOutlined />}
+                    aria-label={`编辑 ${marker.text}`}
+                    icon={<EditOutlined />}
+                    onClick={() => openEditor(marker)}
                   />
-                </Popconfirm>
+                </Tooltip>
+              ) : null}
+              {segment && onPreview ? (
+                <Tooltip title="跳转">
+                  <Button
+                    type="text"
+                    size="small"
+                    disabled={disabled}
+                    aria-label={`预览 ${marker.text}`}
+                    icon={<PlayCircleOutlined />}
+                    onClick={() => onPreview(marker)}
+                  />
+                </Tooltip>
+              ) : null}
+              {segment && onAdjustRange ? (
+                <Tooltip title="调整">
+                  <Button
+                    type="text"
+                    size="small"
+                    disabled={saving}
+                    aria-label={`调整 ${marker.text} 范围`}
+                    icon={<ExpandOutlined />}
+                    onClick={() => onAdjustRange(marker)}
+                  />
+                </Tooltip>
+              ) : null}
+              {segment && onExport ? (
+                <Tooltip title="导出">
+                  <Button
+                    type="text"
+                    size="small"
+                    disabled={exportBusy}
+                    aria-label={`导出 ${marker.text}`}
+                    icon={<ExportOutlined />}
+                    onClick={() => void onExport(marker)}
+                  />
+                </Tooltip>
+              ) : null}
+              {onDelete ? (
+                <Tooltip title="删除">
+                  <Popconfirm
+                    title={`删除${segment ? "片段" : "标签"}标记？`}
+                    onConfirm={() => onDelete(marker)}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label={`删除 ${marker.text}`}
+                      icon={<DeleteOutlined />}
+                    />
+                  </Popconfirm>
+                </Tooltip>
               ) : null}
             </div>
           );

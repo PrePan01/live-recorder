@@ -13,12 +13,12 @@ vi.mock("react", async (importOriginal) => ({
   useMemo: (fn: () => unknown) => fn(),
   useEffect: () => undefined,
 }));
-vi.mock("antd", () => ({ Button: "mock-button", Checkbox: "mock-checkbox", Input: "mock-input", InputNumber: "mock-number", Modal: "mock-modal", Popconfirm: "mock-confirm", Space: "mock-space", Typography: { Text: "mock-text" } }));
+vi.mock("antd", () => ({ Button: "mock-button", Checkbox: "mock-checkbox", Input: "mock-input", InputNumber: "mock-number", Modal: "mock-modal", Popconfirm: "mock-confirm", Tooltip: "mock-tooltip", Space: "mock-space", Typography: { Text: "mock-text" } }));
 import { MarkerNavPanel } from "./MarkerNavPanel";
 const marker: RecordingMarker = { id: "segment", recordingId: "r", text: "片段 1", positionSeconds: 3, endPositionSeconds: 8, createdAt: "", updatedAt: "" };
-function render(onSeek: (second: number) => void) {
+function render(onSeek: (second: number) => void, props: Partial<Parameters<typeof MarkerNavPanel>[0]> = {}) {
   h.cursor = 0;
-  return MarkerNavPanel({ markers: [marker], duration: 20, onSeek, onEdit: vi.fn(), onRangeEdit: vi.fn(), liveMode: true });
+  return MarkerNavPanel({ markers: [marker], duration: 20, onSeek, onEdit: vi.fn(), onRangeEdit: vi.fn(), liveMode: true, ...props });
 }
 function find(node: unknown, match: (node: ReactElement<Record<string, unknown>>) => boolean): ReactElement<Record<string, unknown>> | undefined {
   if (Array.isArray(node)) return node.map((child) => find(child, match)).find(Boolean);
@@ -29,6 +29,21 @@ function find(node: unknown, match: (node: ReactElement<Record<string, unknown>>
 beforeEach(() => { h.slots = []; vi.useFakeTimers(); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("segment list interaction", () => {
+  it("exports the clicked segment directly and explains every row action", () => {
+    const onExport = vi.fn().mockResolvedValue(undefined);
+    const point = { ...marker, id: "point", text: "标签", endPositionSeconds: null };
+    const props = { markers: [marker, point], onExport, onPreview: vi.fn(), onAdjustRange: vi.fn(), onDelete: vi.fn() };
+    const tree = render(vi.fn(), props);
+    const button = find(tree, (node) => node.props["aria-label"] === "导出 片段 1")!;
+    (button.props.onClick as () => void)();
+    expect(onExport).toHaveBeenCalledExactlyOnceWith(marker);
+    expect(find(tree, (node) => node.props["aria-label"] === "导出 标签")).toBeUndefined();
+    for (const title of ["编辑", "跳转", "调整", "导出", "删除"]) {
+      expect(find(tree, (node) => node.type === "mock-tooltip" && node.props.title === title)).toBeDefined();
+    }
+    const busyTree = render(vi.fn(), { ...props, exportBusy: true });
+    expect(find(busyTree, (node) => node.props["aria-label"] === "导出 片段 1")!.props.disabled).toBe(true);
+  });
   it("opens the segment editor on double-click without starting the pending preview", () => {
     const onSeek = vi.fn();
     const button = find(render(onSeek), (node) => node.props.className === "lr-marker-nav__seek")!;

@@ -279,6 +279,7 @@ export function PreviewRecordingTrack({
                         })
                 }
                 onPreview={onPreviewSegment}
+                onExport={(marker) => exports.submit([marker.id])}
                 selectingSegments={exports.selecting}
                 selectedSegmentIds={exports.selectedSet}
                 onSelectSegment={exports.select}
