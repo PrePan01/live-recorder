@@ -4,10 +4,8 @@ import {
   Button,
   Checkbox,
   Input,
-  InputNumber,
   Modal,
   Popconfirm,
-  Space,
   Typography,
 } from "antd";
 import {
@@ -49,14 +47,12 @@ interface MarkerNavPanelProps {
 export function MarkerNavPanel({
   markers,
   currentSecond,
-  duration,
   onSeek,
   liveMode,
   loading = false,
   blockedReason,
   onEdit,
   onDelete,
-  onRangeEdit,
   onAdjustRange,
   onPreview,
   selectingSegments = false,
@@ -67,8 +63,6 @@ export function MarkerNavPanel({
   const [editing, setEditing] = useState<RecordingMarker | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const [rangeStart, setRangeStart] = useState(0);
-  const [rangeEnd, setRangeEnd] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,8 +79,6 @@ export function MarkerNavPanel({
     clickTimer.current = null;
     setEditing(marker);
     setDraft(marker.text);
-    setRangeStart(marker.positionSeconds);
-    setRangeEnd(marker.endPositionSeconds ?? 0);
   };
   const sorted = useMemo(
     () =>
@@ -256,12 +248,7 @@ export function MarkerNavPanel({
         open={editing != null}
         confirmLoading={saving}
         okButtonProps={{
-          disabled:
-            !draft.trim() ||
-            (editing?.endPositionSeconds != null &&
-              (rangeStart < 0 ||
-                rangeEnd - rangeStart < 1 ||
-                rangeEnd > duration)),
+          disabled: !draft.trim(),
         }}
         onCancel={() => {
           if (!saving) setEditing(null);
@@ -269,48 +256,13 @@ export function MarkerNavPanel({
         onOk={() => {
           if (!editing || !onEdit || !draft.trim() || saving) return;
           setSaving(true);
-          const save = async () => {
-            if (
-              editing.endPositionSeconds != null &&
-              onRangeEdit &&
-              (rangeStart !== editing.positionSeconds ||
-                rangeEnd !== editing.endPositionSeconds)
-            ) {
-              if (
-                rangeStart < 0 ||
-                rangeEnd - rangeStart < 1 ||
-                rangeEnd > duration
-              )
-                throw new Error("片段范围非法");
-              await onRangeEdit(editing, rangeStart, rangeEnd);
-            }
-            await onEdit(editing, draft.trim());
-          };
-          void save()
+          void onEdit(editing, draft.trim())
             .then(() => setEditing(null))
             .catch(() => undefined)
             .finally(() => setSaving(false));
         }}
         destroyOnHidden
       >
-        {editing?.endPositionSeconds != null && onRangeEdit ? (
-          <Space style={{ marginBottom: 8 }}>
-            <InputNumber
-              aria-label="片段起点"
-              min={0}
-              max={Math.max(0, rangeEnd - 1)}
-              value={rangeStart}
-              onChange={(v) => setRangeStart(v ?? 0)}
-            />
-            <InputNumber
-              aria-label="片段终点"
-              min={rangeStart + 1}
-              max={duration}
-              value={rangeEnd}
-              onChange={(v) => setRangeEnd(v ?? 0)}
-            />
-          </Space>
-        ) : null}
         <Input
           value={draft}
           maxLength={200}

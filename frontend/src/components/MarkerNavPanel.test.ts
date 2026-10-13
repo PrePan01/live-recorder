@@ -41,8 +41,8 @@ describe("segment list interaction", () => {
     const tree = render(onSeek);
     expect(find(tree, (node) => node.type === "mock-modal")!.props.open).toBe(true);
     expect(find(tree, (node) => node.props["aria-label"] === "标记文字")!.props.value).toBe("片段 1");
-    expect(find(tree, (node) => node.props["aria-label"] === "片段起点")!.props.value).toBe(3);
-    expect(find(tree, (node) => node.props["aria-label"] === "片段终点")!.props.value).toBe(8);
+    expect(find(tree, (node) => node.props["aria-label"] === "片段起点")).toBeUndefined();
+    expect(find(tree, (node) => node.props["aria-label"] === "片段终点")).toBeUndefined();
   });
   it("still previews a single click and keyboard activation", () => {
     const onSeek = vi.fn();
