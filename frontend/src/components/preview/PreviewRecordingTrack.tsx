@@ -247,6 +247,13 @@ export function PreviewRecordingTrack({
               <MarkerNavPanel
                 key={displayedTrack.id}
                 markers={markers}
+                pendingSegment={marking.start != null ? {
+                  start: marking.start,
+                  text: marking.text,
+                  saving: marking.saving,
+                  onEdit: marking.rename,
+                  onDelete: marking.cancel,
+                } : undefined}
                 gaps={trackGaps}
                 duration={trackElapsedSeconds}
                 currentSecond={

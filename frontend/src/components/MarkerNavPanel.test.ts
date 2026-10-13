@@ -15,6 +15,7 @@ vi.mock("react", async (importOriginal) => ({
 }));
 vi.mock("antd", () => ({ Button: "mock-button", Checkbox: "mock-checkbox", Input: "mock-input", InputNumber: "mock-number", Modal: "mock-modal", Popconfirm: "mock-confirm", Tooltip: "mock-tooltip", Space: "mock-space", Typography: { Text: "mock-text" } }));
 import { MarkerNavPanel } from "./MarkerNavPanel";
+import { PendingSegmentRow, type PendingSegment } from "./PendingSegmentRow";
 const marker: RecordingMarker = { id: "segment", recordingId: "r", text: "片段 1", positionSeconds: 3, endPositionSeconds: 8, createdAt: "", updatedAt: "" };
 function render(onSeek: (second: number) => void, props: Partial<Parameters<typeof MarkerNavPanel>[0]> = {}) {
   h.cursor = 0;
@@ -29,6 +30,31 @@ function find(node: unknown, match: (node: ReactElement<Record<string, unknown>>
 beforeEach(() => { h.slots = []; vi.useFakeTimers(); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("segment list interaction", () => {
+  it("shows an unfinished segment even when the saved list is empty", () => {
+    const pendingSegment = { start: 3, text: "片段 1", saving: false, onEdit: vi.fn(), onDelete: vi.fn() };
+    const tree = render(vi.fn(), { markers: [], pendingSegment });
+    expect(tree).not.toBeNull();
+    expect(find(tree, (node) => node.type === PendingSegmentRow)!.props.segment).toBe(pendingSegment);
+  });
+  it("lets an unfinished segment be renamed or cancelled with only two row actions", () => {
+    const segment: PendingSegment = { start: 3, text: "片段 1", saving: false, onEdit: vi.fn(), onDelete: vi.fn() };
+    const renderPending = () => { h.cursor = 0; return PendingSegmentRow({ segment, timeWidth: 10 }); };
+    let tree = renderPending();
+    const time = find(tree, (node) => node.type === "time")!;
+    expect((time.props.children as unknown[]).join("")).toBe("00:03—???");
+    for (const label of ["预览 片段 1", "调整 片段 1 范围", "导出 片段 1", "选择 片段 1"]) {
+      expect(find(tree, (node) => node.props["aria-label"] === label)).toBeUndefined();
+    }
+    (find(tree, (node) => node.props["aria-label"] === "编辑 片段 1")!.props.onClick as () => void)();
+    tree = renderPending();
+    expect(find(tree, (node) => node.type === "mock-modal")!.props.open).toBe(true);
+    (find(tree, (node) => node.props["aria-label"] === "标记文字")!.props.onChange as (e: unknown) => void)({ target: { value: "  精彩片段  " } });
+    (find(renderPending(), (node) => node.type === "mock-modal")!.props.onOk as () => void)();
+    expect(segment.onEdit).toHaveBeenCalledExactlyOnceWith("精彩片段");
+    expect(find(renderPending(), (node) => node.type === "mock-modal")!.props.open).toBe(false);
+    (find(renderPending(), (node) => node.props["aria-label"] === "删除 片段 1")!.props.onClick as () => void)();
+    expect(segment.onDelete).toHaveBeenCalledTimes(1);
+  });
   it("exports the clicked segment directly and explains every row action", () => {
     const onExport = vi.fn().mockResolvedValue(undefined);
     const point = { ...marker, id: "point", text: "标签", endPositionSeconds: null };

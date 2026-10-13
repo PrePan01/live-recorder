@@ -609,6 +609,13 @@ export function DanmakuPlayerModal({
           <MarkerNavPanel
             key={recordingId}
             markers={markers}
+            pendingSegment={marking.start != null ? {
+              start: marking.start,
+              text: marking.text,
+              saving: marking.saving,
+              onEdit: marking.rename,
+              onDelete: marking.cancel,
+            } : undefined}
             gaps={videoGaps}
             currentSecond={current}
             duration={duration}

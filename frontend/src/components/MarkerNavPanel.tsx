@@ -18,12 +18,14 @@ import {
 } from "@ant-design/icons";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
 import { markerNeighbors } from "../utils/markerNavigation";
+import { PendingSegmentRow, type PendingSegment } from "./PendingSegmentRow";
 
 const MARKER_ROW_HEIGHT = 24;
 const MARKER_LIST_HEIGHT = 60;
 
 interface MarkerNavPanelProps {
   markers: RecordingMarker[];
+  pendingSegment?: PendingSegment;
   currentSecond?: number;
   duration: number;
   onSeek: (second: number) => void;
@@ -49,6 +51,7 @@ interface MarkerNavPanelProps {
 
 export function MarkerNavPanel({
   markers,
+  pendingSegment,
   currentSecond,
   onSeek,
   liveMode,
@@ -95,6 +98,7 @@ export function MarkerNavPanel({
     [markers],
   );
   const { current } = markerNeighbors(sorted, currentSecond, liveMode);
+  const pendingStart = pendingSegment?.start;
   const timeWidth = useMemo(
     () =>
       sorted.reduce(
@@ -106,12 +110,12 @@ export function MarkerNavPanel({
                 ? 1 + markerClock(marker.endPositionSeconds).length
                 : 0),
           ),
-        5,
+        Math.max(5, pendingSegment ? markerClock(pendingSegment.start).length + 4 : 0),
       ) + 1,
-    [sorted],
+    [sorted, pendingSegment],
   );
   useEffect(() => {
-    if (current < 0 || !listRef.current) return;
+    if (pendingStart != null || current < 0 || !listRef.current) return;
     const top = current * MARKER_ROW_HEIGHT;
     if (
       top < listRef.current.scrollTop ||
@@ -120,7 +124,15 @@ export function MarkerNavPanel({
       listRef.current.scrollTop = Math.max(0, top - MARKER_ROW_HEIGHT);
       setScrollTop(listRef.current.scrollTop);
     }
-  }, [current]);
+  }, [current, pendingStart]);
+  useEffect(() => {
+    if (pendingStart == null || !listRef.current) return;
+    listRef.current.scrollTop = Math.max(
+      0,
+      (sorted.length + 1) * MARKER_ROW_HEIGHT - MARKER_LIST_HEIGHT,
+    );
+    setScrollTop(listRef.current.scrollTop);
+  }, [pendingStart, sorted.length]);
   const firstVisible = Math.min(
     Math.max(0, sorted.length - 12),
     Math.max(0, Math.floor(scrollTop / MARKER_ROW_HEIGHT) - 3),
@@ -131,7 +143,7 @@ export function MarkerNavPanel({
     if (disabled) return;
     onSeek(marker.positionSeconds);
   };
-  if (sorted.length === 0) return null;
+  if (sorted.length === 0 && !pendingSegment) return null;
   return (
     <section className="lr-marker-nav" aria-label="标记导航">
       {blockedReason ? (
@@ -266,6 +278,9 @@ export function MarkerNavPanel({
         <div
           style={{ height: (sorted.length - lastVisible) * MARKER_ROW_HEIGHT }}
         />
+        {pendingSegment ? (
+          <PendingSegmentRow segment={pendingSegment} timeWidth={timeWidth} />
+        ) : null}
       </div>
       <Modal
         title="编辑标记"
