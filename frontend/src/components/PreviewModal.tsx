@@ -85,6 +85,7 @@ export default function PreviewModal({
     handleStreamAspectRatio,
     modalWidth,
     modalHeight,
+    trackWidth,
     videoBox,
     pictureBox,
     portrait,
@@ -222,6 +223,16 @@ export default function PreviewModal({
     onClose();
   };
 
+  const playerBounds = pictureInPicture
+    ? { left: picturePosition.x, top: picturePosition.y, ...pictureBox }
+    : previewPlayerBounds;
+  const playerStyle = {
+    "--lr-preview-player-left": `${playerBounds?.left ?? 0}px`,
+    "--lr-preview-player-top": `${playerBounds?.top ?? 0}px`,
+    "--lr-preview-player-width": `${playerBounds?.width ?? 0}px`,
+    "--lr-preview-player-height": `${playerBounds?.height ?? 0}px`,
+  } as CSSProperties;
+
   return (
     <>
       <Modal
@@ -301,20 +312,18 @@ export default function PreviewModal({
         <div className="lr-preview-modal__body">
           <div
             className="lr-preview-modal__content"
-            style={{
-              width: videoBox.width,
-              maxWidth: "100%",
-              marginInline: "auto",
-            }}
+            style={
+              { "--lr-preview-track-width": `${trackWidth}px` } as CSSProperties
+            }
           >
             <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: videoBox.height,
-                flexShrink: 1,
-                minHeight: 0,
-              }}
+              className="lr-preview-modal__video"
+              style={
+                {
+                  "--lr-preview-video-width": `${videoBox.width}px`,
+                  "--lr-preview-video-height": `${videoBox.height}px`,
+                } as CSSProperties
+              }
             >
               <div
                 ref={setPreviewPlayerSlot}
@@ -385,6 +394,17 @@ export default function PreviewModal({
       {createPortal(
         <div
           id={playerPortalId}
+          className={[
+            "lr-preview-player",
+            pictureInPicture && "lr-preview-player--picture-in-picture",
+            !pictureInPicture &&
+              (!previewPlayerBounds || !streamRatioReady) &&
+              "lr-preview-player--hidden",
+            (pictureInPicture || (previewPlayerVisible && streamRatioReady)) &&
+              "lr-preview-player--visible",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           role={pictureInPicture ? "button" : undefined}
           tabIndex={pictureInPicture ? 0 : undefined}
           aria-label={pictureInPicture ? "画中画视频，点击返回预览" : undefined}
@@ -395,38 +415,7 @@ export default function PreviewModal({
             if (pictureInPicture && (e.key === "Enter" || e.key === " "))
               setPictureInPicture(false);
           }}
-          style={{
-            position: "fixed",
-            left: pictureInPicture
-              ? picturePosition.x
-              : (previewPlayerBounds?.left ?? 0),
-            top: pictureInPicture
-              ? picturePosition.y
-              : (previewPlayerBounds?.top ?? 0),
-            width: pictureInPicture
-              ? pictureBox.width
-              : (previewPlayerBounds?.width ?? 0),
-            height: pictureInPicture
-              ? pictureBox.height
-              : (previewPlayerBounds?.height ?? 0),
-            zIndex: pictureInPicture ? 1100 : 1001,
-            cursor: pictureInPicture ? "move" : undefined,
-            borderRadius: 8,
-            overflow: "hidden",
-            background: "#000",
-            boxShadow: pictureInPicture
-              ? "0 10px 28px rgba(0,0,0,.35)"
-              : undefined,
-            visibility:
-              !pictureInPicture && (!previewPlayerBounds || !streamRatioReady)
-                ? "hidden"
-                : undefined,
-            opacity:
-              pictureInPicture || (previewPlayerVisible && streamRatioReady)
-                ? 1
-                : 0,
-            transition: pictureInPicture ? undefined : "opacity 180ms ease-out",
-          }}
+          style={playerStyle}
         >
           <VideoPlayer
             fill
@@ -471,19 +460,7 @@ export default function PreviewModal({
             <div
               onMouseDown={onHandleDown}
               title="拖动调整大小"
-              style={{
-                position: "absolute",
-                right: 4,
-                bottom: 4,
-                width: 18,
-                height: 18,
-                cursor: portrait ? "ns-resize" : "nwse-resize",
-                zIndex: 2,
-                borderRight: "3px solid rgba(255,255,255,0.75)",
-                borderBottom: "3px solid rgba(255,255,255,0.75)",
-                borderBottomRightRadius: 4,
-                background: "rgba(0,0,0,0.25)",
-              }}
+              className={`lr-preview-player__resize-handle${portrait ? " lr-preview-player__resize-handle--portrait" : ""}`}
             />
           )}
         </div>,

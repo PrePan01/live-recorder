@@ -241,6 +241,40 @@ describe('v1.4 config export/import', () => {
     expect(path.basename(kept)).toBe('again.JSON');
   });
 
+  it.each([true, false])('includes client alert visibility in saved backups (%s)', async (enabled) => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-appearance-export-'));
+    const written = await exportConfigToPath(services, path.join(dir, 'backup'), {
+      showStatusBarAlerts: enabled, unrelated: 'ignored',
+    });
+    const { config } = JSON.parse(await readFile(written, 'utf8'));
+    expect(config.appearance).toEqual({ showStatusBarAlerts: enabled });
+
+    const { app } = buildApp(services);
+    const response = await app.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST,
+      payload: { config: { appearance: config.appearance } } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ok).toBe(true);
+    expect(services.settings.load()).toBeNull();
+    await app.close();
+  });
+
+  it.each([true, false])('saves cover visibility without changing the service settings (%s)', async (enabled) => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-cover-export-'));
+    const written = await exportConfigToPath(services, path.join(dir, 'backup'), {
+      showStatusBarAlerts: false, showLiveRoomCover: enabled, unrelated: 'ignored',
+    });
+    const { config } = JSON.parse(await readFile(written, 'utf8'));
+    expect(config.appearance).toEqual({ showStatusBarAlerts: false, showLiveRoomCover: enabled });
+    const { app } = buildApp(services);
+    const response = await app.inject({ method: 'POST', url: '/api/v1/config/import', headers: HOST,
+      payload: { config: { appearance: config.appearance } } });
+    expect(response.statusCode).toBe(200);
+    expect(services.settings.load()).toBeNull();
+    await app.close();
+  });
+
   it('rejects invalid settings on import', async () => {
     const { app } = buildApp(newServices());
     const res = await app.inject({

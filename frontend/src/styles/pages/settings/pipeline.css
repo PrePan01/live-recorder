@@ -144,14 +144,15 @@
   font-weight: 800;
   cursor: help;
 }
-.lr-pipeline-step__spacer {
+.lr-pipeline-step__copy {
   flex: 1;
+  min-width: 0;
 }
 .lr-pipeline-step__desc {
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--lr-muted);
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 .lr-pipeline-step__ctrl {
   margin-top: 8px;
@@ -171,7 +172,7 @@
 .lr-pipeline-row.is-bypass .lr-pipeline-step {
   border-style: dashed;
   border-color: var(--lr-muted);
-  background: #fff;
+  background: var(--lr-surface);
 }
 .lr-pipeline-row.is-bypass .lr-pipeline-step__num {
   background: var(--lr-surface);
@@ -207,5 +208,78 @@
   .lr-pipeline-flow *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+.lr-pipeline-feedback:empty {
+  display: none;
+}
+.lr-pipeline-feedback {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.lr-pipeline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+  align-items: center;
+  gap: 8px 24px;
+}
+.lr-pipeline-field > label {
+  font-weight: 700;
+}
+.lr-pipeline-field .ant-input-number {
+  width: 100%;
+}
+.lr-pipeline-field > span {
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+.lr-pipeline-format-control {
+  flex: 0 0 132px;
+}
+.lr-pipeline-concurrency {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+  align-items: center;
+  gap: 8px 24px;
+  margin-block: 12px;
+}
+.lr-pipeline-concurrency > label {
+  font-weight: 700;
+}
+.lr-pipeline-concurrency > span {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--lr-muted);
+}
+.lr-settings-page .lr-pipeline-details[open] > summary {
+  display: none;
+}
+.lr-settings-page .lr-pipeline-details {
+  border: 0;
+  padding: 0;
+}
+
+.lr-settings-page .lr-pipeline-archive-editor {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.lr-settings-page .lr-pipeline-archive-editor > summary {
+  display: none;
+}
+
+.lr-settings-page .lr-pipeline-step__ctrl .lr-settings-row {
+  padding: 8px 0 0;
+}
+
+@media (max-width: 719px) {
+  .lr-pipeline-field,
+  .lr-pipeline-concurrency {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .lr-pipeline-concurrency > span {
+    grid-column: 1;
   }
 }

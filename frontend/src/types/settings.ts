@@ -5,6 +5,7 @@ export type RecordingFormat = 'source_flv' | 'mp4_after';
 export type ThemePreference = 'light' | 'dark' | 'system';
 
 import type { NotificationPreference } from './notification';
+import type { PipelineConfig } from './pipeline';
 
 export type PlatformIntervals = {
   default: number;
@@ -62,6 +63,18 @@ export interface Settings {
   preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
   highlightEnabled?: boolean;
+  pipeline?: PipelineConfig;
+  namingRule?: string;
+}
+
+/** Read-only defaults for safe, individual restoration. Never includes paths or credentials. */
+export interface SettingsDefaults {
+  settings: Pick<Settings, 'maxConcurrentRecordings' | 'checkIntervalSec' | 'quality' | 'autoRecord' | 'danmaku' | 'theme' | 'floatingRecorderSize' | 'confirmAfterComplete' | 'preventSleepWhileRecording' | 'highlightBufferSeconds' | 'highlightEnabled' | 'encodingMode'>;
+  pipeline: Omit<PipelineConfig, 'archiveDirectory' | 'maxConcurrency'>;
+  notifications: NotificationPreference;
+  naming: { namingRule: string };
+  openlist: { enabled: boolean; deleteSourceAfterUpload: boolean };
+  email: { enabled: boolean };
 }
 
 export interface MailInput {
@@ -83,7 +96,7 @@ export interface SettingsInput {
   quality?: Quality;
   recordingFormat?: RecordingFormat;
   autoRecord?: boolean;
-  danmaku?: { enabled: boolean };
+  danmaku?: { enabled?: boolean };
   encodingMode?: 'auto' | 'software';
   mail?: MailInput;
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */

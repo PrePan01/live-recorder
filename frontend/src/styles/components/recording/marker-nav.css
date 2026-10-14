@@ -21,6 +21,14 @@
   background: color-mix(in srgb, var(--lr-primary) 15%, transparent);
 }
 
+.lr-marker-nav__row--pending {
+  background: color-mix(in srgb, var(--lr-yellow) 15%, transparent);
+}
+
+.lr-marker-nav__row--pending .lr-marker-nav__seek {
+  cursor: default;
+}
+
 .lr-marker-nav__seek {
   min-width: 0;
   flex: 1;

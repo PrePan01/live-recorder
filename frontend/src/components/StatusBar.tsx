@@ -137,6 +137,7 @@ export default function StatusBar() {
   const navigate = useNavigate();
   const status = useServiceStore((s) => s.status);
   const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
+  const showStatusBarAlerts = useAppearanceStore((s) => s.showStatusBarAlerts);
   const sseConnected = useServiceStore((s) => s.sseConnected);
   const alerts = useAlertStore((s) => s.alerts);
   const rooms = useRoomStore((s) => s.rooms);
@@ -205,92 +206,94 @@ export default function StatusBar() {
           ) : null}
           {disk.showCleanup ? <Tag color="red">需清理</Tag> : null}
         </div>
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          content={
-            <List
-              size="small"
-              className="lr-statusbar__alerts"
-              header={
-                <Space>
-                  <Typography.Text strong>告警</Typography.Text>
-                  <Button
-                    size="small"
-                    disabled={isSettingsPage}
-                    onClick={() => {
-                      void markAllRead().catch(() => undefined);
-                    }}
-                  >
-                    全部已读
-                  </Button>
-                  {!isSettingsPage && (
+        {showStatusBarAlerts && (
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            content={
+              <List
+                size="small"
+                className="lr-statusbar__alerts"
+                header={
+                  <Space>
+                    <Typography.Text strong>告警</Typography.Text>
                     <Button
                       size="small"
-                      type="link"
-                      onClick={() => navigate("/settings")}
+                      disabled={isSettingsPage}
+                      onClick={() => {
+                        void markAllRead().catch(() => undefined);
+                      }}
                     >
-                      查看全部
+                      全部已读
                     </Button>
-                  )}
-                </Space>
-              }
-              dataSource={alerts.slice(0, 8)}
-              locale={{ emptyText: "暂无告警" }}
-              renderItem={(a) => (
-                <List.Item
-                  actions={
-                    isAlertRead(a)
-                      ? []
-                      : [
-                        a.roomId && a.errorCode ? (
+                    {!isSettingsPage && (
+                      <Button
+                        size="small"
+                        type="link"
+                        onClick={() => navigate("/settings")}
+                      >
+                        查看全部
+                      </Button>
+                    )}
+                  </Space>
+                }
+                dataSource={alerts.slice(0, 8)}
+                locale={{ emptyText: "暂无告警" }}
+                renderItem={(a) => (
+                  <List.Item
+                    actions={
+                      isAlertRead(a)
+                        ? []
+                        : [
+                          a.roomId && a.errorCode ? (
+                            <Button
+                              key="retry"
+                              size="small"
+                              type="link"
+                              loading={retryingId === a.id}
+                              onClick={() =>
+                                void retryFailure(a).catch(() => undefined)
+                              }
+                            >
+                              重试
+                            </Button>
+                          ) : null,
                           <Button
-                            key="retry"
+                            key="read"
                             size="small"
                             type="link"
-                            loading={retryingId === a.id}
-                            onClick={() =>
-                              void retryFailure(a).catch(() => undefined)
-                            }
+                            onClick={() => {
+                              void markRead(a.id).catch(() => undefined);
+                            }}
                           >
-                            重试
-                          </Button>
-                        ) : null,
-                        <Button
-                          key="read"
-                          size="small"
-                          type="link"
-                          onClick={() => {
-                            void markRead(a.id).catch(() => undefined);
-                          }}
-                        >
-                          已读
-                        </Button>,
-                      ]
-                  }
-                >
-                  <List.Item.Meta
-                    title={a.message}
-                    description={
-                      <span>
-                        {a.roomId ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · ` : ''}{alertSourceText(a.source)} ·{" "}
-                        {formatRelative(a.occurredAt)}
-                      </span>
+                            已读
+                          </Button>,
+                        ]
                     }
-                  />
-                </List.Item>
-              )}
-            />
-          }
-        >
-          <Badge count={unread} size="small" offset={[-4, 4]}>
-            <Button
-              type="text"
-              aria-label="告警"
-              icon={<WarningOutlined className="lr-statusbar__alert-icon" />}
-            />
-          </Badge>
-        </Popover>
+                  >
+                    <List.Item.Meta
+                      title={a.message}
+                      description={
+                        <span>
+                          {a.roomId ? `直播间：${rooms.find((room) => room.id === a.roomId)?.displayName || a.roomId} · ` : ''}{alertSourceText(a.source)} ·{" "}
+                          {formatRelative(a.occurredAt)}
+                        </span>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            }
+          >
+            <Badge count={unread} size="small" offset={[-4, 4]}>
+              <Button
+                type="text"
+                aria-label="告警"
+                icon={<WarningOutlined className="lr-statusbar__alert-icon" />}
+              />
+            </Badge>
+          </Popover>
+        )}
         <TaskProgressEntry />
       </div>
     </div>

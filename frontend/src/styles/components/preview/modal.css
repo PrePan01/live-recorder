@@ -1,3 +1,7 @@
+.lr-preview-modal {
+  --lr-preview-modal-height: calc(100dvh - 32px);
+}
+
 .lr-preview-modal .ant-modal-header {
   display: flex;
   align-items: center;
@@ -48,11 +52,31 @@
 }
 
 .lr-preview-modal__content {
+  --lr-preview-track-width: 100%;
+
   flex: 1 1 auto;
   min-height: 0;
   overflow: visible;
   display: flex;
   flex-direction: column;
+}
+
+.lr-preview-modal__content > .lr-recording-track-reveal {
+  width: calc(var(--lr-preview-track-width) + 32px);
+  margin-inline: auto;
+}
+
+.lr-preview-modal__video {
+  --lr-preview-video-width: 100%;
+  --lr-preview-video-height: 0px;
+
+  position: relative;
+  width: var(--lr-preview-video-width);
+  max-width: 100%;
+  margin-inline: auto;
+  height: var(--lr-preview-video-height);
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .lr-preview-modal__player-slot {
@@ -71,4 +95,56 @@
 
 .lr-preview-modal__action-button.ant-btn {
   width: 100px;
+}
+
+.lr-preview-player {
+  --lr-preview-player-left: 0px;
+  --lr-preview-player-top: 0px;
+  --lr-preview-player-width: 0px;
+  --lr-preview-player-height: 0px;
+
+  position: fixed;
+  left: var(--lr-preview-player-left);
+  top: var(--lr-preview-player-top);
+  width: var(--lr-preview-player-width);
+  height: var(--lr-preview-player-height);
+  z-index: 1001;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+.lr-preview-player--picture-in-picture {
+  z-index: 1100;
+  cursor: move;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  transition: none;
+}
+
+.lr-preview-player--hidden {
+  visibility: hidden;
+}
+
+.lr-preview-player--visible {
+  opacity: 1;
+}
+
+.lr-preview-player__resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 2;
+  border-right: 3px solid rgba(255, 255, 255, 0.75);
+  border-bottom: 3px solid rgba(255, 255, 255, 0.75);
+  border-bottom-right-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.lr-preview-player__resize-handle--portrait {
+  cursor: ns-resize;
 }

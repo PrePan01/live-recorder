@@ -33,3 +33,22 @@ it('keeps the search preference across service updates and client reloads', asyn
   vi.resetModules();
   expect((await import('./appearanceStore')).useAppearanceStore.getState().showGlobalSearch).toBe(false);
 });
+
+it('defaults covers to visible for old client preferences and persists an explicit opt-out', async () => {
+  const saved = new Map<string, string>([['live-recorder-appearance', JSON.stringify({
+    state: { showGlobalSearch: true, showStatusBarAlerts: true }, version: 0,
+  })]]);
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => saved.set(key, value),
+    removeItem: (key: string) => saved.delete(key),
+  });
+  const { useAppearanceStore } = await import('./appearanceStore');
+  expect(useAppearanceStore.getState().showLiveRoomCover).toBe(true);
+  expect(useAppearanceStore.getState().showStatusBarAlerts).toBe(true);
+  useAppearanceStore.getState().setShowLiveRoomCover(false);
+  vi.resetModules();
+  const reloaded = (await import('./appearanceStore')).useAppearanceStore;
+  expect(reloaded.getState().showLiveRoomCover).toBe(false);
+  expect(reloaded.getState().showGlobalSearch).toBe(true);
+});

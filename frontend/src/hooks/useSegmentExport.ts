@@ -51,6 +51,9 @@ export function useSegmentExport(
     try {
       await exportClipSegments(recordingId, ids, request.current.id);
       request.current = null;
+      setSelection((s) =>
+        s.recordingId === recordingId ? { ...s, ids: [] } : s,
+      );
       message.success(`已提交 ${ids.length} 个片段`);
     } catch (error) {
       message.error(
