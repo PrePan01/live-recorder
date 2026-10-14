@@ -15,7 +15,7 @@ import { resetApplication } from "../../../api/settings";
 interface ResetSettingsCardProps {
   onExport: () => Promise<void>;
   exporting: boolean;
-  beforeReset: () => void;
+  beforeReset: () => Promise<boolean>;
 }
 
 function finishReset() {
@@ -46,8 +46,8 @@ export default function ResetSettingsCard({
   const confirmReset = async () => {
     if (resetting || exporting) return;
     setResetting(true);
-    beforeReset();
     try {
+      if (!await beforeReset()) { setResetting(false); return; }
       const result = await resetApplication(keepRecordings);
       if (result.retainedFiles.length > 0) {
         setOpen(false);

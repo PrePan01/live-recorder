@@ -40,3 +40,42 @@ export function fitPreviewBoxByHeight(
   const safeRatio = sanitizeRatio(ratio);
   return boxOf(safeRatio, Math.max(0, Math.min(preferredHeight, maxHeight)));
 }
+
+/** 视频与轨道共同占位：横屏轨道跟随视频宽度，竖屏轨道占可用宽度的 80%。 */
+export function fitPreviewContent({
+  ratio,
+  availableWidth,
+  availableHeight,
+  trackHeight,
+  occupiedTrackHeight,
+  preferredVideoHeight,
+}: {
+  ratio: number;
+  availableWidth: number;
+  availableHeight: number;
+  trackHeight: number;
+  occupiedTrackHeight: number;
+  preferredVideoHeight?: number;
+}) {
+  const videoHeightCap = Math.max(0, availableHeight - trackHeight);
+  const settledBox = fitPreviewBox(
+    ratio,
+    availableWidth,
+    Math.max(
+      0,
+      Math.min(preferredVideoHeight ?? videoHeightCap, videoHeightCap),
+    ),
+  );
+  const contentHeight = settledBox.height + trackHeight;
+  const videoBox = fitPreviewBox(
+    ratio,
+    availableWidth,
+    Math.max(0, contentHeight - occupiedTrackHeight),
+  );
+  return {
+    videoBox,
+    contentHeight,
+    trackWidth:
+      sanitizeRatio(ratio) < 1 ? availableWidth * 0.8 : videoBox.width,
+  };
+}

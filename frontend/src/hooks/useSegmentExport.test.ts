@@ -84,6 +84,23 @@ describe("select before exporting segments", () => {
       expect.any(String),
     );
     await Promise.resolve();
+    expect(render().selectedIds).toEqual([]);
+    expect(render().selectedSet.size).toBe(0);
+    expect(render().selecting).toBe(true);
+    render().selectOrSubmit();
+    expect(exportClipSegments).toHaveBeenCalledTimes(1);
+  });
+  it("preserves checked segments after a failed submission so it can be retried", async () => {
+    vi.mocked(exportClipSegments).mockRejectedValueOnce(new Error("提交失败"));
+    render().selectOrSubmit();
+    render().select("a", true);
+    await render().submit(render().selectedIds);
+    expect(render().selectedIds).toEqual(["a"]);
+    expect(render().busy).toBe(false);
+    const requestId = vi.mocked(exportClipSegments).mock.calls[0][2];
+    await render().submit(render().selectedIds);
+    expect(exportClipSegments).toHaveBeenLastCalledWith("r", ["a"], requestId);
+    expect(render().selectedIds).toEqual([]);
   });
   it("does not submit an empty selection and removes unchecked or deleted segments", () => {
     render().selectOrSubmit();

@@ -34,6 +34,7 @@ export function SegmentMarkActions({
       <Tooltip title="Alt+P">
         <Button
           size="small"
+          className={marking.start != null ? "lr-segment-mark-end" : undefined}
           icon={<Icon component={SegmentIcon} />}
           disabled={disabled}
           loading={marking.saving}
@@ -42,18 +43,17 @@ export function SegmentMarkActions({
           {marking.start == null ? "标记片段" : "片段结束"}
         </Button>
       </Tooltip>
-      {children}
       {marking.start != null ? (
-        <>
-          <Button
-            size="small"
-            disabled={marking.saving}
-            onClick={marking.cancel}
-          >
-            取消标记片段
-          </Button>
-        </>
+        <Button
+          size="small"
+          className="lr-segment-mark-cancel"
+          disabled={marking.saving}
+          onClick={marking.cancel}
+        >
+          取消标记片段
+        </Button>
       ) : null}
+      {children}
     </>
   );
 }

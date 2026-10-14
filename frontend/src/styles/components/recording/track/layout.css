@@ -49,6 +49,22 @@
   margin-left: auto;
 }
 
+:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end {
+  background: #ffd500 !important;
+}
+
+:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end:not(:disabled) {
+  color: #000 !important;
+}
+
+:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel {
+  background: #b20061 !important;
+}
+
+:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel:not(:disabled) {
+  color: #fff !important;
+}
+
 .lr-recording-track__status-group {
   display: flex;
   align-items: center;

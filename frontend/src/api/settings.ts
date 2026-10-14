@@ -1,5 +1,10 @@
 import { http } from './client';
-import type { Settings, SettingsInput } from '../types/settings';
+import type { Settings, SettingsInput, SettingsDefaults } from '../types/settings';
+
+export async function fetchSettingsDefaults(): Promise<SettingsDefaults> {
+  const { data } = await http.get<{ defaults: SettingsDefaults }>('/settings/defaults');
+  return data.defaults;
+}
 
 export async function resetApplication(keepRecordings: boolean): Promise<{ ok: true; retainedFiles: string[] }> {
   const { data } = await http.post<{ ok: true; retainedFiles: string[] }>(

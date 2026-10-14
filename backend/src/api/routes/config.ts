@@ -38,6 +38,7 @@ interface RecordingImportSummary {
 export interface ExportConfig {
   version: 1;
   exportedAt: string;
+  appearance?: { showStatusBarAlerts?: boolean; showLiveRoomCover?: boolean };
   settings: Awaited<ReturnType<typeof settingsView>>;
   rooms: ReturnType<Services['rooms']['list']>;
   tags: ReturnType<Services['tags']['list']>;
@@ -177,9 +178,18 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
 }
 
 /** 把导出内容写入指定路径，返回实际写入的文件名。 */
-export async function exportConfigToPath(services: Services, target: string): Promise<string> {
+export async function exportConfigToPath(services: Services, target: string, appearance?: unknown): Promise<string> {
   const filePath = /\.json$/i.test(target) ? target : `${target}.json`;
-  const payload = `${JSON.stringify({ config: await buildExportConfig(services) }, null, 2)}\n`;
+  const config = await buildExportConfig(services);
+  const showStatusBarAlerts = (appearance as { showStatusBarAlerts?: unknown } | null)?.showStatusBarAlerts;
+  if (typeof showStatusBarAlerts === 'boolean') {
+    config.appearance = { showStatusBarAlerts };
+  }
+  const showLiveRoomCover = (appearance as { showLiveRoomCover?: unknown } | null)?.showLiveRoomCover;
+  if (typeof showLiveRoomCover === 'boolean') {
+    config.appearance = { ...config.appearance, showLiveRoomCover };
+  }
+  const payload = `${JSON.stringify({ config }, null, 2)}\n`;
   await writeFile(filePath, payload, 'utf8');
   return filePath;
 }
@@ -189,13 +199,14 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     return reply.send({ config: await buildExportConfig(services) });
   });
 
-  app.post('/api/v1/config/export-file', async (_req, reply) => {
+  app.post('/api/v1/config/export-file', async (req, reply) => {
     if (process.env.VITEST === 'true') return reply.send({ ok: true, saved: false, path: null, reason: 'cancelled' });
     const picked = await nativePickSaveFile(`live-recorder-config-${services.clock.iso().slice(0, 10)}.json`);
     if (picked.status === 'unsupported') return reply.send({ ok: true, saved: false, path: null, reason: 'no-dialog' });
     if (picked.status === 'cancelled') return reply.send({ ok: true, saved: false, path: null, reason: 'cancelled' });
     try {
-      const filePath = await exportConfigToPath(services, picked.path);
+      const { appearance } = (req.body ?? {}) as { appearance?: unknown };
+      const filePath = await exportConfigToPath(services, picked.path, appearance);
       return reply.send({ ok: true, saved: true, path: filePath, reason: null });
     } catch {
       throw new AppError('CONFIG_EXPORT_FAILED', '无法写入所选位置');

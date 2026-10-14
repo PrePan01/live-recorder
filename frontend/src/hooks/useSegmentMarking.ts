@@ -20,6 +20,9 @@ export function useSegmentMarking(
   const end = useSegmentDraftStore((s) =>
     s.recordingId === recordingId ? s.end : null,
   );
+  const text = useSegmentDraftStore((s) =>
+    s.recordingId === recordingId ? s.text : "",
+  );
   const [saving, setSaving] = useState(false);
   const lock = useRef(false);
   const identity = useRef(recordingId);
@@ -47,7 +50,13 @@ export function useSegmentMarking(
       const store = useSegmentDraftStore.getState();
       if (store.recordingId !== id) return;
       if (store.start == null) {
-        store.setStart(id, position);
+        const index =
+          markers.reduce(
+            (max, m) =>
+              Math.max(max, Number(/^片段 (\d+)$/.exec(m.text)?.[1] ?? 0)),
+            markers.filter((m) => m.endPositionSeconds != null).length,
+          ) + 1;
+        store.setStart(id, position, `片段 ${index}`);
         return;
       }
       const from = Math.min(store.start, position);
@@ -57,13 +66,7 @@ export function useSegmentMarking(
         return;
       }
       store.setEnd(id, position);
-      const index =
-        markers.reduce(
-          (max, m) =>
-            Math.max(max, Number(/^片段 (\d+)$/.exec(m.text)?.[1] ?? 0)),
-          0,
-        ) + 1;
-      const marker = await createRecordingMarker(id, `片段 ${index}`, from, to);
+      const marker = await createRecordingMarker(id, store.text, from, to);
       if (
         identity.current === id &&
         useSegmentDraftStore.getState().recordingId === id
@@ -105,6 +108,12 @@ export function useSegmentMarking(
   return {
     start,
     end,
+    text,
+    rename: (value: string) => {
+      const trimmed = value.trim();
+      if (recordingId && !lock.current && trimmed && trimmed.length <= 200)
+        useSegmentDraftStore.getState().setText(recordingId, trimmed);
+    },
     saving,
     mark,
     cancel: () => {

@@ -13,12 +13,14 @@ export { validatePipelineConfig } from '../../config/pipeline.js';
 import { validateSettings } from '../../config/schema.js';
 import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { settingsView } from './settings-view.js';
+import { settingsDefaults } from '../../config/settings-defaults.js';
 
 export { settingsView };
 
 const BILIBILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 export function registerSettingsRoutes(app: FastifyInstance, services: Services): void {
+  app.get('/api/v1/settings/defaults', async () => ({ defaults: settingsDefaults() }));
   app.get('/api/v1/settings', async (_req, reply) => {
     return reply.send({ settings: await settingsView(services) });
   });
@@ -29,13 +31,25 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     const douyinCookie = typeof body.douyinCookie === 'string' ? normalizeDouyinCookie(body.douyinCookie) : null;
     const bilibiliCookie = typeof body.bilibiliCookie === 'string' ? normalizeBilibiliCookie(body.bilibiliCookie) : null;
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
+    if (body.checkIntervalSec !== undefined && (!body.checkIntervalSec || typeof body.checkIntervalSec !== 'object' || Array.isArray(body.checkIntervalSec))) {
+      throw new AppError('CONFIG_INVALID', '检测间隔必须为对象');
+    }
+    if (body.danmaku !== undefined && (!body.danmaku || typeof body.danmaku !== 'object' || Array.isArray(body.danmaku) || (body.danmaku.enabled !== undefined && typeof body.danmaku.enabled !== 'boolean'))) {
+      throw new AppError('CONFIG_INVALID', '弹幕配置必须为对象，enabled 必须为布尔值');
+    }
     if (incoming.mail) delete incoming.mail.password;
     delete (incoming as { douyinCookie?: string }).douyinCookie;
     delete (incoming as { bilibiliCookie?: string }).bilibiliCookie;
+    // Validate secrets before any ordinary settings are persisted.
+    if (douyinCookie) validateDouyinCookie(douyinCookie);
+    if (bilibiliCookie) validateBilibiliCookie(bilibiliCookie);
+    const current = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
     const merged: AppSettings = {
-      ...(services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings)),
+      ...current,
       ...incoming,
-      mail: { ...(services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings)).mail, ...incoming.mail } as MailConfig,
+      checkIntervalSec: { ...current.checkIntervalSec, ...incoming.checkIntervalSec },
+      danmaku: { enabled: current.danmaku?.enabled ?? false, ...incoming.danmaku },
+      mail: { ...current.mail, ...incoming.mail } as MailConfig,
     };
     validateSettings(merged);
     services.settings.save(merged);

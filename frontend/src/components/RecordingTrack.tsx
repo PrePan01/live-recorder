@@ -150,7 +150,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
               </Button>
             )}
             {onQuickAdd && (
-              <Tooltip title="一键标记当前位置（Alt+M）">
+              <Tooltip title="标记当前位置（Alt+M）">
                 <Button
                   size="small"
                   icon={<PushpinOutlined />}
@@ -408,7 +408,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                 {ticks.map((second) => (
                   <span
                     key={second}
-                      data-timeline-second={second}
+                    data-timeline-second={second}
                     style={{
                       left: `${pct(second)}%`,
                       ...(second === 0

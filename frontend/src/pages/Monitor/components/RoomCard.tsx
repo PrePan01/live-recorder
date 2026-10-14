@@ -21,6 +21,7 @@ import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import RecordingStopIcon from "../../../components/RecordingStopIcon";
 import RoomWarningMarquee, { type RoomWarning } from "./RoomWarningMarquee";
 import RoomCover from "./RoomCover";
+import { useAppearanceStore } from "../../../stores/appearanceStore";
 import RoomAvatar from "./RoomAvatar";
 import RoomStats from "./RoomStats";
 import RoomHealth from "./RoomHealth";
@@ -109,6 +110,7 @@ export const RoomCard = memo(function RoomCard({
   floatingEnabled: boolean;
   floatingReady: boolean;
 }) {
+  const showLiveRoomCover = useAppearanceStore((s) => s.showLiveRoomCover);
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
@@ -253,7 +255,7 @@ export const RoomCard = memo(function RoomCard({
           </Space>
         }
       >
-        {onAir && layout === "card" ? (
+        {showLiveRoomCover && onAir && layout === "card" ? (
           <>
             <RoomCover
               key={room.id}
