@@ -208,6 +208,8 @@ export function SettingControl({
     typeof value === "boolean" ||
     [
       "global-search",
+      "statusbar-alerts",
+      "live-room-cover",
       "auto-record",
       "danmaku",
       "prevent-sleep",

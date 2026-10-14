@@ -65,6 +65,8 @@ export function AppearancePanel() {
         />
       </SettingsRow>
       <OrdinaryRow id="global-search" />
+      <OrdinaryRow id="statusbar-alerts" />
+      <OrdinaryRow id="live-room-cover" />
       <SettingsRow id="recorder-size">
         <div className="lr-settings-slider">
           <Slider

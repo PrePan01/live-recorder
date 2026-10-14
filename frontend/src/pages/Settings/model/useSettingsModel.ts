@@ -59,6 +59,8 @@ export function useSettingsModel() {
     return {
       appearance: {
         showGlobalSearch: useAppearanceStore.getState().showGlobalSearch,
+        showStatusBarAlerts: useAppearanceStore.getState().showStatusBarAlerts,
+        showLiveRoomCover: useAppearanceStore.getState().showLiveRoomCover,
       },
       ...(settings
         ? {
@@ -178,7 +180,11 @@ export function useSettingsModel() {
       useAppearanceStore.subscribe((state) => {
         setModels((m) => ({
           ...m,
-          appearance: { showGlobalSearch: state.showGlobalSearch },
+          appearance: {
+            showGlobalSearch: state.showGlobalSearch,
+            showStatusBarAlerts: state.showStatusBarAlerts,
+            showLiveRoomCover: state.showLiveRoomCover,
+          },
         }));
       }),
     [],
@@ -193,8 +199,8 @@ export function useSettingsModel() {
         : (getPath(models[BY_ID[id]!.domain], BY_ID[id]!.path) ??
           getPath(defaults?.[BY_ID[id]!.domain], BY_ID[id]!.path));
   const defaultValue = (id: string) =>
-    id === "global-search"
-      ? false
+    BY_ID[id]?.domain === "appearance"
+      ? id === "live-room-cover"
       : getPath(defaults?.[BY_ID[id]!.domain], BY_ID[id]!.path);
   const isModified = (id: string) =>
     !!defaults &&
@@ -234,10 +240,19 @@ export function useSettingsModel() {
     else if (domain === "openlist") {
       saved = asPatch(await updateOpenListConfig(payload));
     } else {
-      useAppearanceStore
-        .getState()
-        .setShowGlobalSearch(Boolean(payload.showGlobalSearch));
-      saved = payload;
+      const appearance = useAppearanceStore.getState();
+      if ("showGlobalSearch" in payload)
+        appearance.setShowGlobalSearch(Boolean(payload.showGlobalSearch));
+      if ("showStatusBarAlerts" in payload)
+        appearance.setShowStatusBarAlerts(Boolean(payload.showStatusBarAlerts));
+      if ("showLiveRoomCover" in payload)
+        appearance.setShowLiveRoomCover(Boolean(payload.showLiveRoomCover));
+      const current = useAppearanceStore.getState();
+      saved = {
+        showGlobalSearch: current.showGlobalSearch,
+        showStatusBarAlerts: current.showStatusBarAlerts,
+        showLiveRoomCover: current.showLiveRoomCover,
+      };
     }
     setModels((m) => ({ ...m, [domain]: saved }));
     drafts.current = acknowledgeDrafts(drafts.current, patch);
