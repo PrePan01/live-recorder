@@ -1,33 +1,27 @@
-import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useBlocker, useLocation, useNavigate } from "react-router-dom";
 import {
   App,
   Alert,
   Button,
-  Card,
-  Col,
-  Form,
-  Popover,
+  Input,
   Popconfirm,
-  Row,
+  Popover,
   Space,
   Typography,
 } from "antd";
 import {
   DownloadOutlined,
   UploadOutlined,
+  SearchOutlined,
   GlobalOutlined,
   BugOutlined,
 } from "@ant-design/icons";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { useAppearanceStore } from "../../stores/appearanceStore";
 import { useAlertStore } from "../../stores/alertStore";
 import { useRoomStore } from "../../stores/roomStore";
 import { useServiceStore } from "../../stores/serviceStore";
-import { useNotificationStore } from "../../stores/notificationStore";
+import { useTagStore } from "../../stores/tagStore";
 import { bridge } from "../../stores/bootStore";
-import { useAppTheme } from "../../theme";
-import { validateDirectory } from "../../api/settings";
 import {
   exportConfig,
   exportConfigToFile,
@@ -38,68 +32,63 @@ import {
   exportDiagnosticsToFile,
 } from "../../api/diagnostics";
 import { fetchSelfCheck, type SelfCheckItem } from "../../api/service";
-import PipelineConfigCard from "./components/PipelineConfigCard";
-import NamingRuleCard from "./components/NamingRuleCard";
-import OpenListConfigCard from "./components/OpenListConfigCard";
-import ResetSettingsCard from "./components/ResetSettingsCard";
-import ServiceSettingsCard from "./components/ServiceSettingsCard";
-import NotificationSettingsCard from "./components/NotificationSettingsCard";
-import SelfDiagnosticsCard from "./components/SelfDiagnosticsCard";
-import AlertsCard from "./components/AlertsCard";
 import { describeError } from "../../utils/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes } from "../../utils/format";
-import type { SettingsInput } from "../../types/settings";
 import { recentErrorDiagnostics } from "../../utils/errorDiagnostics";
-import { useTagStore } from "../../stores/tagStore";
+import { useSettingsModelContext } from "./model/SettingsContext";
+import { SettingsProvider } from "./model/SettingsProvider";
+import {
+  BY_ID,
+  ORIGINAL_HELP,
+  SECTIONS,
+  searchSettings,
+} from "./model/catalog";
+import {
+  OrdinaryRow,
+  SaveStatus,
+  SettingsSection,
+} from "./components/SettingsPrimitives";
+import {
+  AppearancePanel,
+  RecordingPanel,
+  MonitoringPanel,
+  DirectoryRow,
+  NamingPanel,
+  PipelinePanel,
+  AuthorizationPanel,
+  NotificationPanel,
+  ConnectionPanel,
+} from "./components/SettingsPanels";
+import ResetSettingsCard from "./components/ResetSettingsCard";
+import SelfDiagnosticsCard from "./components/SelfDiagnosticsCard";
+import AlertsCard from "./components/AlertsCard";
 
-const OFFICIAL_SITE_URL = "https://live-rec.bspartner.top/";
-const ISSUE_URL = "https://github.com/PrePan01/live-recorder/issues";
-
-function openExternalUrl(url: string): void {
-  if (bridge.isDesktop) {
-    void bridge.openPath(url).catch(() => {
-      window.open(url, "_blank", "noopener,noreferrer");
-    });
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
+function openExternalUrl(url: string) {
+  if (bridge.isDesktop)
+    void bridge
+      .openPath(url)
+      .catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+  else window.open(url, "_blank", "noopener,noreferrer");
 }
-
 export default function SettingsPage() {
-  const { message } = App.useApp();
-  const { hash } = useLocation();
-  const { settings, load, save } = useSettingsStore();
-
-  // 无障碍：antd 不把 aria-label 透传到滑杆手柄（role=slider 需自带名字）——挂载后补写一次。
-  useEffect(() => {
-    let tries = 0;
-    const timer = setInterval(() => {
-      const handle = document.querySelector(".ant-slider-handle");
-      if (handle) {
-        if (!handle.hasAttribute("aria-label")) {
-          handle.setAttribute("aria-label", "全局录制按钮大小");
-        }
-        clearInterval(timer);
-      } else if (++tries > 20) {
-        clearInterval(timer);
-      }
-    }, 300);
-    return () => clearInterval(timer);
-  }, []);
-  const rooms = useRoomStore((s) => s.rooms);
-  const showGlobalSearch = useAppearanceStore((s) => s.showGlobalSearch);
-  const setShowGlobalSearch = useAppearanceStore((s) => s.setShowGlobalSearch);
-  const { preference, setPreference } = useAppTheme();
-  const { load: loadNotifications } = useNotificationStore();
-  const { fetchAlerts } = useAlertStore();
-  const status = useServiceStore((s) => s.status);
-  const fetchStatus = useServiceStore((s) => s.fetchStatus);
-  const [form] = Form.useForm();
-  const [dirMsg, setDirMsg] = useState<{ ok: boolean; text: string } | null>(
-    null,
+  return (
+    <SettingsProvider>
+      <SettingsContent />
+    </SettingsProvider>
   );
-  const [pickerOpen, setPickerOpen] = useState(false);
+}
+function SettingsContent() {
+  const model = useSettingsModelContext();
+  const hasUnsaved = model.hasUnsaved;
+  const { message, modal } = App.useApp();
+  const { hash } = useLocation();
+  const navigate = useNavigate();
+  const rooms = useRoomStore((s) => s.rooms);
+  const status = useServiceStore((s) => s.status);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState<string>("appearance");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
@@ -107,88 +96,125 @@ export default function SettingsPage() {
   const [checks, setChecks] = useState<SelfCheckItem[] | null>(null);
   const [checking, setChecking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-
+  const rootRef = useRef<HTMLDivElement>(null);
+  const prepareLeave = async (): Promise<boolean> => {
+    if (await model.flush()) return true;
+    return new Promise((resolve) =>
+      modal.confirm({
+        title: "还有未保存的修改",
+        content:
+          "部分配置尚未提交、输入有误或保存失败。继续离开将不保留这些内容。",
+        okText: "继续离开",
+        cancelText: "返回编辑",
+        onOk: async () => {
+          await model.discardAll();
+          resolve(true);
+        },
+        onCancel: () => resolve(false),
+      }),
+    );
+  };
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      currentLocation.pathname !== nextLocation.pathname &&
+      hasUnsaved(),
+  );
+  const resolvingBlock = useRef(false);
   useEffect(() => {
-    void load();
-    void fetchAlerts();
-    void fetchStatus();
-    void loadNotifications().catch(() => undefined);
-  }, [load, fetchAlerts, fetchStatus, loadNotifications]);
-
-  useEffect(() => {
-    if (settings && settings.theme) {
-      setPreference(settings.theme);
+    if (blocker.state !== "blocked") {
+      resolvingBlock.current = false;
+      return;
     }
-  }, [settings, setPreference]);
-
+    if (resolvingBlock.current) return;
+    resolvingBlock.current = true;
+    void prepareLeave()
+      .then((leave) => {
+        if (leave) blocker.proceed?.();
+        else blocker.reset?.();
+      })
+      .catch(() => blocker.reset?.());
+  });
   useEffect(() => {
-    if (!bridge.isDesktop || !settings) return;
-    void bridge
-      .setFloatingRecorderSize(settings.floatingRecorderSize ?? 36)
-      .catch(() => undefined);
-  }, [settings]);
-
+    const unload = (event: BeforeUnloadEvent) => {
+      if (hasUnsaved()) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", unload);
+    return () => window.removeEventListener("beforeunload", unload);
+  }, [hasUnsaved]);
   useEffect(() => {
-    const target =
-      hash === "#douyin-cookie"
-        ? "douyin-cookie"
-        : hash === "#bilibili-cookie"
-          ? "bilibili-cookie"
-          : hash === "#pipeline"
-            ? "pipeline"
-            : null;
+    void useAlertStore.getState().fetchAlerts();
+    void useServiceStore.getState().fetchStatus();
+  }, []);
+  const locate = useCallback((id: string) => {
+    const target = document.getElementById(id);
     if (!target) return;
+    let ancestor: HTMLElement | null = target;
+    while (ancestor) {
+      if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+      ancestor = ancestor.parentElement;
+    }
+    // Platform authorization anchors contain an advanced manual editor.
+    if (BY_ID[id]?.secret || id === "pipeline")
+      target.querySelectorAll("details").forEach((d) => {
+        d.open = true;
+      });
     const frame = requestAnimationFrame(() => {
-      document.getElementById(target)?.scrollIntoView({
-        behavior: "smooth",
+      target.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth",
         block: "start",
       });
+      const control =
+        target.querySelector<HTMLElement>(
+          'input:not([disabled]),[role="switch"]:not([disabled]),[role="combobox"]:not([disabled]),[role="slider"]',
+        ) ?? target.querySelector<HTMLElement>("button:not([disabled])");
+      control?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [hash]);
-
+  }, []);
+  const settingsLoaded = !!model.models.settings;
   useEffect(() => {
-    if (settings) {
-      form.setFieldsValue({
-        recordingDirectory: settings.recordingDirectory,
-        maxConcurrentRecordings: settings.maxConcurrentRecordings,
-        checkIntervalSec: { ...settings.checkIntervalSec },
-        quality: settings.quality,
-        autoRecord: settings.autoRecord ?? false,
-        danmaku: { enabled: settings.danmaku?.enabled ?? false },
-        encodingMode: settings.encodingMode ?? 'auto',
-        confirmAfterComplete: settings.confirmAfterComplete ?? false,
-        preventSleepWhileRecording: settings.preventSleepWhileRecording ?? true,
-        highlightBufferSeconds: settings.highlightBufferSeconds ?? 300,
-        highlightEnabled: settings.highlightEnabled ?? true,
-        theme: settings.theme ?? preference,
-        floatingRecorderSize: settings.floatingRecorderSize ?? 36,
-        douyinCookie: "",
-        bilibiliCookie: "",
-        mail: {
-          ...settings.mail,
-          recipients: settings.mail.recipients.join(", "),
-          password: "",
-        },
-      });
-    }
-  }, [settings, form, preference]);
-
-  const checkDir = async () => {
-    const dir = form.getFieldValue("recordingDirectory") as string;
-    if (!dir) return;
-    try {
-      await validateDirectory(dir);
-      setDirMsg({ ok: true, text: "目录可用" });
-    } catch (e) {
-      setDirMsg({
-        ok: false,
-        text:
-          e instanceof ApiError ? describeError(e.code, e.message) : "校验失败",
-      });
-    }
+    if (hash) return locate(decodeURIComponent(hash.slice(1)));
+  }, [hash, locate, settingsLoaded]);
+  const jump = (id: string) => {
+    setQuery("");
+    setMenuOpen(false);
+    navigate({ hash: `#${id}` });
+    locate(id);
   };
-
+  useEffect(() => {
+    const root = rootRef.current;
+    const scroll = root?.closest(".lr-app-content");
+    if (!root || !scroll) return;
+    const update = () => {
+      const top =
+        scroll.getBoundingClientRect().top +
+        (window.innerWidth < 1100 || window.innerHeight <= 600 ? 160 : 30);
+      let id: string = "appearance";
+      const sections = root.querySelectorAll<HTMLElement>(
+        "[data-settings-section]",
+      );
+      for (const i in sections) {
+        if (
+          sections[i].getBoundingClientRect &&
+          sections[i].getBoundingClientRect().top <= top
+        )
+          id = sections[i].id;
+      }
+      setActive(id);
+    };
+    scroll.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      scroll.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   const runSelfCheck = async () => {
     setChecking(true);
     setChecks(null);
@@ -201,60 +227,6 @@ export default function SettingsPage() {
     } finally {
       setChecking(false);
     }
-  };
-
-  const persist = async (
-    values: SettingsInput,
-    clearCookies: { douyin?: boolean; bilibili?: boolean } = {},
-  ): Promise<boolean> => {
-    const { mail, douyinCookie, bilibiliCookie, ...rest } =
-      values as SettingsInput & {
-        mail?: Record<string, unknown> & {
-          recipients?: string;
-          password?: string;
-        };
-        douyinCookie?: string;
-        bilibiliCookie?: string;
-      };
-    const cookieField = (
-      value: string | undefined,
-      clear: boolean | undefined,
-      key: "douyinCookie" | "bilibiliCookie",
-    ) =>
-      clear
-        ? { [key]: "" }
-        : typeof value === "string" && value.length > 0
-          ? { [key]: value }
-          : {};
-    try {
-      await save({
-        ...rest,
-        ...cookieField(douyinCookie, clearCookies.douyin, "douyinCookie"),
-        ...cookieField(bilibiliCookie, clearCookies.bilibili, "bilibiliCookie"),
-        mail: mail
-          ? {
-              ...mail,
-              recipients: String(mail.recipients ?? "")
-                .split(",")
-                .map((x) => x.trim())
-                .filter(Boolean),
-              password: mail.password || undefined,
-            }
-          : undefined,
-      });
-      return true;
-    } catch (e) {
-      message.error(
-        e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
-      );
-      return false;
-    }
-  };
-
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onValuesChange = (_changed: unknown, all: SettingsInput) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void persist(all), 500);
   };
 
   /** 无系统“另存为”窗口可用时的兜底：走浏览器下载。 */
@@ -273,6 +245,7 @@ export default function SettingsPage() {
   };
 
   const onExport = async () => {
+    if (!(await prepareLeave())) return;
     setExporting(true);
     try {
       const result = await exportConfigToFile();
@@ -317,6 +290,10 @@ export default function SettingsPage() {
   };
 
   const onImportFile = async (file: File) => {
+    if (!(await prepareLeave())) {
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     setImporting(true);
     try {
       const text = await file.text();
@@ -343,7 +320,7 @@ export default function SettingsPage() {
       }
       message.success(`导入完成：${parts.join("，")}`);
       await Promise.all([
-        load(),
+        model.reload(),
         useRoomStore.getState().fetchRooms(true),
         useTagStore.getState().load(),
       ]);
@@ -359,17 +336,46 @@ export default function SettingsPage() {
     }
   };
 
-  const diskFree = status?.disk?.freeBytes ?? 0;
-  const diskTotal = status?.disk?.totalBytes ?? 1;
-  const diskRatio = diskTotal > 0 ? diskFree / diskTotal : 0;
-  const diskDanger = diskFree < 20_000_000_000 || diskRatio < 0.1;
-
+  const results = searchSettings(query, false, () => false);
+  const panels = {
+    appearance: <AppearancePanel />,
+    recording: <RecordingPanel />,
+    monitoring: <MonitoringPanel />,
+    files: (
+      <>
+        <DirectoryRow id="recording-directory" />
+        <NamingPanel />
+      </>
+    ),
+    highlights: (
+      <>
+        <OrdinaryRow id="highlight-enabled" />
+        <OrdinaryRow id="highlight-buffer" />
+      </>
+    ),
+    pipeline: <PipelinePanel />,
+    authorization: <AuthorizationPanel />,
+    notifications: (
+      <>
+        <NotificationPanel />
+        <ConnectionPanel domain="email" />
+      </>
+    ),
+    upload: <ConnectionPanel domain="openlist" />,
+  };
+  const diskFree = status?.disk?.freeBytes;
+  const diskTotal = status?.disk?.totalBytes;
+  const diskDanger =
+    diskFree !== undefined &&
+    diskTotal !== undefined &&
+    (diskFree < 20_000_000_000 ||
+      (diskTotal > 0 && diskFree / diskTotal < 0.1));
   return (
-    <div className="lr-page lr-settings-page">
+    <div ref={rootRef} className="lr-page lr-settings-page">
       <div className="lr-page-header lr-settings-header">
         <div>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            设置与告警
+            设置
           </Typography.Title>
         </div>
         <Space className="lr-page-actions" wrap>
@@ -393,76 +399,123 @@ export default function SettingsPage() {
           </Popconfirm>
         </Space>
       </div>
-      {diskDanger ? (
+      <div className="lr-settings-toolbar">
+        <Input
+          aria-label="搜索设置"
+          placeholder="搜索设置"
+          prefix={<SearchOutlined />}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          allowClear
+        />
+        <SaveStatus />
+      </div>
+      {Object.entries(model.loadErrors)
+        .filter(([domain]) => domain !== "defaults")
+        .map(([domain, error]) => (
+          <Alert
+            key={domain}
+            type="error"
+            showIcon
+            title={error}
+            action={
+              <Button onClick={() => void model.reload()}>重试加载</Button>
+            }
+          />
+        ))}
+      {query.trim() ? (
+        <div className="lr-settings-results" aria-label="设置搜索结果">
+          {!results.length && <div>没有对应的设置</div>}
+          {results.map((def) => (
+            <button key={def.id} onClick={() => jump(def.id)}>
+              <strong>{def.label}</strong>
+              <span>{SECTIONS.find((s) => s[0] === def.section)?.[1]}</span>
+              {ORIGINAL_HELP[def.id] && <small>{ORIGINAL_HELP[def.id]}</small>}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {diskDanger && (
         <Alert
           type="warning"
           showIcon
-          banner
-          style={{ marginBottom: 16 }}
-          message={`磁盘可用空间不足：剩余 ${formatBytes(diskFree)}（${Math.round(diskRatio * 100)}%），可用空间过低将可能无法开启新的录制`}
+          title={`磁盘可用空间不足：剩余 ${formatBytes(diskFree!)}，可能无法开启新的录制。`}
         />
-      ) : null}
-      <Row className="lr-settings-grid" gutter={[16, 16]}>
-        <Col xs={24} lg={14}>
-          <ServiceSettingsCard
-            form={form}
-            settings={settings}
-            preference={preference}
-            showGlobalSearch={showGlobalSearch}
-            setShowGlobalSearch={setShowGlobalSearch}
-            onValuesChange={onValuesChange}
-            checkDir={checkDir}
-            dirMsg={dirMsg}
-            pickerOpen={pickerOpen}
-            setPickerOpen={setPickerOpen}
-            load={load}
-            persist={persist}
-            fileRef={fileRef}
-            onImportFile={onImportFile}
-            setPreference={setPreference}
-            debounceRef={debounceRef}
-          />
-
-          <Card className="lr-settings-card" title="录制文件命名规则">
-            <NamingRuleCard />
-          </Card>
-          <Card id="pipeline" className="lr-settings-card" title="后处理管线">
-            <PipelineConfigCard />
-          </Card>
-          <Card className="lr-settings-card" title="自动上传">
-            <OpenListConfigCard />
-          </Card>
-          <ResetSettingsCard
-            onExport={onExport}
-            exporting={exporting}
-            beforeReset={() => {
-              if (debounceRef.current) {
-                clearTimeout(debounceRef.current);
-                debounceRef.current = null;
-              }
-            }}
-          />
-        </Col>
-        <Col xs={24} lg={10}>
-          <NotificationSettingsCard />
-          <SelfDiagnosticsCard
-            checks={checks}
-            checking={checking}
-            runSelfCheck={runSelfCheck}
-            rooms={rooms}
-          />
-
-          <AlertsCard />
-        </Col>
-      </Row>
+      )}
+      <div className="lr-settings-layout">
+        <nav
+          className={`lr-settings-nav${menuOpen ? " is-open" : ""}`}
+          aria-label="设置目录"
+        >
+          <Button
+            className="lr-settings-nav__toggle"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            {SECTIONS.find((s) => s[0] === active)?.[1]}
+          </Button>
+          <div className="lr-settings-nav__items">
+            {SECTIONS.map(([id, title]) => (
+              <div key={id}>
+                <a
+                  href={`#${id}`}
+                  aria-current={active === id ? "location" : undefined}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    jump(id);
+                  }}
+                >
+                  {title}
+                </a>
+              </div>
+            ))}
+          </div>
+        </nav>
+        <div className="lr-settings-content">
+          {SECTIONS.map(([id, title]) => (
+            <SettingsSection key={id} id={id} title={title}>
+              {id !== "maintenance" ? (
+                panels[id]
+              ) : (
+                <>
+                  <div className="lr-settings-runtime">
+                    <SelfDiagnosticsCard
+                      checks={checks}
+                      checking={checking}
+                      runSelfCheck={runSelfCheck}
+                      rooms={rooms}
+                    />
+                    <AlertsCard />
+                  </div>
+                  <div className="lr-settings-danger">
+                    <ResetSettingsCard
+                      onExport={onExport}
+                      exporting={exporting}
+                      beforeReset={prepareLeave}
+                    />
+                  </div>
+                </>
+              )}
+            </SettingsSection>
+          ))}
+        </div>
+      </div>
       <footer className="lr-settings-footer" aria-label="相关链接">
         <Space size={16} wrap>
-          <Typography.Link onClick={() => openExternalUrl(OFFICIAL_SITE_URL)}>
+          <Typography.Link
+            onClick={() => openExternalUrl("https://live-rec.bspartner.top/")}
+          >
             <GlobalOutlined /> 官网
           </Typography.Link>
           <Space className="lr-settings-support-links" size={4}>
             <BugOutlined />
-            <Typography.Link onClick={() => openExternalUrl(ISSUE_URL)}>
+            <Typography.Link
+              onClick={() =>
+                openExternalUrl(
+                  "https://github.com/PrePan01/live-recorder/issues",
+                )
+              }
+            >
               提交 Issue
             </Typography.Link>
             <Typography.Text>|</Typography.Text>
@@ -508,6 +561,16 @@ export default function SettingsPage() {
           </Space>
         </Space>
       </footer>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/json,.json"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void onImportFile(file);
+        }}
+      />
     </div>
   );
 }

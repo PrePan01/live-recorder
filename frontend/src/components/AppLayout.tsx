@@ -107,7 +107,8 @@ export default function AppLayout() {
     contentRef.current?.scrollTo({ top: 0, left: 0 });
   }, [pathname]);
 
-  const selectedPath = pendingPath ?? pathname;
+  // A blocked/cancelled navigation must keep the current route selected.
+  const selectedPath = isPending ? pendingPath ?? pathname : pathname;
 
   const handleSidebarCollapse = (
     collapsed: boolean,

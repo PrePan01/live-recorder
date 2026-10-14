@@ -14,11 +14,10 @@
 @import './components/platform-logo.css';
 @import './components/platform-authorization.css';
 @import './pages/settings/settings.css';
-@import './pages/settings/service.css';
+@import './pages/settings/pipeline.css';
 @import './pages/settings/notifications.css';
 @import './pages/settings/alerts.css';
 @import './pages/settings/diagnostics.css';
-@import './pages/settings/pipeline.css';
 @import './components/chart.css';
 @import './pages/stats.css';
 @import './controls/tag-filter.css';

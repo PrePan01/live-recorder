@@ -16,8 +16,8 @@ export function validateSettings(input: unknown): AppSettings {
   if (!path.isAbsolute(s.recordingDirectory)) {
     throw new AppError('DIRECTORY_NOT_WRITABLE', '录像目录必须为绝对路径');
   }
-  if (typeof s.maxConcurrentRecordings !== 'number' || s.maxConcurrentRecordings < 1 || s.maxConcurrentRecordings > 8) {
-    throw new AppError('CONFIG_INVALID', '最大并发数需在 1-8 之间');
+  if (!Number.isInteger(s.maxConcurrentRecordings) || typeof s.maxConcurrentRecordings !== 'number' || s.maxConcurrentRecordings < 1 || s.maxConcurrentRecordings > 8) {
+    throw new AppError('CONFIG_INVALID', '最大并发数需为 1-8 之间的整数');
   }
   if (s.recordingFormat !== undefined && s.recordingFormat !== 'source_flv' && s.recordingFormat !== 'mp4_after') {
     throw new AppError('CONFIG_INVALID', '录制格式仅支持 source_flv / mp4_after');
@@ -47,8 +47,8 @@ export function validateSettings(input: unknown): AppSettings {
     throw new AppError('CONFIG_INVALID', '全局录制按钮大小需在 20-100px 之间');
   }
   const ci = s.checkIntervalSec;
-  if (!ci || typeof ci.default !== 'number' || ci.default < 10 || typeof ci.bilibili !== 'number' || ci.bilibili < 10 || typeof ci.douyin !== 'number' || ci.douyin < 10) {
-    throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin 且不小于 10 秒');
+  if (!ci || [ci.default, ci.bilibili, ci.douyin].some(value => !Number.isInteger(value) || typeof value !== 'number' || value < 10)) {
+    throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin，且均为不小于 10 秒的整数');
   }
   const r = s.retry;
   if (!r || !Array.isArray(r.delaysSeconds) || r.delaysSeconds.length === 0 || typeof r.maxAttempts !== 'number' || r.maxAttempts < 0) {
