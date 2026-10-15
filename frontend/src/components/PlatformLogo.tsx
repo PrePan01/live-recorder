@@ -13,7 +13,7 @@ const PLATFORM_STYLE: Record<
   },
   bilibili: {
     color: "#fb7299",
-    bg: "rgba(251,114,153,0.12)",
+    bg: "#e6f7ff",
     label: "B站",
     icon: "https://www.bilibili.com/favicon.ico",
   },
