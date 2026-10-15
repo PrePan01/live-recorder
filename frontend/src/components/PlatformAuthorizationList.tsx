@@ -9,6 +9,7 @@ import { App, Button, Tag, Typography } from "antd";
 import { bridge } from "../stores/bootStore";
 import {
   fetchBilibiliCookieStatus,
+  fetchXiaohongshuCookieStatus,
   fetchDouyinCookieStatus,
 } from "../api/settings";
 import type { Settings } from "../types/settings";
@@ -25,9 +26,12 @@ export interface PlatformAuthorizationConfig {
   label: string;
   anchor: string;
   unauthorizedHint: string;
-  cookieField: "douyinCookie" | "bilibiliCookie";
+  cookieField: "douyinCookie" | "bilibiliCookie" | "xiaohongshuCookie";
   manualHost: string;
   manualPlaceholder: string;
+  fetchStatus: () => Promise<CookieProbeStatus>;
+  startAuthorization: () => Promise<void>;
+  authorizedEvent: (callback: () => void) => () => void;
 }
 
 /**
@@ -42,6 +46,9 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
     cookieField: "douyinCookie",
     manualHost: "live.douyin.com",
     manualPlaceholder: "粘贴完整抖音 Cookie",
+    fetchStatus: fetchDouyinCookieStatus,
+    startAuthorization: () => bridge.startDouyinAuthorization(),
+    authorizedEvent: (callback) => bridge.onDouyinAuthorized(callback),
   },
   {
     platform: "bilibili",
@@ -51,6 +58,21 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
     cookieField: "bilibiliCookie",
     manualHost: "live.bilibili.com",
     manualPlaceholder: "粘贴完整B站 Cookie",
+    fetchStatus: fetchBilibiliCookieStatus,
+    startAuthorization: () => bridge.startBilibiliAuthorization(),
+    authorizedEvent: (callback) => bridge.onBilibiliAuthorized(callback),
+  },
+  {
+    platform: "xiaohongshu",
+    label: "小红书",
+    anchor: "xiaohongshu-cookie",
+    unauthorizedHint: "部分直播与弹幕需要登录小红书",
+    cookieField: "xiaohongshuCookie",
+    manualHost: "xiaohongshu.com",
+    manualPlaceholder: "粘贴完整小红书 Cookie",
+    fetchStatus: fetchXiaohongshuCookieStatus,
+    startAuthorization: () => bridge.startXiaohongshuAuthorization(),
+    authorizedEvent: (callback) => bridge.onXiaohongshuAuthorized(callback),
   },
 ];
 
@@ -79,31 +101,13 @@ interface PlatformAuthorizationListProps {
   showPrivacyNote?: boolean;
 }
 
-async function fetchStatus(platform: Platform): Promise<CookieProbeStatus> {
-  return platform === "douyin"
-    ? fetchDouyinCookieStatus()
-    : fetchBilibiliCookieStatus();
-}
-
-function startAuthorization(platform: Platform): Promise<void> {
-  return platform === "douyin"
-    ? bridge.startDouyinAuthorization()
-    : bridge.startBilibiliAuthorization();
-}
-
-function authorizedEvent(platform: Platform, callback: () => void): () => void {
-  return platform === "douyin"
-    ? bridge.onDouyinAuthorized(callback)
-    : bridge.onBilibiliAuthorized(callback);
-}
-
 function resolveStatuses(
   settings: Settings | null,
   probes: Partial<Record<Platform, CookieProbeStatus | null>>,
 ): PlatformAuthorizationStatuses {
   return PLATFORM_AUTHORIZATION_CONFIGS.reduce<PlatformAuthorizationStatuses>(
     (result, config) => {
-      const hasCookie = settings?.[config.cookieField].hasCookie ?? false;
+      const hasCookie = settings?.[config.cookieField]?.hasCookie ?? false;
       result[config.platform] = credentialStatus(
         probes[config.platform] ?? null,
         hasCookie,
@@ -142,11 +146,11 @@ export default function PlatformAuthorizationList({
   );
 
   const refreshStatus = useCallback(
-    async (platform: Platform) => {
+    async (config: PlatformAuthorizationConfig) => {
       try {
-        updateProbe(platform, await fetchStatus(platform));
+        updateProbe(config.platform, await config.fetchStatus());
       } catch {
-        updateProbe(platform, "unknown");
+        updateProbe(config.platform, "unknown");
       }
     },
     [updateProbe],
@@ -154,16 +158,16 @@ export default function PlatformAuthorizationList({
 
   useEffect(() => {
     for (const config of PLATFORM_AUTHORIZATION_CONFIGS) {
-      void refreshStatus(config.platform);
+      void refreshStatus(config);
     }
   }, [refreshStatus]);
 
   useEffect(() => {
     const listeners = PLATFORM_AUTHORIZATION_CONFIGS.map((config) =>
-      authorizedEvent(config.platform, () => {
+      config.authorizedEvent(() => {
         void (async () => {
           await onAuthorized();
-          await refreshStatus(config.platform);
+          await refreshStatus(config);
           message.success(`${config.label}授权已完成`);
         })();
       }),
@@ -179,7 +183,7 @@ export default function PlatformAuthorizationList({
   const authorize = async (config: PlatformAuthorizationConfig) => {
     setAuthorizing((current) => ({ ...current, [config.platform]: true }));
     try {
-      await startAuthorization(config.platform);
+      await config.startAuthorization();
       message.info(`请在新窗口完成${config.label}登录，完成后回到此处确认。`);
     } catch (error) {
       message.error(
@@ -197,7 +201,7 @@ export default function PlatformAuthorizationList({
       <div className="lr-credential-list">
         {PLATFORM_AUTHORIZATION_CONFIGS.map((config) => {
           const status = statuses[config.platform] ?? "unauthorized";
-          const hasCookie = settings?.[config.cookieField].hasCookie ?? false;
+          const hasCookie = settings?.[config.cookieField]?.hasCookie ?? false;
           const authorized = status !== "unauthorized";
           return (
             <div
@@ -215,7 +219,7 @@ export default function PlatformAuthorizationList({
                     color={
                       status === "invalid"
                         ? "error"
-                        : authorized
+                        : status === "authorized"
                           ? "success"
                           : "default"
                     }

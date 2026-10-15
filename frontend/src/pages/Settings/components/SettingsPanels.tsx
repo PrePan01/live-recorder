@@ -43,7 +43,6 @@ export function AppearancePanel() {
   const model = useSettingsModelContext();
   const { setPreference } = useAppTheme();
   const theme = model.value("theme") as ThemePreference | undefined;
-  // Reflect confirmed values; failed saves do not silently change the effective theme.
   useEffect(() => {
     const confirmed = model.models.settings?.theme as
       ThemePreference | undefined;
@@ -107,7 +106,7 @@ export function MonitoringPanel() {
   return (
     <>
       <p>按平台设置检查开播状态的间隔（秒），数值越小响应越快。</p>
-      {["default", "bilibili", "douyin"].map((p) => (
+      {["default", "bilibili", "douyin", "xiaohongshu"].map((p) => (
         <OrdinaryRow key={p} id={`interval-${p}`} />
       ))}
     </>
@@ -291,7 +290,7 @@ export function AuthorizationPanel() {
       onClear={(platform) =>
         modal.confirm({
           title: "清除平台授权？",
-          content: "清除后需要重新登录；其他配置保持不变。",
+          content: "清除后需要重新登录",
           onOk: () => {
             model.change(`${platform}-cookie`, "");
           },
@@ -490,7 +489,10 @@ export function ConnectionPanel({ domain }: { domain: "email" | "openlist" }) {
       action={
         <Button
           loading={testing}
-          disabled={!model.models[domain] || (!email && model.connection.phase === "checking")}
+          disabled={
+            !model.models[domain] ||
+            (!email && model.connection.phase === "checking")
+          }
           onClick={() => void test()}
         >
           {email ? "发送测试邮件" : "测试连接"}

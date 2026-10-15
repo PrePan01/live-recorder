@@ -15,6 +15,7 @@ export interface CheckIntervalSec {
   default: number;
   bilibili: number;
   douyin: number;
+  xiaohongshu?: number;
 }
 
 export interface MailConfig {
@@ -163,6 +164,7 @@ export interface SettingsView {
   douyinCookie: { hasCookie: boolean };
   /** B站 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）；用于获取蓝光/原画档位。 */
   bilibiliCookie: { hasCookie: boolean };
+  xiaohongshuCookie?: { hasCookie: boolean };
   /** V5 界面主题偏好。 */
   theme: ThemePreference;
   floatingRecorderSize: number;

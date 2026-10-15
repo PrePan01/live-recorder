@@ -1,52 +1,77 @@
-import react from '@vitejs/plugin-react'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
+import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vite";
 
 const pkg = JSON.parse(
-  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
-) as { version: string }
+  readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
+) as { version: string };
 
-// 单一开关：RECORDING_ADAPTER=real 时前端强制直连真实后端（关闭 mock），
-// 未设或非 real 时走 .env.development 的 mock 默认。前后端只需控制这一个变量。
-if (process.env.RECORDING_ADAPTER === 'real') {
-  process.env.VITE_USE_MOCK = '0'
+if (process.env.RECORDING_ADAPTER === "real") {
+  process.env.VITE_USE_MOCK = "0";
 }
 
 export default defineConfig({
-  // 注入真实应用版本（#31：错误诊断上下文需要真实版本号，而非 API 契约版本）。
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
-  // Tauri WebView 用 tauri://localhost 加载，绝对路径 /assets 无法解析，
-  // 需用相对路径（#138 QA 定位白屏根因）。
-  base: './',
+  base: "./",
   plugins: [react()],
-  // The native Douyin/Bilibili authorization windows each have a small local confirmation
-  // webview in addition to the remote login webview, so they need their own packaged HTML entries.
   build: {
     rollupOptions: {
       input: {
-        main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        'floating-recorder': fileURLToPath(new URL('./src/window-entries/floating-recorder/floating-recorder.html', import.meta.url)),
-        'douyin-auth': fileURLToPath(new URL('./src/window-entries/platform-auth/douyin-auth.html', import.meta.url)),
-        'bilibili-auth': fileURLToPath(new URL('./src/window-entries/platform-auth/bilibili-auth.html', import.meta.url)),
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        "floating-recorder": fileURLToPath(
+          new URL(
+            "./src/window-entries/floating-recorder/floating-recorder.html",
+            import.meta.url,
+          ),
+        ),
+        "douyin-auth": fileURLToPath(
+          new URL(
+            "./src/window-entries/platform-auth/douyin-auth.html",
+            import.meta.url,
+          ),
+        ),
+        "bilibili-auth": fileURLToPath(
+          new URL(
+            "./src/window-entries/platform-auth/bilibili-auth.html",
+            import.meta.url,
+          ),
+        ),
+        "xiaohongshu-auth": fileURLToPath(
+          new URL(
+            "./src/window-entries/platform-auth/xiaohongshu-auth.html",
+            import.meta.url,
+          ),
+        ),
       },
     },
   },
   server: {
     port: 5173,
-    // 5173 被占用时显性报错而非静默漂移到 5174——避免「服务未就绪/找不到端口」困惑（PM 建议，多 dev 实例不能并存）。
     strictPort: true,
     proxy: {
-      // dev 后端端口可通过 LIVE_RECORDER_PORT 覆盖（开发隔离默认 43140，正式默认 43120）。
-      '/api': { target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, changeOrigin: true },
-      '/ws': { target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, ws: true, changeOrigin: true },
+      "/api": {
+        target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? "43120"}`,
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? "43120"}`,
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
-  // 构建产物本地验收（vite preview）与 dev 同源代理：分块/字体等改动需在真实产物上冒烟。
   preview: {
     proxy: {
-      '/api': { target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, changeOrigin: true },
-      '/ws': { target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? '43120'}`, ws: true, changeOrigin: true },
+      "/api": {
+        target: `http://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? "43120"}`,
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: `ws://127.0.0.1:${process.env.LIVE_RECORDER_PORT ?? "43120"}`,
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
-})
+});

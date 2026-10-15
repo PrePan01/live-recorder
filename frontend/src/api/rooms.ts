@@ -1,5 +1,6 @@
 import { baseUrl, http } from "./client";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
+import { guessPlatform } from "../utils/roomPlatform";
 
 export async function fetchRooms(): Promise<Room[]> {
   const { data } = await http.get<{ rooms: Room[] }>("/rooms");
@@ -14,7 +15,8 @@ export async function reorderRooms(roomIds: string[]): Promise<Room[]> {
 }
 
 export async function createRoom(input: RoomCreateInput): Promise<Room> {
-  const { data } = await http.post<{ room: Room }>("/rooms", input);
+  const { data } = await http.post<{ room: Room }>("/rooms", input,
+    guessPlatform(input.url) === "xiaohongshu" ? { timeout: 30_000 } : undefined);
   return data.room;
 }
 
@@ -26,7 +28,7 @@ export interface BatchRoomResult {
 export async function batchCreateRooms(
   urls: string[],
 ): Promise<BatchRoomResult> {
-  const { data } = await http.post<BatchRoomResult>("/rooms/batch", { urls });
+  const { data } = await http.post<BatchRoomResult>("/rooms/batch", { urls }, { timeout: 10_000 + urls.filter(url => { try { return ["www.xiaohongshu.com", "xiaohongshu.com", "xhslink.com"].includes(new URL(url).hostname); } catch { return false; } }).length * 30_000 });
   return data;
 }
 
@@ -34,7 +36,8 @@ export async function updateRoom(
   id: string,
   input: RoomUpdateInput,
 ): Promise<Room> {
-  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input);
+  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input,
+    input.url && guessPlatform(input.url) === "xiaohongshu" ? { timeout: 30_000 } : undefined);
   return data.room;
 }
 

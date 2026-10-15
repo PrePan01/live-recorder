@@ -370,6 +370,7 @@ export function buildRecordingColumns(
               <GapDetail
                 recordingId={r.id}
                 recordingStartedAt={r.startedAt}
+                platform={r.platform}
                 missingMs={gap.totalMissingMs}
                 gapCount={gap.gapCount}
                 estimated={gap.estimated}
@@ -403,7 +404,7 @@ export function buildRecordingColumns(
                   e instanceof ApiError && e.status === 404
                     ? e.code === "RESOURCE_NOT_FOUND" ? "录像文件已删除或不可访问" : "播放接口不可用，请更新或重启本地服务"
                     : e instanceof ApiError
-                      ? describeError(e.code, e.message)
+                      ? describeError(e.code, e.message, r.platform)
                       : "无法打开系统默认播放器，请检查文件关联",
                 );
               }
@@ -451,7 +452,7 @@ export function buildRecordingColumns(
               void openDirectory(r.id).catch((e) =>
                 message.error(
                   e instanceof ApiError
-                    ? describeError(e.code, e.message)
+                    ? describeError(e.code, e.message, r.platform)
                     : "无法打开目录",
                 ),
               )
@@ -465,7 +466,7 @@ export function buildRecordingColumns(
               void removeRecording(r.id).catch((e) =>
                 message.error(
                   e instanceof ApiError
-                    ? describeError(e.code, e.message)
+                    ? describeError(e.code, e.message, r.platform)
                     : "删除失败",
                 ),
               )

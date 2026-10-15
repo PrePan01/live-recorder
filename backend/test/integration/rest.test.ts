@@ -153,7 +153,7 @@ describe("REST contract v1.1 (fake stack)", () => {
     expect(body.items.length).toBeGreaterThanOrEqual(5);
     const keys = body.items.map((i: { key: string }) => i.key);
     expect(keys).toEqual(
-      expect.arrayContaining(["backend", "smtp", "cookie", "disk", "writable"]),
+      expect.arrayContaining(["backend", "smtp", "cookie", "bilibili-cookie", "xiaohongshu-cookie", "disk", "writable"]),
     );
     for (const item of body.items) {
       expect(["ok", "fail", "warn"]).toContain(item.status);
@@ -692,6 +692,7 @@ describe("REST contract v1.1 (fake stack)", () => {
       default: 60,
       bilibili: 60,
       douyin: 120,
+      xiaohongshu: 120,
     });
     expect(JSON.stringify(get.json())).not.toContain('password":');
 

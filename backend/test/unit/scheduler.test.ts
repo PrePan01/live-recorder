@@ -322,19 +322,19 @@ describe('Scheduler', () => {
     });
 
     services.scheduler.start();
-    // room:updated 先于本轮检测收尾；两平台都重新挂好计时器后才能推进时钟。
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 2 && seen.filter((id) => id === r2.id).length === 2 && clock.pendingTimers() === 2);
+    // room:updated 先于本轮检测收尾；三平台都重新挂好计时器后才能推进时钟。
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 2 && seen.filter((id) => id === r2.id).length === 2 && clock.pendingTimers() === 3);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 4 && clock.pendingTimers() === 2);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 4 && clock.pendingTimers() === 3);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 30_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 6 && clock.pendingTimers() === 2);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 6 && clock.pendingTimers() === 3);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(2);
 
     await settle(clock, 60_000);
-    await waitFor(() => seen.filter((id) => id === r1.id).length === 8 && seen.filter((id) => id === r2.id).length === 4 && clock.pendingTimers() === 2);
+    await waitFor(() => seen.filter((id) => id === r1.id).length === 8 && seen.filter((id) => id === r2.id).length === 4 && clock.pendingTimers() === 3);
     expect(seen.filter((id) => id === r2.id)).toHaveLength(4);
 
     services.scheduler.stop();

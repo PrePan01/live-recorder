@@ -212,6 +212,7 @@ interface ActiveSession {
 }
 
 interface PreviewSession {
+  streamSessionId?: string;
   engine: import("../recorder/engine.js").RecordingEngine;
   /** The actual quality of this already-open upstream stream. */
   actualQuality: string;
@@ -521,7 +522,8 @@ export class RecorderManager {
 
   /** 将 activeRecording 附加到房间对象，供 API/SSE 输出。 */
   enrichRoom(room: Room): Room {
-    return { ...room, activeRecording: this.activeRecordingFor(room.id) };
+    const liveRoomUrl = this.services.adapterFor(room.platform).getRoomPageUrl?.(room.url);
+    return { ...room, ...(liveRoomUrl ? { liveRoomUrl } : {}), activeRecording: this.activeRecordingFor(room.id) };
   }
 
   /** 补发 service:status SSE，供前端顶部导航实时显示录制中数量。 */
@@ -1112,6 +1114,7 @@ export class RecorderManager {
       }
       const engine = this.services.engineFor();
       const session: PreviewSession = {
+        ...(stream.streamSessionId ? { streamSessionId: stream.streamSessionId } : {}),
         engine,
         actualQuality: stream.actualQuality,
         hasReceivedData: false,
@@ -1391,6 +1394,8 @@ export class RecorderManager {
       bootstrap.subarray(0, 3).toString() !== "FLV"
     )
       return false;
+
+    if (previewSession.streamSessionId) status = { ...status, streamSessionId: previewSession.streamSessionId };
 
     const filePath = recordingFilePath(
       settings.recordingDirectory,
@@ -1737,7 +1742,7 @@ export class RecorderManager {
     this.detachHighlightBufferForRecording(room.id);
     startupTrace.mark("highlight_buffer_stopped");
     const settings = this.settings();
-    const sessionId = status.streamSessionId ?? null;
+    let sessionId = status.streamSessionId ?? null;
     if (
       !opts.manual &&
       !opts.scheduled &&
@@ -1792,6 +1797,7 @@ export class RecorderManager {
     const stream = await this.services
       .adapterFor(room.platform)
       .getStreamUrl(room.url, settings.quality, cookie);
+    sessionId = stream.streamSessionId ?? sessionId;
     startupTrace.mark("stream_url_ready");
     // The stream lookup is asynchronous. A scheduler/manual request may have
     // claimed this room while it was in flight; never create a second session
@@ -2421,7 +2427,9 @@ export class RecorderManager {
 
   private async resolveRecordingSource(room: Room, quality: import("../types/index.js").Quality, cookie?: string): Promise<RecordingSourceResult> {
     const adapter = this.services.adapterFor(room.platform);
-    if (adapter.resolveRecordingSource) return adapter.resolveRecordingSource(room.url, quality, cookie);
+    if (adapter.resolveRecordingSource) return room.platform === 'xiaohongshu'
+      ? adapter.resolveRecordingSource(room.url, quality, cookie, { streamSessionId: this.active.get(room.id)?.streamSessionId ?? null })
+      : adapter.resolveRecordingSource(room.url, quality, cookie);
     const live = await adapter.checkLiveStatus(room.url, cookie);
     if (live.status === "offline") return { status: "offline" };
     if (live.status !== "live") return { status: live.status, error: live.error ?? new AppError("NETWORK_UNAVAILABLE", "暂时无法确认直播状态", { retryable: true }).toObject() };
@@ -3440,7 +3448,7 @@ function defaultsLite(): AppSettings {
     quality: "original",
     recordingFormat: "source_flv",
     autoRecord: false,
-    checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
+    checkIntervalSec: { default: 60, bilibili: 60, douyin: 120, xiaohongshu: 120 },
     retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
     diskGuard: { minFreeBytes: 20 * 1024 ** 3, minFreePercent: 10 },
     mail: {

@@ -252,6 +252,11 @@ export default function Setup() {
               {authorizationStatuses.bilibili === "authorized"
                 ? "已登录"
                 : "未登录"}
+              <br />
+              小红书授权：
+              {authorizationStatuses.xiaohongshu === "authorized"
+                ? "已登录"
+                : "未登录"}
             </Typography.Paragraph>
             <div className="lr-setup-first-room">
               <div className="lr-setup-first-room__copy">

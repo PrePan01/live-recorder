@@ -1,3 +1,5 @@
+import { createXiaohongshuDanmakuAdapter } from "./adapters/xiaohongshu.js";
+import { XiaohongshuAdapter } from "../platform/xiaohongshu.js";
 import { randomUUID } from "node:crypto";
 import { AppError } from "../types/error.js";
 import { SharedDanmakuAdapter } from "./shared-adapter.js";
@@ -10,9 +12,10 @@ import { DanmakuCollector, unsupportedDanmakuAdapter } from "./collector.js";
 import { DanmakuStore, type DanmakuReadOptions } from "./store.js";
 import type { DanmakuAdapter, DanmakuGap, DanmakuStatus } from "./types.js";
 
-function adapterFor(platform: string): DanmakuAdapter {
+function adapterFor(platform: string, services?: Services): DanmakuAdapter {
   if (platform === "bilibili") return bilibiliDanmakuAdapter;
   if (platform === "douyin") return douyinDanmakuAdapter;
+  if (platform === "xiaohongshu" && services?.adapterFor("xiaohongshu") instanceof XiaohongshuAdapter) return createXiaohongshuDanmakuAdapter(services.adapterFor("xiaohongshu") as XiaohongshuAdapter);
   return unsupportedDanmakuAdapter(platform);
 }
 
@@ -61,7 +64,7 @@ export class DanmakuManager {
   private previews = new Map<string, PreviewSource>();
   private previewSweep: ReturnType<typeof setInterval> | undefined;
 
-  constructor(private readonly services: Services, private readonly resolveAdapter = adapterFor) {}
+  constructor(private readonly services: Services, private readonly resolveAdapter = (platform: string) => adapterFor(platform, services)) {}
 
   private sharedAdapter(platform: string): SharedDanmakuAdapter {
     let adapter = this.adapters.get(platform);

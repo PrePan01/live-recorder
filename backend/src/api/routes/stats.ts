@@ -225,9 +225,9 @@ export function registerStatsRoutes(
     if (
       qs.platform !== undefined &&
       qs.platform !== "bilibili" &&
-      qs.platform !== "douyin"
+      qs.platform !== "douyin" && qs.platform !== "xiaohongshu"
     ) {
-      throw new AppError("CONFIG_INVALID", "platform 仅支持 bilibili/douyin");
+      throw new AppError("CONFIG_INVALID", "platform 仅支持 bilibili/douyin/xiaohongshu");
     }
     const from = new Date(Date.parse(fromRaw)).toISOString();
     const to = new Date(Date.parse(toRaw)).toISOString();

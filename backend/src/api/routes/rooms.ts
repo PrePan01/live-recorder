@@ -11,7 +11,7 @@ import {
 
 import { registerRoomCoverRoutes } from "./room-cover.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin"];
+const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 /** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
 const MANUAL_LIVE_FRESH_MS = 10_000;
@@ -282,7 +282,7 @@ export function registerRoomRoutes(
     }
     const room = services.rooms.create({
       platform,
-      url: adapter.normalizeUrl(body.url),
+      url: adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(platform)) : adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === "string" ? body.displayName : "",
       enabled: body.enabled ?? true,
       liveNotificationEnabled: body.liveNotificationEnabled ?? false,
@@ -331,9 +331,11 @@ export function registerRoomRoutes(
         continue;
       }
       const adapter = services.adapterFor(platform);
-      const normalized = adapter.normalizeUrl(url);
+      let normalized: string;
+      try { normalized = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(url, await services.platformCookie(platform)) : adapter.normalizeUrl(url); }
+      catch (error) { failed.push({ url, reason: error instanceof AppError ? error.message : "链接解析失败，请稍后重试" }); continue; }
       const key = `${platform}|${normalized}`;
-      if (existing.has(key) || seen.has(key)) {
+      if (existing.has(key) || seen.has(key) || (platform === "xiaohongshu" && services.rooms.list().some(room => room.platform === platform && room.url === normalized))) {
         failed.push({ url, reason: "该直播间已存在" });
         continue;
       }
@@ -390,7 +392,7 @@ export function registerRoomRoutes(
           roomId: id,
         });
       }
-      patch.url = adapter.normalizeUrl(body.url);
+      patch.url = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(existing!.platform)) : adapter.normalizeUrl(body.url);
     }
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.enabled !== undefined) patch.enabled = body.enabled;
@@ -652,9 +654,8 @@ export function registerRoomRoutes(
       | undefined;
     if (room.lastLiveStatus === null && !previewReady) {
       const cookie = await services.platformCookie(room.platform);
-      status = await services
-        .adapterFor(room.platform)
-        .checkLiveStatus(room.url, cookie);
+      const adapter = services.adapterFor(room.platform);
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
       if (
         status.status === "live" ||
         status.status === "offline" ||
@@ -682,9 +683,8 @@ export function registerRoomRoutes(
       services.clock.now() - checkedAtMs <= MANUAL_LIVE_FRESH_MS;
     if (!status && !previewReady && !liveFresh) {
       const cookie = await services.platformCookie(room.platform);
-      status = await services
-        .adapterFor(room.platform)
-        .checkLiveStatus(room.url, cookie);
+      const adapter = services.adapterFor(room.platform);
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
     }
     if (status && status.status !== "live") {
       throw new AppError(

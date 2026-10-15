@@ -371,7 +371,7 @@ export default function Rooms() {
     }
     const platform = guessPlatform(values.url);
     if (!platform) {
-      message.error("仅支持 B站 / 抖音 直播链接");
+      message.error("支持 B站 / 抖音直播链接及小红书主页、直播分享链接");
       return;
     }
     setSubmitting(true);
@@ -509,6 +509,7 @@ export default function Rooms() {
           options={[
             { value: "bilibili", label: "B站" },
             { value: "douyin", label: "抖音" },
+            { value: "xiaohongshu", label: "小红书" },
           ]}
         />
         <Select
@@ -616,7 +617,11 @@ export default function Rooms() {
                 validator: (_, v: string) =>
                   !v || guessPlatform(v)
                     ? Promise.resolve()
-                    : Promise.reject(new Error("仅支持 B站 / 抖音 直播链接")),
+                    : Promise.reject(
+                        new Error(
+                          "支持 B站 / 抖音直播链接及小红书主页、直播分享链接",
+                        ),
+                      ),
               },
             ]}
             extra={
@@ -626,7 +631,7 @@ export default function Rooms() {
             }
           >
             <Input
-              placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..."
+              placeholder="B站、抖音直播链接、小红书主页/直播链接"
               addonAfter={
                 <Button
                   className="lr-room-url-paste"
@@ -669,13 +674,13 @@ export default function Rooms() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
-          每行一个直播链接，支持 B站 / 抖音 混排，最多 100
+          每行一个直播链接，支持 B站 / 抖音 / 小红书混排，最多 100
           条。自动去重（含已存在直播间与批内重复）。
         </Typography.Paragraph>
         <Input.TextArea
           rows={6}
           placeholder={
-            "https://live.bilibili.com/...\nhttps://live.douyin.com/..."
+            "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/..."
           }
           value={batchText}
           onChange={(e) => setBatchText(e.target.value)}

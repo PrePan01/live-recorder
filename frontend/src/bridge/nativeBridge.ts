@@ -28,6 +28,8 @@ export interface NativeBridge {
   setFloatingRecorderSize(buttonSize: number): Promise<void>;
   startDouyinAuthorization(): Promise<void>;
   onDouyinAuthorized(cb: () => void): () => void;
+  startXiaohongshuAuthorization(): Promise<void>;
+  onXiaohongshuAuthorized(cb: () => void): () => void;
   startBilibiliAuthorization(): Promise<void>;
   onBilibiliAuthorized(cb: () => void): () => void;
   quit(): Promise<void>;
@@ -151,6 +153,20 @@ class TauriBridge implements NativeBridge {
     let disposed = false;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const off = await listen<void>('bilibili:authorized', () => { if (!disposed) cb(); });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }
+
+  async startXiaohongshuAuthorization(): Promise<void> {
+    await this.invoke<void>('start_xiaohongshu_authorization');
+  }
+
+  onXiaohongshuAuthorized(cb: () => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<void>('xiaohongshu:authorized', () => { if (!disposed) cb(); });
       if (disposed) off(); else unlisten = off;
     });
     return () => { disposed = true; unlisten?.(); };
@@ -325,6 +341,12 @@ class BrowserBridge implements NativeBridge {
   }
 
   onBilibiliAuthorized(_cb: () => void): () => void { return () => {}; }
+
+  async startXiaohongshuAuthorization(): Promise<void> {
+    throw new Error('应用内授权仅限桌面客户端');
+  }
+
+  onXiaohongshuAuthorized(_cb: () => void): () => void { return () => {}; }
 
   async quit(): Promise<void> {
     /* 浏览器模式忽略 */

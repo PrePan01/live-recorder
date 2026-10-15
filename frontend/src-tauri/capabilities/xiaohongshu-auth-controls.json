@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "xiaohongshu-auth-controls",
+  "description": "Only the local confirmation bar in the Xiaohongshu authorization window may invoke app commands.",
+  "webviews": ["xiaohongshu-auth-controls"],
+  "permissions": ["core:default"]
+}

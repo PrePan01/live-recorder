@@ -2,7 +2,7 @@ import type { ErrorObject } from './error.js';
 import type { Quality } from './recording.js';
 import type { Tag } from './tag.js';
 
-export type Platform = 'bilibili' | 'douyin';
+export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu';
 
 export type MonitorState =
   | 'idle'
@@ -23,6 +23,8 @@ export interface Room {
   id: string;
   platform: Platform;
   url: string;
+  /** Current broadcast page, including resolved links for legacy profile records. */
+  liveRoomUrl?: string;
   displayName: string;
   /** 主播头像 CDN 地址（平台检测周期顺带写入，历史房间可能为 null；UI 需兑底）。 */
   liveCoverUrl?: string | null;

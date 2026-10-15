@@ -1,5 +1,8 @@
+import { saveXiaohongshuSource } from '../platform/xiaohongshu-source-store.js';
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
+import { XiaohongshuNativeBroker } from "../platform/xiaohongshu-native.js";
+import { XiaohongshuAdapter } from "../platform/xiaohongshu.js";
 import { DanmakuManager } from "../danmaku/manager.js";
 import { QualityHealthService } from "./quality-health.js";
 import { ClipQueueManager } from "./clip-queue.js";
@@ -17,6 +20,7 @@ import {
   MAIL_PASSWORD_KEY,
   DOUYIN_COOKIE_KEY,
   BILIBILI_COOKIE_KEY,
+  XIAOHONGSHU_COOKIE_KEY,
 } from "../security/keys.js";
 import { FakePlatformAdapter } from "../platform/fake-adapter.js";
 import { BilibiliAdapter } from "../platform/bilibili.js";
@@ -57,6 +61,7 @@ export type AdapterMode = "fake" | "real";
 
 export interface Services {
   resetting?: boolean;
+  xhsNative: XiaohongshuNativeBroker;
   mode: AdapterMode;
   startedAt: number;
   events: AppEventBus;
@@ -90,11 +95,11 @@ export interface Services {
   exporter: ExportManager;
   /** 跳播服务（正在录的这条：索引状态/预热/起流）。 */
   seek: SeekService;
-  adapterFor(platform: "bilibili" | "douyin"): PlatformAdapter;
+  adapterFor(platform: "bilibili" | "douyin" | "xiaohongshu"): PlatformAdapter;
   engineFor(): RecordingEngine;
   recordingBufferDirectory: string;
   /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
-  platformCookie(platform: "bilibili" | "douyin"): Promise<string | undefined>;
+  platformCookie(platform: "bilibili" | "douyin" | "xiaohongshu"): Promise<string | undefined>;
 }
 
 export interface BuildOptions {
@@ -168,15 +173,27 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const clock = opts.clock ?? new SystemClock();
   const fakeEngine = new FakeRecordingEngine(clock);
 
+  const xhsNative = new XiaohongshuNativeBroker();
   const adapters =
     mode === "real"
       ? {
           bilibili: new BilibiliAdapter() as PlatformAdapter,
           douyin: new DouyinAdapter() as PlatformAdapter,
+          xiaohongshu: new XiaohongshuAdapter(fetch, {
+            load: profile => (db.prepare('SELECT room_url FROM xiaohongshu_sources WHERE profile_url = ?').get(profile) as { room_url: string } | undefined)?.room_url,
+            save: (profile, url) => saveXiaohongshuSource(db, profile, url),
+            profileForRoom: url => (db.prepare('SELECT profile_url FROM xiaohongshu_sources WHERE room_url = ?').get(url) as { profile_url: string } | undefined)?.profile_url,
+            loadProfile: profile => (db.prepare('SELECT profile_request_url FROM xiaohongshu_sources WHERE profile_url = ?').get(profile) as { profile_request_url?: string } | undefined)?.profile_request_url,
+            saveProfile: (profile, url) => { db.prepare('INSERT INTO xiaohongshu_sources (profile_url, room_url, profile_request_url) VALUES (?, ?, ?) ON CONFLICT(profile_url) DO UPDATE SET profile_request_url=excluded.profile_request_url').run(profile, '', url); },
+          }, (url, signal, cookie) => {
+            const session = /(?:^|;\s*)web_session=([^;\s]+)/.exec(cookie ?? '')?.[1];
+            return xhsNative.request(url, signal, session ? createHash('sha256').update(session).digest('hex') : undefined);
+          }) as PlatformAdapter,
         }
       : {
           bilibili: new FakePlatformAdapter("bilibili") as PlatformAdapter,
           douyin: new FakePlatformAdapter("douyin") as PlatformAdapter,
+          xiaohongshu: new FakePlatformAdapter("xiaohongshu") as PlatformAdapter,
         };
 
   const useKeychain = mode === "real";
@@ -188,6 +205,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
 
   const services: Services = {
     mode,
+    xhsNative,
     startedAt: clock.now(),
     events: new AppEventBus(),
     clock,
@@ -242,6 +260,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
       // B站未登录时服务端只提供 720p 及以下档位，登录 Cookie（SESSDATA）是获取蓝光/原画的唯一途径。
       if (platform === "bilibili")
         return (await secretStore.get(BILIBILI_COOKIE_KEY)) ?? undefined;
+      if (platform === "xiaohongshu") return (await secretStore.get(XIAOHONGSHU_COOKIE_KEY)) ?? undefined;
       return undefined;
     },
     notifier: undefined as unknown as Notifier,

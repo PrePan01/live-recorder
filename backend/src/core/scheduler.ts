@@ -12,13 +12,14 @@ import {
   type PredictionCoverageInterval,
 } from "./live-prediction.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin"];
+const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
 /**
  * 开播检测平台级上限
  */
 const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
   bilibili: 6,
   douyin: 3,
+  xiaohongshu: 1,
 };
 
 export class Scheduler {
@@ -78,7 +79,7 @@ export class Scheduler {
       bilibili: 60,
       douyin: 120,
     };
-    return ci[platform] ?? ci.default;
+    return ci[platform] ?? (platform === "xiaohongshu" ? 120 : ci.default);
   }
 
   private scheduleNext(platform: Platform): void {
@@ -191,9 +192,16 @@ export class Scheduler {
   }
 
   /**
-   * B站授权更新后的复检：B站 的登录态只影响可选清晰度档位，不会返回凭证失效错误，
-   * 因此无需抖音那样的熔断复位，仅等待旧 Cookie 的在途请求收口后重新发起检测。
+   * 小红书授权更新后的复检：小红书登录态用于主页发现、官网签名接口与评论采集，
+   * 与拉流档位无关；风控 406/461 不等于 Cookie 过期，因此有意不做抖音那样的凭证失效
+   * 熔断（避免误判），仅等待旧 Cookie 的在途请求收口后重新发起检测。
    */
+  async recheckXiaohongshuRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.list().filter(room => room.platform === "xiaohongshu");
+    await Promise.all(rooms.map(room => this.waitForRoomCheck(room.id)));
+    await Promise.all(rooms.map(room => this.triggerImmediateCheck(room.id)));
+  }
+
   async recheckBilibiliRoomsAfterCookieUpdate(): Promise<void> {
     const rooms = this.services.rooms
       .list()
@@ -576,7 +584,7 @@ export class Scheduler {
         status.status === "restricted"
           ? room.platform === "douyin"
             ? "平台访问受限，请检查抖音授权"
-            : "平台访问受限，请检查B站授权"
+            : room.platform === "xiaohongshu" ? "平台访问受限，请检查小红书授权" : "平台访问受限，请检查B站授权"
           : "平台请求失败",
         { roomId: room.id, retryable: status.status !== "restricted" },
       ).toObject();

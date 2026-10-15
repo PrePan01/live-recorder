@@ -3,6 +3,7 @@ export const MAIL_PASSWORD_KEY = 'mail.password';
 export const DOUYIN_COOKIE_KEY = 'douyin.cookie';
 
 export const BILIBILI_COOKIE_KEY = 'bilibili.cookie';
+export const XIAOHONGSHU_COOKIE_KEY = 'xiaohongshu.cookie';
 
 export const OPENLIST_TOKEN_KEY = 'openlist.token';
 

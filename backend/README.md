@@ -1,6 +1,6 @@
 # Live Recorder Backend
 
-本地常驻录制服务：监控 B站/抖音直播间开播，自动录制到用户目录，邮件通知，Web 管理界面走 localhost API。
+本地常驻录制服务：监控 B站/抖音/小红书直播间开播，自动录制到用户目录，邮件通知，Web 管理界面走 localhost API。
 
 ## 快速开始
 

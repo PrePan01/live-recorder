@@ -25,6 +25,8 @@ export class SettingsRepository {
         autoRecord?: boolean;
         mail?: MailConfig & { password?: string };
       };
+      parsed.checkIntervalSec = { xiaohongshu: 120, ...parsed.checkIntervalSec };
+      delete (parsed as unknown as Record<string, unknown>).xiaohongshuCookie;
       if (parsed.mail) delete (parsed.mail as { password?: string }).password;
       // v4 之前已保存的设置没有 autoRecord 字段，历史行为是自动录制默认开启。
       // 新的首次使用默认关闭只适用于完全没有 settings 记录的用户，不能倒改旧用户。
@@ -60,6 +62,7 @@ export class SettingsRepository {
       } as MailConfig,
     };
     delete (safe.mail as { password?: string }).password;
+    delete (safe as unknown as Record<string, unknown>).xiaohongshuCookie;
     this.setRaw('settings', JSON.stringify(safe));
   }
 }

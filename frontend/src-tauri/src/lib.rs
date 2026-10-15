@@ -2,6 +2,7 @@ mod backend;
 mod power;
 mod contract;
 mod updates;
+mod xiaohongshu;
 
 use std::{fs, sync::Mutex};
 
@@ -43,6 +44,11 @@ const DOUYIN_AUTH_WINDOW: &str = "douyin-auth";
 const DOUYIN_CONTROLS_WEBVIEW: &str = "douyin-auth-controls";
 const DOUYIN_LOGIN_WEBVIEW: &str = "douyin-auth-login-page";
 const DOUYIN_LOGIN_URL: &str = "https://www.douyin.com/";
+const XIAOHONGSHU_AUTHORIZED_EVENT: &str = "xiaohongshu:authorized";
+const XIAOHONGSHU_AUTH_WINDOW: &str = "xiaohongshu-auth";
+const XIAOHONGSHU_CONTROLS_WEBVIEW: &str = "xiaohongshu-auth-controls";
+const XIAOHONGSHU_LOGIN_WEBVIEW: &str = "xiaohongshu-auth-login-page";
+const XIAOHONGSHU_LOGIN_URL: &str = "https://www.xiaohongshu.com/explore";
 const BILIBILI_AUTHORIZED_EVENT: &str = "bilibili:authorized";
 const BILIBILI_AUTH_WINDOW: &str = "bilibili-auth";
 const BILIBILI_CONTROLS_WEBVIEW: &str = "bilibili-auth-controls";
@@ -367,6 +373,41 @@ fn show_bilibili_auth_windows(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn show_xiaohongshu_auth_windows(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_window(XIAOHONGSHU_AUTH_WINDOW) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let auth_window = WindowBuilder::new(app, XIAOHONGSHU_AUTH_WINDOW)
+        .title("小红书授权")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(720.0, 520.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("无法打开小红书授权窗口: {e}"))?;
+    let login_url = XIAOHONGSHU_LOGIN_URL
+        .parse()
+        .map_err(|e| format!("小红书登录地址无效: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(XIAOHONGSHU_LOGIN_WEBVIEW, WebviewUrl::External(login_url)),
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(980.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+        )
+        .map_err(|e| format!("无法加载小红书登录页面: {e}"))?;
+    auth_window
+        .add_child(
+            WebviewBuilder::new(XIAOHONGSHU_CONTROLS_WEBVIEW, WebviewUrl::App("src/window-entries/platform-auth/xiaohongshu-auth.html".into())),
+            LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+            LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
+        )
+        .map_err(|e| format!("无法加载小红书授权确认栏: {e}"))?;
+    Ok(())
+}
+
 /// 授权窗口被用户缩放时重新排布：远程登录页占满上部，本地确认栏贴底。
 fn layout_auth_window(
     app: &AppHandle,
@@ -398,6 +439,12 @@ fn close_bilibili_auth_windows(app: &AppHandle) {
     }
 }
 
+fn close_xiaohongshu_auth_windows(app: &AppHandle) {
+    if let Some(window) = app.get_window(XIAOHONGSHU_AUTH_WINDOW) {
+        let _ = window.close();
+    }
+}
+
 #[tauri::command]
 async fn start_douyin_authorization(app: AppHandle) -> Result<(), String> {
     // WebView2 can deadlock when a child webview is created synchronously from
@@ -413,6 +460,13 @@ async fn start_bilibili_authorization(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || show_bilibili_auth_windows(&app))
         .await
         .map_err(|e| format!("创建B站授权窗口任务异常: {e}"))?
+}
+
+#[tauri::command]
+async fn start_xiaohongshu_authorization(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || show_xiaohongshu_auth_windows(&app))
+        .await
+        .map_err(|e| format!("创建小红书授权窗口任务异常: {e}"))?
 }
 
 fn douyin_cookie_header(app: &AppHandle) -> Result<String, String> {
@@ -537,6 +591,31 @@ fn bilibili_cookie_header(app: &AppHandle) -> Result<String, String> {
     Ok(pairs.join("; "))
 }
 
+fn xiaohongshu_cookie_header(app: &AppHandle) -> Result<String, String> {
+    let window = app
+        .get_webview(XIAOHONGSHU_LOGIN_WEBVIEW)
+        .ok_or_else(|| "授权窗口已关闭，请重新打开后完成登录".to_string())?;
+    // 与抖音同理：passport 与主站分属不同 host，只按其中一个过滤会漏掉登录流程
+    // 落在 live.xiaohongshu.com 的 host-only Cookie。这里读取整个原生存储（含 HttpOnly）。
+    let mut pairs: Vec<String> = window
+        .cookies()
+        .map_err(|e| format!("无法读取小红书登录凭证: {e}"))?
+        .into_iter()
+        .filter(|cookie| {
+            cookie
+                .domain()
+                .is_some_and(|domain| { let host = domain.trim_start_matches('.'); host == "xiaohongshu.com" || host.ends_with(".xiaohongshu.com") })
+        })
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect();
+    pairs.sort();
+    pairs.dedup();
+    if !pairs.iter().any(|pair| pair.starts_with("web_session=")) {
+        return Err("尚未检测到小红书登录态。请先在上方窗口登录小红书，再点击“完成登录并授权”。".to_string());
+    }
+    Ok(pairs.join("; "))
+}
+
 fn verify_bilibili_login(cookie: &str) -> Result<(), String> {
     // Presence of SESSDATA alone is not proof of an active session: B站 会在退出登录后
     // 把过期凭证留在原生 Cookie 库里。nav 接口仅在已登录时返回 code=0 且 data.isLogin=true，
@@ -599,6 +678,40 @@ async fn complete_bilibili_authorization(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("保存B站授权任务异常: {e}"))??;
     close_bilibili_auth_windows(&app);
     let _ = app.emit(BILIBILI_AUTHORIZED_EVENT, ());
+    Ok(())
+}
+
+fn save_xiaohongshu_cookie(cookie: String) -> Result<(), String> {
+    // Cookie shape is validated by the backend; signed platform probes run separately.
+    let instance = backend::fetch_ready().ok_or_else(|| "本地服务尚未就绪，请稍候重试".to_string())?;
+    let response = reqwest::blocking::Client::new()
+        .post(format!("{}/api/v1/settings/xiaohongshu-cookie", instance.base_url))
+        .json(&serde_json::json!({ "cookie": cookie }))
+        .send()
+        .map_err(|e| format!("保存小红书授权失败: {e}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let detail = response
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|body| body.pointer("/error/message").and_then(|value| value.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| format!("服务返回 {status}"));
+    Err(format!("保存小红书授权失败: {detail}"))
+}
+
+#[tauri::command]
+async fn complete_xiaohongshu_authorization(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    let cookie = tauri::async_runtime::spawn_blocking(move || xiaohongshu_cookie_header(&handle))
+        .await
+        .map_err(|e| format!("读取小红书授权任务异常: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || save_xiaohongshu_cookie(cookie))
+        .await
+        .map_err(|e| format!("保存小红书授权任务异常: {e}"))??;
+    close_xiaohongshu_auth_windows(&app);
+    let _ = app.emit(XIAOHONGSHU_AUTHORIZED_EVENT, ());
     Ok(())
 }
 
@@ -796,12 +909,14 @@ pub fn run() {
                 if window.label() == "main" {
                     save_main_window_size(&window.app_handle(), *size);
                 }
-                if window.label() == DOUYIN_AUTH_WINDOW || window.label() == BILIBILI_AUTH_WINDOW {
+                if window.label() == DOUYIN_AUTH_WINDOW || window.label() == BILIBILI_AUTH_WINDOW || window.label() == XIAOHONGSHU_AUTH_WINDOW {
                     // The remote child webview occupies all but the bottom
                     // confirmation bar, including after user resizes.
                     if let Ok(scale_factor) = window.scale_factor() {
                         let (login_label, controls_label) = if window.label() == DOUYIN_AUTH_WINDOW {
                             (DOUYIN_LOGIN_WEBVIEW, DOUYIN_CONTROLS_WEBVIEW)
+                        } else if window.label() == XIAOHONGSHU_AUTH_WINDOW {
+                            (XIAOHONGSHU_LOGIN_WEBVIEW, XIAOHONGSHU_CONTROLS_WEBVIEW)
                         } else {
                             (BILIBILI_LOGIN_WEBVIEW, BILIBILI_CONTROLS_WEBVIEW)
                         };
@@ -834,10 +949,13 @@ pub fn run() {
             complete_douyin_authorization,
             start_bilibili_authorization,
             complete_bilibili_authorization,
+            start_xiaohongshu_authorization,
+            complete_xiaohongshu_authorization,
             quit_app,
         ])
         .setup(|app| {
             power::start(app.handle().clone());
+            xiaohongshu::start(app.handle().clone());
             // This runs before the event loop begins, so the saved dimensions
             // are applied as the native window is being brought up.
             #[cfg(any(target_os = "macos", target_os = "windows"))]

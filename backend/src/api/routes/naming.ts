@@ -61,7 +61,7 @@ export function registerNamingRoutes(app: FastifyInstance, services: Services): 
     if (template.length > MAX_TEMPLATE_LEN) throw new AppError('CONFIG_INVALID', `namingRule 过长`);
     const ctx: NamingContext = {
       room: typeof body.room === 'string' && body.room ? body.room : '主播名',
-      platform: body.platform === 'douyin' ? 'douyin' : 'bilibili',
+      platform: body.platform === 'xiaohongshu' ? 'xiaohongshu' : body.platform === 'douyin' ? 'douyin' : 'bilibili',
       date: '2026-08-29',
       time: '18_30_00',
       quality: '1080p',

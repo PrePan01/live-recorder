@@ -1,6 +1,12 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { Platform } from "../../../types/room";
 
+const PLATFORM_FALLBACK_CHAR: Record<Platform, string> = {
+  bilibili: "B",
+  douyin: "抖",
+  xiaohongshu: "红",
+};
+
 function thumbSrc(url: string, platform: Platform, size: number): string {
   if (platform === "bilibili" && !url.includes("@")) {
     const d = Math.max(size * 2, 240);
@@ -34,7 +40,7 @@ export default function RoomAvatar({
 
   const show = Boolean(avatarUrl) && !failed;
   const initial =
-    [...(name ?? "").trim()][0] || (platform === "bilibili" ? "B" : "抖");
+    [...(name ?? "").trim()][0] || PLATFORM_FALLBACK_CHAR[platform];
   const classes = [
     "lr-room-avatar",
     `lr-room-avatar--${platform}`,

@@ -1,7 +1,7 @@
 import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, SettingsView } from '../../types/index.js';
-import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { notificationPreference } from './notifications.js';
 
 export async function settingsView(services: Services): Promise<SettingsView> {
@@ -10,6 +10,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
   const passwordSet = await services.secretStore.has(MAIL_PASSWORD_KEY);
   const hasDouyinCookie = await services.secretStore.has(DOUYIN_COOKIE_KEY);
   const hasBilibiliCookie = await services.secretStore.has(BILIBILI_COOKIE_KEY);
+  const hasXiaohongshuCookie = await services.secretStore.has(XIAOHONGSHU_COOKIE_KEY);
   const mail = { ...settings.mail, passwordSet };
   return {
     recordingDirectory: settings.recordingDirectory,
@@ -23,6 +24,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     mail,
     douyinCookie: { hasCookie: hasDouyinCookie },
     bilibiliCookie: { hasCookie: hasBilibiliCookie },
+    xiaohongshuCookie: { hasCookie: hasXiaohongshuCookie },
     theme: settings.theme ?? 'system',
     // 旧版本允许 30–128px；收紧范围后在视图层归一化，避免旧值让新滑块越界。
     floatingRecorderSize: Math.min(100, Math.max(20, settings.floatingRecorderSize ?? 36)),

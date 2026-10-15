@@ -27,8 +27,15 @@ export async function fetchDouyinCookieStatus(): Promise<DouyinCookieStatus> {
 
 export type BilibiliCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
 
+export type XiaohongshuCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
+
 export async function fetchBilibiliCookieStatus(): Promise<BilibiliCookieStatus> {
   const { data } = await http.get<{ status: BilibiliCookieStatus }>('/settings/bilibili-cookie-status', { timeout: 12_000 });
+  return data.status;
+}
+
+export async function fetchXiaohongshuCookieStatus(): Promise<XiaohongshuCookieStatus> {
+  const { data } = await http.get<{ status: XiaohongshuCookieStatus }>('/settings/xiaohongshu-cookie-status', { timeout: 12_000 });
   return data.status;
 }
 

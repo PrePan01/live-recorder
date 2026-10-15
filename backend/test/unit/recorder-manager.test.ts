@@ -2021,3 +2021,32 @@ describe("persistent network recovery", () => {
     } finally { timers.mockRestore(); random.mockRestore(); await services.manager.shutdown(); }
   });
 });
+
+describe('Xiaohongshu broadcast-bound recovery', () => {
+  it('finishes the recorded broadcast when profile discovery is unavailable and carries the actual stream session ID', async () => {
+    const { XiaohongshuAdapter } = await import('../../src/platform/xiaohongshu.js');
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-xhs-end-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    let ended = false;
+    const adapter = new XiaohongshuAdapter((async (url: string) => new Response(url.includes('/user/profile') ? '<html>profile without live metadata</html>' : `<script>window.__INITIAL_STATE__=${JSON.stringify({ liveStream: { liveStatus: 'success', roomData: { roomInfo: {
+      status: ended ? 3 : 2, roomId: '123', deeplink: 'xhsdiscover://live?host_id=abcdef',
+      pullConfig: JSON.stringify({ height: 720, h264: [{ master_url: 'https://live.xhscdn.com/123.flv' }] }),
+    } } } })}</script>`)) as typeof fetch, { load: () => 'https://www.xiaohongshu.com/livestream/123', save: () => {} });
+    const resolve = vi.spyOn(adapter, 'resolveRecordingSource');
+    const original = services.adapterFor.bind(services);
+    services.adapterFor = platform => platform === 'xiaohongshu' ? adapter : original(platform);
+    const room = services.rooms.create({ platform: 'xiaohongshu', url: 'https://www.xiaohongshu.com/user/profile/abcdef', displayName: '小红书主播' });
+    try {
+      await services.manager.maybeStartRecording(room, {}, { manual: true });
+      const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+      expect(rec.streamSessionId).toBe('123');
+      ended = true;
+      await waitForWithClock(clock, () => services.recordings.get(rec.id)?.state === 'completed');
+      expect(services.manager.isRoomActive(room.id)).toBe(false);
+      expect(resolve.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(resolve.mock.calls.every(call => call[3]?.streamSessionId === '123')).toBe(true);
+    } finally { await services.manager.shutdown(); }
+  });
+});

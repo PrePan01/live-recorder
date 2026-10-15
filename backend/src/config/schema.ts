@@ -50,6 +50,7 @@ export function validateSettings(input: unknown): AppSettings {
   if (!ci || [ci.default, ci.bilibili, ci.douyin].some(value => !Number.isInteger(value) || typeof value !== 'number' || value < 10)) {
     throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin，且均为不小于 10 秒的整数');
   }
+  if (ci.xiaohongshu !== undefined && (!Number.isInteger(ci.xiaohongshu) || ci.xiaohongshu < 10)) throw new AppError('CONFIG_INVALID', '小红书检测间隔需为不小于 10 秒的整数');
   const r = s.retry;
   if (!r || !Array.isArray(r.delaysSeconds) || r.delaysSeconds.length === 0 || typeof r.maxAttempts !== 'number' || r.maxAttempts < 0) {
     throw new AppError('CONFIG_INVALID', '重连配置非法');

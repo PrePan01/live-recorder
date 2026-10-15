@@ -18,6 +18,7 @@ const CDN_DOMAINS = [
   'byteimg.com',
   'ibytedtos.com',
   'pstatp.com',
+  'xhscdn.com',
 ];
 function validateUrl(raw: string): URL {
   const url = new URL(raw);
@@ -82,7 +83,9 @@ export async function fetchRoomCover(
           Referer:
             room.platform === 'bilibili'
               ? 'https://live.bilibili.com/'
-              : 'https://live.douyin.com/',
+              : room.platform === 'xiaohongshu'
+                ? 'https://www.xiaohongshu.com/'
+                : 'https://live.douyin.com/',
         },
       });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;

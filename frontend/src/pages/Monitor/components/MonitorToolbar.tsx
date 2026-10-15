@@ -1,11 +1,4 @@
-import {
-  Button,
-  Input,
-  Popover,
-  Select,
-  Tooltip,
-  Typography,
-} from "antd";
+import { Button, Input, Popover, Select, Tooltip, Typography } from "antd";
 import {
   AppstoreOutlined,
   ReloadOutlined,
@@ -89,6 +82,14 @@ export function MonitorToolbar({
                 </Tooltip>
               ),
               value: "douyin",
+            },
+            {
+              label: (
+                <span className="lr-platform-filter-option">
+                  <PlatformIcon platform="xiaohongshu" />
+                </span>
+              ),
+              value: "xiaohongshu",
             },
           ]}
           value={platformFilter}

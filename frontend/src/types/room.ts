@@ -2,7 +2,7 @@ import type { ApiErrorEnvelope } from "./error";
 import type { Quality } from "./settings";
 import type { Tag } from "./tag";
 
-export type Platform = "bilibili" | "douyin";
+export type Platform = "bilibili" | "douyin" | "xiaohongshu";
 
 export type LiveStatus = "live" | "offline" | "restricted";
 
@@ -21,6 +21,7 @@ export interface Room {
   id: string;
   platform: Platform;
   url: string;
+  liveRoomUrl?: string;
   displayName: string;
   enabled: boolean;
   monitorState: MonitorState;

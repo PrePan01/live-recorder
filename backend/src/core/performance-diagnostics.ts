@@ -14,7 +14,7 @@ export interface PerformanceDiagnostic {
   id: number;
   kind: PerformanceOperationKind;
   roomId: string;
-  platform: "bilibili" | "douyin";
+  platform: "bilibili" | "douyin" | "xiaohongshu";
   startedAt: string;
   elapsedMs: number;
   outcome: PerformanceOutcome;
@@ -55,7 +55,7 @@ export class PerformanceDiagnostics {
 
   begin(
     kind: PerformanceOperationKind,
-    room: { id: string; platform: "bilibili" | "douyin" },
+    room: { id: string; platform: "bilibili" | "douyin" | "xiaohongshu" },
   ): PerformanceTrace {
     if (!this.enabled) return NOOP_TRACE;
     const startedMs = this.clock.now();

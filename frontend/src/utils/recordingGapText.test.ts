@@ -39,6 +39,18 @@ describe("recordingGapText", () => {
     expect(result.reason).not.toContain("已停止");
   });
 
+  it("小红书受限缺口带平台名与风控/授权人话，无平台上下文用中性句", () => {
+    const restricted = gap({
+      evidence: JSON.stringify({ cause: { code: "PLATFORM_ACCESS_RESTRICTED", message: "x" } }),
+    });
+    expect(recordingGapText(restricted, "xiaohongshu").reason).toBe(
+      "小红书限制了访问（可能触发风控或授权失效），暂时无法获取直播数据。",
+    );
+    expect(recordingGapText(restricted).reason).toBe(
+      "直播平台限制了访问（可能触发风控或授权失效），暂时无法获取直播数据。",
+    );
+  });
+
   it("distinguishes an unrecovered silent tail from resumed recording", () => {
     expect(recordingGapText(gap({ kind: "recording_tail" })))
       .toEqual({ status: "录制结束", reason: "录制结束前持续未收到直播数据，这段时间未录入录像。" });

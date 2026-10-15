@@ -15,7 +15,7 @@ export interface PerformanceDiagnostic {
   id: number;
   kind: "recording_start" | "preview_start";
   roomId: string;
-  platform: "bilibili" | "douyin";
+  platform: "bilibili" | "douyin" | "xiaohongshu";
   startedAt: string;
   elapsedMs: number;
   outcome: "running" | "ok" | "failed" | "skipped";

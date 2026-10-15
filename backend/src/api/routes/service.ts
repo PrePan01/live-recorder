@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { access, constants, stat } from 'node:fs/promises';
 import type { Services } from '../../core/services.js';
-import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { validateXiaohongshuCookie } from '../../security/xiaohongshu-cookie.js';
 import { resolveBin } from '../../utils/ffmpeg.js';
 import { AppError } from '../../types/error.js';
 
@@ -107,6 +108,21 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
       return { key: 'bilibili-cookie', label: 'B站授权', status: 'warn', detail: 'B站未授权，录像清晰度最高 720p', fixHint: '在设置页完成B站授权' };
     }));
 
+    // ③c 与其它平台一致检查本地授权配置，不触发官网请求或占用取流队列。
+    const xhsWarning: SelfCheckItem = {
+      key: 'xiaohongshu-cookie', label: '小红书授权', status: 'warn',
+      detail: '小红书未授权，直播检测和弹幕采集可能受限', fixHint: '在设置页完成小红书授权',
+    };
+    items.push(await withTimeout(async () => {
+      let cookie: string | null;
+      try { cookie = await services.secretStore.get(XIAOHONGSHU_COOKIE_KEY); }
+      catch { return { ...xhsWarning, detail: '无法读取小红书授权凭据', fixHint: '检查系统钥匙串或重新完成小红书授权' }; }
+      if (!cookie) return xhsWarning;
+      try { validateXiaohongshuCookie(cookie); }
+      catch { return { ...xhsWarning, detail: '小红书授权凭据格式无效', fixHint: '在设置页重新完成小红书授权' }; }
+      return { ...xhsWarning, status: 'ok', detail: '小红书授权凭据已配置，登录有效性以平台验证结果为准', fixHint: '' };
+    }, { ...xhsWarning, detail: '读取小红书授权凭据超时', fixHint: '稍后重试，或检查系统钥匙串' }));
+
     // ④ 磁盘空间。
     items.push(await withTimeout(async () => {
       if (!settings || !settings.recordingDirectory) {
@@ -152,11 +168,15 @@ export function registerServiceRoutes(app: FastifyInstance, services: Services):
   });
 }
 
-function withTimeout(fn: () => Promise<SelfCheckItem>): Promise<SelfCheckItem> {
+function withTimeout(
+  fn: () => Promise<SelfCheckItem>,
+  timeoutItem: SelfCheckItem = { key: 'unknown', label: '检查项', status: 'warn', detail: '超时', fixHint: '重试' },
+): Promise<SelfCheckItem> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     fn(),
-    new Promise<SelfCheckItem>((resolve) => setTimeout(() => resolve({ key: 'unknown', label: '检查项', status: 'warn', detail: '超时', fixHint: '重试' }), CHECK_TIMEOUT_MS)),
-  ]);
+    new Promise<SelfCheckItem>((resolve) => { timer = setTimeout(() => resolve(timeoutItem), CHECK_TIMEOUT_MS); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function formatBytes(n: number): string {

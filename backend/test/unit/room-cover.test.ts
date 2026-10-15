@@ -56,6 +56,21 @@ describe('cover retrieval', () => {
       Referer: 'https://live.bilibili.com/',
     });
   });
+  it('accepts Xiaohongshu CDN covers and sends the Xiaohongshu Referer', async () => {
+    const xhsRoom = {
+      ...room,
+      platform: 'xiaohongshu',
+      liveCoverUrl: 'https://sns-webpic-qc.xhscdn.com/cover.png',
+    } as Room;
+    expect(await fetchRoomCover(xhsRoom, fetcher)).toEqual({
+      bytes: png,
+      type: 'image/png',
+      extension: 'png',
+    });
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Referer: 'https://www.xiaohongshu.com/',
+    });
+  });
   it.each([
     [
       'HTML',

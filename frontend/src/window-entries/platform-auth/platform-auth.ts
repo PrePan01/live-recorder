@@ -4,9 +4,10 @@ import { invoke } from '@tauri-apps/api/core';
 const platform = document.documentElement.dataset.platform;
 const authorizationCommands = {
   bilibili: 'complete_bilibili_authorization',
+  xiaohongshu: 'complete_xiaohongshu_authorization',
   douyin: 'complete_douyin_authorization',
 };
-if (platform !== 'bilibili' && platform !== 'douyin') {
+if (platform !== 'bilibili' && platform !== 'douyin' && platform !== 'xiaohongshu') {
   throw new Error('授权页面未配置有效平台');
 }
 const command = authorizationCommands[platform];

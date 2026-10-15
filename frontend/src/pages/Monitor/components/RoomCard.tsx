@@ -1,3 +1,4 @@
+import { roomLivePageUrl } from "../../../utils/roomPlatform";
 import { memo } from "react";
 import {
   Button,
@@ -328,7 +329,8 @@ export const RoomCard = memo(function RoomCard({
               size="middle"
               aria-label="打开直播间"
               icon={<LinkOutlined />}
-              href={room.url}
+              href={roomLivePageUrl(room)}
+              disabled={!roomLivePageUrl(room)}
               target="_blank"
               rel="noopener noreferrer"
             >

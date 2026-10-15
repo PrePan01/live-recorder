@@ -348,7 +348,7 @@ describe("v48 compatibility", () => {
       );
       insert.run("draft", null, "queued");
       insert.run("running", '{"encodingMode":"software"}', "running");
-      expect(runMigrations(db)).toBe(1);
+      expect(runMigrations(db)).toBe(4);
       expect(
         db
           .prepare(
