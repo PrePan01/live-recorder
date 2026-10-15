@@ -25,6 +25,7 @@ interface Bullet {
   row: number;
   node: HTMLElement;
   animation: Animation;
+  hovered: boolean;
   fade?: Animation;
 }
 
@@ -90,7 +91,7 @@ export class DanmakuRenderer {
     if (rate === this.rate) return;
     this.rate = rate;
     for (const bullet of this.active.values()) {
-      if (rate === 0) bullet.animation.pause();
+      if (rate === 0 || bullet.hovered) bullet.animation.pause();
       else {
         bullet.animation.updatePlaybackRate(rate);
         if (bullet.animation.playState === 'paused') bullet.animation.play();
@@ -216,7 +217,7 @@ export class DanmakuRenderer {
     Object.assign(node.style, {
       position: 'absolute', left: '0', top: `${row * this.rowHeight}px`, width: `${width}px`,
       font: this.font, lineHeight: `${this.rowHeight}px`, whiteSpace: 'pre', color: '#fff',
-      textShadow: '0 1px 2px rgba(0,0,0,.7)', pointerEvents: 'none', userSelect: 'none',
+      textShadow: '0 1px 2px rgba(0,0,0,.7)', pointerEvents: 'auto', userSelect: 'none',
       overflow: 'hidden', textOverflow: 'ellipsis', willChange: 'transform',
       transform: `translate3d(${this.width}px,0,0)`,
     });
@@ -227,7 +228,21 @@ export class DanmakuRenderer {
     animation.playbackRate = this.rate || 1;
     if (age > 0) animation.currentTime = age;
     if (this.rate === 0) animation.pause();
-    const bullet: Bullet = { id, width, area: width * this.rowHeight, row, node, animation };
+    const bullet: Bullet = { id, width, area: width * this.rowHeight, row, node, animation, hovered: false };
+    node.onmouseenter = () => {
+      bullet.hovered = true;
+      // Keep later bullets from taking the pointer when they pass over this one.
+      node.style.zIndex = '1';
+      animation.pause();
+    };
+    node.onmouseleave = () => {
+      bullet.hovered = false;
+      node.style.zIndex = '';
+      if (this.rate > 0) {
+        animation.updatePlaybackRate(this.rate);
+        animation.play();
+      }
+    };
     if (restoring) bullet.fade = node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, fill: 'forwards' });
     this.active.set(id, bullet); this.rows[row] = bullet;
     this.layerArea += width * this.rowHeight;
@@ -238,6 +253,7 @@ export class DanmakuRenderer {
     this.layerArea -= bullet.area;
     if (this.rows[bullet.row] === bullet) this.rows[bullet.row] = undefined;
     bullet.animation.onfinish = null;
+    bullet.node.onmouseenter = bullet.node.onmouseleave = null;
     bullet.animation.cancel(); bullet.fade?.cancel(); bullet.node.remove();
   }
 }

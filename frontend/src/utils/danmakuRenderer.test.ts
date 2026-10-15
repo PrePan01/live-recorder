@@ -21,6 +21,7 @@ function fakeAnimation(keyframes: Keyframe[], options: KeyframeAnimationOptions)
 function createNode() {
     const animations: ReturnType<typeof fakeAnimation>[] = [];
     const node = { style: {} as Record<string, string>, textContent: '', className: '', removed: false,
+      onmouseenter: null as (() => void) | null, onmouseleave: null as (() => void) | null,
       remove: vi.fn(() => { node.removed = true; }),
       animate: vi.fn((keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
         const animation = fakeAnimation(keyframes, options); animations.push(animation); return animation;
@@ -39,6 +40,43 @@ function setup() {
 }
 
 describe('弹幕原生动画生命周期', () => {
+  it('悬停只冻结当前弹幕，移开后从原位置按最新倍速继续', () => {
+    const { renderer, nodes, input } = setup();
+    const messages = [...input.messages, { id: 'b', text: '另一条', tMs: 0 }];
+    renderer.tick(0, { ...input, messages }, 1);
+    const first = nodes[0].animations[0], second = nodes[1].animations[0];
+    first.advance(500);
+    nodes[0].onmouseenter?.();
+    renderer.tick(500, { ...input, messages }, 2);
+    first.advance(1000); second.advance(1000);
+    expect(first.currentTime).toBe(500);
+    expect(second.currentTime).toBe(2000);
+    expect(nodes[0].style.pointerEvents).toBe('auto');
+    nodes[0].onmouseleave?.();
+    first.advance(100);
+    expect(first.currentTime).toBe(700);
+    expect(first.assignedTimes).toEqual([]);
+    renderer.destroy();
+    expect(nodes[0].onmouseenter).toBeNull();
+    expect(nodes[0].onmouseleave).toBeNull();
+  });
+  it('视频恢复时悬停弹幕仍暂停，视频暂停时移开也不会启动弹幕', () => {
+    const { renderer, nodes, input } = setup();
+    renderer.tick(0, input, 1);
+    const animation = nodes[0].animations[0];
+    nodes[0].onmouseenter?.();
+    renderer.setPlaybackRate(0);
+    renderer.setPlaybackRate(1);
+    animation.advance(1000);
+    expect(animation.currentTime).toBe(0);
+    renderer.setPlaybackRate(0);
+    nodes[0].onmouseleave?.();
+    animation.advance(1000);
+    expect(animation.currentTime).toBe(0);
+    renderer.setPlaybackRate(1);
+    animation.advance(100);
+    expect(animation.currentTime).toBe(100);
+  });
   it('创建一次完整的线性出入场轨迹，媒体时钟反复停住也不重建或逐帧改位置', () => {
     const { renderer, nodes, input } = setup();
     renderer.tick(0, input, 1);
