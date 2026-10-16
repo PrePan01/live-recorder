@@ -13,6 +13,17 @@ const ROOMS_CACHE_MS = 30_000;
 // mutation. The old request may still be useful to its original callers, but
 // its response is no longer authoritative for the current epoch.
 const recordingRequests = new Map<string, Promise<void>>();
+const roomWrites = new Map<string, Promise<void>>();
+
+/** Serialize all policy edits, including writes from other pages and batch actions. */
+function queueRoomWrite(id: string, write: () => Promise<void>): Promise<void> {
+  const task = (roomWrites.get(id) ?? Promise.resolve()).catch(() => undefined).then(write);
+  roomWrites.set(id, task);
+  void task.finally(() => {
+    if (roomWrites.get(id) === task) roomWrites.delete(id);
+  }).catch(() => undefined);
+  return task;
+}
 
 function invalidateRoomsRequest(): void {
   roomsEpoch += 1;
@@ -23,7 +34,11 @@ function normalizeRoom(room: Room): Room {
     ...room,
     favorited: room.favorited ?? false,
     autoRecord: room.autoRecord ?? null,
+    danmakuEnabled: room.danmakuEnabled ?? null,
+    checkIntervalSec: room.checkIntervalSec ?? null,
+    quality: room.quality ?? null,
     liveNotificationEnabled: room.liveNotificationEnabled ?? false,
+    liveEmailNotificationEnabled: room.liveEmailNotificationEnabled ?? false,
     lastLiveStatus: room.lastLiveStatus ?? null,
     liveCoverUrl: room.liveCoverUrl ?? null,
     currentStreamTitle: room.currentStreamTitle ?? null,
@@ -127,8 +142,10 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     return res;
   },
   async editRoom(id, input) {
-    invalidateRoomsRequest();
-    get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, input)));
+    return queueRoomWrite(id, async () => {
+      invalidateRoomsRequest();
+      get().upsertRoom(normalizeRoom(await roomsApi.updateRoom(id, input)));
+    });
   },
   async removeRoom(id) {
     await roomsApi.deleteRoom(id);
@@ -136,8 +153,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     set((s) => ({ rooms: s.rooms.filter((r) => r.id !== id) }));
   },
   async toggleRoom(id, enabled) {
-    invalidateRoomsRequest();
-    get().upsertRoom(normalizeRoom(await roomsApi.setRoomEnabled(id, enabled)));
+    return get().editRoom(id, { enabled });
   },
   async favoriteRoom(id, favorited) {
     invalidateRoomsRequest();
@@ -146,22 +162,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     );
   },
   async setAutoRecord(id, value) {
-    invalidateRoomsRequest();
-    get().upsertRoom(
-      normalizeRoom(await roomsApi.updateRoom(id, { autoRecord: value })),
-    );
+    return get().editRoom(id, { autoRecord: value });
   },
   async setDanmakuEnabled(id, value) {
-    invalidateRoomsRequest();
-    get().upsertRoom(
-      normalizeRoom(await roomsApi.updateRoom(id, { danmakuEnabled: value })),
-    );
+    return get().editRoom(id, { danmakuEnabled: value });
   },
   async setLiveNotification(id, value) {
-    invalidateRoomsRequest();
-    get().upsertRoom(
-      normalizeRoom(await roomsApi.updateRoom(id, { liveNotificationEnabled: value })),
-    );
+    return get().editRoom(id, { liveNotificationEnabled: value });
   },
   async checkRoomNow(id) {
     invalidateRoomsRequest();

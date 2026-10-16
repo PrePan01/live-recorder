@@ -1034,6 +1034,19 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     const sources = db.prepare('SELECT profile_url,room_url FROM xiaohongshu_sources').all() as Array<{ profile_url: string; room_url: string }>;
     for (const source of sources) saveXiaohongshuSource(db, source.profile_url, source.room_url);
   } },
+  { version: 53, up: db => {
+    ensureColumn(db, 'rooms', 'check_interval_sec', 'check_interval_sec INTEGER');
+    ensureColumn(db, 'rooms', 'quality', 'quality TEXT');
+  } },
+  { version: 54, up: db => {
+    ensureColumn(db, 'rooms', 'live_email_notification_enabled', 'live_email_notification_enabled INTEGER NOT NULL DEFAULT 0');
+  } },
+  { version: 55, up: db => {
+    // 将旧版任一渠道订阅合并为开播提醒，并清空废弃渠道位，避免后续备份再次开启已关闭的提醒。
+    db.exec(`UPDATE rooms SET
+      live_notification_enabled = CASE WHEN live_notification_enabled = 1 OR live_email_notification_enabled = 1 THEN 1 ELSE 0 END,
+      live_email_notification_enabled = 0`);
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

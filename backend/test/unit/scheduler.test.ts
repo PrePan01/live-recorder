@@ -1,13 +1,14 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
+import { DouyinAdapter } from '../../src/platform/douyin.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
-import type { AppSettings, ScheduleDay } from '../../src/types/index.js';
+import { DEFAULT_NOTIFICATION_PREFERENCE, type AppSettings, type ScheduleDay } from '../../src/types/index.js';
 import { AppError } from '../../src/types/error.js';
 
 function newServices(): { services: Services; clock: FakeClock } {
@@ -158,7 +159,7 @@ describe('Scheduler', () => {
       mail: { enabled: true, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'u@x.com', recipients: ['me@x.com'] },
       notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
     });
-    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true, liveEmailNotificationEnabled: true });
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
     const notices: Array<{ title: string; body: string }> = [];
     services.events.on((event) => {
@@ -195,6 +196,83 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(gated.id);
 
     expect(notices).toEqual([]);
+  });
+
+  it.each([
+    { reminder: true, desktop: true, email: true, globalMail: true, legacyEmail: false, expectedDesktop: 1, expectedMail: 1 },
+    { reminder: true, desktop: false, email: true, globalMail: true, legacyEmail: false, expectedDesktop: 0, expectedMail: 1 },
+    { reminder: true, desktop: true, email: false, globalMail: true, legacyEmail: true, expectedDesktop: 1, expectedMail: 0 },
+    { reminder: true, desktop: true, email: true, globalMail: false, legacyEmail: true, expectedDesktop: 1, expectedMail: 0 },
+    { reminder: false, desktop: true, email: true, globalMail: true, legacyEmail: true, expectedDesktop: 0, expectedMail: 0 },
+  ])('gates only live reminders per room and selects channels globally: %j', async (options) => {
+    const { services } = newServices();
+    services.settings.save({
+      ...baseSettings(), autoRecord: false,
+      mail: { enabled: options.globalMail, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'u@x.com', recipients: ['me@x.com'] },
+      notifications: {
+        ...DEFAULT_NOTIFICATION_PREFERENCE,
+        desktop: { ...DEFAULT_NOTIFICATION_PREFERENCE.desktop, liveStarted: options.desktop },
+        email: { ...DEFAULT_NOTIFICATION_PREFERENCE.email, liveStarted: options.email },
+      },
+    });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/606', displayName: '开播提醒', liveNotificationEnabled: options.reminder, liveEmailNotificationEnabled: options.legacyEmail });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
+    const notices: string[] = [];
+    services.events.on(event => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(notices).toHaveLength(options.expectedDesktop);
+    expect((services.mailer as FakeMailer).sent).toHaveLength(options.expectedMail);
+    services.db.close();
+  });
+
+  it.each([false, true])('uses the latest room reminder when it changes during a check (enabled=%s)', async (enabled) => {
+    const { services } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/607', displayName: '即时设置', liveNotificationEnabled: !enabled });
+    services.rooms.setLiveStatus(room.id, 'offline');
+    const notices: string[] = [];
+    services.events.on(event => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
+    vi.spyOn(services.adapterFor('bilibili'), 'checkLiveStatus').mockImplementationOnce(async () => {
+      services.rooms.update(room.id, { liveNotificationEnabled: enabled });
+      return { status: 'live' };
+    });
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(notices).toHaveLength(enabled ? 1 : 0);
+    services.db.close();
+  });
+
+  it('still announces a subscribed broadcast when automatic recording fails to start', async () => {
+    const { services } = newServices();
+    services.settings.save(baseSettings());
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/608', displayName: '启动失败', liveNotificationEnabled: true });
+    services.rooms.setLiveStatus(room.id, 'offline');
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live' }]);
+    vi.spyOn(services.manager, 'maybeStartRecording').mockRejectedValueOnce(new Error('cannot start'));
+    const notices: string[] = [];
+    services.events.on(event => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(notices).toEqual(['您订阅的 启动失败 已开播']);
+    expect(services.rooms.get(room.id)!.lastError?.code).toBe('RECORDING_START_FAILED');
+    services.db.close();
+  });
+
+  it.each([false, true])('rechecks the reminder after waiting for automatic recording (enabled=%s)', async (enabled) => {
+    const { services } = newServices();
+    services.settings.save(baseSettings());
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/609', displayName: '最新订阅', liveNotificationEnabled: !enabled });
+    services.rooms.setLiveStatus(room.id, 'offline');
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'live' }]);
+    vi.spyOn(services.manager, 'maybeStartRecording').mockImplementationOnce(async () => {
+      services.rooms.update(room.id, { liveNotificationEnabled: enabled });
+      return false;
+    });
+    const notices: string[] = [];
+    services.events.on(event => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(notices).toHaveLength(enabled ? 1 : 0);
+    services.db.close();
   });
 
   it('persists initial-live discovery separately from an offline-to-live transition', async () => {
@@ -835,6 +913,63 @@ describe('Scheduler', () => {
     await services.secretStore.delete('douyin.cookie');
     await services.scheduler.triggerImmediateCheck(room.id);
     expect(seenCookie).toBeUndefined();
+  });
+
+  it('immediately exposes missing douyin authorization and clears the warning after authorization recovers', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/70', displayName: 'login required' });
+    const fetcher = vi.fn<typeof fetch>();
+    const adapter = new DouyinAdapter(fetcher);
+    services.adapterFor = () => adapter;
+    const updates: Array<{ lastLiveStatus: string | null; lastError: { code: string } | null }> = [];
+    services.events.on((event) => {
+      if (event.type === 'room:updated' && event.data.id === room.id) updates.push(event.data);
+    });
+
+    await services.scheduler.triggerImmediateCheck(room.id);
+
+    expect(services.rooms.get(room.id)).toMatchObject({
+      lastLiveStatus: 'restricted',
+      monitorState: 'failed',
+      lastError: { code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查抖音授权' },
+    });
+    expect(updates.at(-1)).toMatchObject({ lastLiveStatus: 'restricted', lastError: { code: 'PLATFORM_ACCESS_RESTRICTED' } });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(services.alerts.list({ unresolvedOnly: true })).toMatchObject([
+      { roomId: room.id, level: 'warning', errorCode: 'PLATFORM_ACCESS_RESTRICTED' },
+    ]);
+
+    // 重复检测刷新同一条告警，不需要等待计票，也不应重复创建。
+    await services.scheduler.triggerImmediateCheck(room.id);
+    expect(services.rooms.get(room.id)!.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(1);
+
+    await services.secretStore.set('douyin.cookie', 'sessionid=authorized');
+    const recovered = new FakePlatformAdapter('douyin');
+    recovered.setScript([{ status: 'offline' }]);
+    services.adapterFor = () => recovered;
+    await services.scheduler.recheckDouyinRoomsAfterCookieUpdate();
+    expect(services.rooms.get(room.id)).toMatchObject({ lastLiveStatus: 'offline', monitorState: 'idle', lastError: null });
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(0);
+  });
+
+  it.each([
+    { cookie: 'sessionid=authorized', status: 'restricted' as const, code: 'PLATFORM_ACCESS_RESTRICTED' },
+    { cookie: undefined, status: 'error' as const, code: 'NETWORK_UNAVAILABLE' },
+  ])('keeps the error gate for douyin $code (cookie=$cookie)', async ({ cookie, status, code }) => {
+    const { services, clock } = newServices();
+    if (cookie) await services.secretStore.set('douyin.cookie', cookie);
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/74', displayName: 'temporary failure' });
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript(
+      Array.from({ length: 3 }, () => ({ status, error: new AppError(code, 'temporary failure').toObject() })),
+    );
+
+    for (let vote = 1; vote <= 3; vote += 1) {
+      await services.scheduler.triggerImmediateCheck(room.id);
+      expect(services.rooms.get(room.id)!.lastError?.code ?? null).toBe(vote === 3 ? code : null);
+      expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(vote === 3 ? 1 : 0);
+      clock.advance(60_001);
+    }
   });
 
   it('marks every douyin room and skips further checks after an explicit cookie-expired response', async () => {

@@ -21,7 +21,7 @@ describe('Xiaohongshu database upgrade', () => {
         CREATE INDEX idx_custom_room_name ON rooms(display_name);
         CREATE TABLE custom_child(room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE);
         INSERT INTO custom_child VALUES ('b');`);
-      expect(runMigrations(db)).toBe(3);
+      expect(runMigrations(db)).toBe(6);
       expect(db.prepare('SELECT extension FROM rooms WHERE id=?').get('b')).toEqual({ extension: 'preserved' });
       expect(db.prepare('SELECT * FROM custom_child').all()).toEqual([{ room_id: 'b' }]);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_custom_room_name'").get()).toBeTruthy();
@@ -32,11 +32,11 @@ describe('Xiaohongshu database upgrade', () => {
       expect(() => db.exec("INSERT INTO rooms(id,platform,url) VALUES ('bad','unknown','https://example.com')")).toThrow();
     } finally { db.close(); }
   });
-  it('upgrades a v49 database to v52, keeps profile request params, and stays idempotent', () => {
+  it('upgrades a v49 database to v55, keeps profile request params, and stays idempotent', () => {
     const db = oldDatabase();
     try {
-      expect(runMigrations(db)).toBe(3);
-      expect(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get()).toEqual({ version: 52 });
+      expect(runMigrations(db)).toBe(6);
+      expect(db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get()).toEqual({ version: 55 });
       const columns = (db.prepare('PRAGMA table_info(xiaohongshu_sources)').all() as Array<{ name: string }>).map(c => c.name);
       expect(columns).toEqual(expect.arrayContaining(['profile_url', 'room_url', 'profile_request_url']));
       db.prepare('INSERT INTO xiaohongshu_sources(profile_url, room_url, profile_request_url) VALUES (?,?,?)')
@@ -63,7 +63,7 @@ describe('Xiaohongshu database upgrade', () => {
       db.prepare("INSERT INTO rooms(id,platform,url,display_name) VALUES ('x','xiaohongshu',?,'主播')").run(profile);
       db.exec("CREATE TABLE history_child(room_id TEXT REFERENCES rooms(id)); INSERT INTO history_child VALUES ('x')");
       db.prepare('INSERT INTO xiaohongshu_sources(profile_url,room_url) VALUES (?,?)').run(profile, live);
-      expect(runMigrations(db)).toBe(1);
+      expect(runMigrations(db)).toBe(4);
       expect(db.prepare('SELECT id,url,display_name FROM rooms').get()).toEqual({ id: 'x', url: live, display_name: '主播' });
       expect(db.prepare('SELECT * FROM history_child').get()).toEqual({ room_id: 'x' });
       expect(db.pragma('foreign_key_check')).toEqual([]);

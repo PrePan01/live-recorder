@@ -1,3 +1,4 @@
+import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../types/error.js";
 import type { Platform } from "../../types/index.js";
@@ -254,6 +255,11 @@ export function registerRoomRoutes(
       displayName?: string;
       enabled?: boolean;
       liveNotificationEnabled?: boolean;
+      liveEmailNotificationEnabled?: boolean;
+      checkIntervalSec?: number | null;
+      quality?: import("../../types/index.js").Quality | null;
+      autoRecord?: boolean | null;
+      danmakuEnabled?: boolean | null;
     };
     if (typeof body.url !== "string" || body.url.trim().length === 0) {
       throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
@@ -270,22 +276,15 @@ export function registerRoomRoutes(
     if (!platform || !services.adapterFor(platform).validateUrl(body.url)) {
       throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
     }
+    const policy = validateRoomPolicy(body);
     const adapter = services.adapterFor(platform);
-    if (
-      body.liveNotificationEnabled !== undefined &&
-      typeof body.liveNotificationEnabled !== "boolean"
-    ) {
-      throw new AppError(
-        "ROOM_LINK_INVALID",
-        "liveNotificationEnabled 必须为布尔值",
-      );
-    }
     const room = services.rooms.create({
       platform,
       url: adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(platform)) : adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === "string" ? body.displayName : "",
       enabled: body.enabled ?? true,
       liveNotificationEnabled: body.liveNotificationEnabled ?? false,
+      ...policy,
     });
     // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
     // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
@@ -375,7 +374,8 @@ export function registerRoomRoutes(
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
       uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
-    };
+    } & RoomPolicyPatch;
+    const policy = validateRoomPolicy(body);
     const patch: {
       url?: string;
       displayName?: string;
@@ -383,7 +383,7 @@ export function registerRoomRoutes(
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
       uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
-    } = {};
+    } & RoomPolicyPatch = { ...policy };
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
       const adapter = services.adapterFor(existing?.platform ?? "bilibili");
@@ -395,39 +395,6 @@ export function registerRoomRoutes(
       patch.url = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(existing!.platform)) : adapter.normalizeUrl(body.url);
     }
     if (body.displayName !== undefined) patch.displayName = body.displayName;
-    if (body.enabled !== undefined) patch.enabled = body.enabled;
-    if (body.autoRecord !== undefined) {
-      // null=恢复继承全局；布尔=单独覆盖。
-      if (body.autoRecord !== null && typeof body.autoRecord !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "autoRecord 必须为布尔值或 null",
-          { roomId: id },
-        );
-      }
-      patch.autoRecord = body.autoRecord;
-    }
-    if (body.liveNotificationEnabled !== undefined) {
-      if (typeof body.liveNotificationEnabled !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "liveNotificationEnabled 必须为布尔值",
-          { roomId: id },
-        );
-      }
-      patch.liveNotificationEnabled = body.liveNotificationEnabled;
-    }
-    if (body.danmakuEnabled !== undefined) {
-      // null=恢复继承全局；布尔=单独覆盖（与 autoRecord 同语义）。
-      if (body.danmakuEnabled !== null && typeof body.danmakuEnabled !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "danmakuEnabled 必须为布尔值或 null",
-          { roomId: id },
-        );
-      }
-      patch.danmakuEnabled = body.danmakuEnabled;
-    }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。
       if (
@@ -499,6 +466,7 @@ export function registerRoomRoutes(
     await services.manager.stopPreviewStream(id);
     await services.manager.disableHighlightBuffer(id);
     services.rooms.remove(id);
+    services.scheduler.reschedule();
     services.events.emit({
       type: "room:updated",
       data: enrich({ ...existing, enabled: false, monitorState: "disabled" }),

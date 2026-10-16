@@ -1,3 +1,4 @@
+import { platformCheckInterval } from '../config/room-policy.js';
 import { type ErrorObject, type Platform, type Room } from "../types/index.js";
 import type { PlatformAdapter } from "../platform/adapter.js";
 import { AppError } from "../types/error.js";
@@ -24,6 +25,10 @@ const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
 
 export class Scheduler {
   private running = false;
+  private completedChecks = new Map<string, number>();
+  private platformTasks = new Map<Platform, Promise<void>>();
+  private policySignatures = new Map<string, string>();
+  private pollingRooms = new Map<string, Room>();
   private handles = new Map<Platform, unknown>();
   private dueByPlatform = new Map<Platform, string[]>();
   /** 同一房间的手动与后台检测共用一次上游请求，避免页面切换/连点造成重复探测。 */
@@ -43,18 +48,61 @@ export class Scheduler {
   constructor(
     private services: Services,
     private manager: RecorderManager,
-  ) {}
+  ) {
+    services.events.on(event => {
+      if (event.type === 'settings:updated' || event.type === 'schedule:updated') {
+        for (const platform of PLATFORMS) this.scheduleNext(platform);
+      }
+      if (event.type === 'room:updated') {
+        const room = event.data;
+        const previous = this.pollingRooms.get(room.id);
+        this.pollingRooms.set(room.id, room);
+        const signature = JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, manager.isRoomActive(room.id)]);
+        if (this.policySignatures.get(room.id) !== signature) {
+          this.policySignatures.set(room.id, signature);
+          this.scheduleNext(room.platform);
+          if (previous && previous.platform !== room.platform) this.scheduleNext(previous.platform);
+        }
+      }
+    });
+  }
+
+  /** Re-arm one timer per platform, never start a second platform worker. */
+  reschedule(): void {
+    if (!this.running) return;
+    const rooms = this.services.rooms.list();
+    this.pollingRooms = new Map(rooms.map(room => [room.id, room]));
+    const ids = new Set(this.pollingRooms.keys());
+    for (const id of this.completedChecks.keys()) if (!ids.has(id)) this.completedChecks.delete(id);
+    for (const id of this.policySignatures.keys()) if (!ids.has(id)) this.policySignatures.delete(id);
+    for (const platform of PLATFORMS) if (!this.platformTasks.has(platform)) this.scheduleNext(platform);
+  }
+
+  private runPlatformOnce(platform: Platform): Promise<void> {
+    const pending = this.platformTasks.get(platform);
+    if (pending) return pending;
+    const task = this.runPlatform(platform).finally(() => {
+      this.platformTasks.delete(platform);
+      this.scheduleNext(platform);
+    });
+    this.platformTasks.set(platform, task);
+    return task;
+  }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.completedChecks.clear();
+    const rooms = this.services.rooms.list();
+    this.pollingRooms = new Map(rooms.map(room => [room.id, room]));
+    this.policySignatures = new Map(rooms.map(room => [room.id,
+      JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, this.manager.isRoomActive(room.id)])]));
     // 启动后先完成一轮检测，再开始按平台间隔轮询；恢复服务无需额外等待一个周期。
     for (const platform of PLATFORMS) {
-      void this.runPlatform(platform)
+      void this.runPlatformOnce(platform)
         .catch((error: unknown) => {
           console.error(`scheduler ${platform} check failed`, error);
-        })
-        .finally(() => this.scheduleNext(platform));
+        });
     }
   }
 
@@ -74,24 +122,30 @@ export class Scheduler {
   }
 
   intervalFor(platform: Platform): number {
-    const ci = this.services.settings.load()?.checkIntervalSec ?? {
-      default: 60,
-      bilibili: 60,
-      douyin: 120,
-    };
-    return ci[platform] ?? (platform === "xiaohongshu" ? 120 : ci.default);
+    return platformCheckInterval(platform, this.services.settings.load());
   }
 
   private scheduleNext(platform: Platform): void {
-    if (!this.running) return;
-    const ms = this.intervalFor(platform) * 1000;
+    if (!this.running || this.platformTasks.has(platform)) return;
+    const previous = this.handles.get(platform);
+    if (previous !== undefined) this.services.clock.clearTimeout(previous);
+    const now = this.services.clock.now();
+    // Keep the former platform cadence as the maximum delay for schedule/prediction work.
+    const platformIntervalMs = this.intervalFor(platform) * 1000;
+    let next = now + platformIntervalMs;
+    if (!(platform === 'douyin' && this.douyinCookieExpired)) {
+      for (const room of this.pollingRooms.values()) {
+        if (!room.enabled || room.platform !== platform || this.manager.isRoomActive(room.id) || this.checking.has(room.id)) continue;
+        const completed = this.completedChecks.get(room.id);
+        next = Math.min(next, completed === undefined ? now : completed + (room.checkIntervalSec == null ? platformIntervalMs : room.checkIntervalSec * 1000));
+      }
+    }
     const handle = this.services.clock.setTimeout(() => {
-      void this.runPlatform(platform)
-        .catch((error: unknown) => {
-          console.error(`scheduler ${platform} check failed`, error);
-        })
-        .finally(() => this.scheduleNext(platform));
-    }, ms);
+      this.handles.delete(platform);
+      void this.runPlatformOnce(platform).catch((error: unknown) => {
+        console.error(`scheduler ${platform} check failed`, error);
+      });
+    }, Math.min(2_147_483_647, Math.max(1, next - now)));
     this.handles.set(platform, handle);
   }
 
@@ -112,8 +166,13 @@ export class Scheduler {
     const rooms = this.services.rooms
       .listEnabled()
       .filter((r) => r.platform === platform);
+    const platformIntervalMs = this.intervalFor(platform) * 1000;
     await this.runChecks(
-      rooms.filter((room) => !this.manager.isRoomActive(room.id)),
+      rooms.filter((room) => {
+        const completed = this.completedChecks.get(room.id);
+        return !this.manager.isRoomActive(room.id) && (completed === undefined ||
+          this.services.clock.now() >= completed + (room.checkIntervalSec == null ? platformIntervalMs : room.checkIntervalSec * 1000));
+      }),
     );
   }
 
@@ -270,9 +329,11 @@ export class Scheduler {
     const pending = this.checking.get(room.id);
     if (pending) return pending;
 
-    const task = this.runCheckRoom(room, opts).finally(() =>
-      this.checking.delete(room.id),
-    );
+    const task = this.runCheckRoom(room, opts).finally(() => {
+      this.checking.delete(room.id);
+      this.completedChecks.set(room.id, this.services.clock.now());
+      if (!this.platformTasks.has(room.platform)) this.scheduleNext(room.platform);
+    });
     this.checking.set(room.id, task);
     return task;
   }
@@ -496,10 +557,11 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      const shouldNotifyLiveStarted =
-        room.lastLiveStatus === "offline" &&
-        checkedRoom.enabled &&
-        checkedRoom.liveNotificationEnabled;
+      const shouldNotifyLiveStarted = () => {
+        const currentRoom = this.services.rooms.get(room.id);
+        return room.lastLiveStatus === "offline" &&
+          currentRoom?.enabled && currentRoom.liveNotificationEnabled;
+      };
       if (opts.nameOnly) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
@@ -520,26 +582,21 @@ export class Scheduler {
           lastError: null,
         });
         this.emitRoom(room.id);
-        if (shouldNotifyLiveStarted) {
+        if (shouldNotifyLiveStarted()) {
           await this.services.notifier.notify("live_started", room.id, {
             title: checkedRoom.displayName,
           });
         }
         return;
       }
+      let autoRecordingStarted = false;
       try {
         const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
-        const started = await this.manager.maybeStartRecording(
+        autoRecordingStarted = await this.manager.maybeStartRecording(
           { ...refreshedRoom, monitorState: "checking" },
           status,
           { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
         );
-        if (shouldNotifyLiveStarted) {
-          await this.services.notifier.notify("live_started", room.id, {
-            title: checkedRoom.displayName,
-            autoRecordingStarted: started,
-          });
-        }
       } catch (err) {
         const appErr =
           err instanceof AppError
@@ -560,6 +617,13 @@ export class Scheduler {
           retryable: appErr.retryable,
         });
         this.services.events.emit({ type: "alert:created", data: alert });
+      }
+      // 开播事实与自动录制能否启动相互独立，启动失败也不能吞掉已订阅的开播提醒。
+      if (shouldNotifyLiveStarted()) {
+        await this.services.notifier.notify("live_started", room.id, {
+          title: this.services.rooms.get(room.id)?.displayName ?? checkedRoom.displayName,
+          autoRecordingStarted,
+        });
       }
       return;
     }
@@ -592,8 +656,15 @@ export class Scheduler {
       this.markDouyinCookieExpired();
       return;
     }
-    if (this.checkErrorGate(room.id, err.code)) {
-      // 满 3 票（同房同码、票距≥60s）：恢复原有行为——卡片标红 + 进告警中心（不发桌面通知）。
+    // 本地明确缺少抖音凭证时，重试不能恢复；立即保留授权提示，不等待瞬时故障的三票门。
+    const missingDouyinAuthorization =
+      room.platform === "douyin" &&
+      !cookie &&
+      status.status === "restricted" &&
+      err.code === "PLATFORM_ACCESS_RESTRICTED";
+    if (missingDouyinAuthorization) this.clearErrorVotes(room.id);
+    if (missingDouyinAuthorization || this.checkErrorGate(room.id, err.code)) {
+      // 明确未授权或满 3 票：卡片显示错误 + 进告警中心（不发桌面通知）。
       this.setCheckFailure(room.id, err);
       this.createCheckAlert(
         room,

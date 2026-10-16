@@ -29,12 +29,17 @@ export interface Room {
   /** 主播头像 CDN 地址（平台检测周期顺带写入，历史房间可能为 null；UI 需兑底）。 */
   liveCoverUrl?: string | null;
   avatarUrl: string | null;
+  /** null inherits the current platform/global setting. */
+  checkIntervalSec?: number | null;
+  quality?: Quality | null;
   enabled: boolean;
   favorited: boolean;
   /** 是否单独设置自动录制：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
   autoRecord: boolean | null;
-  /** 是否在该直播间离线转开播时发送桌面提醒；默认关闭。 */
+  /** 是否订阅开播提醒；桌面和邮件渠道由全局通知偏好决定。 */
   liveNotificationEnabled: boolean;
+  /** 历史字段，仅兼容旧数据，不参与通知控制。 */
+  liveEmailNotificationEnabled?: boolean;
   /** 弹幕采集覆盖：未设置(null/undefined)=继承全局 settings.danmaku.enabled；false=该房间不采。 */
   danmakuEnabled?: boolean | null;
   /** 最近一次检测的直播状态：live/offline/restricted，未检测过为 null。 */

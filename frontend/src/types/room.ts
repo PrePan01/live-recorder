@@ -23,6 +23,9 @@ export interface Room {
   url: string;
   liveRoomUrl?: string;
   displayName: string;
+  checkIntervalSec?: number | null;
+  quality?: Quality | null;
+  danmakuEnabled?: boolean | null;
   enabled: boolean;
   monitorState: MonitorState;
   lastLiveStatus: LiveStatus | null;
@@ -30,7 +33,10 @@ export interface Room {
   lastError: ApiErrorEnvelope | null;
   favorited: boolean;
   autoRecord: boolean | null;
+  /** 是否订阅开播提醒；桌面和邮件渠道由全局通知偏好决定。 */
   liveNotificationEnabled: boolean;
+  /** 历史字段，仅兼容旧数据，不参与通知控制。 */
+  liveEmailNotificationEnabled?: boolean;
   currentStreamTitle: string | null;
   /** 最近一次检测时该房间实际能录到的清晰度；未开播或平台未给出时为空。 */
   availableQualities: Quality[];
@@ -58,15 +64,25 @@ export interface RoomCreateInput {
   url: string;
   displayName?: string;
   cookie?: string;
+  enabled?: boolean;
+  autoRecord?: boolean | null;
+  danmakuEnabled?: boolean | null;
+  checkIntervalSec?: number | null;
+  quality?: Quality | null;
   liveNotificationEnabled?: boolean;
+  liveEmailNotificationEnabled?: boolean;
 }
 
 export interface RoomUpdateInput {
+  enabled?: boolean;
+  checkIntervalSec?: number | null;
+  quality?: Quality | null;
   url?: string;
   displayName?: string;
   cookie?: string;
   autoRecord?: boolean | null;
   liveNotificationEnabled?: boolean;
+  liveEmailNotificationEnabled?: boolean;
   uploadEnabled?: boolean | null;
   danmakuEnabled?: boolean | null;
 }

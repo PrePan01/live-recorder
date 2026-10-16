@@ -958,6 +958,7 @@ describe("RecorderManager", () => {
       platform: "bilibili",
       url: "https://live.bilibili.com/17",
       displayName: "L",
+      liveEmailNotificationEnabled: true,
     });
 
     // 空间不足只提醒、不拦下录制：能不能录交给实际写入决定（写不进去时会有明确失败原因）。
@@ -1876,6 +1877,7 @@ describe("shared preview watchdog lifecycle", () => {
     expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(3);
     expect(services.manager.recordingPreviewOffsetSeconds(room.id, rec.id)).toBe(-45);
     clock.advance(4000); await send(52000);
+    await waitFor(() => services.manager.recordingMediaTailSeconds(room.id, rec.id) === 7);
     expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(7);
     const { buildApp } = await import("../../src/api/server.js");
     const { app } = buildApp(services);
@@ -2048,5 +2050,84 @@ describe('Xiaohongshu broadcast-bound recovery', () => {
       expect(resolve.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(resolve.mock.calls.every(call => call[3]?.streamSessionId === '123')).toBe(true);
     } finally { await services.manager.shutdown(); }
+  });
+});
+
+describe('per-room recording quality', () => {
+  it.each([{ manual: true }, { scheduled: true }, {}])('uses the room target for each recording origin: %j', async opts => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-room-quality-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.engineFor = () => new FakeRecordingEngine(clock, { frames: 100 });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9910', displayName: 'quality', quality: '720p' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    const lookup = vi.spyOn(adapter, 'getStreamUrl').mockImplementation(async (url, quality) => ({ url: `fake://${url}?q=${quality}`, format: 'flv', actualQuality: '360p' }));
+    try {
+      expect(await services.manager.maybeStartRecording(room, { streamSessionId: 'quality' }, opts)).toBe(true);
+      const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+      expect(rec).toMatchObject({ expectedQuality: '720p', quality: '360p' });
+      expect(lookup.mock.calls[0]![1]).toBe('720p');
+      await waitFor(() => Boolean(services.recordings.get(rec.id)!.filePath) && statSync(services.recordings.get(rec.id)!.filePath!).size > 13);
+      await services.manager.stopRecording(room.id);
+    } finally { await services.manager.shutdown(); services.quality.stop(); }
+  });
+
+  it('keeps the opening target across natural-end recovery after room and global preferences change', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-quality-recovery-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    let engines = 0;
+    services.engineFor = () => new FakeRecordingEngine(clock, { frames: ++engines === 1 ? 1 : 100 });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9911', displayName: 'snapshot', quality: '720p' });
+    const adapter = services.adapterFor('bilibili') as FakePlatformAdapter;
+    vi.spyOn(adapter, 'checkLiveStatus').mockResolvedValue({ status: 'live', streamSessionId: 'same-session' });
+    const lookup = vi.spyOn(adapter, 'getStreamUrl');
+    try {
+      await services.manager.maybeStartRecording(room, { streamSessionId: 'same-session' }, { manual: true });
+      const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+      await waitFor(() => Boolean(services.recordings.get(rec.id)!.filePath) && statSync(services.recordings.get(rec.id)!.filePath!).size > 13);
+      services.rooms.update(room.id, { quality: '360p' });
+      services.settings.save({ ...services.settings.load()!, quality: '1080p' });
+      await waitForWithClock(clock, () => engines >= 2);
+      expect(lookup.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(lookup.mock.calls.every(call => call[1] === '720p')).toBe(true);
+      expect(services.recordings.get(rec.id)!.expectedQuality).toBe('720p');
+      await services.manager.stopRecording(room.id);
+      await services.manager.maybeStartRecording(room, { streamSessionId: 'new-session' }, { manual: true });
+      expect(lookup.mock.calls.at(-1)![1]).toBe('360p');
+      await services.manager.stopRecording(room.id);
+    } finally { await services.manager.shutdown(); services.quality.stop(); }
+  });
+
+  it('records independently when preview quality differs, keeping the viewer uninterrupted', async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-quality-preview-'));
+    const services = buildServices({ dbPath: ':memory:', clock });
+    services.settings.save(baseSettings(dir));
+    services.engineFor = () => new FakeRecordingEngine(clock, { frames: 100 });
+    const preview = new FakePreview(); services.manager.preview = preview;
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/9912', displayName: 'viewer', quality: '720p' });
+    services.rooms.setLiveStatus(room.id, 'live');
+    const lookup = vi.spyOn(services.adapterFor('bilibili'), 'getStreamUrl');
+    try {
+      await services.manager.ensurePreviewStream(room.id);
+      await waitFor(() => services.manager.isPreviewReadyForRecording(room.id));
+      const viewerFrames = preview.frames.get(room.id);
+      await services.manager.maybeStartRecording(room, { streamSessionId: 'separate' }, { manual: true });
+      const rec = services.recordings.list({ roomId: room.id }).items[0]!;
+      await waitFor(() => Boolean(services.recordings.get(rec.id)!.filePath) && statSync(services.recordings.get(rec.id)!.filePath!).size > 13);
+      expect(lookup.mock.calls.map(call => call[1])).toEqual(['original', '720p']);
+      expect(preview.frames.get(room.id)).toBe(viewerFrames);
+      expect(preview.resets).toEqual([]);
+      expect(preview.closed).toEqual([]);
+      await services.manager.stopRecording(room.id);
+      expect(services.manager.isPreviewStreaming(room.id)).toBe(true);
+      expect(preview.closed).toEqual([]);
+      await settle(clock, 500);
+      expect(preview.frames.get(room.id)!).toBeGreaterThan(viewerFrames!);
+      await services.manager.stopPreviewStream(room.id);
+    } finally { await services.manager.shutdown(); services.quality.stop(); }
   });
 });

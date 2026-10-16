@@ -1,3 +1,4 @@
+import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
 import { saveXiaohongshuSource } from '../../platform/xiaohongshu-source-store.js';
 import { writeFile } from 'node:fs/promises';
 import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../platform/xiaohongshu-url.js';
@@ -55,7 +56,7 @@ export interface ExportConfig {
 export interface ImportConfigInput {
   version?: number;
   settings?: Partial<AppSettings>;
-  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; danmakuEnabled?: boolean | null; tags?: unknown[] }>;
+  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; danmakuEnabled?: boolean | null; tags?: unknown[] } & RoomPolicyPatch>;
   tags?: unknown[];
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
   recordings?: unknown;
@@ -180,7 +181,7 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
     version: 1,
     exportedAt: services.clock.iso(),
     settings: await settingsView(services),
-    rooms: services.rooms.list(),
+    rooms: services.rooms.list().map(room => ({ ...room, liveEmailNotificationEnabled: false })),
     tags: services.tags.list(),
     alerts: services.alerts.list(),
     recordings: exportRecordingArchive(services),
@@ -290,6 +291,10 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
       try {
         for (const item of incoming.rooms) {
           if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin' && item.platform !== 'xiaohongshu')) continue;
+          const policy = validateRoomPolicy({ ...item });
+          // 旧版备份可能仅订阅邮件；新版将其并入开播提醒，废弃位不再保留为开启状态。
+          if (policy.liveEmailNotificationEnabled === true) policy.liveNotificationEnabled = true;
+          if (policy.liveEmailNotificationEnabled !== undefined) policy.liveEmailNotificationEnabled = false;
           const url = persistedRoomUrl(services, item.platform, item.url);
           const key = `${item.platform}|${url}`;
           let room = existing.get(key);
@@ -304,9 +309,7 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
             existing.set(key, room);
             importedRooms += 1;
           }
-          if (item.danmakuEnabled === null || typeof item.danmakuEnabled === 'boolean') {
-            services.rooms.update(room.id, { danmakuEnabled: item.danmakuEnabled });
-          }
+          if (Object.keys(policy).length) services.rooms.update(room.id, policy);
           if (Array.isArray(item.tags)) {
             const roomId = room.id;
             services.db.transaction(() => {
@@ -324,6 +327,7 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
         throw new AppError('CONFIG_LOAD_FAILED', '房间导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
       }
     }
+    services.scheduler.reschedule();
     let recordings: RecordingImportSummary | null = null;
     if (incoming.recordings !== undefined) {
       try {

@@ -1,3 +1,4 @@
+import { roomQuality } from '../config/room-policy.js';
 import { assertSegmentRange, recordedSeconds } from './recording-range.js';
 import { createWriteStream, statSync, type WriteStream } from "node:fs";
 import { access, mkdir, open, rename, unlink, stat } from "node:fs/promises";
@@ -159,6 +160,7 @@ export function validateClipName(raw: string, recordingId: string): string {
 }
 
 interface ActiveSession {
+  expectedQuality: import("../types/index.js").Quality;
   downloadSpeed: DownloadSpeed;
   recordingId: string;
   roomId: string;
@@ -317,6 +319,7 @@ export class RecorderManager {
   /** 正在转 MP4 的录制；分段收尾与录制完成可能各触发一次，必须避免两个 ffmpeg 抢同一份产物。 */
   /** Explicit normal-preview highlight caches. Live-wall clients never create these. */
   private highlightBuffers = new Map<string, HighlightBuffer>();
+  private highlightQualities = new WeakMap<HighlightBuffer, string>();
   /**
    * 精彩时刻导出期间提前展示的保留确认。导出可能需要等待当前缓存分段落盘，
    * 不能让这段 I/O 延迟阻塞确认框，也不能在文件尚未生成时启动后处理或删除记录。
@@ -347,6 +350,12 @@ export class RecorderManager {
   settings(): AppSettings {
     const stored = this.services.settings.load();
     return stored ?? { ...structuredClone(defaultsLite()) };
+  }
+
+  private settingsForRecording(room: Room, session?: ActiveSession): AppSettings {
+    const settings = this.settings();
+    const currentRoom = this.services.rooms.get(room.id) ?? room;
+    return { ...settings, quality: session?.expectedQuality ?? roomQuality(currentRoom, settings) };
   }
 
   isRoomActive(roomId: string): boolean {
@@ -443,6 +452,7 @@ export class RecorderManager {
     return {
       downloadSpeed: new DownloadSpeed(),
       recordingId,
+      expectedQuality: (this.services.recordings.get(recordingId)?.expectedQuality ?? this.settings().quality) as import("../types/index.js").Quality,
       roomId,
       streamSessionId,
       stopRequested: false,
@@ -499,7 +509,10 @@ export class RecorderManager {
   recordingPreviewOffsetSeconds(roomId: string, recordingId: string): number | null {
     const session = this.active.get(roomId);
     if (!session || session.recordingId !== recordingId) return null;
-    const shared = this.previewSessions.get(roomId)?.recording;
+    const preview = this.previewSessions.get(roomId);
+    const shared = preview?.recording;
+    // Independent upstreams have distinct media clocks; never claim a zero offset.
+    if (preview && !shared) return null;
     if (!shared || shared.session !== session) return session.previewOffsetMs == null ? null : session.previewOffsetMs / 1000;
     const offset = shared.normalizer.timestampOffsetMs;
     return offset == null ? null : offset / 1000;
@@ -601,6 +614,7 @@ export class RecorderManager {
       buffer = new HighlightBuffer(dir, settings.highlightBufferSeconds ?? 300);
       await buffer.start();
       this.highlightBuffers.set(roomId, buffer);
+      this.highlightQualities.set(buffer, this.previewSessions.get(roomId)?.actualQuality ?? settings.quality);
       // 共享预览流在停止录制后不会重新发送 FLV 文件头。用预览缓存的初始化段和
       // 关键帧播种精彩时刻缓存，否则新缓存会永远等待一个不会再出现的文件头。
       // 只接受 FLV 头起始的 bootstrap；拿不到时保持 awaitingHeader，
@@ -764,14 +778,15 @@ export class RecorderManager {
       );
     }
     const settings = this.settings();
+    const bufferedQuality = this.highlightQualities.get(buffer) ?? this.previewSessions.get(roomId)?.actualQuality ?? settings.quality;
     const recording = this.services.recordings.create({
       roomId,
       roomName: room.displayName,
       platform: room.platform,
       streamSessionId: null,
       streamTitle: `精彩时刻｜${room.displayName}`,
-      quality: settings.quality,
-      expectedQuality: settings.quality,
+      quality: bufferedQuality,
+      expectedQuality: bufferedQuality,
       origin: "highlight",
     });
     const base = recordingFilePath(
@@ -781,7 +796,7 @@ export class RecorderManager {
       recording.startedAt,
       settings.recordingFormat,
       settings.namingRule,
-      settings.quality,
+      bufferedQuality,
       room.id,
     );
     const parsed = path.parse(base);
@@ -1189,6 +1204,7 @@ export class RecorderManager {
                 // 当前块不是 FLV 头时先从预览房延迟播种（此前帧已在 broadcastFrame 留底），
                 // 再 append 当前块——避免错过唯一一次文件头后永久停在 0 秒。
                 const highlight = this.highlightBuffers.get(roomId);
+                if (highlight) this.highlightQualities.set(highlight, session.actualQuality);
                 if (highlight?.awaitingHeader) {
                   const startsFlv =
                     event.chunk.length >= 3 &&
@@ -1389,6 +1405,8 @@ export class RecorderManager {
     // 共享写入器目前复用 FLV 标签及其时间戳归零逻辑；非 FLV 流沿用原有独立录制路径。
     if (
       !previewSession ||
+      previewSession.actualQuality !== settings.quality ||
+      previewSession.actualQuality !== actualQuality ||
       previewSession.recording ||
       !bootstrap ||
       bootstrap.subarray(0, 3).toString() !== "FLV"
@@ -1535,6 +1553,7 @@ export class RecorderManager {
       void preview.engine.stop().catch(() => undefined);
       return false;
     }
+    if (preview.actualQuality !== settings.quality) return false;
     return this.startSharedPreviewRecording(
       room,
       status,
@@ -1741,7 +1760,7 @@ export class RecorderManager {
   ): Promise<boolean> {
     this.detachHighlightBufferForRecording(room.id);
     startupTrace.mark("highlight_buffer_stopped");
-    const settings = this.settings();
+    const settings = this.settingsForRecording(room);
     let sessionId = status.streamSessionId ?? null;
     if (
       !opts.manual &&
@@ -1808,7 +1827,7 @@ export class RecorderManager {
     }
     // 自此可能创建文件：磁盘检查（含低空间告警/通知）必须已完成。
     await diskCheckReady;
-    // 已有观看预览时复用它的上游流；只有尚未形成可写入的关键帧缓存时才回退旧路径。
+    // 仅复用目标画质一致且已有关键帧缓存的观看流；否则保留观看并独立录制。
     if (
       await this.startSharedPreviewRecording(
         room,
@@ -1824,8 +1843,7 @@ export class RecorderManager {
     }
     this.previewTransitions.add(room.id);
     try {
-      // 无观看预览时维持原有独立录制路径。
-      await this.stopPreviewStream(room.id, true);
+      // 独立录制保留已有观看会话；previewTransitions 阻止迟到的观看取流覆盖它。
       if (this.active.has(room.id)) {
         startupTrace.finish("skipped");
         return false;
@@ -1914,7 +1932,7 @@ export class RecorderManager {
     session: ActiveSession,
     attempt: number,
   ): Promise<void> {
-    const settings = this.settings();
+    const settings = this.settingsForRecording(room, session);
     const engine = this.services.engineFor();
     const generation = session.generation;
     session.engine = engine;
@@ -1923,7 +1941,7 @@ export class RecorderManager {
         session.downloadSpeed.add(bytes, this.services.clock.now());
     });
     session.filePath = filePath;
-    this.preview?.resetRoom(room.id);
+    if (!this.previewSessions.has(room.id)) this.preview?.resetRoom(room.id);
 
     let startedConfirmed = false;
     let gotData = false;
@@ -1964,7 +1982,7 @@ export class RecorderManager {
         switch (event.type) {
           case "preview_data": {
             if (event.recordingOffsetMs !== undefined) session.previewOffsetMs = event.recordingOffsetMs;
-            this.preview?.broadcastFrame(room.id, event.chunk);
+            if (!this.previewSessions.has(room.id)) this.preview?.broadcastFrame(room.id, event.chunk);
             break;
           }
           case "file_created": {
@@ -2003,7 +2021,7 @@ export class RecorderManager {
             session.lastDataAt = now;
             if (!event.previewForwarded) {
               session.previewOffsetMs = 0;
-              this.preview?.broadcastFrame(room.id, event.chunk);
+              if (!this.previewSessions.has(room.id)) this.preview?.broadcastFrame(room.id, event.chunk);
             }
             break;
           }
@@ -2151,7 +2169,7 @@ export class RecorderManager {
       return;
     }
 
-    const settings = this.settings();
+    const settings = this.settingsForRecording(room, session);
     // Preserve the explicit opt-out; positive legacy attempt counts no longer cap network recovery.
     if (settings.retry.maxAttempts === 0) {
       await this.finishInterrupted(room, recordingId, reconnectExhausted(error, 0));
@@ -2311,7 +2329,7 @@ export class RecorderManager {
       ) {
         session.writeRestartCount = 0;
       }
-      const settings = this.settings();
+      const settings = this.settingsForRecording(room, session);
       let cause = error;
       while (session.writeRestartCount < WRITE_RESTART_ATTEMPTS) {
         // 用户手动介入（点停止/点录制接管）：立即让位，绝不再自动重启（PrePan 钦定边界）。
@@ -2446,7 +2464,7 @@ export class RecorderManager {
     cookie: string | undefined,
   ): Promise<boolean> {
     try {
-      const again = await this.resolveRecordingSource(room, this.settings().quality, cookie);
+      const again = await this.resolveRecordingSource(room, this.settingsForRecording(room, this.active.get(room.id)).quality, cookie);
       return again.status === "offline";
     } catch {
       return false;
@@ -3030,7 +3048,7 @@ export class RecorderManager {
       });
       return;
     }
-    const settings = this.settings();
+    const settings = this.settingsForRecording(room, session);
     if (settings.retry.maxAttempts === 0) {
       await this.completeRecording(room, recordingId, size, "ended");
       return;
@@ -3184,7 +3202,7 @@ export class RecorderManager {
       failureReason: options.failure ?? null,
     });
     // 中断收尾要用 4004（stream_lost）告知观看端：这不是正常结束，流是断的。
-    if (!options.preservePreview)
+    if (!options.preservePreview && !this.previewSessions.has(room.id))
       this.preview?.closeRoom(
         room.id,
         endReason === "stream_lost" ? 4004 : 1000,
@@ -3404,7 +3422,7 @@ export class RecorderManager {
     console.log(
       `[record] 录制失败 ${recordingId}（${failure.code}）：${failure.message}`,
     );
-    if (!preservePreview) this.preview?.closeRoom(room.id, 4004, "stream_lost");
+    if (!preservePreview && !this.previewSessions.has(room.id)) this.preview?.closeRoom(room.id, 4004, "stream_lost");
     this.active.delete(room.id);
     this.emitServiceStatus();
     this.services.rooms.setState(room.id, "failed", {
