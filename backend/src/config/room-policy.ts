@@ -49,11 +49,11 @@ export function validateRoomPolicy(
   if (quality !== undefined) {
     if (
       quality !== null &&
-      !["original", "1080p", "720p", "360p"].includes(quality as string)
+      !["original", "1080p", "720p", "540p", "360p"].includes(quality as string)
     )
       throw new AppError(
         "CONFIG_INVALID",
-        "录制清晰度需为 original / 1080p / 720p / 360p 或 null",
+        "录制清晰度需为 original / 1080p / 720p / 540p / 360p 或 null",
       );
     patch.quality = quality as Quality | null;
   }

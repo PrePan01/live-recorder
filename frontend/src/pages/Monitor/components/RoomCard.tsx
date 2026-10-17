@@ -55,7 +55,7 @@ export function SortableRoomCardItem({
   );
 }
 
-const QUALITY_ORDER = ["original", "1080p", "720p", "360p"];
+const QUALITY_ORDER = ["original", "1080p", "720p", "540p", "360p"];
 const qualityRank = (q: string) => QUALITY_ORDER.indexOf(q);
 const qualityLabel = (q: string) => (q === "original" ? "原画" : q);
 

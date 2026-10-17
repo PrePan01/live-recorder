@@ -321,14 +321,14 @@ export class XiaohongshuAdapter implements PlatformAdapter {
       // Dimensions determine the reported resolution. HD is an opaque platform label.
       const height = Number(entry.height ?? config.height);
       if (!Number.isFinite(height) || height <= 0) continue;
-      const quality: Quality = height >= 1080 ? '1080p' : height >= 720 ? '720p' : '360p';
+      const quality: Quality = height >= 1080 ? '1080p' : height >= 720 ? '720p' : height >= 540 ? '540p' : '360p';
       streams.push({ url: raw, format, actualQuality: quality, streamSessionId: room.roomId, headers: { 'User-Agent': XHS_UA, Referer: 'https://app.xhs.cn/' } });
     }
     return streams.sort((a, b) => (a.format === 'flv' ? 0 : 1) - (b.format === 'flv' ? 0 : 1));
   }
   private select(room: XhsRoom, quality: Quality): StreamUrlResult {
     const streams = this.streams(room);
-    const rank: Record<Quality, number> = { original: 4, '1080p': 3, '720p': 2, '360p': 1 };
+    const rank: Record<Quality, number> = { original: 5, '1080p': 4, '720p': 3, '540p': 2, '360p': 1 };
     const sorted = [...streams].sort((a, b) => rank[b.actualQuality] - rank[a.actualQuality]);
     const picked = sorted.find(stream => rank[stream.actualQuality] <= rank[quality]) ?? sorted.at(-1);
     if (!picked) throw new AppError('PLATFORM_CHANGED', '小红书尚未提供可录制的 H.264 直播流', { retryable: true });

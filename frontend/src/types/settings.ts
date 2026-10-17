@@ -1,4 +1,4 @@
-export type Quality = 'original' | '1080p' | '720p' | '360p';
+export type Quality = 'original' | '1080p' | '720p' | '540p' | '360p';
 
 export type RecordingFormat = 'source_flv' | 'mp4_after';
 

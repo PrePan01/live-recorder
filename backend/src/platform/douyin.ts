@@ -21,16 +21,18 @@ const PLATFORM_REQUEST_ATTEMPTS = 2;
 const RESOLUTION_QUALITY: Record<string, Quality> = {
   FULL_HD1: "original",
   HD1: "1080p",
-  SD1: "720p",
-  SD2: "360p",
+  SD2: "720p",
+  SD1: "540p",
+  MD: "360p",
 };
 
 /** 本地清晰度 → 抖音档位键（按偏好顺序取第一个存在的）。 */
 const QUALITY_RESOLUTIONS: Record<Quality, string[]> = {
-  original: ["FULL_HD1", "HD1", "SD1", "SD2"],
-  "1080p": ["HD1", "FULL_HD1", "SD1", "SD2"],
-  "720p": ["SD1", "HD1", "SD2", "FULL_HD1"],
-  "360p": ["SD2", "SD1", "HD1", "FULL_HD1"],
+  original: ["FULL_HD1", "HD1", "SD2", "SD1", "MD"],
+  "1080p": ["HD1", "FULL_HD1", "SD2", "SD1", "MD"],
+  "720p": ["SD2", "HD1", "SD1", "MD", "FULL_HD1"],
+  "540p": ["SD1", "MD", "SD2", "HD1", "FULL_HD1"],
+  "360p": ["MD", "SD1", "SD2", "HD1", "FULL_HD1"],
 };
 
 interface DouyinEnterData {

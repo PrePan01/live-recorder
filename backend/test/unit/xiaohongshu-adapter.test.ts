@@ -17,6 +17,21 @@ function page(overrides = {}, roomId = '123') {
 }
 
 describe('XiaohongshuAdapter', () => {
+  it.each([
+    [[1080, 720, 540, 360], 540, '540p'],
+    [[1080, 720, 360], 360, '360p'],
+    [[1080, 720], 720, '720p'],
+  ] as const)('selects 540p or the available fallback from dimensions %j', async (heights, selected, actualQuality) => {
+    const pullConfig = JSON.stringify({ h264: heights.map(height => ({
+      height, master_url: `https://live.xhscdn.com/${height}.flv`,
+    })) });
+    const adapter = new XiaohongshuAdapter((async () => new Response(page({ pullConfig }))) as typeof fetch);
+    expect(await adapter.getStreamUrl(roomUrl, '540p')).toMatchObject({
+      actualQuality, url: `https://live.xhscdn.com/${selected}.flv`,
+    });
+    expect((await adapter.checkLiveStatus(roomUrl)).availableQualities?.includes('540p')).toBe(heights.includes(540 as never));
+  });
+
   it('keeps access tokens, strips only tracking, and rejects lookalike/credential hosts', () => {
     expect(normalizeXiaohongshuUrl(roomUrl + '&track_id=abc')).toBe(roomUrl);
     expect(parseXiaohongshuUrl('https://www.xiaohongshu.com.evil.test/livestream/123')).toBeNull();

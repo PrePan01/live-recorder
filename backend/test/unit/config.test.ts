@@ -55,7 +55,7 @@ describe('error code mapping', () => {
       expect(() => validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: bad as never })).toThrowError(AppError);
     }
     // 合法 quality 通过
-    for (const ok of ['original', '1080p', '720p', '360p']) {
+    for (const ok of ['original', '1080p', '720p', '540p', '360p']) {
       const s = validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: ok as never });
       expect(s.quality).toBe(ok);
     }

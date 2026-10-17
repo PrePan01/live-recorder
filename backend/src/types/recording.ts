@@ -2,7 +2,7 @@ import type { ErrorObject } from '../types/error.js';
 import type { Platform } from '../types/room.js';
 import type { UploadJobStatus } from './upload.js';
 
-export type Quality = 'original' | '1080p' | '720p' | '360p';
+export type Quality = 'original' | '1080p' | '720p' | '540p' | '360p';
 
 export type RecordingState =
   | 'pending'

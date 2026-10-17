@@ -83,7 +83,7 @@ describe("room policy persistence and compatibility", () => {
       checkIntervalSec: null,
       displayName: "old",
     });
-    services.settings.save({ ...services.settings.load()!, quality: "720p" });
+    services.settings.save({ ...services.settings.load()!, quality: "540p" });
     expect(services.rooms.get(room.id)!.quality).toBeNull();
     await app.close();
   });
@@ -122,7 +122,7 @@ describe("room policy persistence and compatibility", () => {
         displayName: "custom",
         enabled: false,
         checkIntervalSec: 15,
-        quality: "720p",
+        quality: "540p",
         autoRecord: false,
         danmakuEnabled: true,
       },
@@ -130,7 +130,7 @@ describe("room policy persistence and compatibility", () => {
     expect(response.statusCode).toBe(201);
     const room = response.json().room;
     expect(room).toMatchObject({
-      quality: "720p",
+      quality: "540p",
       checkIntervalSec: 15,
       enabled: false,
       danmakuEnabled: true,
@@ -142,7 +142,7 @@ describe("room policy persistence and compatibility", () => {
       payload: { displayName: "renamed" },
     });
     expect(update.json().room).toMatchObject({
-      quality: "720p",
+      quality: "540p",
       checkIntervalSec: 15,
     });
     const reset = await app.inject({

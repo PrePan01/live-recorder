@@ -29,6 +29,7 @@ const qualityOptions = [
   { value: "original", label: "原画" },
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
+  { value: "540p", label: "540p" },
   { value: "360p", label: "360p" },
 ];
 

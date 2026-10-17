@@ -73,6 +73,19 @@ function flvCodec(payload: unknown): Record<string, unknown> {
 }
 
 describe('BilibiliAdapter', () => {
+  it('requests the lower native tier for 540p and reports the actual fallback', async () => {
+    const payload = livePayload();
+    flvCodec(payload).current_qn = 80;
+    let requestedQn: string | null = null;
+    const adapter = new BilibiliAdapter(mockFetcher(url => {
+      requestedQn = new URL(url).searchParams.get('qn');
+      return payload;
+    }));
+    expect(await adapter.getStreamUrl('https://live.bilibili.com/123456', '540p'))
+      .toMatchObject({ actualQuality: '360p' });
+    expect(requestedQn).toBe('80');
+  });
+
   it('validates, normalizes and parses room urls', () => {
     const a = new BilibiliAdapter();
     expect(a.validateUrl('https://live.bilibili.com/123')).toBe(true);
