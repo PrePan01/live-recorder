@@ -33,4 +33,6 @@ export interface VideoPlayerProps {
   onSeekRetry?: () => void;
   /** 实时流首帧（切实时段掍表打点）。 */
   onLiveFirstFrame?: () => void;
+  /** 是否已有当前源真正呈现的画面，供截图按钮使用。 */
+  onFrameReadyChange?: (ready: boolean) => void;
 }

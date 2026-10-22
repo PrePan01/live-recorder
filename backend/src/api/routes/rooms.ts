@@ -10,6 +10,7 @@ import {
   type LivePrediction,
 } from "../../core/live-prediction.js";
 
+import { registerRoomScreenshotRoutes } from "./room-screenshots.js";
 import { registerRoomCoverRoutes } from "./room-cover.js";
 
 const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
@@ -37,6 +38,7 @@ export function registerRoomRoutes(
   services: Services,
 ): void {
   registerRoomCoverRoutes(app, services);
+  registerRoomScreenshotRoutes(app, services);
   const danmakuPreview = (req: { params: unknown }) => {
     const { id, token } = req.params as { id: string; token: string };
     if (!/^[a-zA-Z0-9-]{16,96}$/.test(token)) throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");

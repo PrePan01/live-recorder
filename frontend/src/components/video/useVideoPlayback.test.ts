@@ -89,22 +89,27 @@ describe("live startup watchdog", () => {
 
   it('reports real loading stages and completes only after the first frame is presented', () => {
     const video = liveVideo();
-    render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    const frameReady = vi.fn();
+    const props = { roomId: 'progress-room', platform: 'youtube' as const, onFrameReadyChange: frameReady };
+    render(props, video);
+    expect(frameReady).toHaveBeenLastCalledWith(false);
     const progress = vi.mocked(livePreviewConfig).mock.calls.at(-1)![3]!;
     progress('stream_url_ready');
-    expect(render({ roomId: 'progress-room', platform: 'youtube' }, video).loadProgress.percent).toBe(45);
+    expect(render(props, video).loadProgress.percent).toBe(45);
     progress('receiving_media'); progress('youtube_manifests_ready');
-    expect(render({ roomId: 'progress-room', platform: 'youtube' }, video).loadProgress.percent).toBe(90);
+    expect(render(props, video).loadProgress.percent).toBe(90);
     video.dispatchEvent(new Event('loadeddata'));
-    let result = render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    let result = render(props, video);
     expect(result.state).toBe('loading');
     expect(result.loadProgress.percent).toBe(95);
     expect(result.hasEverPlayedRef.current).toBe(false);
+    expect(frameReady).toHaveBeenLastCalledWith(false);
     h.frame?.();
-    result = render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    result = render(props, video);
     expect(result.state).toBe('playing');
     expect(result.loadProgress.percent).toBe(100);
     expect(result.hasEverPlayedRef.current).toBe(true);
+    expect(frameReady).toHaveBeenLastCalledWith(true);
   });
 
   it('resets progress for a retry and ignores callbacks from the retired player', async () => {
@@ -164,20 +169,24 @@ describe("seek player lifecycle", () => {
     const oldFrame = vi.fn();
     render({ roomId: "room", seek, onSeekTail: vi.fn(), onSeekFirstFrame: oldFrame, onSeekError: vi.fn() }, video);
     const firstPlayer = h.players[0];
+    const frameReady = vi.fn();
     const latestFrame = vi.fn();
     const latestTail = vi.fn();
-    for (let i = 0; i < 5; i++) render({ roomId: "room", seek, onSeekTail: latestTail, onSeekFirstFrame: latestFrame, onSeekError: vi.fn() }, video);
+    for (let i = 0; i < 5; i++) render({ roomId: "room", seek, onFrameReadyChange: frameReady, onSeekTail: latestTail, onSeekFirstFrame: latestFrame, onSeekError: vi.fn() }, video);
     expect(h.players).toHaveLength(1);
     expect(firstPlayer.destroy).not.toHaveBeenCalled();
     h.ready?.();
     video.dispatchEvent(new Event("playing"));
+    expect(frameReady).not.toHaveBeenCalledWith(true);
     h.frame?.();
+    expect(frameReady).toHaveBeenLastCalledWith(true);
     expect(latestFrame).toHaveBeenCalledWith(1, 1.25);
     expect(oldFrame).not.toHaveBeenCalled();
     video.dispatchEvent(new Event("ended"));
     expect(latestTail).toHaveBeenCalledOnce();
-    render({ roomId: "room", seek: { ...seek, generation: 2, url: "/seek2" } }, video);
+    render({ roomId: "room", onFrameReadyChange: frameReady, seek: { ...seek, generation: 2, url: "/seek2" } }, video);
     expect(firstPlayer.destroy).toHaveBeenCalledOnce();
+    expect(frameReady).toHaveBeenLastCalledWith(false);
     expect(h.players).toHaveLength(2);
   });
 });
