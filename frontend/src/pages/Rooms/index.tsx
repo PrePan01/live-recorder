@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   App,
@@ -66,6 +66,16 @@ export default function Rooms() {
   > | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 慢路径（解析耗时秒级）才出等待说明；快路径（缓存命中约 1.5s）不允许闪现，故阈值取 2s。
+  const [submitHint, setSubmitHint] = useState(false);
+  const submitHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSubmitHintTimer = useCallback(() => {
+    if (submitHintTimer.current !== null) {
+      clearTimeout(submitHintTimer.current);
+      submitHintTimer.current = null;
+    }
+  }, []);
+  useEffect(() => () => clearSubmitHintTimer(), [clearSubmitHintTimer]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [form] = Form.useForm<{
     url: string;
@@ -253,10 +263,14 @@ export default function Rooms() {
     }
     const platform = guessPlatform(values.url);
     if (!platform) {
-      message.error("支持 B站 / 抖音直播链接及小红书主页、直播分享链接");
+      message.error("支持 B站、抖音、小红书、YouTube 直播链接");
       return;
     }
     setSubmitting(true);
+    if (!editing) {
+      clearSubmitHintTimer();
+      submitHintTimer.current = setTimeout(() => setSubmitHint(true), 2000);
+    }
     try {
       if (editing) {
         await editRoom(editing.id, values);
@@ -280,6 +294,8 @@ export default function Rooms() {
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
     } finally {
+      clearSubmitHintTimer();
+      setSubmitHint(false);
       setSubmitting(false);
     }
   };
@@ -386,6 +402,7 @@ export default function Rooms() {
             { value: "bilibili", label: "B站" },
             { value: "douyin", label: "抖音" },
             { value: "xiaohongshu", label: "小红书" },
+            { value: "youtube", label: "YouTube" },
           ]}
         />
         <Select
@@ -546,7 +563,7 @@ export default function Rooms() {
                     ? Promise.resolve()
                     : Promise.reject(
                         new Error(
-                          "支持 B站 / 抖音直播链接及小红书主页、直播分享链接",
+                          "支持 B站 / 抖音直播链接、小红书主页或直播分享链接、YouTube 频道或直播视频链接",
                         ),
                       ),
               },
@@ -558,7 +575,7 @@ export default function Rooms() {
             }
           >
             <Input
-              placeholder="B站、抖音直播链接、小红书主页/直播链接"
+              placeholder="B站、抖音、小红书直播链接或 YouTube 频道/直播视频链接"
               addonAfter={
                 <Button
                   className="lr-room-url-paste"
@@ -579,6 +596,14 @@ export default function Rooms() {
             <TagSelect value={tagIds} onChange={setTagIds} />
           </Form.Item>
         </Form>
+        {submitting && submitHint && !editing ? (
+          <div className="lr-room-submit-pending" role="status" aria-live="polite">
+            <Spin size="small" />
+            <Typography.Text type="secondary">
+              正在解析直播间信息，约需 10 秒…
+            </Typography.Text>
+          </div>
+        ) : null}
       </Modal>
       <Modal
         title="批量添加直播间"
@@ -594,13 +619,13 @@ export default function Rooms() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
-          每行一个直播链接，支持 B站 / 抖音 / 小红书混排，最多 100
+          每行一个直播链接，支持 B站 / 抖音 / 小红书 / YouTube 混排，最多 100
           条。自动去重（含已存在直播间与批内重复）。
         </Typography.Paragraph>
         <Input.TextArea
           rows={6}
           placeholder={
-            "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/..."
+            "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/...\nhttps://www.youtube.com/@频道名\nhttps://www.youtube.com/watch?v=视频ID"
           }
           value={batchText}
           onChange={(e) => setBatchText(e.target.value)}

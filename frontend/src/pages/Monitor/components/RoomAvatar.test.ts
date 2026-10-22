@@ -2,6 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { expect, it } from "vitest";
 import RoomAvatar from "./RoomAvatar";
+import { baseUrl } from '../../../api/client';
+
+it('YouTube avatars use the local image route while other platforms keep their original URLs', () => {
+  const avatarUrl = 'https://yt3.ggpht.com/avatar';
+  const markup = renderToStaticMarkup(createElement(RoomAvatar, { platform: 'youtube', roomId: 'room1', avatarUrl }));
+  expect(markup).toContain(`${baseUrl()}/rooms/room1/avatar?v=${encodeURIComponent(avatarUrl)}`);
+  expect(renderToStaticMarkup(createElement(RoomAvatar, { platform: 'xiaohongshu', roomId: 'room1', avatarUrl }))).toContain(`src="${avatarUrl}"`);
+});
 
 const render = (platform: "bilibili" | "douyin" | "xiaohongshu", name?: string) =>
   renderToStaticMarkup(createElement(RoomAvatar, { platform, name }));

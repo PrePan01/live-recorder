@@ -5,13 +5,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { attachWebSocketUpgrade, PreviewManager } from '../../src/api/websocket.js';
 import type { Services } from '../../src/core/services.js';
 
-async function setup() {
+async function setup(monitorState = 'idle') {
   let finishStart!: () => void;
   const starting = new Promise<void>((resolve) => { finishStart = resolve; });
   const stop = vi.fn(async () => {});
+  const viewersAtStart: boolean[] = [];
+  const start = vi.fn(() => {
+    viewersAtStart.push(preview.hasClients('hover-room'));
+    return starting;
+  });
   const services = {
-    rooms: { get: () => ({ id: 'hover-room', monitorState: 'idle', lastLiveStatus: 'live' }) },
-    manager: { ensurePreviewStream: () => starting, stopPreviewStream: stop },
+    rooms: { get: () => ({ id: 'hover-room', monitorState, lastLiveStatus: 'live' }) },
+    manager: { ensurePreviewStream: start, stopPreviewStream: stop },
   } as unknown as Services;
   const server = createServer();
   const preview = new PreviewManager(services);
@@ -24,7 +29,7 @@ async function setup() {
   await once(server, 'listening');
   const address = server.address() as { port: number };
   return {
-    stop, finishStart,
+    stop, start, viewersAtStart, finishStart,
     hasViewers: () => preview.hasClients("hover-room"),
     async connect() {
       const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/preview/hover-room`);
@@ -44,6 +49,23 @@ async function setup() {
 }
 
 describe('preview startup after a hover has ended', () => {
+  it.each(['idle', 'recording', 'reconnecting'])('activates preview after registering a viewer, including reconnect during %s', async state => {
+    const fixture = await setup(state);
+    try {
+      const first = await fixture.connect();
+      expect(fixture.start).toHaveBeenCalledWith('hover-room');
+      expect(fixture.viewersAtStart).toEqual([true]);
+      first.close();
+      await once(first, 'close');
+      await vi.waitFor(() => expect(fixture.hasViewers()).toBe(false));
+      await fixture.connect();
+      expect(fixture.start).toHaveBeenCalledTimes(2);
+      expect(fixture.viewersAtStart).toEqual([true, true]);
+      fixture.finishStart();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(fixture.stop).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  });
   it('stops a late-starting stream when its viewer has already left', async () => {
     const fixture = await setup();
     try {

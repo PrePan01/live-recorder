@@ -11,7 +11,7 @@ describe('config defaults', () => {
     expect(DEFAULT_DISK_GUARD.minFreePercent).toBe(10);
     expect(DEFAULT_SETTINGS.maxConcurrentRecordings).toBe(2);
     expect(DEFAULT_SETTINGS.autoRecord).toBe(false);
-    expect(DEFAULT_SETTINGS.checkIntervalSec).toEqual({ default: 60, bilibili: 60, douyin: 120, xiaohongshu: 120 });
+    expect(DEFAULT_SETTINGS.checkIntervalSec).toEqual({ default: 60, bilibili: 60, douyin: 120, youtube: 120, xiaohongshu: 120 });
     expect(DEFAULT_SETTINGS.dedupeWindowMinutes).toBe(30);
   });
 

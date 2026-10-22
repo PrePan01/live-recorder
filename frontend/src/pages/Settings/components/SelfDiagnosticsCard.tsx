@@ -168,7 +168,7 @@ export default function SelfDiagnosticsCard(props: SelfDiagnosticsCardProps) {
                       <Space wrap>
                         <Typography.Text strong>{kind}</Typography.Text>
                         <Tag>
-                          {item.platform === "xiaohongshu"
+                          {item.platform === "youtube" ? "YouTube" : item.platform === "xiaohongshu"
                             ? "小红书"
                             : item.platform === "bilibili"
                               ? "B站"

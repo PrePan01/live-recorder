@@ -50,6 +50,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   bilibili: "B站",
   douyin: "抖音",
   xiaohongshu: "小红书",
+  youtube: "YouTube",
 };
 
 type MetricKey = "trend" | "platform" | "room" | "heat";
@@ -582,6 +583,7 @@ export default function Stats() {
               { value: "bilibili", label: "B站" },
               { value: "douyin", label: "抖音" },
               { value: "xiaohongshu", label: "小红书" },
+            { value: "youtube", label: "YouTube" },
             ]}
           />
           <TagFilterSelect

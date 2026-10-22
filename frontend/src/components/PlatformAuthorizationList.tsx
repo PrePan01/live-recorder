@@ -1,3 +1,4 @@
+import { fetchYoutubeCookieStatus } from "../api/settings";
 import {
   useCallback,
   useEffect,
@@ -26,18 +27,26 @@ export interface PlatformAuthorizationConfig {
   label: string;
   anchor: string;
   unauthorizedHint: string;
-  cookieField: "douyinCookie" | "bilibiliCookie" | "xiaohongshuCookie";
+  cookieField: "douyinCookie" | "bilibiliCookie" | "xiaohongshuCookie" | "youtubeCookie";
   manualHost: string;
   manualPlaceholder: string;
   fetchStatus: () => Promise<CookieProbeStatus>;
-  startAuthorization: () => Promise<void>;
-  authorizedEvent: (callback: () => void) => () => void;
+  startAuthorization?: () => Promise<void>;
+  authorizedEvent?: (callback: () => void) => () => void;
 }
 
 /**
  * 平台授权入口集中在此配置中；新增需要登录的平台时补充一项和对应桥接/API 即可。
  */
 const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
+  {
+    platform: "youtube", label: "YouTube", anchor: "youtube-cookie",
+    unauthorizedHint: "公开直播无需登录，受限直播需要登录授权",
+    cookieField: "youtubeCookie", manualHost: "youtube.com", manualPlaceholder: "粘贴 Netscape 格式 Cookie 文件内容",
+    fetchStatus: fetchYoutubeCookieStatus,
+    startAuthorization: () => bridge.startYoutubeAuthorization(),
+    authorizedEvent: (callback) => bridge.onYoutubeAuthorized(callback),
+  },
   {
     platform: "douyin",
     label: "抖音",
@@ -164,7 +173,7 @@ export default function PlatformAuthorizationList({
 
   useEffect(() => {
     const listeners = PLATFORM_AUTHORIZATION_CONFIGS.map((config) =>
-      config.authorizedEvent(() => {
+      config.authorizedEvent?.(() => {
         void (async () => {
           await onAuthorized();
           await refreshStatus(config);
@@ -172,7 +181,7 @@ export default function PlatformAuthorizationList({
         })();
       }),
     );
-    return () => listeners.forEach((dispose) => dispose());
+    return () => listeners.forEach((dispose) => dispose?.());
   }, [message, onAuthorized, refreshStatus]);
 
   const statuses = useMemo(
@@ -183,7 +192,7 @@ export default function PlatformAuthorizationList({
   const authorize = async (config: PlatformAuthorizationConfig) => {
     setAuthorizing((current) => ({ ...current, [config.platform]: true }));
     try {
-      await config.startAuthorization();
+      await config.startAuthorization?.();
       message.info(`请在新窗口完成${config.label}登录，完成后回到此处确认。`);
     } catch (error) {
       message.error(

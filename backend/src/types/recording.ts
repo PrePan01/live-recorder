@@ -32,6 +32,7 @@ export type PipelineStatus = 'not_required' | 'queued' | 'running' | 'ok' | 'par
 
 /** 后处理 sidecar 元数据（V5）：录制完成后由管线写入，供历史页展示真实时长/断流次数/清晰度/大小。 */
 export interface RecordingMetadata {
+  source?: { width: number; height: number; videoCodec: string; audioCodec: string };
   durationMs: number | null;
   segmentCount: number;
   quality: string | null;

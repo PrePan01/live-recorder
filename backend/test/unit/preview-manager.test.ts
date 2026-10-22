@@ -144,6 +144,26 @@ describe('preview initialization across source changes', () => {
 });
 
 describe('preview session accounting', () => {
+  it('sends progress only to opted-in clients, replays the latest stage and filters non-protocol values', () => {
+    const preview = manager();
+    const legacy = socket(), modern = socket();
+    preview.addClient('r', legacy.ws);
+    preview.addClient('r', modern.ws, true);
+    preview.reportProgress('r', 'stream_url_ready');
+    preview.reportProgress('r', 'stream_url_ready');
+    preview.reportProgress('r', 'https://private.example/media?secret=1');
+    expect(legacy.sent).toHaveLength(0);
+    expect(modern.sent.map(value => JSON.parse(value.toString()))).toEqual([
+      { type: 'preview_progress', stage: 'requested' },
+      { type: 'preview_progress', stage: 'stream_url_ready' },
+    ]);
+    const joining = socket(); preview.addClient('r', joining.ws, true);
+    expect(JSON.parse(joining.sent[0].toString()).stage).toBe('stream_url_ready');
+    preview.resetRoom('r');
+    const replacement = socket(); preview.addClient('r', replacement.ws, true);
+    expect(JSON.parse(replacement.sent[0].toString()).stage).toBe('requested');
+    preview.closeAll(1000);
+  });
   it('does not consume viewer slots for recordings with only a warm cache', () => {
     const preview = manager(1);
     for (const room of ['a', 'b', 'c']) preview.broadcastFrame(room, init());

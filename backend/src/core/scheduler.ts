@@ -13,7 +13,7 @@ import {
   type PredictionCoverageInterval,
 } from "./live-prediction.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
+const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
 /**
  * 开播检测平台级上限
  */
@@ -21,6 +21,7 @@ const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
   bilibili: 6,
   douyin: 3,
   xiaohongshu: 1,
+  youtube: 2,
 };
 
 export class Scheduler {
@@ -129,6 +130,10 @@ export class Scheduler {
     if (!this.running || this.platformTasks.has(platform)) return;
     const previous = this.handles.get(platform);
     if (previous !== undefined) this.services.clock.clearTimeout(previous);
+    if (platform === 'youtube' && ![...this.pollingRooms.values()].some(room => room.platform === 'youtube' && room.enabled)) {
+      this.handles.delete(platform);
+      return;
+    }
     const now = this.services.clock.now();
     // Keep the former platform cadence as the maximum delay for schedule/prediction work.
     const platformIntervalMs = this.intervalFor(platform) * 1000;
@@ -255,6 +260,12 @@ export class Scheduler {
    * 与拉流档位无关；风控 406/461 不等于 Cookie 过期，因此有意不做抖音那样的凭证失效
    * 熔断（避免误判），仅等待旧 Cookie 的在途请求收口后重新发起检测。
    */
+  async recheckYoutubeRoomsAfterCookieUpdate(): Promise<void> {
+    const rooms = this.services.rooms.listEnabled().filter(room => room.platform === 'youtube' && !this.manager.isRoomActive(room.id));
+    await Promise.all(rooms.map(room => this.waitForRoomCheck(room.id)));
+    await this.runChecks(rooms, { allowWhenStopped: true });
+  }
+
   async recheckXiaohongshuRoomsAfterCookieUpdate(): Promise<void> {
     const rooms = this.services.rooms.list().filter(room => room.platform === "xiaohongshu");
     await Promise.all(rooms.map(room => this.waitForRoomCheck(room.id)));
@@ -663,8 +674,16 @@ export class Scheduler {
       status.status === "restricted" &&
       err.code === "PLATFORM_ACCESS_RESTRICTED";
     if (missingDouyinAuthorization) this.clearErrorVotes(room.id);
-    if (missingDouyinAuthorization || this.checkErrorGate(room.id, err.code)) {
-      // 明确未授权或满 3 票：卡片显示错误 + 进告警中心（不发桌面通知）。
+    // 链接指向的内容不存在属永久失败：重试不能恢复，立即上屏进告警，不等三票门。
+    const permanentLinkFailure =
+      err.retryable === false && err.code === "ROOM_LINK_INVALID";
+    if (permanentLinkFailure) this.clearErrorVotes(room.id);
+    if (
+      missingDouyinAuthorization ||
+      permanentLinkFailure ||
+      this.checkErrorGate(room.id, err.code)
+    ) {
+      // 明确未授权/永久链接失败或满 3 票：卡片显示错误 + 进告警中心（不发桌面通知）。
       this.setCheckFailure(room.id, err);
       this.createCheckAlert(
         room,

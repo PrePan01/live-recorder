@@ -1,3 +1,5 @@
+import { createYoutubeDanmakuAdapter } from "./adapters/youtube.js";
+import { YoutubeAdapter } from "../platform/youtube.js";
 import { createXiaohongshuDanmakuAdapter } from "./adapters/xiaohongshu.js";
 import { XiaohongshuAdapter } from "../platform/xiaohongshu.js";
 import { randomUUID } from "node:crypto";
@@ -13,6 +15,7 @@ import { DanmakuStore, type DanmakuReadOptions } from "./store.js";
 import type { DanmakuAdapter, DanmakuGap, DanmakuStatus } from "./types.js";
 
 function adapterFor(platform: string, services?: Services): DanmakuAdapter {
+  if (platform === "youtube" && services?.adapterFor("youtube") instanceof YoutubeAdapter) return createYoutubeDanmakuAdapter(services.adapterFor("youtube") as YoutubeAdapter);
   if (platform === "bilibili") return bilibiliDanmakuAdapter;
   if (platform === "douyin") return douyinDanmakuAdapter;
   if (platform === "xiaohongshu" && services?.adapterFor("xiaohongshu") instanceof XiaohongshuAdapter) return createXiaohongshuDanmakuAdapter(services.adapterFor("xiaohongshu") as XiaohongshuAdapter);
@@ -163,7 +166,7 @@ export class DanmakuManager {
           const cookie = await loadCookie(this.services, room, pending.abort.signal);
           if (pending.cancelled) { await store.close(); return; }
           const collector = DanmakuCollector.start({
-            recordingId, adapter: this.sharedAdapter(room.platform), roomUrl: room.url,
+            recordingId, adapter: this.sharedAdapter(room.platform), roomUrl: room.platform === "youtube" && this.services.recordings.get(recordingId)?.streamSessionId ? `https://www.youtube.com/watch?v=${this.services.recordings.get(recordingId)!.streamSessionId}` : room.url,
             cookie: cookie ?? null, store,
             sink: { status: status => this.services.events.emit({ type: "danmaku:status", data: status }) },
             mediaNow, gaps: await store.readGaps(),

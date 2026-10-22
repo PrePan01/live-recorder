@@ -1,0 +1,157 @@
+[
+  {
+    "experiment": "cold-start",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "mode": "recording",
+        "quality": "720p",
+        "label": "final-user-live",
+        "metadataMs": 9047,
+        "reusedExtraction": true,
+        "error": "Error: {\"code\":\"NETWORK_UNAVAILABLE\",\"message\":\"YouTube 解析或拉流失败，请检查系统网络后重试\",\"roomId\":null,\"recordingId\":null,\"occurredAt\":\"2026-10-17T16:02:53.383Z\",\"retryable\":true}"
+      },
+      {
+        "mode": "preview",
+        "quality": "720p",
+        "label": "final-user-live",
+        "metadataMs": 10215,
+        "reusedExtraction": true,
+        "previewMs": 31094,
+        "previewBytes": 397594,
+        "media": [
+          {
+            "file": "preview.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1280,
+                "height": 720
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "experiment": "same-source-ffmpeg-comparison",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "variant": "system",
+        "nativeMs": 17289,
+        "previewMs": 17365,
+        "bytes": 361232
+      },
+      {
+        "variant": "bundled44",
+        "nativeMs": 18560,
+        "previewMs": 18610,
+        "bytes": 816523
+      }
+    ]
+  },
+  {
+    "experiment": "same-source-short-probe-experiment",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "variant": "system-probe1s",
+        "nativeMs": 17028,
+        "previewMs": 17207,
+        "bytes": 393917,
+        "decoded": true
+      },
+      {
+        "variant": "bundled44-probe1s",
+        "nativeMs": 20039,
+        "previewMs": 20086,
+        "bytes": 355611,
+        "decoded": true
+      }
+    ]
+  },
+  {
+    "experiment": "final-external-ffmpeg-io-timeout",
+    "publicVideoId": "rFZHOHl-L8A",
+    "processExitCode": 0,
+    "results": [
+      {
+        "mode": "recording",
+        "quality": "720p",
+        "label": "final-io-timeout",
+        "metadataMs": 8136,
+        "reusedExtraction": true,
+        "source": {
+          "width": 1280,
+          "height": 720,
+          "videoCodec": "V_MPEG4/ISO/AVC",
+          "audioCodec": "A_AAC"
+        },
+        "nativeMs": 24245,
+        "previewMs": 24321,
+        "previewBytes": 378147,
+        "media": [
+          {
+            "file": "recording.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1280,
+                "height": 720
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          },
+          {
+            "file": "capture.mkv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1280,
+                "height": 720
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "mode": "preview",
+        "quality": "720p",
+        "label": "final-io-timeout",
+        "metadataMs": 8219,
+        "reusedExtraction": true,
+        "previewMs": 26559,
+        "previewBytes": 369009,
+        "media": [
+          {
+            "file": "preview.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1280,
+                "height": 720
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

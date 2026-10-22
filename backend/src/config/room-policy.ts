@@ -67,7 +67,7 @@ export function platformCheckInterval(
   const intervals = settings?.checkIntervalSec;
   return (
     intervals?.[platform] ??
-    (platform === "xiaohongshu"
+    ((platform === "xiaohongshu" || platform === "youtube")
       ? 120
       : (intervals?.default ?? (platform === "douyin" ? 120 : 60)))
   );

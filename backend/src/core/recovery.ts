@@ -3,6 +3,7 @@ import path from "node:path";
 import { recoverRecordingBuffer, listRecordingBufferTargets } from "../recorder/buffered-writer.js";
 import { removeSeekIndexSidecar } from "../storage/seek-index.js";
 import type { Services } from "./services.js";
+import { readYoutubeParts, youtubeSize } from '../recorder/youtube-media.js';
 
 export async function recoverStaleRecordings(
   services: Services,
@@ -29,11 +30,14 @@ export async function recoverStaleRecordings(
   const activeIds = new Set(stale.map(rec => rec.id));
   for (const entry of await listRecordingBufferTargets(services.recordingBufferDirectory)) {
     const rec = services.recordings.get(entry.recordingId);
-    if (!rec || rec.filePath !== entry.target || activeIds.has(rec.id)) continue;
+    if (!rec || !rec.filePath || activeIds.has(rec.id)) continue;
     try {
+      if (rec.filePath !== entry.target && !(rec.platform === 'youtube' &&
+          (await readYoutubeParts(rec.filePath)).some(part => part.path === entry.target))) continue;
       const bytes = await recoverRecordingBuffer(services.recordingBufferDirectory, entry.target);
       await removeSeekIndexSidecar(entry.target);
-      services.recordings.update(rec.id, { fileSizeBytes: (await stat(entry.target)).size });
+      services.recordings.update(rec.id, { fileSizeBytes: rec.platform === 'youtube'
+        ? await youtubeSize(rec.filePath) : (await stat(entry.target)).size });
       if (rec.state !== "awaiting_confirmation") services.manager.resumeRecoveredProcessing(rec.id);
       console.log(`[recording-recovery] ${rec.id} replayedBytes=${bytes}`);
     } catch (error) { console.warn(`[recording-recovery] ${rec.id} buffer retained: ${(error as Error).message}`); }
@@ -41,18 +45,29 @@ export async function recoverStaleRecordings(
   for (const rec of stale) {
     if (!services.db.open) break;
     if (rec.filePath) {
-      try {
-        const bytes = await recoverRecordingBuffer(services.recordingBufferDirectory, rec.filePath);
-        if (bytes) { await removeSeekIndexSidecar(rec.filePath); console.log(`[recording-recovery] ${rec.id} replayedBytes=${bytes}`); }
-      } catch (error) { console.warn(`[recording-recovery] ${rec.id} buffer retained: ${(error as Error).message}`); }
+      let targets = [rec.filePath];
+      if (rec.platform === 'youtube') {
+        try { targets = [...new Set([...targets, ...(await readYoutubeParts(rec.filePath)).map(part => part.path)])]; }
+        catch (error) { console.warn(`[recording-recovery] ${rec.id} manifest retained: ${(error as Error).message}`); }
+      }
+      // Reconnect writers spool to their own part, not the original file path.
+      // Replay every part before deciding whether any saved media exists.
+      for (const target of targets) {
+        try {
+          const bytes = await recoverRecordingBuffer(services.recordingBufferDirectory, target);
+          if (bytes) { await removeSeekIndexSidecar(target); console.log(`[recording-recovery] ${rec.id} replayedBytes=${bytes}`); }
+        } catch (error) { console.warn(`[recording-recovery] ${rec.id} buffer retained: ${(error as Error).message}`); }
+      }
     }
     const st = rec.filePath ? await stat(rec.filePath).catch(() => null) : null;
+    const savedSize = rec.platform === 'youtube' && rec.filePath
+      ? await youtubeSize(rec.filePath).catch(() => st?.size ?? 0) : st?.size ?? 0;
     if (!services.db.open) break;
-    if (st && st.size > 0) {
+    if (savedSize > 0) {
       services.recordings.update(rec.id, {
         state: "completed",
         endedAt: now,
-        fileSizeBytes: st.size,
+        fileSizeBytes: savedSize,
         endReason: "service_restart",
         failureReason: {
           code: "RECORDING_START_FAILED",

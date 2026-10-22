@@ -1,7 +1,9 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { Platform } from "../../../types/room";
+import { baseUrl } from "../../../api/client";
 
 const PLATFORM_FALLBACK_CHAR: Record<Platform, string> = {
+  youtube: "Y",
   bilibili: "B",
   douyin: "抖",
   xiaohongshu: "红",
@@ -22,6 +24,7 @@ function thumbSrc(url: string, platform: Platform, size: number): string {
 
 export default function RoomAvatar({
   platform,
+  roomId,
   avatarUrl,
   name,
   live = false,
@@ -29,6 +32,7 @@ export default function RoomAvatar({
   className,
 }: {
   platform: Platform;
+  roomId?: string;
   avatarUrl?: string | null;
   name?: string;
   live?: boolean;
@@ -60,7 +64,9 @@ export default function RoomAvatar({
     >
       {show ? (
         <img
-          src={thumbSrc(avatarUrl!, platform, size)}
+          src={platform === 'youtube' && roomId
+            ? `${baseUrl()}/rooms/${encodeURIComponent(roomId)}/avatar?v=${encodeURIComponent(avatarUrl!)}`
+            : thumbSrc(avatarUrl!, platform, size)}
           alt=""
           loading="lazy"
           decoding="async"

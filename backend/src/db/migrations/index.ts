@@ -1047,6 +1047,20 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       live_notification_enabled = CASE WHEN live_notification_enabled = 1 OR live_email_notification_enabled = 1 THEN 1 ELSE 0 END,
       live_email_notification_enabled = 0`);
   } },
+  { version: 56, foreignKeysOff: true, up: db => {
+    const original = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='rooms'").get() as { sql: string };
+    const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='rooms' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
+    const create = original.sql.replace(/^CREATE TABLE\s+["`\[]?rooms["`\]]?/i, 'CREATE TABLE rooms_youtube_upgrade')
+      .replace(/CHECK\s*\(platform IN \([^)]*\)\)/i, "CHECK(platform IN ('bilibili', 'douyin', 'xiaohongshu', 'youtube'))");
+    if (!create.includes("'youtube'")) throw new Error('rooms platform constraint could not be upgraded');
+    const columns = (db.prepare('PRAGMA table_info(rooms)').all() as Array<{ name: string }>).map(column => `"${column.name.replaceAll('"', '""')}"`).join(',');
+    db.exec(create);
+    db.exec(`INSERT INTO rooms_youtube_upgrade (${columns}) SELECT ${columns} FROM rooms`);
+    db.exec('DROP TABLE rooms; ALTER TABLE rooms_youtube_upgrade RENAME TO rooms');
+    for (const index of indexes) db.exec(index.sql);
+    db.exec('CREATE TABLE youtube_sources (input_url TEXT PRIMARY KEY, channel_url TEXT NOT NULL)');
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key validation failed after YouTube upgrade');
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

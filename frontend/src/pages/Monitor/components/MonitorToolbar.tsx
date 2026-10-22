@@ -91,6 +91,14 @@ export function MonitorToolbar({
               ),
               value: "xiaohongshu",
             },
+            {
+              label: (
+                <span>
+                  <PlatformIcon platform="youtube" />{" "}
+                </span>
+              ),
+              value: "youtube",
+            },
           ]}
           value={platformFilter}
           onChange={(e) =>

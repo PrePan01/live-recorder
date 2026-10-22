@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
+import { recordingSpoolDirectory } from '../../src/recorder/buffered-writer.js';
+import { saveYoutubeParts } from '../../src/recorder/youtube-media.js';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { buildServices } from '../../src/core/services.js';
@@ -51,4 +53,28 @@ it('releases all stale slots before filesystem recovery, including records beyon
   expect(services.recordings.activeCount()).toBe(0);
   expect(await recovery).toBe(125);
   services.db.close();
+});
+it.each(['saved', 'spooled'])('recovers a %s YouTube reconnect part when its original first connection has no file', async kind => {
+  const services = buildServices({ dbPath: ':memory:', mode: 'fake' });
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-youtube-recovery-'));
+  const room = services.rooms.create({ platform: 'youtube', url: 'https://youtube.com/watch?v=abcdefghijk', displayName: 'Creator' });
+  const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'youtube', streamSessionId: 'abcdefghijk', streamTitle: '' });
+  const file = path.join(dir, 'native.mkv');
+  const next = `${file}.part-1.mkv`;
+  await writeFile(next, kind === 'saved' ? 'saved original' : '');
+  if (kind === 'spooled') {
+    const spool = recordingSpoolDirectory(services.recordingBufferDirectory, next);
+    await mkdir(spool, { recursive: true });
+    await writeFile(path.join(spool, 'manifest.json'), JSON.stringify({ version: 1, target: next, recordingId: rec.id }));
+    await writeFile(path.join(spool, '0-abcd.buffer'), 'saved original');
+  }
+  await saveYoutubeParts(file, [{ path: file, offsetMs: 0, durationMs: 0 }, { path: next, offsetMs: 0, durationMs: 1000 }]);
+  services.recordings.update(rec.id, { state: 'recording', filePath: file });
+  const resume = vi.spyOn(services.manager, 'resumeRecoveredProcessing').mockImplementation(() => {});
+  try {
+    expect(await recoverStaleRecordings(services)).toBe(1);
+    expect(services.recordings.get(rec.id)).toMatchObject({ state: 'completed', fileSizeBytes: 14 });
+    expect(resume).toHaveBeenCalledWith(rec.id);
+    expect(await readFile(next, 'utf8')).toBe('saved original');
+  } finally { services.db.close(); await rm(dir, { recursive: true, force: true }); }
 });

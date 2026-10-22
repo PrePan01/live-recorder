@@ -2,7 +2,7 @@ import type { ErrorObject } from './error.js';
 import type { Quality } from './recording.js';
 import type { Tag } from './tag.js';
 
-export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu';
+export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu' | 'youtube';
 
 export type MonitorState =
   | 'idle'

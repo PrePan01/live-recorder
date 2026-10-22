@@ -258,6 +258,11 @@ export default function Setup() {
               {authorizationStatuses.xiaohongshu === "authorized"
                 ? "已登录"
                 : "未登录"}
+              <br />
+              YouTube授权：
+              {authorizationStatuses.youtube === "authorized"
+                ? "已登录"
+                : "未登录"}
             </Typography.Paragraph>
             <div className="lr-setup-first-room">
               <div className="lr-setup-first-room__copy">

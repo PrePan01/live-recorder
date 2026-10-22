@@ -23,7 +23,7 @@ export function inheritedInterval(
 ): number {
   return (
     (platform ? settings?.checkIntervalSec[platform] : undefined) ??
-    (platform === "xiaohongshu"
+    ((platform === "xiaohongshu" || platform === "youtube")
       ? 120
       : (settings?.checkIntervalSec.default ??
         (platform === "douyin" ? 120 : 60)))

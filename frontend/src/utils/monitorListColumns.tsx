@@ -86,7 +86,8 @@ export function buildMonitorListColumns(
         <Space size={4}>
           <RoomAvatar
             platform={room.platform}
-            avatarUrl={room.avatarUrl}
+            roomId={room.id}
+              avatarUrl={room.avatarUrl}
             name={v}
             live={room.lastLiveStatus === "live"}
             size={22}

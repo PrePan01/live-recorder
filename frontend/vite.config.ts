@@ -43,6 +43,12 @@ export default defineConfig({
             import.meta.url,
           ),
         ),
+        "youtube-auth": fileURLToPath(
+          new URL(
+            "./src/window-entries/platform-auth/youtube-auth.html",
+            import.meta.url,
+          ),
+        ),
       },
     },
   },

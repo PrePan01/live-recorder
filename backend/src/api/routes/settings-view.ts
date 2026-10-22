@@ -1,3 +1,4 @@
+import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
 import type { Services } from '../../core/services.js';
 import { DEFAULT_SETTINGS } from '../../config/defaults.js';
 import type { AppSettings, SettingsView } from '../../types/index.js';
@@ -25,6 +26,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     douyinCookie: { hasCookie: hasDouyinCookie },
     bilibiliCookie: { hasCookie: hasBilibiliCookie },
     xiaohongshuCookie: { hasCookie: hasXiaohongshuCookie },
+    youtubeCookie: { hasCookie: await services.secretStore.has(YOUTUBE_COOKIE_KEY) },
     theme: settings.theme ?? 'system',
     // 旧版本允许 30–128px；收紧范围后在视图层归一化，避免旧值让新滑块越界。
     floatingRecorderSize: Math.min(100, Math.max(20, settings.floatingRecorderSize ?? 36)),

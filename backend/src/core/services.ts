@@ -1,3 +1,6 @@
+import { YoutubeAdapter } from "../platform/youtube.js";
+import { YoutubeRecordingEngine } from "../recorder/youtube-recorder.js";
+import { YOUTUBE_COOKIE_KEY } from "../security/keys.js";
 import { saveXiaohongshuSource } from '../platform/xiaohongshu-source-store.js';
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
@@ -95,11 +98,11 @@ export interface Services {
   exporter: ExportManager;
   /** 跳播服务（正在录的这条：索引状态/预热/起流）。 */
   seek: SeekService;
-  adapterFor(platform: "bilibili" | "douyin" | "xiaohongshu"): PlatformAdapter;
-  engineFor(): RecordingEngine;
+  adapterFor(platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): PlatformAdapter;
+  engineFor(platform?: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): RecordingEngine;
   recordingBufferDirectory: string;
   /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
-  platformCookie(platform: "bilibili" | "douyin" | "xiaohongshu"): Promise<string | undefined>;
+  platformCookie(platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): Promise<string | undefined>;
 }
 
 export interface BuildOptions {
@@ -177,6 +180,10 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const adapters =
     mode === "real"
       ? {
+          youtube: new YoutubeAdapter(undefined, {
+            load: url => (db.prepare('SELECT channel_url FROM youtube_sources WHERE input_url = ?').get(url) as { channel_url: string } | undefined)?.channel_url,
+            save: (url, channel) => { db.prepare('INSERT INTO youtube_sources (input_url,channel_url) VALUES (?,?) ON CONFLICT(input_url) DO UPDATE SET channel_url=excluded.channel_url').run(url, channel); },
+          }) as PlatformAdapter,
           bilibili: new BilibiliAdapter() as PlatformAdapter,
           douyin: new DouyinAdapter() as PlatformAdapter,
           xiaohongshu: new XiaohongshuAdapter(fetch, {
@@ -191,6 +198,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
           }) as PlatformAdapter,
         }
       : {
+          youtube: new FakePlatformAdapter("youtube") as PlatformAdapter,
           bilibili: new FakePlatformAdapter("bilibili") as PlatformAdapter,
           douyin: new FakePlatformAdapter("douyin") as PlatformAdapter,
           xiaohongshu: new FakePlatformAdapter("xiaohongshu") as PlatformAdapter,
@@ -248,13 +256,14 @@ export function buildServices(opts: BuildOptions = {}): Services {
               : path.dirname(path.resolve(dbPath)),
             "recording-buffer",
           ),
-    engineFor: () =>
+    engineFor: (platform) =>
       mode === "real"
-        ? new StreamRecordingEngine(fetch, undefined, {
+        ? platform === "youtube" ? new YoutubeRecordingEngine({ directory: services.recordingBufferDirectory }, services.settings.load()?.encodingMode ?? "auto") : new StreamRecordingEngine(fetch, undefined, {
             directory: services.recordingBufferDirectory,
           })
         : fakeEngine,
     platformCookie: async (platform) => {
+      if (platform === "youtube") return (await secretStore.get(YOUTUBE_COOKIE_KEY)) ?? undefined;
       if (platform === "douyin")
         return (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined;
       // B站未登录时服务端只提供 720p 及以下档位，登录 Cookie（SESSDATA）是获取蓝光/原画的唯一途径。

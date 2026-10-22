@@ -1798,6 +1798,42 @@ describe('#116 路2 三钉（FakePlatformAdapter=纯触发逻辑面）', () => {
 });
 
 describe("shared preview watchdog lifecycle", () => {
+  it("releases waiting viewers immediately when stream URL resolution fails", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = services.rooms.create({ platform: "bilibili", url: "https://live.bilibili.com/123", displayName: "Lookup failure" });
+    services.rooms.setLiveStatus(room.id, "live");
+    vi.spyOn(services.adapterFor("bilibili"), "getStreamUrl").mockRejectedValue(new AppError("NETWORK_UNAVAILABLE", "temporary outage"));
+    try {
+      await services.manager.ensurePreviewStream(room.id);
+      expect(preview.closed).toEqual([{ roomId: room.id, code: 4004, reason: "stream_lost" }]);
+    } finally { await services.manager.shutdown(); services.db.close(); }
+  });
+
+  it("keeps a recording's viewers when an earlier preview URL lookup fails late", async () => {
+    const clock = new FakeClock();
+    const dir = await mkdtemp(path.join(tmpdir(), "lr-preview-lookup-race-"));
+    const services = buildServices({ dbPath: ":memory:", clock });
+    services.settings.save(baseSettings(dir));
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = services.rooms.create({ platform: "bilibili", url: "https://live.bilibili.com/123", displayName: "Lookup race" });
+    services.rooms.setLiveStatus(room.id, "live");
+    let rejectLookup!: (error: Error) => void;
+    const lookup = vi.spyOn(services.adapterFor("bilibili"), "getStreamUrl").mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    services.engineFor = () => new FakeRecordingEngine(clock, { frames: 1000, intervalMs: 500 });
+    const starting = services.manager.ensurePreviewStream(room.id);
+    try {
+      await waitFor(() => lookup.mock.calls.length === 1);
+      await services.manager.maybeStartRecording(room, {}, { manual: true });
+      expect(services.manager.isRoomActive(room.id)).toBe(true);
+      rejectLookup(new AppError("NETWORK_UNAVAILABLE", "late failure"));
+      await starting;
+      expect(preview.closed).toEqual([]);
+    } finally { await services.manager.shutdown(); services.db.close(); }
+  });
+
   async function setup(firstDelayMs = 0) {
     const clock = new FakeClock(Date.now());
     const dir = await mkdtemp(path.join(tmpdir(), "lr-shared-watchdog-"));
@@ -2129,5 +2165,148 @@ describe('per-room recording quality', () => {
       expect(preview.frames.get(room.id)!).toBeGreaterThan(viewerFrames!);
       await services.manager.stopPreviewStream(room.id);
     } finally { await services.manager.shutdown(); services.quality.stop(); }
+  });
+});
+
+describe("preview startup resilience", () => {
+  const youtubeRoom = (services: Services, name: string) => {
+    const room = services.rooms.create({
+      platform: "youtube",
+      url: "https://www.youtube.com/watch?v=abcdefghijk",
+      displayName: name,
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    vi.spyOn(services.adapterFor("youtube"), "getStreamUrl").mockResolvedValue({
+      url: "https://www.youtube.com/watch?v=abcdefghijk",
+      format: "youtube",
+      actualQuality: "720p",
+    } as never);
+    return room;
+  };
+
+  it("extends the startup budget as stages arrive instead of one flat deadline", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "slow start");
+    let reportStage: ((stage: string) => void) | undefined;
+    let release!: () => void;
+    const stalled = new Promise<void>((resolve) => { release = resolve; });
+    services.engineFor = () => ({
+      setStartupObserver: (fn: (stage: string) => void) => { reportStage = fn; },
+      setDownloadObserver: () => {},
+      setPreviewActive: () => {},
+      hasRecordingConsumers: () => false,
+      stop: async () => { release(); },
+      start: async function* () {
+        await stalled;
+        yield { type: "data", chunk: Buffer.from("x") };
+        await new Promise(() => {});
+      },
+    }) as never;
+    const started = services.manager.ensurePreviewStream(room.id);
+    await settle(clock, 20);
+    reportStage?.("youtube_native_stream_ready");
+    await settle(clock, 40_000);
+    release();
+    await started;
+    await settle(clock, 20);
+    // 80s 总耗时远超旧的 45s 平预算：有阶段进展就该续命等到数据。
+    expect(preview.closed).toEqual([]);
+    expect(preview.frames.get(room.id) ?? 0).toBeGreaterThan(0);
+    await services.manager.shutdown();
+    services.db.close();
+  });
+
+  it("still harvests a silent zombie at the flat slice window", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "silent zombie");
+    let stopped = false;
+    let release!: () => void;
+    const stalled = new Promise<void>((resolve) => { release = resolve; });
+    services.engineFor = () => ({
+      setStartupObserver: () => {},
+      setDownloadObserver: () => {},
+      setPreviewActive: () => {},
+      hasRecordingConsumers: () => false,
+      stop: async () => { stopped = true; release(); },
+      start: async function* () { await stalled; },
+    }) as never;
+    const started = services.manager.ensurePreviewStream(room.id);
+    await settle(clock, 20);
+    await settle(clock, 45_000);
+    await started;
+    await settle(clock, 20);
+    expect(stopped).toBe(true);
+    expect(preview.closed).toEqual([{ roomId: room.id, code: 4004, reason: "stream_lost" }]);
+    await services.manager.shutdown();
+    services.db.close();
+  });
+
+  it("retries startup after a pre-frame source failure without kicking viewers", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "retry once");
+    let attempts = 0;
+    services.engineFor = () => {
+      attempts += 1;
+      const attempt = attempts;
+      return {
+        setStartupObserver: () => {},
+        setDownloadObserver: () => {},
+        setPreviewActive: () => {},
+        hasRecordingConsumers: () => false,
+        stop: async () => {},
+        start: async function* () {
+          if (attempt === 1)
+            throw new AppError("NETWORK_UNAVAILABLE", "断流", { retryable: true });
+          yield { type: "data", chunk: Buffer.from("x") };
+          await new Promise(() => {});
+        },
+      } as never;
+    };
+    const started = services.manager.ensurePreviewStream(room.id);
+    await started;
+    await settle(clock, 50);
+    expect(attempts).toBe(2);
+    expect(preview.closed).toEqual([]);
+    expect(preview.frames.get(room.id) ?? 0).toBeGreaterThan(0);
+    await services.manager.shutdown();
+    services.db.close();
+  });
+
+  it("closes the room only after startup retries are exhausted", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "retry exhausted");
+    let attempts = 0;
+    services.engineFor = () => {
+      attempts += 1;
+      return {
+        setStartupObserver: () => {},
+        setDownloadObserver: () => {},
+        setPreviewActive: () => {},
+        hasRecordingConsumers: () => false,
+        stop: async () => {},
+        start: async function* () {
+          throw new AppError("NETWORK_UNAVAILABLE", "断流", { retryable: true });
+        },
+      } as never;
+    };
+    const started = services.manager.ensurePreviewStream(room.id);
+    await started;
+    await settle(clock, 100);
+    expect(attempts).toBe(3);
+    expect(preview.closed).toEqual([{ roomId: room.id, code: 4004, reason: "stream_lost" }]);
+    await services.manager.shutdown();
+    services.db.close();
   });
 });

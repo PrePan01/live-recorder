@@ -56,6 +56,19 @@ export async function detectHwEncoder(ffmpegBin: string): Promise<HwEncoder | nu
   try { return await job; } finally { probes.delete(fingerprint); }
 }
 
+/** Interactive previews may fall back to software while a queued probe finishes.
+ * Existing batch work keeps its original queue and resource budget.
+ */
+export async function detectPreviewHwEncoder(timeoutMs = 2_000): Promise<HwEncoder | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      detectHwEncoder(resolveBin("ffmpeg")),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs); timer.unref(); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 function ffmpegBin(): string {
   return resolveBin("ffmpeg");
 }

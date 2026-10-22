@@ -60,3 +60,6 @@ button:disabled {
 :root[data-platform="xiaohongshu"] {
   --platform-auth-color: #ff2741;
 }
+:root[data-platform="youtube"] {
+  --platform-auth-color: #ff0033;
+}

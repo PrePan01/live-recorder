@@ -71,6 +71,7 @@ export default function PreviewModal({
   const mediaClock = useRecordingMediaRange(
     activeRecordingId ?? displayedTrack?.id,
     previewVideo,
+    room.platform === "youtube" && recording,
   );
   const trackElapsedSeconds = mediaClock.durationSeconds;
   const {
@@ -400,7 +401,7 @@ export default function PreviewModal({
             !pictureInPicture &&
               (!previewPlayerBounds || !streamRatioReady) &&
               "lr-preview-player--hidden",
-            (pictureInPicture || (previewPlayerVisible && streamRatioReady)) &&
+            (pictureInPicture || previewPlayerVisible) &&
               "lr-preview-player--visible",
           ]
             .filter(Boolean)

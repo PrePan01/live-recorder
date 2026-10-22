@@ -2,7 +2,7 @@ import type { ApiErrorEnvelope } from "./error";
 import type { Quality } from "./settings";
 import type { Tag } from "./tag";
 
-export type Platform = "bilibili" | "douyin" | "xiaohongshu";
+export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "youtube";
 
 export type LiveStatus = "live" | "offline" | "restricted";
 

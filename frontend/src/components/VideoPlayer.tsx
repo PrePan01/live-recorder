@@ -1,4 +1,4 @@
-import { Alert, Button, Spin } from "antd";
+import { Alert, Button, Progress, Spin } from "antd";
 import type { VideoPlayerProps } from "./video/types";
 import { useVideoPlayback } from "./video/useVideoPlayback";
 export type { VideoPlayerProps } from "./video/types";
@@ -17,20 +17,48 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     attachVideoRef,
     transitionRef,
     state,
-    setState,
     errorMsg,
     setReloadToken,
     hasEverPlayedRef,
+    loadProgress,
   } = useVideoPlayback(props);
   return (
     <div
-      className="lr-video-player" style={{ ...(fill ? { height: "100%" } : null) }}
+      className="lr-video-player"
+      style={{ ...(fill ? { height: "100%" } : null) }}
     >
-      {!thumbnail && state === "loading" && !hasEverPlayedRef.current && (
-        <div className="lr-video-player__loading">
-          <Spin description="连接预览流…" />
-        </div>
-      )}
+      {!thumbnail &&
+        state === "loading" &&
+        (!seek || !hasEverPlayedRef.current) && (
+          <div className="lr-video-player__loading">
+            {seek ? (
+              <Spin description="正在加载回看画面…" />
+            ) : (
+              <div
+                className="lr-video-player__progress"
+                role="progressbar"
+                aria-label="直播加载进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={loadProgress.percent}
+                aria-valuetext={`${loadProgress.percent}% ${loadProgress.label}`}
+              >
+                <div className="lr-video-player__progress-heading">
+                  <span>{loadProgress.label}</span>
+                  <strong>{loadProgress.percent}%</strong>
+                </div>
+                <Progress
+                  percent={loadProgress.percent}
+                  status="active"
+                  showInfo={false}
+                  strokeColor="var(--lr-primary)"
+                  railColor="var(--lr-surface-alt)"
+                  aria-hidden="true"
+                />
+              </div>
+            )}
+          </div>
+        )}
       {!thumbnail && state === "error" && (
         <div className="lr-video-player__message">
           <Alert
@@ -63,26 +91,22 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         muted={thumbnail || muted}
         playsInline
         autoPlay={!seek}
-        onCanPlay={() =>
-          !seek &&
-          setState((current) => (current === "loading" ? "playing" : current))
-        }
-        onPlaying={() => {
-          if (!seek) setState("playing");
-        }}
-        className="lr-video-player__video" style={{
+        className="lr-video-player__video"
+        style={{
           ...(fill
             ? { height: "100%", objectFit: "contain" as const }
-            : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }), display: state === "error" || state === "ended" ? "none" : "block"
+            : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }),
+          display: state === "error" || state === "ended" ? "none" : "block",
         }}
       />
       {preserveFrameOnSwitch && (
         <canvas
           ref={transitionRef}
           aria-hidden="true"
-          className="lr-video-player__transition" style={{
+          className="lr-video-player__transition"
+          style={{
             visibility:
-              state === "error" || state === "ended" ? "hidden" : "visible"
+              state === "error" || state === "ended" ? "hidden" : "visible",
           }}
         />
       )}

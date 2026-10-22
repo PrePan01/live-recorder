@@ -18,3 +18,4 @@ export function keychainService(): string {
   const dir = process.env.LIVE_RECORDER_DATA_DIR;
   return dir && dir.length > 0 ? 'live-recorder-dev' : KEYCHAIN_SERVICE;
 }
+export const YOUTUBE_COOKIE_KEY = 'youtube.cookie';

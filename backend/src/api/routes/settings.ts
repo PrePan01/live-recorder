@@ -1,3 +1,6 @@
+import { checkYoutubeCookieStatus } from "../../security/youtube-cookie.js";
+import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
+import { normalizeYoutubeCookies } from "../../platform/youtube-runtime.js";
 import { access, mkdir, readdir, writeFile, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -22,18 +25,32 @@ export { settingsView };
 const BILIBILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 export function registerSettingsRoutes(app: FastifyInstance, services: Services): void {
+  app.get('/api/v1/settings/youtube-cookie-status', async () => { const cookie = await services.secretStore.get(YOUTUBE_COOKIE_KEY); return { status: cookie ? await checkYoutubeCookieStatus(cookie) : 'missing' }; });
+  app.post('/api/v1/settings/youtube-cookie', async (req) => {
+    const { cookie } = (req.body ?? {}) as { cookie?: unknown };
+    if (typeof cookie !== 'string') throw new AppError('CONFIG_INVALID', '请导入 YouTube Cookie 文件');
+    if (cookie.trim()) await services.secretStore.set(YOUTUBE_COOKIE_KEY, normalizeYoutubeCookies(cookie));
+    else await services.secretStore.delete(YOUTUBE_COOKIE_KEY);
+    void services.scheduler.recheckYoutubeRoomsAfterCookieUpdate().catch(() => undefined);
+    const view = await settingsView(services);
+    services.events.emit({ type: 'settings:updated', data: view });
+    return { settings: view };
+  });
+
   app.get('/api/v1/settings/defaults', async () => ({ defaults: settingsDefaults() }));
   app.get('/api/v1/settings', async (_req, reply) => {
     return reply.send({ settings: await settingsView(services) });
   });
 
   app.put('/api/v1/settings', async (req, reply) => {
-    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string; bilibiliCookie?: string; xiaohongshuCookie?: string };
+    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string; bilibiliCookie?: string; xiaohongshuCookie?: string; youtubeCookie?: string };
     const password = typeof body.mail?.password === 'string' && body.mail.password.length > 0 ? body.mail.password : null;
     const douyinCookie = typeof body.douyinCookie === 'string' ? normalizeDouyinCookie(body.douyinCookie) : null;
     const bilibiliCookie = typeof body.bilibiliCookie === 'string' ? normalizeBilibiliCookie(body.bilibiliCookie) : null;
     const xiaohongshuCookie = typeof body.xiaohongshuCookie === 'string' ? normalizeXiaohongshuCookie(body.xiaohongshuCookie) : null;
     if (body.xiaohongshuCookie !== undefined && typeof body.xiaohongshuCookie !== 'string') throw new AppError('CONFIG_INVALID', '小红书 Cookie 必须为字符串');
+    if (body.youtubeCookie !== undefined && typeof body.youtubeCookie !== 'string') throw new AppError('CONFIG_INVALID', 'YouTube Cookie 必须为字符串');
+    const youtubeCookie = typeof body.youtubeCookie === 'string' ? body.youtubeCookie.trim() ? normalizeYoutubeCookies(body.youtubeCookie) : '' : null;
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
     if (body.checkIntervalSec !== undefined && (!body.checkIntervalSec || typeof body.checkIntervalSec !== 'object' || Array.isArray(body.checkIntervalSec))) {
       throw new AppError('CONFIG_INVALID', '检测间隔必须为对象');
@@ -42,6 +59,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
       throw new AppError('CONFIG_INVALID', '弹幕配置必须为对象，enabled 必须为布尔值');
     }
     if (incoming.mail) delete incoming.mail.password;
+    delete (incoming as { youtubeCookie?: string }).youtubeCookie;
     delete (incoming as { douyinCookie?: string }).douyinCookie;
     delete (incoming as { bilibiliCookie?: string }).bilibiliCookie;
     delete (incoming as { xiaohongshuCookie?: string }).xiaohongshuCookie;
@@ -62,6 +80,11 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     if (merged.highlightEnabled === false) await services.manager.disableAllHighlightBuffers();
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
+    if (youtubeCookie !== null) {
+      if (youtubeCookie) await services.secretStore.set(YOUTUBE_COOKIE_KEY, youtubeCookie);
+      else await services.secretStore.delete(YOUTUBE_COOKIE_KEY);
+      void services.scheduler.recheckYoutubeRoomsAfterCookieUpdate().catch(() => undefined);
+    }
     if (douyinCookie !== null) {
       if (douyinCookie.length > 0) {
         validateDouyinCookie(douyinCookie);

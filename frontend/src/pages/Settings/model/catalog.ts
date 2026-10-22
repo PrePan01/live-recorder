@@ -146,13 +146,13 @@ export const DEFINITIONS: SettingDefinition[] = [
     "录制完成后询问是否保留",
     "等待保留确认时，后处理和上传将暂缓执行。",
   ),
-  ...(["default", "bilibili", "douyin", "xiaohongshu"] as const).map((platform, index) =>
+  ...(["default", "bilibili", "douyin", "xiaohongshu", "youtube"] as const).map((platform, index) =>
     field(
       `interval-${platform}`,
       "monitoring",
       "settings",
       `checkIntervalSec.${platform}`,
-      `${["全局默认", "B站", "抖音", "小红书"][index]}检测间隔`,
+      `${["全局默认", "B站", "抖音", "小红书", "YouTube"][index]}检测间隔`,
       "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
       {
         min: 10,
@@ -305,6 +305,7 @@ export const DEFINITIONS: SettingDefinition[] = [
     "授权用于获取可用的高画质档位；凭据已保存不等于授权有效。",
     { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
   ),
+  field("youtube-cookie", "authorization", "settings", "youtubeCookie", "YouTube 授权", "在授权窗口登录，或手动保存 Netscape 格式 Cookie。", { restorable: false, secret: true, keywords: "Cookie 登录 账户 YouTube" }),
   field("xiaohongshu-cookie", "authorization", "settings", "xiaohongshuCookie", "小红书授权", "在授权窗口登录，或手动保存完整 Cookie。", { restorable: false, secret: true, keywords: "Cookie 登录 账户" }),
   field(
     "notification-dedupe",

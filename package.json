@@ -14,7 +14,8 @@
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
     "install:ci": "npm --prefix backend ci && npm --prefix frontend ci",
     "version:set": "node scripts/version-set.mjs",
-    "verify": "node scripts/verify-release.mjs"
+    "verify": "node scripts/verify-release.mjs",
+    "youtube:setup": "node frontend/scripts/bundle-youtube.mjs"
   },
   "engines": {
     "node": ">=22"

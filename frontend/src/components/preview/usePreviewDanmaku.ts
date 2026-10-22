@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { readPreviewElapsed } from "../../utils/previewMediaClock";
 import { fetchDanmakuWindow } from "../../api/danmakuWindow";
 import { fetchRecordingGaps } from "../../api/recordings";
 import { useLiveDanmaku } from "../../hooks/useLiveDanmaku";
@@ -43,6 +44,7 @@ export function usePreviewDanmaku(
   const [trackGaps, setTrackGaps] = useState<RecordingGap[]>([]);
   const streamHealth = useStreamHealth(activeRecordingId);
   useEffect(() => {
+    setTrackGaps([]);
     if (!activeRecordingId) return undefined;
     let cancelled = false;
     const load = () => {
@@ -66,23 +68,15 @@ export function usePreviewDanmaku(
   const displayedDanmakuStatus = seekPlayback
     ? danmakuStatus
     : liveDanmaku.status;
-  const danmakuAnchorRef = useRef<number | null>(null);
   const getDanmakuTimeMs = useCallback((): number => {
     if (!seekPlayback || !previewVideo || !previewVideo.buffered.length)
       return NaN;
     if (previewFrameGenerationRef.current !== seekPlayback.generation)
       return NaN;
-    if (danmakuAnchorRef.current == null)
-      danmakuAnchorRef.current = previewVideo.buffered.start(0);
-    return (
-      (seekPlayback.startSecond +
-        previewVideo.currentTime -
-        danmakuAnchorRef.current) *
-      1000
-    );
+    const elapsed = readPreviewElapsed(previewVideo);
+    return elapsed == null ? NaN : (seekPlayback.startSecond + elapsed) * 1000;
   }, [seekPlayback, previewVideo, previewFrameGenerationRef]);
   useEffect(() => {
-    danmakuAnchorRef.current = null;
     setDanmakuMessages([]);
     setDanmakuGaps([]);
     if (!activeRecordingId || !seekPlayback || !danmakuVisible)

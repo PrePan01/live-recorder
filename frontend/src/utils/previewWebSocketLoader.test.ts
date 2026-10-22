@@ -11,7 +11,9 @@ class Socket {
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   close = vi.fn();
-  constructor(_url: string) {
+  url: string;
+  constructor(url: string) {
+    this.url = url;
     Socket.latest = this;
   }
 }
@@ -24,6 +26,36 @@ beforeEach(() => vi.stubGlobal("WebSocket", Socket));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("preview WebSocket lifecycle", () => {
+  it('opts into progress and keeps control messages out of the binary media stream', () => {
+    const progress = vi.fn();
+    const loader = new PreviewWebSocketLoader(undefined, undefined, undefined, progress);
+    loader.open({ url: 'ws://localhost/preview?existing=1', duration: 0 });
+    const socket = Socket.latest;
+    expect(new URL(socket.url).searchParams.get('progress')).toBe('1');
+    expect(new URL(socket.url).searchParams.get('existing')).toBe('1');
+    loader.onDataArrival = vi.fn(); loader.onError = vi.fn();
+    socket.onopen!();
+    socket.onmessage!({ data: JSON.stringify({ type: 'preview_progress', stage: 'stream_url_ready' }) });
+    expect(progress).toHaveBeenCalledWith('connected');
+    expect(progress).toHaveBeenCalledWith('stream_url_ready');
+    socket.onmessage!({ data: JSON.stringify({ type: 'preview_progress', stage: 'presented' }) });
+    expect(progress).not.toHaveBeenCalledWith('presented');
+    expect(loader.onDataArrival).not.toHaveBeenCalled();
+    socket.onmessage!({ data: new ArrayBuffer(4) });
+    expect(progress).toHaveBeenCalledWith('receiving_media');
+    expect(loader.onDataArrival).toHaveBeenCalledWith(expect.any(ArrayBuffer), 0, 4);
+    socket.onmessage!({ data: JSON.stringify({ type: 'stream_end', reason: 'ended' }) });
+    expect(loader.onError).not.toHaveBeenCalled();
+    const late = socket.onmessage!;
+    progress.mockClear(); loader.destroy();
+    late({ data: JSON.stringify({ type: 'preview_progress', stage: 'preview_media_ready' }) });
+    expect(progress).not.toHaveBeenCalled();
+  });
+  it('keeps binary-only consumers on the existing protocol', () => {
+    const { loader, socket } = open();
+    expect(new URL(socket.url).searchParams.has('progress')).toBe(false);
+    loader.destroy();
+  });
   it("clears handlers before closing a connecting socket and ignores queued callbacks", () => {
     const { loader, socket } = open();
     const error = socket.onerror!;

@@ -173,6 +173,7 @@ export default memo(function RoomManagementCard({
           <div className="lr-room-policy-profile">
             <RoomAvatar
               platform={room.platform}
+              roomId={room.id}
               avatarUrl={room.avatarUrl}
               name={room.displayName}
               live={room.lastLiveStatus === "live"}

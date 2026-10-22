@@ -844,3 +844,11 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 添加直播间慢路径等待说明行（仅提交超过阈值时出现）。 */
+.lr-room-submit-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}

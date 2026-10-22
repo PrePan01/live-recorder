@@ -30,6 +30,8 @@ export interface NativeBridge {
   onDouyinAuthorized(cb: () => void): () => void;
   startXiaohongshuAuthorization(): Promise<void>;
   onXiaohongshuAuthorized(cb: () => void): () => void;
+  startYoutubeAuthorization(): Promise<void>;
+  onYoutubeAuthorized(cb: () => void): () => void;
   startBilibiliAuthorization(): Promise<void>;
   onBilibiliAuthorized(cb: () => void): () => void;
   quit(): Promise<void>;
@@ -167,6 +169,20 @@ class TauriBridge implements NativeBridge {
     let disposed = false;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const off = await listen<void>('xiaohongshu:authorized', () => { if (!disposed) cb(); });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }
+
+  async startYoutubeAuthorization(): Promise<void> {
+    await this.invoke<void>('start_youtube_authorization');
+  }
+
+  onYoutubeAuthorized(cb: () => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<void>('youtube:authorized', () => { if (!disposed) cb(); });
       if (disposed) off(); else unlisten = off;
     });
     return () => { disposed = true; unlisten?.(); };
@@ -347,6 +363,12 @@ class BrowserBridge implements NativeBridge {
   }
 
   onXiaohongshuAuthorized(_cb: () => void): () => void { return () => {}; }
+
+  async startYoutubeAuthorization(): Promise<void> {
+    throw new Error('应用内授权仅限桌面客户端');
+  }
+
+  onYoutubeAuthorized(_cb: () => void): () => void { return () => {}; }
 
   async quit(): Promise<void> {
     /* 浏览器模式忽略 */

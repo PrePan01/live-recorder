@@ -106,7 +106,7 @@ export function MonitoringPanel() {
   return (
     <>
       <p>按平台设置检查开播状态的间隔（秒），数值越小响应越快。</p>
-      {["default", "bilibili", "douyin", "xiaohongshu"].map((p) => (
+      {["default", "bilibili", "douyin", "xiaohongshu", "youtube"].map((p) => (
         <OrdinaryRow key={p} id={`interval-${p}`} />
       ))}
     </>
@@ -301,9 +301,9 @@ export function AuthorizationPanel() {
           <summary>手动粘贴 Cookie（高级）</summary>
           <div className="lr-authorization-manual__content">
             <p>
-              进入网页版{config.label}并登录，打开任意直播间后按 F12 →
+              {config.platform === "youtube" ? "使用外部浏览器登录 YouTube，导出 Netscape 格式 Cookie 文件，在下方粘贴其内容。" : <>进入网页版{config.label}并登录，打开任意直播间后按 F12 →
               网络（Network） → 刷新页面 → 点开任意 {config.manualHost} 请求 →
-              在「请求标头」复制完整 Cookie 并粘贴。
+              在「请求标头」复制完整 Cookie 并粘贴。</>}
               {config.platform === "douyin" && (
                 <span className="lr-network-help">
                   <Tooltip

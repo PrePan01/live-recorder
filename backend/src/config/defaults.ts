@@ -10,6 +10,7 @@ export const DEFAULT_CHECK_INTERVAL: CheckIntervalSec = {
   bilibili: 60,
   douyin: 120,
   xiaohongshu: 120,
+  youtube: 120,
 };
 
 export const DEFAULT_RETRY: RetryConfig = {

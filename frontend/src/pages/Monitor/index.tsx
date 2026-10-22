@@ -65,7 +65,7 @@ function readSavedMonitorFilters(): SavedMonitorFilters {
       parsed.platformFilter === "全部" ||
       parsed.platformFilter === "bilibili" ||
       parsed.platformFilter === "douyin" ||
-      parsed.platformFilter === "xiaohongshu"
+      parsed.platformFilter === "xiaohongshu" || parsed.platformFilter === "youtube"
     ) {
       out.platformFilter = parsed.platformFilter;
     }

@@ -52,3 +52,8 @@ export async function validateDirectory(directory: string): Promise<{ ok: boolea
 export async function testSmtp(): Promise<void> {
   await http.post('/settings/test-smtp');
 }
+
+export async function fetchYoutubeCookieStatus(): Promise<DouyinCookieStatus> {
+  const { data } = await http.get<{ status: DouyinCookieStatus }>('/settings/youtube-cookie-status');
+  return data.status;
+}

@@ -38,6 +38,7 @@ export interface UploadSnapshot {
 }
 
 export interface PipelineMetadata {
+  source?: { width: number; height: number; videoCodec: string; audioCodec: string };
   durationMs: number;
   segmentCount: number;
   quality: string;

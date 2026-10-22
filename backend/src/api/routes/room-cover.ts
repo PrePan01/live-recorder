@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import type { Room } from '../../types/room.js';
 import { AppError } from '../../types/error.js';
+import { youtubeFetch } from '../../platform/youtube-network.js';
 import {
   nativePickSaveFile,
   type SaveFileOptions,
@@ -19,6 +20,9 @@ const CDN_DOMAINS = [
   'ibytedtos.com',
   'pstatp.com',
   'xhscdn.com',
+  'ytimg.com',
+  'yt3.googleusercontent.com',
+  'yt3.ggpht.com',
 ];
 function validateUrl(raw: string): URL {
   const url = new URL(raw);
@@ -63,19 +67,22 @@ function imageFormat(
 
 export async function fetchRoomCover(
   room: Room,
-  fetcher: typeof fetch = fetch,
+  fetcher?: typeof fetch,
+  kind: 'cover' | 'avatar' = 'cover',
 ) {
-  if (room.lastLiveStatus !== 'live' || !room.liveCoverUrl) {
+  const source = kind === 'avatar' ? room.avatarUrl : room.liveCoverUrl;
+  if (!source || (kind === 'cover' && room.lastLiveStatus !== 'live')) {
     throw new AppError('RESOURCE_NOT_FOUND', '暂无直播封面', {
       roomId: room.id,
     });
   }
   try {
-    let url = validateUrl(room.liveCoverUrl);
+    let url = validateUrl(source);
+    const request = fetcher ?? (room.platform === 'youtube' ? youtubeFetch : fetch);
     const signal = AbortSignal.timeout(8_000);
     let response: Response | undefined;
     for (let hop = 0; hop < 4; hop++) {
-      response = await fetcher(url, {
+      response = await request(url, {
         signal,
         redirect: 'manual',
         headers: {
@@ -83,7 +90,9 @@ export async function fetchRoomCover(
           Referer:
             room.platform === 'bilibili'
               ? 'https://live.bilibili.com/'
-              : room.platform === 'xiaohongshu'
+              : room.platform === 'youtube'
+                ? 'https://www.youtube.com/'
+                : room.platform === 'xiaohongshu'
                 ? 'https://www.xiaohongshu.com/'
                 : 'https://live.douyin.com/',
         },
@@ -169,6 +178,16 @@ export function registerRoomCoverRoutes(
       throw new AppError('RESOURCE_NOT_FOUND', '直播间不存在', { roomId: id });
     return room;
   };
+  app.get<{ Params: { id: string } }>(
+    '/api/v1/rooms/:id/avatar',
+    async (req, reply) => {
+      const image = await fetchRoomCover(getRoom(req.params.id), deps.fetcher, 'avatar');
+      return reply.type(image.type)
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Cache-Control', 'private, max-age=300')
+        .send(image.bytes);
+    },
+  );
   app.get<{ Params: { id: string }; Querystring: { download?: string } }>(
     '/api/v1/rooms/:id/cover',
     async (req, reply) => {

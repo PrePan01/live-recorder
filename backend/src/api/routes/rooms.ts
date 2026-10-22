@@ -12,7 +12,7 @@ import {
 
 import { registerRoomCoverRoutes } from "./room-cover.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu"];
+const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 /** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
 const MANUAL_LIVE_FRESH_MS = 10_000;
@@ -483,6 +483,16 @@ export function registerRoomRoutes(
         details: { resource: "room" },
       });
     await services.scheduler.triggerImmediateCheck(id);
+    // 解析失败如实报错：永久链接失败已由检测写入状态与告警，这里同步到响应体，
+    // 不让「建了房却什么都没发生」的假象留在接口层（瞬时故障仍按三票门静默、回 ok）。
+    const after = services.rooms.get(id);
+    if (after?.monitorState === "failed" && after.lastError?.code === "ROOM_LINK_INVALID") {
+      throw new AppError(
+        after.lastError.code,
+        after.lastError.message ?? "未找到该频道或直播，请检查链接是否正确",
+        { roomId: id, retryable: false },
+      );
+    }
     return reply.send({ ok: true });
   });
 

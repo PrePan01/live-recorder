@@ -3,7 +3,7 @@
   <br>
   <img src="frontend/public/icon1.png" alt="Live Recorder" width="128" />
 </h1>
-<h4 align="center">直播录制工具（macOS / Windows）。支持 B站 / 抖音 / 小红书直播间。</h4>
+<h4 align="center">直播录制工具（macOS / Windows）。支持 B站 / 抖音 / 小红书 / YouTube 直播间。</h4>
 
 
 ## 简介
@@ -15,7 +15,7 @@
 ## 功能
 
 ### 录制与监控
-- B站 / 抖音 / 小红书直播间检测与自动录制，手动录制 / 停止
+- B站 / 抖音 / 小红书 / YouTube 直播间检测与自动录制，手动录制 / 停止
 - 录制中快速导出片段、回看、标签记录
 - 监控总览：卡片 / 列表视图、收藏置顶、当前录制时长、直播预览、开播预测、实时状态
 - 多路直播墙（2×2 / 3×3 / 3×1）
@@ -34,6 +34,16 @@
 - 录制命名规则自定义
 - 支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）自动上传：进度 / 重试 / 取消
 - 邮件通知（SMTP 预设，失败提醒去重）
+
+### YouTube 直播
+
+- 支持频道持续监控和指定视频直播；可粘贴频道、`@handle`、`watch`、`youtu.be` 或 `/live/视频ID` 链接。
+- 复用直播间管理、自动录制、通知、直播墙、弹幕采集与回放、标记、精彩片段、后处理和上传。
+- 原画音视频保留原始编码并保存为 MKV；可通过现有后处理转换 MP4。实时预览与应用内回看按需提供兼容播放流，不修改原始录像。
+- 公开直播默认匿名访问；需要权限时在设置中导入 Netscape 格式的 YouTube Cookie 文件，凭据由系统钥匙串保存。
+- 解析、媒体下载和聊天使用系统网络，支持系统静态 HTTP/HTTPS 代理及代理环境变量。没有新增应用内代理设置；PAC/SOCKS 代理需通过可供媒体进程使用的 HTTP 代理或全局网络提供访问。
+- 桌面打包内置固定版本的 yt-dlp、FFmpeg/FFprobe 和 Node。源码运行前执行 `npm run youtube:setup` 下载并校验解析器，或通过 `LR_YTDLP_PATH` 指向本地 yt-dlp。
+- YouTube 可能要求登录或平台验证；程序会显示受限状态，不将网络故障视为下播。已进行短时真实直播链路验证；长时间录制及 Windows 安装包仍待验收，详见 [实施与验证记录](reports/youtube-adaptation.md)。
 
 ### 桌面客户端
 - 支持 macOS / Windows 桌面端

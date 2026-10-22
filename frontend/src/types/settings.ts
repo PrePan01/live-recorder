@@ -12,6 +12,7 @@ export type PlatformIntervals = {
   bilibili: number;
   douyin: number;
   xiaohongshu?: number;
+  youtube?: number;
 };
 
 export interface RetryPolicy {
@@ -55,6 +56,7 @@ export interface Settings {
   /** B站 Cookie（SecretStore 存，GET 仅回显是否存在）；用于获取蓝光/原画档位。 */
   bilibiliCookie: { hasCookie: boolean };
   xiaohongshuCookie?: { hasCookie: boolean };
+  youtubeCookie?: { hasCookie: boolean };
   /** V5：主题偏好（light | dark | system） */
   theme?: ThemePreference;
   floatingRecorderSize?: number;
@@ -106,6 +108,7 @@ export interface SettingsInput {
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   bilibiliCookie?: string;
   xiaohongshuCookie?: string;
+  youtubeCookie?: string;
   /** V5：主题偏好 */
   theme?: ThemePreference;
   floatingRecorderSize?: number;

@@ -5,6 +5,7 @@ const PLATFORM_STYLE: Record<
   Platform,
   { color: string; bg: string; label: string; icon: string }
 > = {
+  youtube: { color: "#ff0000", bg: "rgba(255,0,0,0.08)", label: "YouTube", icon: "https://www.youtube.com/favicon.ico" },
   xiaohongshu: {
     color: "#ff2442",
     bg: "rgba(255,36,66,0.1)",

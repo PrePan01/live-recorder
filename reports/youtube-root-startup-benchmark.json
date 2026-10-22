@@ -1,0 +1,283 @@
+{
+  "date": "2026-10-18",
+  "videoId": "rFZHOHl-L8A",
+  "measurement": "Backend first media data, not screen first frame; single runs, not statistical guarantees",
+  "runs": [
+    {
+      "run": "lr-youtube-startup-IT3EDx",
+      "results": [
+        {
+          "mode": "recording",
+          "quality": "1080p",
+          "label": "parallel-source-onedir",
+          "metadataMs": 8444,
+          "reusedExtraction": true,
+          "source": {
+            "width": 1920,
+            "height": 1080,
+            "videoCodec": "V_MPEG4/ISO/AVC",
+            "audioCodec": "A_AAC"
+          },
+          "nativeMs": 11944,
+          "previewMs": 12033,
+          "previewBytes": 2230632,
+          "media": [
+            {
+              "file": "recording.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            },
+            {
+              "file": "capture.mkv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mode": "preview",
+          "quality": "1080p",
+          "label": "parallel-source-onedir",
+          "metadataMs": 1,
+          "reusedExtraction": true,
+          "previewMs": 3728,
+          "previewBytes": 2099808,
+          "media": [
+            {
+              "file": "preview.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": "lr-youtube-startup-LZkeHJ",
+      "results": [
+        {
+          "mode": "recording",
+          "quality": "1080p",
+          "label": "final-onedir-cold-a",
+          "metadataMs": 7323,
+          "reusedExtraction": true,
+          "source": {
+            "width": 1920,
+            "height": 1080,
+            "videoCodec": "V_MPEG4/ISO/AVC",
+            "audioCodec": "A_AAC"
+          },
+          "nativeMs": 11038,
+          "previewMs": 11131,
+          "previewBytes": 2134917,
+          "media": [
+            {
+              "file": "recording.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            },
+            {
+              "file": "capture.mkv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mode": "preview",
+          "quality": "1080p",
+          "label": "final-onedir-cold-a",
+          "metadataMs": 0,
+          "reusedExtraction": true,
+          "previewMs": 2647,
+          "previewBytes": 2196336,
+          "media": [
+            {
+              "file": "preview.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": "lr-youtube-startup-y8EXOU",
+      "results": [
+        {
+          "mode": "recording",
+          "quality": "720p",
+          "label": "final-onedir-cold-b",
+          "metadataMs": 3891,
+          "reusedExtraction": true,
+          "source": {
+            "width": 1280,
+            "height": 720,
+            "videoCodec": "V_MPEG4/ISO/AVC",
+            "audioCodec": "A_AAC"
+          },
+          "nativeMs": 8713,
+          "previewMs": 8780,
+          "previewBytes": 1199998,
+          "media": [
+            {
+              "file": "recording.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1280,
+                  "height": 720
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            },
+            {
+              "file": "capture.mkv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1280,
+                  "height": 720
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mode": "preview",
+          "quality": "720p",
+          "label": "final-onedir-cold-b",
+          "metadataMs": 0,
+          "reusedExtraction": true,
+          "previewMs": 4157,
+          "previewBytes": 1192262,
+          "media": [
+            {
+              "file": "preview.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1280,
+                  "height": 720
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": "lr-youtube-startup-6X7Zht",
+      "results": [
+        {
+          "mode": "preview",
+          "quality": "1080p",
+          "label": "final-preview-cold",
+          "stages": [
+            {
+              "stage": "youtube_manifests_ready",
+              "elapsedMs": 6392
+            },
+            {
+              "stage": "youtube_source_process_started",
+              "elapsedMs": 6396
+            },
+            {
+              "stage": "youtube_initial_segments_ready",
+              "elapsedMs": 8612
+            },
+            {
+              "stage": "youtube_native_stream_ready",
+              "elapsedMs": 8797
+            }
+          ],
+          "metadataMs": 5127,
+          "reusedExtraction": true,
+          "previewMs": 8897,
+          "previewBytes": 2069094,
+          "media": [
+            {
+              "file": "preview.flv",
+              "decoded": true,
+              "streams": [
+                {
+                  "codec": "h264",
+                  "width": 1920,
+                  "height": 1080
+                },
+                {
+                  "codec": "aac"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

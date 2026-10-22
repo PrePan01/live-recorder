@@ -169,7 +169,8 @@ export const RoomCard = memo(function RoomCard({
                     <div className="lr-room-card__avatar-preview">
                       <RoomAvatar
                         platform={room.platform}
-                        avatarUrl={room.avatarUrl}
+                        roomId={room.id}
+              avatarUrl={room.avatarUrl}
                         name={room.displayName}
                         live={onAir}
                         size={120}
@@ -186,7 +187,8 @@ export const RoomCard = memo(function RoomCard({
                   >
                     <RoomAvatar
                       platform={room.platform}
-                      avatarUrl={room.avatarUrl}
+                      roomId={room.id}
+              avatarUrl={room.avatarUrl}
                       name={room.displayName}
                       live={onAir}
                       size={40}

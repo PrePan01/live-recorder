@@ -126,7 +126,7 @@ export function buildRecordingColumns(
       width: 70,
       render: (q: string | null, r: Recording) => {
         if (!q) return "-";
-        const label = QUALITY_LABEL[q] ?? q;
+        const label = r.platform === "youtube" && r.metadata?.source?.height ? `${r.metadata.source.height}p` : QUALITY_LABEL[q] ?? q;
         const expected = r.expectedQuality;
         if (!expected || expected === q) return label;
         const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，本次实际录制画质为 ${label}（该直播间未提供该档位，或当前账号未取得该清晰度权限）`;

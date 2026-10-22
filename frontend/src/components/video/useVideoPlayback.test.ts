@@ -16,7 +16,7 @@ vi.mock("react", () => {
     useState: (value: unknown) => {
       const i = h.cursor++;
       if (!(i in h.slots)) h.slots[i] = value;
-      return [h.slots[i], (next: unknown) => { h.slots[i] = next; }];
+      return [h.slots[i], (next: unknown) => { h.slots[i] = typeof next === 'function' ? next(h.slots[i]) : next; }];
     },
     useCallback: (fn: unknown, deps: unknown[]) => {
       const i = h.cursor++;
@@ -35,6 +35,7 @@ vi.mock("react", () => {
   };
 });
 vi.mock("mpegts.js", () => ({ default: {
+  isSupported: () => true,
   Events: { ERROR: "error", LOADING_COMPLETE: "complete" },
   createPlayer: vi.fn(() => {
     const player = { load: vi.fn(), play: vi.fn().mockResolvedValue(undefined), destroy: vi.fn(), attachMediaElement: vi.fn(), on: vi.fn() };
@@ -56,6 +57,7 @@ vi.mock("../../utils/videoFrameTransition", () => ({ holdVideoFrame: vi.fn(), re
   return vi.fn();
 } }));
 import { useVideoPlayback } from "./useVideoPlayback";
+import { livePreviewConfig } from "../../utils/livePreviewConfig";
 
 function render(props: VideoPlayerProps, video: HTMLVideoElement) {
   h.cursor = 0;
@@ -77,6 +79,83 @@ beforeEach(() => {
 afterEach(() => {
   for (const slot of h.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("live startup watchdog", () => {
+  const liveVideo = () => Object.assign(new EventTarget(), {
+    pause: vi.fn(), currentTime: 0, paused: false, muted: true, volume: 1,
+  }) as unknown as HTMLVideoElement;
+
+  it('reports real loading stages and completes only after the first frame is presented', () => {
+    const video = liveVideo();
+    render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    const progress = vi.mocked(livePreviewConfig).mock.calls.at(-1)![3]!;
+    progress('stream_url_ready');
+    expect(render({ roomId: 'progress-room', platform: 'youtube' }, video).loadProgress.percent).toBe(45);
+    progress('receiving_media'); progress('youtube_manifests_ready');
+    expect(render({ roomId: 'progress-room', platform: 'youtube' }, video).loadProgress.percent).toBe(90);
+    video.dispatchEvent(new Event('loadeddata'));
+    let result = render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    expect(result.state).toBe('loading');
+    expect(result.loadProgress.percent).toBe(95);
+    expect(result.hasEverPlayedRef.current).toBe(false);
+    h.frame?.();
+    result = render({ roomId: 'progress-room', platform: 'youtube' }, video);
+    expect(result.state).toBe('playing');
+    expect(result.loadProgress.percent).toBe(100);
+    expect(result.hasEverPlayedRef.current).toBe(true);
+  });
+
+  it('resets progress for a retry and ignores callbacks from the retired player', async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    render({ roomId: 'retry-progress', platform: 'youtube' }, video);
+    const progress = vi.mocked(livePreviewConfig).mock.calls.at(-1)![3]!;
+    progress('receiving_media');
+    const error = h.players[0].on.mock.calls.find(args => args[0] === 'error')![1] as () => void;
+    error();
+    progress('decoded');
+    let result = render({ roomId: 'retry-progress', platform: 'youtube' }, video);
+    expect(result.loadProgress.percent).toBe(5);
+    expect(result.loadProgress.label).toContain('重试');
+    await vi.advanceTimersByTimeAsync(1000);
+    progress('presented');
+    result = render({ roomId: 'retry-progress', platform: 'youtube' }, video);
+    expect(result.loadProgress.percent).toBe(5);
+    expect(result.state).toBe('loading');
+  });
+
+  it.each([false, true])("keeps YouTube startup connected beyond 12 seconds (thumbnail=%s), then bounds it", async (thumbnail) => {
+    vi.useFakeTimers();
+    render({ roomId: "youtube-room", platform: "youtube", thumbnail }, liveVideo());
+    expect(livePreviewConfig).toHaveBeenLastCalledWith(thumbnail, thumbnail ? undefined : expect.any(Function), 'youtube', thumbnail ? undefined : expect.any(Function));
+    const first = h.players[0];
+    await vi.advanceTimersByTimeAsync(28_000);
+    expect(first.destroy).not.toHaveBeenCalled();
+    expect(h.players).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(62_000);
+    expect(first.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("still reconnects a stalled YouTube stream 12 seconds after playback", async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    render({ roomId: "youtube-room", platform: "youtube" }, video);
+    await vi.advanceTimersByTimeAsync(28_000);
+    video.dispatchEvent(new Event("playing"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.players[0].destroy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.players[0].destroy).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the 12 second startup watchdog for existing platforms", async () => {
+    vi.useFakeTimers();
+    render({ roomId: "douyin-room", platform: "douyin" }, liveVideo());
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(h.players[0].destroy).toHaveBeenCalledOnce();
+  });
 });
 describe("seek player lifecycle", () => {
   it("does not restart during parent clock refreshes and reports the first frame to the latest callback", () => {

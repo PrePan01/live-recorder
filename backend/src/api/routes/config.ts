@@ -129,7 +129,7 @@ function importRecordingArchive(services: Services, input: unknown): RecordingIm
   );
   services.db.transaction(() => {
     for (const group of groups) {
-      if (!group || (group.platform !== 'bilibili' && group.platform !== 'douyin' && group.platform !== 'xiaohongshu') || typeof group.url !== 'string') continue;
+      if (!group || (group.platform !== 'bilibili' && group.platform !== 'douyin' && group.platform !== 'xiaohongshu' && group.platform !== 'youtube') || typeof group.url !== 'string') continue;
       const room = roomsByUrl.get(`${group.platform}|${persistedRoomUrl(services, group.platform, group.url)}`);
       if (!room) {
         summary.skippedRooms += 1;
@@ -244,10 +244,11 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
       const merged: AppSettings = {
         ...current,
         ...incoming.settings,
-        checkIntervalSec: { xiaohongshu: 120, ...current.checkIntervalSec, ...incoming.settings.checkIntervalSec },
+        checkIntervalSec: { youtube: 120, xiaohongshu: 120, ...current.checkIntervalSec, ...incoming.settings.checkIntervalSec },
         mail: { ...current.mail, ...incoming.settings.mail } as AppSettings['mail'],
       };
       delete (merged as unknown as Record<string, unknown>).xiaohongshuCookie;
+      delete (merged as unknown as Record<string, unknown>).youtubeCookie;
       validateSettings(merged);
       services.settings.save(merged);
       appliedSettings = true;
@@ -290,7 +291,7 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
       const existing = new Map(services.rooms.list().map((r) => [`${r.platform}|${r.url}`, r]));
       try {
         for (const item of incoming.rooms) {
-          if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin' && item.platform !== 'xiaohongshu')) continue;
+          if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin' && item.platform !== 'xiaohongshu' && item.platform !== 'youtube')) continue;
           const policy = validateRoomPolicy({ ...item });
           // 旧版备份可能仅订阅邮件；新版将其并入开播提醒，废弃位不再保留为开启状态。
           if (policy.liveEmailNotificationEnabled === true) policy.liveNotificationEnabled = true;

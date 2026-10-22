@@ -692,7 +692,7 @@ describe("REST contract v1.1 (fake stack)", () => {
       default: 60,
       bilibili: 60,
       douyin: 120,
-      xiaohongshu: 120,
+      youtube: 120, xiaohongshu: 120,
     });
     expect(JSON.stringify(get.json())).not.toContain('password":');
 
