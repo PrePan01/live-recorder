@@ -130,11 +130,32 @@ describe('XiaohongshuAdapter', () => {
     const adapter = new XiaohongshuAdapter(fetcher, { load: () => roomUrl, save: () => {} });
     expect(await adapter.resolveRecordingSource(profile, 'original')).toMatchObject({ status: 'live' });
   });
-  it('does not treat the previous room ending as proof that the host is currently offline', async () => {
+  it('reports an ended broadcast as offline when the accessible profile offers no new room', async () => {
     const fetcher = (async (raw: string) => new Response(raw.includes('/user/profile') ? '<html>no live metadata</html>' : page({ status: 3 }))) as typeof fetch;
     const adapter = new XiaohongshuAdapter(fetcher, { load: () => roomUrl, save: () => {} });
-    expect(await adapter.checkLiveStatus(profile)).toMatchObject({ status: 'restricted' });
+    expect(await adapter.checkLiveStatus(profile, 'web_session=local')).toMatchObject({ status: 'offline', streamSessionId: '123' });
     expect(await adapter.checkLiveStatus(roomUrl)).toMatchObject({ status: 'offline' });
+  });
+  it('discovers a new broadcast after an authenticated offline check', async () => {
+    let live = false;
+    const fetcher = vi.fn(async (raw: string) => new Response(raw.includes('/user/profile')
+      ? `<script>window.__INITIAL_STATE__=${JSON.stringify({ user: live ? { liveLink: 'https://www.xiaohongshu.com/livestream/456?xsec_token=new' } : {} })}</script>`
+      : raw.includes('/livestream/456') ? page({}, '456') : page({ status: 3 })));
+    const adapter = new XiaohongshuAdapter(fetcher as typeof fetch, {
+      load: () => roomUrl, save: () => {}, profileForRoom: () => profile,
+    });
+    expect(await adapter.checkLiveStatus(roomUrl, 'web_session=local')).toMatchObject({ status: 'offline' });
+    live = true;
+    expect(await adapter.checkLiveStatus(roomUrl, 'web_session=local')).toMatchObject({ status: 'live', streamSessionId: '456' });
+  });
+  it.each([403, 503])('preserves a profile HTTP %s failure when the saved broadcast has ended', async status => {
+    const fetcher = (async (raw: string) => raw.includes('/user/profile')
+      ? new Response('', { status }) : new Response(page({ status: 3 }))) as typeof fetch;
+    const adapter = new XiaohongshuAdapter(fetcher, { load: () => roomUrl, save: () => {} });
+    expect(await adapter.checkLiveStatus(profile, 'web_session=local')).toMatchObject({
+      status: status === 403 ? 'restricted' : 'error',
+      error: { code: status === 403 ? 'PLATFORM_ACCESS_RESTRICTED' : 'NETWORK_UNAVAILABLE' },
+    });
   });
   it('does not replace an associated host with a different host discovered on the page', async () => {
     const adapter = new XiaohongshuAdapter((async (raw: string) => new Response(raw.includes('/user/profile')

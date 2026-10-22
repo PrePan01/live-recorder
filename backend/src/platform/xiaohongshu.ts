@@ -210,11 +210,13 @@ export class XiaohongshuAdapter implements PlatformAdapter {
     const target = parseXiaohongshuUrl(raw);
     if (!target) throw new AppError('ROOM_LINK_INVALID', '无效的小红书直播或主页链接');
     let page;
+    let profileRequestError: unknown;
     const requestUrl = target.kind === 'profile' ? this.sources.loadProfile?.(this.normalizeUrl(raw)) ?? target.url.href : target.url.href;
     try { page = preloaded ?? await this.request(requestUrl, cookie, signal, target.kind === 'profile' ? PROFILE_UA : XHS_UA); }
     catch (error) {
       if (target.kind !== 'profile' || !this.sources.load(this.normalizeUrl(raw)) || signal?.aborted) throw error;
       // A profile-page failure must not block a still-accessible saved room share.
+      profileRequestError = error;
       page = { text: '', url: target.url.href };
     }
     if (target.kind === 'share' && parseXiaohongshuUrl(page.url)?.kind === 'profile') return this.resolveRoom(page.url, cookie, signal, page, options);
@@ -289,9 +291,10 @@ export class XiaohongshuAdapter implements PlatformAdapter {
       } catch { /* An unavailable status API is not proof that an accessible media stream ended. */ }
     }
     const live = section.liveStatus === 'success' && data.status === 2;
-    if (usingPreviousRoom && !options.media && !live && (section.liveStatus === 'end' || data.status === 3)) {
-      throw new AppError('PLATFORM_ACCESS_RESTRICTED', '小红书上一场直播已结束，暂未从主页确认当前场次，请检查授权或更新分享链接', { retryable: true });
-    }
+    // An ended saved broadcast is offline when the accessible profile offers no new
+    // room. Keep polling the profile on later checks to discover the next broadcast.
+    // A failed profile request still cannot establish the host's current status.
+    if (usingPreviousRoom && !options.media && !live && profileRequestError) throw profileRequestError;
     if (!live && section.liveStatus !== 'end' && data.status !== 3) {
       throw new AppError('PLATFORM_ACCESS_RESTRICTED', '小红书直播状态暂不可确认，请检查授权或更新分享链接', { retryable: true });
     }

@@ -17,6 +17,31 @@ function setup() {
 afterEach(async () => { for (const { app } of active.splice(0)) await app.close(); });
 
 describe('Xiaohongshu product integration', () => {
+  it('clears the restricted state and warning after detecting an ended authenticated broadcast', async () => {
+    const { services } = setup();
+    const room = services.rooms.create({ platform: 'xiaohongshu', url: roomUrl, displayName: '主播' });
+    await services.secretStore.set(XIAOHONGSHU_COOKIE_KEY, 'web_session=local');
+    services.rooms.setLiveStatus(room.id, 'restricted');
+    services.rooms.setState(room.id, 'failed', { lastError: {
+      code: 'PLATFORM_ACCESS_RESTRICTED', message: '平台访问受限，请检查授权',
+      roomId: room.id, recordingId: null, occurredAt: services.clock.iso(), retryable: true,
+    } });
+    services.alerts.createOrRefresh({
+      level: 'warning', source: 'platform', message: '平台访问受限，请检查授权',
+      occurredAt: services.clock.iso(), roomId: room.id, errorCode: 'PLATFORM_ACCESS_RESTRICTED', retryable: true,
+    });
+    const adapter = new XiaohongshuAdapter((async (raw: string) => new Response(raw.includes('/user/profile')
+      ? '<script>window.__INITIAL_STATE__={"user":{}}</script>'
+      : '<script>window.__INITIAL_STATE__={"liveStream":{"liveStatus":"end","roomData":{"roomInfo":{"roomId":"123","status":3}}}}</script>')) as typeof fetch, {
+      load: () => roomUrl, save: () => {}, profileForRoom: () => profile,
+    });
+    const original = services.adapterFor.bind(services);
+    services.adapterFor = platform => platform === 'xiaohongshu' ? adapter : original(platform);
+    await services.scheduler.checkRoom(services.rooms.get(room.id)!, { nameOnly: true });
+    expect(services.rooms.get(room.id)).toMatchObject({ lastLiveStatus: 'offline', monitorState: 'idle', lastError: null });
+    expect(services.alerts.list({ unresolvedOnly: true }).filter(alert => alert.roomId === room.id)).toEqual([]);
+  });
+
   it('adds, deduplicates and batch-imports all three platforms through the existing API', async () => {
     const { app } = setup();
     const response = await app.inject({ method: 'POST', url: '/api/v1/rooms', headers, payload: { url: profile, displayName: '小红书主播' } });
