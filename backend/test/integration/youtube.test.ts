@@ -78,12 +78,22 @@ describe("YouTube application integration", () => {
     expect(await services.secretStore.get(YOUTUBE_COOKIE_KEY)).toContain(
       "private-cookie",
     );
+    const manual = await app.inject({
+      headers: { host: "127.0.0.1:43120" },
+      method: "PUT",
+      url: "/api/v1/settings",
+      payload: { youtubeCookie: cookie },
+    });
+    expect(manual.statusCode).toBe(422);
+    expect(manual.json().error.message).toContain("一键授权");
+    expect(await services.secretStore.get(YOUTUBE_COOKIE_KEY)).toContain("private-cookie");
     const cleared = await app.inject({
       headers: { host: "127.0.0.1:43120" },
-      method: "POST",
-      url: "/api/v1/settings/youtube-cookie",
-      payload: { cookie: "" },
+      method: "PUT",
+      url: "/api/v1/settings",
+      payload: { youtubeCookie: "", recordingDirectory: tmpdir() },
     });
+    expect(cleared.statusCode, cleared.body).toBe(200);
     expect(cleared.json().settings.youtubeCookie.hasCookie).toBe(false);
     await app.close();
   });

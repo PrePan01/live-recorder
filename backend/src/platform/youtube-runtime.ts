@@ -31,12 +31,12 @@ export function youtubeBinary(): string {
 
 export function normalizeYoutubeCookies(raw: string): string {
   if (Buffer.byteLength(raw) > 256 * 1024)
-    throw new AppError("CONFIG_INVALID", "YouTube Cookie 文件过大");
+    throw new AppError("CONFIG_INVALID", "YouTube 登录凭据过大，请重新授权");
   const lines = raw.replace(/\r\n/g, "\n").trim().split("\n");
   if (!lines[0]?.match(/^# (?:Netscape HTTP Cookie File|HTTP Cookie File)/))
     throw new AppError(
       "CONFIG_INVALID",
-      "请导入 Netscape 格式的 YouTube Cookie 文件",
+      "YouTube 登录凭据格式无效，请重新授权",
     );
   const kept = lines.filter((line) => {
     if (
@@ -46,7 +46,7 @@ export function normalizeYoutubeCookies(raw: string): string {
       return true;
     const fields = line.replace(/^#HttpOnly_/, "").split("\t");
     if (fields.length !== 7 || fields.some((value) => value.includes("\0")))
-      throw new AppError("CONFIG_INVALID", "YouTube Cookie 文件格式无效");
+      throw new AppError("CONFIG_INVALID", "YouTube 登录凭据格式无效，请重新授权");
     const domain = fields[0]!.replace(/^\./, "").toLowerCase();
     return (
       domain === "youtube.com" ||
@@ -61,7 +61,7 @@ export function normalizeYoutubeCookies(raw: string): string {
         line.trim() && (!line.startsWith("#") || line.startsWith("#HttpOnly_")),
     )
   )
-    throw new AppError("CONFIG_INVALID", "文件中没有 YouTube 登录凭据");
+    throw new AppError("CONFIG_INVALID", "未获取到 YouTube 登录凭据，请重新授权");
   return kept.join("\n") + "\n";
 }
 

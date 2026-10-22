@@ -28,8 +28,7 @@ export interface PlatformAuthorizationConfig {
   anchor: string;
   unauthorizedHint: string;
   cookieField: "douyinCookie" | "bilibiliCookie" | "xiaohongshuCookie" | "youtubeCookie";
-  manualHost: string;
-  manualPlaceholder: string;
+  manualHost?: string;
   fetchStatus: () => Promise<CookieProbeStatus>;
   startAuthorization?: () => Promise<void>;
   authorizedEvent?: (callback: () => void) => () => void;
@@ -40,21 +39,12 @@ export interface PlatformAuthorizationConfig {
  */
 const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
   {
-    platform: "youtube", label: "YouTube", anchor: "youtube-cookie",
-    unauthorizedHint: "公开直播无需登录，受限直播需要登录授权",
-    cookieField: "youtubeCookie", manualHost: "youtube.com", manualPlaceholder: "粘贴 Netscape 格式 Cookie 文件内容",
-    fetchStatus: fetchYoutubeCookieStatus,
-    startAuthorization: () => bridge.startYoutubeAuthorization(),
-    authorizedEvent: (callback) => bridge.onYoutubeAuthorized(callback),
-  },
-  {
     platform: "douyin",
     label: "抖音",
     anchor: "douyin-cookie",
     unauthorizedHint: "未授权将无法观看与录制抖音直播间",
     cookieField: "douyinCookie",
     manualHost: "live.douyin.com",
-    manualPlaceholder: "粘贴完整抖音 Cookie",
     fetchStatus: fetchDouyinCookieStatus,
     startAuthorization: () => bridge.startDouyinAuthorization(),
     authorizedEvent: (callback) => bridge.onDouyinAuthorized(callback),
@@ -66,7 +56,6 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
     unauthorizedHint: "未登录时最高只能观看、录制 720p",
     cookieField: "bilibiliCookie",
     manualHost: "live.bilibili.com",
-    manualPlaceholder: "粘贴完整B站 Cookie",
     fetchStatus: fetchBilibiliCookieStatus,
     startAuthorization: () => bridge.startBilibiliAuthorization(),
     authorizedEvent: (callback) => bridge.onBilibiliAuthorized(callback),
@@ -78,10 +67,17 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
     unauthorizedHint: "部分直播与弹幕需要登录小红书",
     cookieField: "xiaohongshuCookie",
     manualHost: "xiaohongshu.com",
-    manualPlaceholder: "粘贴完整小红书 Cookie",
     fetchStatus: fetchXiaohongshuCookieStatus,
     startAuthorization: () => bridge.startXiaohongshuAuthorization(),
     authorizedEvent: (callback) => bridge.onXiaohongshuAuthorized(callback),
+  },
+  {
+    platform: "youtube", label: "YouTube", anchor: "youtube-cookie",
+    unauthorizedHint: "公开直播无需登录，受限直播需要登录授权",
+    cookieField: "youtubeCookie",
+    fetchStatus: fetchYoutubeCookieStatus,
+    startAuthorization: () => bridge.startYoutubeAuthorization(),
+    authorizedEvent: (callback) => bridge.onYoutubeAuthorized(callback),
   },
 ];
 
@@ -273,7 +269,7 @@ export default function PlatformAuthorizationList({
                   ) : null}
                 </div>
               </div>
-              {renderSupplement?.(config, hasCookie)}
+              {config.manualHost && renderSupplement?.(config, hasCookie)}
             </div>
           );
         })}

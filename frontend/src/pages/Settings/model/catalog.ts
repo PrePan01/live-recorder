@@ -305,7 +305,7 @@ export const DEFINITIONS: SettingDefinition[] = [
     "授权用于获取可用的高画质档位；凭据已保存不等于授权有效。",
     { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
   ),
-  field("youtube-cookie", "authorization", "settings", "youtubeCookie", "YouTube 授权", "在授权窗口登录，或手动保存 Netscape 格式 Cookie。", { restorable: false, secret: true, keywords: "Cookie 登录 账户 YouTube" }),
+  field("youtube-cookie", "authorization", "settings", "youtubeCookie", "YouTube 授权", "点击登录并授权，在授权窗口完成 YouTube 登录。", { restorable: false, secret: true, keywords: "登录 账户 YouTube" }),
   field("xiaohongshu-cookie", "authorization", "settings", "xiaohongshuCookie", "小红书授权", "在授权窗口登录，或手动保存完整 Cookie。", { restorable: false, secret: true, keywords: "Cookie 登录 账户" }),
   field(
     "notification-dedupe",

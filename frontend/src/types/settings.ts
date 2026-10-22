@@ -108,7 +108,8 @@ export interface SettingsInput {
   /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   bilibiliCookie?: string;
   xiaohongshuCookie?: string;
-  youtubeCookie?: string;
+  /** 仅用于清除授权；登录凭据由桌面一键授权保存。 */
+  youtubeCookie?: '';
   /** V5：主题偏好 */
   theme?: ThemePreference;
   floatingRecorderSize?: number;

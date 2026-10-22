@@ -28,7 +28,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   app.get('/api/v1/settings/youtube-cookie-status', async () => { const cookie = await services.secretStore.get(YOUTUBE_COOKIE_KEY); return { status: cookie ? await checkYoutubeCookieStatus(cookie) : 'missing' }; });
   app.post('/api/v1/settings/youtube-cookie', async (req) => {
     const { cookie } = (req.body ?? {}) as { cookie?: unknown };
-    if (typeof cookie !== 'string') throw new AppError('CONFIG_INVALID', '请导入 YouTube Cookie 文件');
+    if (typeof cookie !== 'string') throw new AppError('CONFIG_INVALID', '未获取到 YouTube 登录凭据，请重新授权');
     if (cookie.trim()) await services.secretStore.set(YOUTUBE_COOKIE_KEY, normalizeYoutubeCookies(cookie));
     else await services.secretStore.delete(YOUTUBE_COOKIE_KEY);
     void services.scheduler.recheckYoutubeRoomsAfterCookieUpdate().catch(() => undefined);
@@ -49,8 +49,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     const bilibiliCookie = typeof body.bilibiliCookie === 'string' ? normalizeBilibiliCookie(body.bilibiliCookie) : null;
     const xiaohongshuCookie = typeof body.xiaohongshuCookie === 'string' ? normalizeXiaohongshuCookie(body.xiaohongshuCookie) : null;
     if (body.xiaohongshuCookie !== undefined && typeof body.xiaohongshuCookie !== 'string') throw new AppError('CONFIG_INVALID', '小红书 Cookie 必须为字符串');
-    if (body.youtubeCookie !== undefined && typeof body.youtubeCookie !== 'string') throw new AppError('CONFIG_INVALID', 'YouTube Cookie 必须为字符串');
-    const youtubeCookie = typeof body.youtubeCookie === 'string' ? body.youtubeCookie.trim() ? normalizeYoutubeCookies(body.youtubeCookie) : '' : null;
+    if (body.youtubeCookie !== undefined && body.youtubeCookie !== '') throw new AppError('CONFIG_INVALID', '请使用一键授权登录 YouTube');
     const incoming = structuredClone(body) as AppSettings & { mail?: MailConfig & { password?: string } };
     if (body.checkIntervalSec !== undefined && (!body.checkIntervalSec || typeof body.checkIntervalSec !== 'object' || Array.isArray(body.checkIntervalSec))) {
       throw new AppError('CONFIG_INVALID', '检测间隔必须为对象');
@@ -80,9 +79,8 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     if (merged.highlightEnabled === false) await services.manager.disableAllHighlightBuffers();
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);
-    if (youtubeCookie !== null) {
-      if (youtubeCookie) await services.secretStore.set(YOUTUBE_COOKIE_KEY, youtubeCookie);
-      else await services.secretStore.delete(YOUTUBE_COOKIE_KEY);
+    if (body.youtubeCookie === '') {
+      await services.secretStore.delete(YOUTUBE_COOKIE_KEY);
       void services.scheduler.recheckYoutubeRoomsAfterCookieUpdate().catch(() => undefined);
     }
     if (douyinCookie !== null) {
