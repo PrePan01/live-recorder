@@ -1,11 +1,11 @@
-export type Quality = 'original' | '1080p' | '720p' | '540p' | '360p';
+export type Quality = "original" | "1080p" | "720p" | "540p" | "360p";
 
-export type RecordingFormat = 'source_flv' | 'mp4_after';
+export type RecordingFormat = "source_flv" | "mp4_after";
 
-export type ThemePreference = 'light' | 'dark' | 'system';
+export type ThemePreference = "light" | "dark" | "system";
 
-import type { NotificationPreference } from './notification';
-import type { PipelineConfig } from './pipeline';
+import type { NotificationPreference } from "./notification";
+import type { PipelineConfig } from "./pipeline";
 
 export type PlatformIntervals = {
   default: number;
@@ -41,28 +41,27 @@ export interface Settings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
   checkIntervalSec: PlatformIntervals;
+  detectionLoad?: {
+    perMinute: number;
+    limitPerMinute: number;
+    staggered: boolean;
+    queued: number;
+  };
   quality: Quality;
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
-  /** 弹幕采集全局开关；房间可单独覆盖（danmakuEnabled null=跟随全局）。 */
   danmaku: { enabled: boolean };
-  /** 编码方式：自动=硬编优先失败回退软编；软件=只软编。 */
-  encodingMode?: 'auto' | 'software';
+  encodingMode?: "auto" | "software";
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
-  /** v1.3：抖音 Cookie（SecretStore 存，GET 仅回显是否存在，永回明文） */
   douyinCookie: { hasCookie: boolean };
-  /** B站 Cookie（SecretStore 存，GET 仅回显是否存在）；用于获取蓝光/原画档位。 */
   bilibiliCookie: { hasCookie: boolean };
   xiaohongshuCookie?: { hasCookie: boolean };
   youtubeCookie?: { hasCookie: boolean };
-  /** V5：主题偏好（light | dark | system） */
   theme?: ThemePreference;
   floatingRecorderSize?: number;
-  /** V5：通知偏好 */
   notifications?: NotificationPreference;
-  /** #220/#221：录制完成后询问是否保留（默认关，开启后待确认态等用户决策） */
   confirmAfterComplete?: boolean;
   preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;
@@ -71,10 +70,23 @@ export interface Settings {
   namingRule?: string;
 }
 
-/** Read-only defaults for safe, individual restoration. Never includes paths or credentials. */
 export interface SettingsDefaults {
-  settings: Pick<Settings, 'maxConcurrentRecordings' | 'checkIntervalSec' | 'quality' | 'autoRecord' | 'danmaku' | 'theme' | 'floatingRecorderSize' | 'confirmAfterComplete' | 'preventSleepWhileRecording' | 'highlightBufferSeconds' | 'highlightEnabled' | 'encodingMode'>;
-  pipeline: Omit<PipelineConfig, 'archiveDirectory' | 'maxConcurrency'>;
+  settings: Pick<
+    Settings,
+    | "maxConcurrentRecordings"
+    | "checkIntervalSec"
+    | "quality"
+    | "autoRecord"
+    | "danmaku"
+    | "theme"
+    | "floatingRecorderSize"
+    | "confirmAfterComplete"
+    | "preventSleepWhileRecording"
+    | "highlightBufferSeconds"
+    | "highlightEnabled"
+    | "encodingMode"
+  >;
+  pipeline: Omit<PipelineConfig, "archiveDirectory" | "maxConcurrency">;
   notifications: NotificationPreference;
   naming: { namingRule: string };
   openlist: { enabled: boolean; deleteSourceAfterUpload: boolean };
@@ -89,7 +101,6 @@ export interface MailInput {
   username?: string;
   from?: string;
   recipients?: string[];
-  /** 仅更新密码时传入 */
   password?: string;
 }
 
@@ -101,19 +112,14 @@ export interface SettingsInput {
   recordingFormat?: RecordingFormat;
   autoRecord?: boolean;
   danmaku?: { enabled?: boolean };
-  encodingMode?: 'auto' | 'software';
+  encodingMode?: "auto" | "software";
   mail?: MailInput;
-  /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   douyinCookie?: string;
-  /** 填写新 Cookie 或传空字符串清除；GET 不回显 */
   bilibiliCookie?: string;
   xiaohongshuCookie?: string;
-  /** 仅用于清除授权；登录凭据由桌面一键授权保存。 */
-  youtubeCookie?: '';
-  /** V5：主题偏好 */
+  youtubeCookie?: "";
   theme?: ThemePreference;
   floatingRecorderSize?: number;
-  /** #220/#221：录制完成后询问是否保留 */
   confirmAfterComplete?: boolean;
   preventSleepWhileRecording?: boolean;
   highlightBufferSeconds?: number;

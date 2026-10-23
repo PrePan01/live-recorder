@@ -1,6 +1,7 @@
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
 import path from 'node:path';
+import { CHECK_INTERVAL_MIN_SEC, CHECK_INTERVAL_MAX_SEC } from './check-guard.js';
 import { validatePipelineConfig } from './pipeline.js';
 
 /** 配置校验（阶段 B 手写检查；阶段 B-E4 路由层补 JSON Schema）。 */
@@ -47,11 +48,13 @@ export function validateSettings(input: unknown): AppSettings {
     throw new AppError('CONFIG_INVALID', '全局录制按钮大小需在 20-100px 之间');
   }
   const ci = s.checkIntervalSec;
-  if (!ci || [ci.default, ci.bilibili, ci.douyin].some(value => !Number.isInteger(value) || typeof value !== 'number' || value < 10)) {
-    throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin，且均为不小于 10 秒的整数');
+  const validInterval = (value: unknown) =>
+    typeof value === 'number' && Number.isSafeInteger(value) &&
+    value >= CHECK_INTERVAL_MIN_SEC && value <= CHECK_INTERVAL_MAX_SEC;
+  if (!ci || ![ci.default, ci.bilibili, ci.douyin].every(validInterval) ||
+      [ci.youtube, ci.xiaohongshu].some(value => value !== undefined && !validInterval(value))) {
+    throw new AppError('CONFIG_INVALID', `检测间隔需为 ${CHECK_INTERVAL_MIN_SEC}~${CHECK_INTERVAL_MAX_SEC} 秒的整数`);
   }
-  if (ci.youtube !== undefined && (!Number.isInteger(ci.youtube) || ci.youtube < 10 || ci.youtube > 3600)) throw new AppError('CONFIG_INVALID', 'YouTube 检测间隔需为 10-3600 秒的整数');
-  if (ci.xiaohongshu !== undefined && (!Number.isInteger(ci.xiaohongshu) || ci.xiaohongshu < 10)) throw new AppError('CONFIG_INVALID', '小红书检测间隔需为不小于 10 秒的整数');
   const r = s.retry;
   if (!r || !Array.isArray(r.delaysSeconds) || r.delaysSeconds.length === 0 || typeof r.maxAttempts !== 'number' || r.maxAttempts < 0) {
     throw new AppError('CONFIG_INVALID', '重连配置非法');

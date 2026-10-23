@@ -1,4 +1,11 @@
 import { platformCheckInterval } from '../config/room-policy.js';
+import {
+  backoffDelayMs,
+  detectionLoad,
+  effectiveIntervalMs,
+  PLATFORM_THROTTLE_CODES,
+  spreadDueTimes,
+} from "../config/check-guard.js";
 import { type ErrorObject, type Platform, type Room } from "../types/index.js";
 import type { PlatformAdapter } from "../platform/adapter.js";
 import { AppError } from "../types/error.js";
@@ -27,6 +34,13 @@ const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
 export class Scheduler {
   private running = false;
   private completedChecks = new Map<string, number>();
+  /** 同一检测周期的错峰预约：其他房间完成检测不能把本房的到期时间提前。 */
+  private staggeredDues = new Map<string, { baseMs: number; intervalMs: number; dueMs: number }>();
+  /** 平台级退避（限流/服务端故障类）：退避期暂停该平台检测，不把「被退避」记成失败。 */
+  private throttleBackoff = new Map<
+    Platform,
+    { untilMs: number; attempt: number }
+  >();
   private platformTasks = new Map<Platform, Promise<void>>();
   private policySignatures = new Map<string, string>();
   private pollingRooms = new Map<string, Room>();
@@ -74,6 +88,7 @@ export class Scheduler {
     const rooms = this.services.rooms.list();
     this.pollingRooms = new Map(rooms.map(room => [room.id, room]));
     const ids = new Set(this.pollingRooms.keys());
+    for (const id of this.staggeredDues.keys()) if (!ids.has(id)) this.staggeredDues.delete(id);
     for (const id of this.completedChecks.keys()) if (!ids.has(id)) this.completedChecks.delete(id);
     for (const id of this.policySignatures.keys()) if (!ids.has(id)) this.policySignatures.delete(id);
     for (const platform of PLATFORMS) if (!this.platformTasks.has(platform)) this.scheduleNext(platform);
@@ -94,6 +109,7 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
     this.completedChecks.clear();
+    this.staggeredDues.clear();
     const rooms = this.services.rooms.list();
     this.pollingRooms = new Map(rooms.map(room => [room.id, room]));
     this.policySignatures = new Map(rooms.map(room => [room.id,
@@ -126,6 +142,92 @@ export class Scheduler {
     return platformCheckInterval(platform, this.services.settings.load());
   }
 
+  private baseIntervalMs(room: Room, settings = this.services.settings.load()): number {
+    return room.checkIntervalSec == null
+      ? platformCheckInterval(room.platform, settings) * 1000
+      : room.checkIntervalSec * 1000;
+  }
+
+  /** 检测负载供数（与设置页同一纯函数）：基准间隔折算的合计频率与拉伸房数。 */
+  detectionLoadSnapshot(): ReturnType<typeof detectionLoad> {
+    const settings = this.services.settings.load();
+    return detectionLoad(
+      [...this.pollingRooms.values()]
+        .filter((room) => room.enabled)
+        .map((room) => this.baseIntervalMs(room, settings)),
+    );
+  }
+
+  /**
+   * 平台内各房到期时刻：生效间隔 = 基准间隔 × 合计护栏拉伸；同刻扎堆的检测
+   * 按 id 哈希序错开 ≥2s（削平齐步走尖峰），无碰撞的房间零变化。
+   * 从未检测过的房间仍立即到期，不改任何既有到期语义。
+   */
+  private roomDuesAt(platform: Platform, nowMs: number): Map<string, number> {
+    const settings = this.services.settings.load();
+    const enabled = [...this.pollingRooms.values()].filter(room => room.enabled);
+    const intervals = new Map(enabled.map(room => [room.id, this.baseIntervalMs(room, settings)]));
+    const load = detectionLoad([...intervals.values()]).perMinute;
+    const rooms = enabled.filter(room => room.platform === platform);
+    const dues = new Map<string, number>();
+    const checked: { id: string; dueMs: number; intervalMs: number }[] = [];
+    for (const room of rooms) {
+      const completed = this.completedChecks.get(room.id);
+      const intervalMs = effectiveIntervalMs(intervals.get(room.id)!, load);
+      // 从未检测过的房间仍立即到期（首轮起检语义不动），错峰只摊平稳态扎堆。
+      if (completed === undefined) dues.set(room.id, nowMs);
+      else checked.push({ id: room.id, dueMs: completed + intervalMs, intervalMs });
+    }
+    // 并发槽位内的同刻检测本来就已被限流器收拢，只摊平超出槽位的扎堆。
+    for (const [id, dueMs] of spreadDueTimes(
+      checked,
+      undefined,
+      PLATFORM_CHECK_CONCURRENCY[platform],
+    )) {
+      dues.set(id, dueMs);
+    }
+    for (const entry of checked) {
+      const previous = this.staggeredDues.get(entry.id);
+      const dueMs = Math.max(
+        dues.get(entry.id)!,
+        previous?.baseMs === entry.dueMs && previous.intervalMs === entry.intervalMs
+          ? previous.dueMs : entry.dueMs,
+      );
+      this.staggeredDues.set(entry.id, { baseMs: entry.dueMs, intervalMs: entry.intervalMs, dueMs });
+      dues.set(entry.id, dueMs);
+    }
+    return dues;
+  }
+
+  private isThrottled(platform: Platform): boolean {
+    return (this.throttleBackoff.get(platform)?.untilMs ?? 0) > this.services.clock.now();
+  }
+
+  private registerThrottle(platform: Platform): void {
+    // 同一批在途请求的失败只算一次退避，避免并发数放大指数。
+    if (this.isThrottled(platform)) return;
+    const attempt = (this.throttleBackoff.get(platform)?.attempt ?? 0) + 1;
+    const jitterMs = Math.floor(Math.random() * 5_000);
+    const delayMs = backoffDelayMs(attempt - 1, jitterMs);
+    this.throttleBackoff.set(platform, {
+      attempt,
+      untilMs: this.services.clock.now() + delayMs,
+    });
+    console.log(
+      `[scheduler] throttle platform=${platform} attempt=${attempt} backoffMs=${delayMs}`,
+    );
+  }
+
+  private clearThrottle(
+    platform: Platform,
+    observed: { untilMs: number; attempt: number } | undefined,
+  ): void {
+    // 只允许退避到期后发起的成功请求恢复；旧的在途结果不能覆盖新的失败信号。
+    if (!observed || this.throttleBackoff.get(platform) !== observed || this.isThrottled(platform)) return;
+    if (this.throttleBackoff.delete(platform))
+      console.log(`[scheduler] throttle cleared platform=${platform}`);
+  }
+
   private scheduleNext(platform: Platform): void {
     if (!this.running || this.platformTasks.has(platform)) return;
     const previous = this.handles.get(platform);
@@ -139,12 +241,14 @@ export class Scheduler {
     const platformIntervalMs = this.intervalFor(platform) * 1000;
     let next = now + platformIntervalMs;
     if (!(platform === 'douyin' && this.douyinCookieExpired)) {
+      const dues = this.roomDuesAt(platform, now);
       for (const room of this.pollingRooms.values()) {
         if (!room.enabled || room.platform !== platform || this.manager.isRoomActive(room.id) || this.checking.has(room.id)) continue;
-        const completed = this.completedChecks.get(room.id);
-        next = Math.min(next, completed === undefined ? now : completed + (room.checkIntervalSec == null ? platformIntervalMs : room.checkIntervalSec * 1000));
+        next = Math.min(next, dues.get(room.id) ?? now);
       }
     }
+    const backoff = this.throttleBackoff.get(platform);
+    if (backoff && backoff.untilMs > now) next = Math.max(next, backoff.untilMs);
     const handle = this.services.clock.setTimeout(() => {
       this.handles.delete(platform);
       void this.runPlatformOnce(platform).catch((error: unknown) => {
@@ -156,6 +260,9 @@ export class Scheduler {
 
   private async runPlatform(platform: Platform): Promise<void> {
     if (platform === "douyin" && this.douyinCookieExpired) return;
+    // 退避期间整轮跳过：既不发请求也不记失败，到期后自动回常频。
+    const backoff = this.throttleBackoff.get(platform);
+    if (backoff && backoff.untilMs > this.services.clock.now()) return;
     await this.finalizePastPredictions();
     // #125：先触发到期定时录制计划（跨天/重启恢复由 nextRunAt 持久化保证，离线不建空录制）。
     const now = this.services.clock.now();
@@ -171,14 +278,11 @@ export class Scheduler {
     const rooms = this.services.rooms
       .listEnabled()
       .filter((r) => r.platform === platform);
-    const platformIntervalMs = this.intervalFor(platform) * 1000;
-    await this.runChecks(
-      rooms.filter((room) => {
-        const completed = this.completedChecks.get(room.id);
-        return !this.manager.isRoomActive(room.id) && (completed === undefined ||
-          this.services.clock.now() >= completed + (room.checkIntervalSec == null ? platformIntervalMs : room.checkIntervalSec * 1000));
-      }),
-    );
+    const nowMs = this.services.clock.now();
+    const dues = this.roomDuesAt(platform, nowMs);
+    await this.runChecks(rooms.filter(room =>
+      !this.manager.isRoomActive(room.id) && nowMs >= (dues.get(room.id) ?? 0),
+    ));
   }
 
   private async runChecks(
@@ -192,6 +296,8 @@ export class Scheduler {
         (this.running || opts.allowWhenStopped) &&
         (!isDouyinQueue || !this.douyinCookieExpired)
       ) {
+        const platform = rooms[0]?.platform;
+        if (platform && this.isThrottled(platform)) return;
         const room = rooms[cursor++];
         if (!room) return;
         await this.checkRoom(room, opts).catch(() => undefined);
@@ -208,6 +314,12 @@ export class Scheduler {
         worker,
       ),
     );
+    // 到期计划已推进 nextRunAt；被退避中断的未执行任务必须保留，不能丢失本次开录指令。
+    if (opts.scheduled && cursor < rooms.length) {
+      const platform = rooms[0]!.platform;
+      const pending = this.dueByPlatform.get(platform) ?? [];
+      this.dueByPlatform.set(platform, [...new Set([...pending, ...rooms.slice(cursor).map(room => room.id)])]);
+    }
   }
 
   queueEnabledRoomChecks(): { queued: number; alreadyRunning: boolean } {
@@ -460,6 +572,7 @@ export class Scheduler {
               `检测异常: ${(err as Error).message ?? String(err)}`,
               { roomId: room.id, retryable: true },
             );
+      if (PLATFORM_THROTTLE_CODES.has(appErr.code)) this.registerThrottle(room.platform);
       this.setCheckFailure(room.id, appErr.toObject());
       this.createCheckAlert(room, appErr.toObject(), "error");
     }
@@ -470,6 +583,7 @@ export class Scheduler {
     adapter: PlatformAdapter,
     opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
   ): Promise<void> {
+    const backoffAtStart = this.isThrottled(room.platform) ? undefined : this.throttleBackoff.get(room.platform);
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
     // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
@@ -529,8 +643,10 @@ export class Scheduler {
     }
     if (status.status === "live" || status.status === "offline") {
       // 恢复清理：成功检测=该房计数清零，告警列表该条由 resolveRoomAlerts 隐藏留档。
+      // 检测成功：计数清零、告警收声、平台退避解除（自愈回常频）。
       this.clearErrorVotes(room.id);
       this.resolveRoomAlerts(room.id);
+      this.clearThrottle(room.platform, backoffAtStart);
       this.recordCoverage(room.id);
       if (status.status === "offline") this.recordTodayForecast(room.id);
     }
@@ -667,6 +783,9 @@ export class Scheduler {
       this.markDouyinCookieExpired();
       return;
     }
+    // 平台侧限流/服务端故障是平台级信号：立即退避该平台（不等三票门——
+    // 门是给房间级瞬时噪声的），退避期间整轮跳过、不把「被退避」记成失败。
+    if (PLATFORM_THROTTLE_CODES.has(err.code)) this.registerThrottle(room.platform);
     // 本地明确缺少抖音凭证时，重试不能恢复；立即保留授权提示，不等待瞬时故障的三票门。
     const missingDouyinAuthorization =
       room.platform === "douyin" &&

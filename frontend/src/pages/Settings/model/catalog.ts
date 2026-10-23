@@ -155,7 +155,7 @@ export const DEFINITIONS: SettingDefinition[] = [
       `${["全局默认", "B站", "抖音", "小红书", "YouTube"][index]}检测间隔`,
       "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
       {
-        min: 10,
+        min: 1,
         max: 3600,
         unit: "秒",
         keywords: "检测频率 轮询",

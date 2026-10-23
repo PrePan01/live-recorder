@@ -22,6 +22,7 @@ import {
 import MemphisRadioGroup from "../../../components/MemphisRadioGroup";
 import DirectoryPicker from "../../../components/DirectoryPicker";
 import PlatformAuthorizationList from "../../../components/PlatformAuthorizationList";
+import DetectionLoadHint from "../../../components/DetectionLoadHint";
 import type { Settings, ThemePreference } from "../../../types/settings";
 import { useAppTheme } from "../../../theme";
 import {
@@ -109,6 +110,7 @@ export function MonitoringPanel() {
       {["default", "bilibili", "douyin", "xiaohongshu", "youtube"].map((p) => (
         <OrdinaryRow key={p} id={`interval-${p}`} />
       ))}
+      <DetectionLoadHint />
     </>
   );
 }

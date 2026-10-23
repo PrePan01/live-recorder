@@ -1106,3 +1106,42 @@ describe('Scheduler', () => {
   });
 
 });
+
+describe('检测负载防呆（调度集成）', () => {
+  const errorOf = (code: string, retryable: boolean) => ({
+    code, message: code, roomId: null, recordingId: null,
+    occurredAt: new Date().toISOString(), retryable,
+  });
+  it('平台限流立即退避该平台、其他平台零影响、恢复后自动回常频', async () => {
+    const { services, clock } = newServices();
+    clock.advance(Date.now() - clock.now());
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-throttle-'));
+    services.settings.save({ ...baseSettings(dir), autoRecord: false });
+    const bilibili = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/598', displayName: '限流房' });
+    const douyin = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/9001', displayName: '对照房' });
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
+      { status: 'error', error: errorOf('PLATFORM_SERVER_ERROR', true) },
+    ]);
+    (services.adapterFor('douyin') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    await services.scheduler.checkRoom(services.rooms.get(bilibili.id)!);
+    const priv = services.scheduler as unknown as {
+      throttleBackoff: Map<string, { untilMs: number; attempt: number }>;
+      runPlatform: (platform: string) => Promise<void>;
+      completedChecks: Map<string, number>;
+    };
+    // D1：一次限流即平台级退避（不等三票门），其他平台不背锅。
+    expect(priv.throttleBackoff.has('bilibili')).toBe(true);
+    expect(priv.throttleBackoff.has('douyin')).toBe(false);
+    // D3：退避期整轮跳过——被退避不记成新的检测（completedChecks 不推进）。
+    const before = priv.completedChecks.get(bilibili.id);
+    await priv.runPlatform('bilibili');
+    expect(priv.completedChecks.get(bilibili.id)).toBe(before);
+    // D2：退避窗口过后自动回常频，成功一次即解除退避。
+    clock.advance(35_000);
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }]);
+    await services.scheduler.checkRoom(services.rooms.get(bilibili.id)!);
+    expect(priv.throttleBackoff.has('bilibili')).toBe(false);
+    await services.manager.shutdown().catch(() => undefined);
+    services.db.close();
+  });
+});

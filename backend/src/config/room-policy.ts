@@ -1,5 +1,9 @@
 import type { AppSettings, Platform, Quality, Room } from "../types/index.js";
 import { AppError } from "../types/error.js";
+import {
+  CHECK_INTERVAL_MAX_SEC,
+  CHECK_INTERVAL_MIN_SEC,
+} from "./check-guard.js";
 
 export type RoomPolicyPatch = Partial<
   Pick<
@@ -37,11 +41,12 @@ export function validateRoomPolicy(
       interval !== null &&
       (typeof interval !== "number" ||
         !Number.isSafeInteger(interval) ||
-        interval < 10)
+        interval < CHECK_INTERVAL_MIN_SEC ||
+        interval > CHECK_INTERVAL_MAX_SEC)
     )
       throw new AppError(
         "CONFIG_INVALID",
-        "检测间隔需为不小于 10 秒的安全整数或 null",
+        `检测间隔需为 ${CHECK_INTERVAL_MIN_SEC}~${CHECK_INTERVAL_MAX_SEC} 秒的安全整数或 null`,
       );
     patch.checkIntervalSec = interval as number | null;
   }

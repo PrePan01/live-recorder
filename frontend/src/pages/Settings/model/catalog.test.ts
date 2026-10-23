@@ -20,7 +20,7 @@ describe("settings catalog", () => {
         (d) => d.id,
       ),
     ).toEqual(["interval-xiaohongshu"]);
-    expect(validateValue(BY_ID["interval-xiaohongshu"], 5)).toBeTruthy();
+    expect(validateValue(BY_ID["interval-xiaohongshu"], 0)).toBeTruthy();
     expect(validateValue(BY_ID["interval-xiaohongshu"], 120)).toBeUndefined();
   });
   it("finds authorization and connection synonyms without reading user input", () => {
@@ -55,7 +55,7 @@ describe("settings catalog", () => {
     expect(validateValue(BY_ID["pipeline-crf"], null)).toBeUndefined();
     expect(validateValue(BY_ID["concurrency"], null)).toBeTruthy();
     expect(validateValue(BY_ID["concurrency"], 1.5)).toBeTruthy();
-    expect(validateValue(BY_ID["interval-douyin"], 5)).toBeTruthy();
+    expect(validateValue(BY_ID["interval-douyin"], 0)).toBeTruthy();
     expect(validateValue(BY_ID["naming-rule"], "")).toBeTruthy();
   });
   it("validates automatic email edits before enqueueing partial input", () => {

@@ -164,7 +164,9 @@ describe("room policy persistence and compatibility", () => {
   });
 
   it.each([
-    { checkIntervalSec: 9 },
+    // 区间定稿 [1, 3600]：9 秒起为合法值（下限只降），越界两侧都拒。
+    { checkIntervalSec: 0 },
+    { checkIntervalSec: 3601 },
     { checkIntervalSec: 10.5 },
     { checkIntervalSec: "60" },
     { checkIntervalSec: Number.MAX_SAFE_INTEGER + 1 },

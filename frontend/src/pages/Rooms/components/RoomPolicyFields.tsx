@@ -75,7 +75,7 @@ export default function RoomPolicyFields({
   const intervalError =
     interval === null ||
     !Number.isInteger(interval) ||
-    interval < 10 ||
+    interval < 1 ||
     interval > 3600;
   useEffect(() => {
     onValidityChange?.(value.checkIntervalSec == null || !intervalError);
@@ -314,7 +314,7 @@ export default function RoomPolicyFields({
                       <InputNumber
                         id={`${id}-custom-interval`}
                         aria-label="自定义检测间隔秒数"
-                        min={10}
+                        min={1}
                         max={3600}
                         precision={0}
                         value={interval}
@@ -332,7 +332,7 @@ export default function RoomPolicyFields({
                       />
                       {intervalError && (
                         <span role="alert" className="lr-room-policy-error">
-                          请输入 10–3600 的整数
+                          请输入 1–3600 的整数
                         </span>
                       )}
                     </div>

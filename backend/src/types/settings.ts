@@ -158,6 +158,13 @@ export interface SettingsView {
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
+  /** 检测负载供数（与调度器同一纯函数出数）：设置页提示行用，不含任何凭据。 */
+  detectionLoad: {
+    perMinute: number;
+    limitPerMinute: number;
+    staggered: boolean;
+    queued: number;
+  };
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
   mail: MailConfigView;
