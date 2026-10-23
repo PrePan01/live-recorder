@@ -2,11 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyRoomBatch,
   DEFAULT_ROOM_POLICY,
-  inheritedInterval,
   isDefaultPolicy,
   roomPolicy,
 } from "./roomPolicy";
-import type { Settings } from "../../../types/settings";
 
 describe("restore-default baseline", () => {
   it("shares one baseline with roomPolicy defaults", () => {
@@ -43,7 +41,7 @@ describe("restore-default baseline", () => {
 });
 
 describe("room policies", () => {
-  it("normalizes historical room settings and inherits platform intervals", () => {
+  it("normalizes historical room settings", () => {
     expect(roomPolicy()).toEqual({
       enabled: true,
       autoRecord: null,
@@ -52,11 +50,6 @@ describe("room policies", () => {
       checkIntervalSec: null,
       quality: null,
     });
-    const settings = {
-      checkIntervalSec: { default: 50, bilibili: 30, douyin: 120 },
-    } as Settings;
-    expect(inheritedInterval("bilibili", settings)).toBe(30);
-    expect(inheritedInterval("xiaohongshu", settings)).toBe(120);
   });
   it("bounds batch concurrency and retries only failed rooms", async () => {
     let active = 0;

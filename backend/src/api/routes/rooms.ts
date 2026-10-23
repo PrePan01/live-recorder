@@ -1,4 +1,4 @@
-import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
+import { defaultDanmakuEnabled, platformCheckInterval, resolveRoomPolicy, validateRoomPolicy, type RoomPolicyPatch, type RoomPolicySettings } from '../../config/room-policy.js';
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../types/error.js";
 import type { Platform } from "../../types/index.js";
@@ -65,13 +65,31 @@ export function registerRoomRoutes(
     services.manager.enrichRoom(room);
   let insightCache:
     { key: string; expiresAt: number; body: unknown } | undefined;
-  services.events.on((event) => {
+  let policySettings: RoomPolicySettings | null = services.settings.load();
+  const policySignature = (settings: RoomPolicySettings | null) => JSON.stringify([
+    PLATFORMS.map(platform => platformCheckInterval(platform, settings)), settings?.quality ?? "original",
+    settings?.autoRecord ?? false, defaultDanmakuEnabled(settings),
+  ]);
+  const unsubscribe = services.events.on((event) => {
+    if (event.type === "settings:updated") {
+      const previous = policySettings;
+      policySettings = event.data;
+      if (policySignature(previous) !== policySignature(policySettings)) {
+        // 全局变化只刷新生效值真正改变的房间；显式覆盖值保持不动。
+        for (const room of services.rooms.list()) {
+          if (JSON.stringify(resolveRoomPolicy(room, previous)) === JSON.stringify(resolveRoomPolicy(room, policySettings))) continue;
+          services.events.emit({ type: "room:updated", data: services.manager.enrichRoom(room, policySettings) });
+        }
+      }
+    }
     if (event.type === "room:updated" || event.type === "recording:updated")
       insightCache = undefined;
   });
 
+  app.addHook("onClose", async () => unsubscribe());
+
   app.get("/api/v1/rooms", async (_req, reply) => {
-    return reply.send({ rooms: services.rooms.list().map(enrich) });
+    return reply.send({ rooms: services.manager.enrichRooms(services.rooms.list()) });
   });
 
   app.put("/api/v1/rooms/order", async (req, reply) => {
@@ -82,7 +100,7 @@ export function registerRoomRoutes(
     ) {
       throw new AppError("CONFIG_INVALID", "roomIds 必须是直播间 ID 数组");
     }
-    const rooms = services.rooms.reorder(body.roomIds as string[]).map(enrich);
+    const rooms = services.manager.enrichRooms(services.rooms.reorder(body.roomIds as string[]));
     return reply.send({ rooms });
   });
 
@@ -362,9 +380,10 @@ export function registerRoomRoutes(
     const orderedSucceeded = succeeded.map((room) =>
       services.rooms.get(room.id)!,
     );
-    for (const room of orderedSucceeded)
-      services.events.emit({ type: "room:updated", data: enrich(room) });
-    return reply.send({ succeeded: orderedSucceeded.map(enrich), failed });
+    const enriched = services.manager.enrichRooms(orderedSucceeded);
+    for (const room of enriched)
+      services.events.emit({ type: "room:updated", data: room });
+    return reply.send({ succeeded: enriched, failed });
   });
 
   app.patch("/api/v1/rooms/:id", async (req, reply) => {
@@ -412,14 +431,14 @@ export function registerRoomRoutes(
       patch.uploadEnabled = body.uploadEnabled;
     }
     const previous = services.rooms.get(id);
-    const globalAuto = services.settings.load()?.autoRecord ?? false;
+    const settings = services.settings.load();
     const room = services.rooms.update(id, patch);
     services.events.emit({ type: "room:updated", data: enrich(room) });
     if (
       patch.autoRecord !== undefined &&
       previous &&
-      !(previous.autoRecord ?? globalAuto) &&
-      (room.autoRecord ?? globalAuto)
+      !resolveRoomPolicy(previous, settings).autoRecord.value &&
+      resolveRoomPolicy(room, settings).autoRecord.value
     ) {
       await services.scheduler.triggerAutoRecordCheck(id);
     }

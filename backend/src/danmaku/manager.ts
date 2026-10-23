@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { AppError } from "../types/error.js";
 import { SharedDanmakuAdapter } from "./shared-adapter.js";
 import { DanmakuPreviewBuffer } from "./preview-buffer.js";
+import { resolveDanmakuEnabled } from "../config/room-policy.js";
 import type { Room } from "../types/room.js";
 import type { Services } from "../core/services.js";
 import { bilibiliDanmakuAdapter } from "./adapters/bilibili.js";
@@ -27,9 +28,8 @@ export function danmakuEnabledFor(
   room: Pick<Room, "danmakuEnabled">,
   settings: { danmaku?: { enabled: boolean } },
 ): boolean {
-  if (room.danmakuEnabled === false) return false;
-  if (room.danmakuEnabled === true) return true;
-  return settings.danmaku?.enabled === true;
+  // 生效值走继承唯一出口，避免这里长出第二份「谁覆盖谁」。
+  return resolveDanmakuEnabled(room, settings);
 }
 
 interface PreviewSource {

@@ -1,3 +1,4 @@
+import type { Platform } from "./room.js";
 import type { Quality } from './recording.js';
 import type { OpenListConfig } from './upload.js';
 
@@ -158,6 +159,8 @@ export interface SettingsView {
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
+  /** 各平台生效检测间隔默认（含平台默认兜底，单出口解析）：批量弹窗「跟随全局」标签用。 */
+  checkIntervalDefaults: Record<Platform, number>;
   /** 检测负载供数（与调度器同一纯函数出数）：设置页提示行用，不含任何凭据。 */
   detectionLoad: {
     perMinute: number;

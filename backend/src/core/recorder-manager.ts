@@ -1,5 +1,5 @@
 import { finalizeYoutube, youtubeManifest, youtubeSize, removeYoutubeParts } from "../recorder/youtube-media.js";
-import { roomQuality } from '../config/room-policy.js';
+import { resolveRoomPolicy, roomQuality, type RoomPolicySettings } from '../config/room-policy.js';
 import { assertSegmentRange, recordedSeconds } from './recording-range.js';
 import { createWriteStream, existsSync, statSync, type WriteStream } from "node:fs";
 import { access, mkdir, open, rename, unlink, stat } from "node:fs/promises";
@@ -554,9 +554,21 @@ export class RecorderManager {
   }
 
   /** 将 activeRecording 附加到房间对象，供 API/SSE 输出。 */
-  enrichRoom(room: Room): Room {
+  enrichRoom(room: Room, settings: RoomPolicySettings | null = this.services.settings.load()): Room {
     const liveRoomUrl = this.services.adapterFor(room.platform).getRoomPageUrl?.(room.url);
-    return { ...room, ...(liveRoomUrl ? { liveRoomUrl } : {}), activeRecording: this.activeRecordingFor(room.id) };
+    return {
+      ...room,
+      ...(liveRoomUrl ? { liveRoomUrl } : {}),
+      activeRecording: this.activeRecordingFor(room.id),
+      // 生效值+来源随房间出口回传：与执行侧同一函数同一规则（resolveRoomPolicy）。
+      effective: resolveRoomPolicy(room, settings),
+    };
+  }
+
+  /** 列表共用一个配置快照，避免每个房间都查询和解析全局配置。 */
+  enrichRooms(rooms: Room[]): Room[] {
+    const settings = this.services.settings.load();
+    return rooms.map(room => this.enrichRoom(room, settings));
   }
 
   /** 补发 service:status SSE，供前端顶部导航实时显示录制中数量。 */

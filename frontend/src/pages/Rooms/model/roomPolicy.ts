@@ -1,5 +1,4 @@
-import type { Room, RoomUpdateInput, Platform } from "../../../types/room";
-import type { Settings } from "../../../types/settings";
+import type { Room, RoomUpdateInput } from "../../../types/room";
 
 export type RoomPolicy = Pick<
   RoomUpdateInput,
@@ -17,18 +16,6 @@ export const QUALITY_OPTIONS = [
   { value: "540p", label: "540p" },
   { value: "360p", label: "360p" },
 ];
-export function inheritedInterval(
-  platform: Platform | undefined,
-  settings: Settings | null,
-): number {
-  return (
-    (platform ? settings?.checkIntervalSec[platform] : undefined) ??
-    ((platform === "xiaohongshu" || platform === "youtube")
-      ? 120
-      : (settings?.checkIntervalSec.default ??
-        (platform === "douyin" ? 120 : 60)))
-  );
-}
 export function roomPolicy(room?: Partial<Room>): RoomPolicy {
   return {
     enabled: room?.enabled ?? true,

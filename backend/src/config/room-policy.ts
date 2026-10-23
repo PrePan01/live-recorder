@@ -1,9 +1,21 @@
-import type { AppSettings, Platform, Quality, Room } from "../types/index.js";
+import type {
+  AppSettings,
+  EffectiveRoomPolicy,
+  EffectiveValue,
+  Platform,
+  Quality,
+  Room,
+} from "../types/index.js";
 import { AppError } from "../types/error.js";
 import {
   CHECK_INTERVAL_MAX_SEC,
   CHECK_INTERVAL_MIN_SEC,
 } from "./check-guard.js";
+
+export type RoomPolicySettings = Pick<
+  AppSettings,
+  "checkIntervalSec" | "quality" | "autoRecord" | "danmaku"
+>;
 
 export type RoomPolicyPatch = Partial<
   Pick<
@@ -23,7 +35,11 @@ export function validateRoomPolicy(
   input: Record<string, unknown>,
 ): RoomPolicyPatch {
   const patch: RoomPolicyPatch = {};
-  for (const key of ["enabled", "liveNotificationEnabled", "liveEmailNotificationEnabled"] as const) {
+  for (const key of [
+    "enabled",
+    "liveNotificationEnabled",
+    "liveEmailNotificationEnabled",
+  ] as const) {
     if (input[key] === undefined) continue;
     if (typeof input[key] !== "boolean")
       throw new AppError("ROOM_LINK_INVALID", `${key} 必须为布尔值`);
@@ -67,20 +83,114 @@ export function validateRoomPolicy(
 
 export function platformCheckInterval(
   platform: Platform,
-  settings: AppSettings | null,
+  settings: Pick<AppSettings, "checkIntervalSec"> | null,
 ): number {
   const intervals = settings?.checkIntervalSec;
   return (
     intervals?.[platform] ??
-    ((platform === "xiaohongshu" || platform === "youtube")
+    (platform === "xiaohongshu" || platform === "youtube"
       ? 120
       : (intervals?.default ?? (platform === "douyin" ? 120 : 60)))
   );
 }
 
+/** 房间检测间隔：执行侧、负载统计与完整策略解析共用此字段解析器。 */
+export function resolveCheckInterval(
+  room: Pick<Room, "platform" | "checkIntervalSec">,
+  settings: Pick<AppSettings, "checkIntervalSec"> | null,
+  tagValue?: number | null,
+): EffectiveValue<number> {
+  return pickPolicyValue(
+    room.checkIntervalSec,
+    tagValue,
+    platformCheckInterval(room.platform, settings),
+  );
+}
+
 export function roomQuality(
   room: Pick<Room, "quality">,
-  settings: AppSettings,
+  settings: Pick<AppSettings, "quality">,
 ): Quality {
-  return room.quality ?? settings.quality;
+  return pickPolicyValue(room.quality, undefined, settings.quality).value;
+}
+
+/**
+ * 覆盖优先级的唯一规则：房间显式值 > 标签策略 > 全局默认，来源=最近显式覆盖层。
+ * 供各字段绑定与窄签名助手共用，防止任何地方再长出第二份「谁覆盖谁」。
+ */
+export function pickPolicyValue<T>(
+  roomValue: T | null | undefined,
+  tagValue: T | null | undefined,
+  globalValue: T,
+): EffectiveValue<T> {
+  if (roomValue !== null && roomValue !== undefined)
+    return { value: roomValue, source: "room" };
+  if (tagValue !== null && tagValue !== undefined)
+    return { value: tagValue, source: "tag" };
+  return { value: globalValue, source: "global" };
+}
+
+/** 弹幕全局层默认（沿用既有语义：仅显式 true 才默认开）。 */
+export function defaultDanmakuEnabled(
+  settings: { danmaku?: { enabled: boolean } } | null | undefined,
+): boolean {
+  return settings?.danmaku?.enabled === true;
+}
+
+/** 标签层策略（数据模型尚未落地）：落地后插入房间层与全局层之间即自动生效。 */
+export type TagPolicy = Pick<
+  RoomPolicyPatch,
+  "checkIntervalSec" | "quality" | "autoRecord" | "danmakuEnabled"
+>;
+
+/**
+ * 继承生效值的唯一出口：房间显式值 > 标签策略 > 全局默认（null/缺省=跟随上层）。
+ * 执行侧与接口回传都走这一份规则，前后端不再各算一遍；来源=最近显式覆盖层。
+ */
+export function resolveRoomPolicy(
+  room: Pick<
+    Room,
+    | "platform"
+    | "checkIntervalSec"
+    | "quality"
+    | "autoRecord"
+    | "danmakuEnabled"
+  >,
+  settings: RoomPolicySettings | null,
+  tagPolicy?: TagPolicy | null,
+): EffectiveRoomPolicy {
+  return {
+    checkIntervalSec: resolveCheckInterval(
+      room,
+      settings,
+      tagPolicy?.checkIntervalSec,
+    ),
+    quality: pickPolicyValue(
+      room.quality,
+      tagPolicy?.quality,
+      settings?.quality ?? "original",
+    ),
+    autoRecord: pickPolicyValue(
+      room.autoRecord,
+      tagPolicy?.autoRecord,
+      settings?.autoRecord ?? false,
+    ),
+    danmakuEnabled: pickPolicyValue(
+      room.danmakuEnabled,
+      tagPolicy?.danmakuEnabled,
+      defaultDanmakuEnabled(settings),
+    ),
+  };
+}
+
+/** 弹幕开关生效值：与回传同一规则（收窄签名的调用方走这里，不再自算）。 */
+export function resolveDanmakuEnabled(
+  room: Pick<Room, "danmakuEnabled">,
+  settings: { danmaku?: { enabled: boolean } } | null | undefined,
+): boolean {
+  return pickPolicyValue(
+    room.danmakuEnabled,
+    undefined,
+    defaultDanmakuEnabled(settings),
+  ).value;
 }

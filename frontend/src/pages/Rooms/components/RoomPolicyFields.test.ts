@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import RoomPolicyFields from "./RoomPolicyFields";
+import type { RoomEffectivePolicy } from "../../../types/room";
 import type { Settings } from "../../../types/settings";
 
 function render(enabled: boolean, batch = false, reminder = false) {
@@ -26,5 +27,34 @@ describe("room live reminder", () => {
         expect(render(mailEnabled, batch, true)).toMatch(/aria-label="开播提醒"[^>]*aria-checked="true"/);
       }
     }
+  });
+});
+
+
+describe("effective policy updates", () => {
+  it("updates inherited switches and values when a refreshed room arrives", () => {
+    const settings = { autoRecord: true, danmaku: { enabled: true }, quality: "720p",
+      checkIntervalDefaults: { bilibili: 45 } } as Settings;
+    const effective: RoomEffectivePolicy = {
+      autoRecord: { value: false, source: "global" },
+      danmakuEnabled: { value: false, source: "global" },
+      quality: { value: "original", source: "global" },
+      checkIntervalSec: { value: 60, source: "global" },
+    };
+    const renderPolicy = (policy: RoomEffectivePolicy) => renderToStaticMarkup(createElement(RoomPolicyFields, {
+      value: { autoRecord: null, danmakuEnabled: null, quality: null, checkIntervalSec: null },
+      effective: policy, settings, platform: "bilibili", presentation: "console", onChange: () => {},
+    }));
+    expect(renderPolicy(effective)).toMatch(/aria-label="自动录制"[^>]*aria-checked="false"/);
+    const updated = renderPolicy({
+      autoRecord: { value: true, source: "global" },
+      danmakuEnabled: { value: true, source: "global" },
+      quality: { value: "720p", source: "global" },
+      checkIntervalSec: { value: 45, source: "global" },
+    });
+    expect(updated).toMatch(/aria-label="自动录制"[^>]*aria-checked="true"/);
+    expect(updated).toMatch(/aria-label="弹幕保存"[^>]*aria-checked="true"/);
+    expect(updated).toContain("45 秒");
+    expect(updated).toContain("720p");
   });
 });

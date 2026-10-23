@@ -301,6 +301,7 @@ export default memo(function RoomManagementCard({
           value={policy}
           settings={settings}
           platform={room.platform}
+          effective={room.effective}
           onChange={(patch) => void save(patch)}
           hideEnabled
           presentation="console"

@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { guessPlatform, PLATFORM_LABEL } from "./roomPlatform";
-import { inheritedInterval } from "../pages/Rooms/model/roomPolicy";
 
 describe("YouTube platform presentation", () => {
   it.each([
@@ -18,10 +17,9 @@ describe("YouTube platform presentation", () => {
       guessPlatform("https://example.com/youtube.com/@creator"),
     ).toBeNull();
   });
-  it("keeps existing platform detection and provides an inherited interval", () => {
+  it("keeps existing platform detection and labels", () => {
     expect(guessPlatform("https://live.bilibili.com/1")).toBe("bilibili");
     expect(guessPlatform("https://live.douyin.com/1")).toBe("douyin");
     expect(PLATFORM_LABEL.youtube).toBe("YouTube");
-    expect(inheritedInterval("youtube", null)).toBe(120);
   });
 });

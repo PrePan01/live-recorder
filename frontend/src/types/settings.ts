@@ -41,6 +41,10 @@ export interface Settings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
   checkIntervalSec: PlatformIntervals;
+  checkIntervalDefaults?: Record<
+    "bilibili" | "douyin" | "xiaohongshu" | "youtube",
+    number
+  >;
   detectionLoad?: {
     perMinute: number;
     limitPerMinute: number;

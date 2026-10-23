@@ -10,7 +10,7 @@ import {
 } from "../../security/keys.js";
 import { notificationPreference } from "./notifications.js";
 import { detectionLoad } from "../../config/check-guard.js";
-import { platformCheckInterval } from "../../config/room-policy.js";
+import { platformCheckInterval, resolveCheckInterval } from "../../config/room-policy.js";
 
 export async function settingsView(services: Services): Promise<SettingsView> {
   const stored = services.settings.load();
@@ -30,14 +30,16 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     recordingFormat: settings.recordingFormat ?? "source_flv",
     autoRecord: settings.autoRecord ?? false,
     checkIntervalSec: settings.checkIntervalSec,
+    checkIntervalDefaults: {
+      bilibili: platformCheckInterval('bilibili', settings),
+      douyin: platformCheckInterval('douyin', settings),
+      xiaohongshu: platformCheckInterval('xiaohongshu', settings),
+      youtube: platformCheckInterval('youtube', settings),
+    },
     detectionLoad: detectionLoad(
       services.rooms
         .listEnabled()
-        .map((room) =>
-          room.checkIntervalSec == null
-            ? platformCheckInterval(room.platform, settings) * 1000
-            : room.checkIntervalSec * 1000,
-        ),
+        .map((room) => resolveCheckInterval(room, settings).value * 1000),
     ),
     retry: settings.retry,
     diskGuard: settings.diskGuard,

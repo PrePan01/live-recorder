@@ -4,6 +4,20 @@ import type { Tag } from "./tag";
 
 export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "youtube";
 
+export type SettingSource = "room" | "tag" | "global";
+
+export interface EffectivePolicyValue<T> {
+  value: T;
+  source: SettingSource;
+}
+
+export interface RoomEffectivePolicy {
+  checkIntervalSec: EffectivePolicyValue<number>;
+  quality: EffectivePolicyValue<Quality>;
+  autoRecord: EffectivePolicyValue<boolean>;
+  danmakuEnabled: EffectivePolicyValue<boolean>;
+}
+
 export type LiveStatus = "live" | "offline" | "restricted";
 
 export type MonitorState =
@@ -42,6 +56,8 @@ export interface Room {
   availableQualities: Quality[];
   activeRecording: ActiveRecording | null;
   tags: Tag[];
+  /** 生效策略值（后端 resolveRoomPolicy 单出口回传）；来源=最近显式覆盖层（T2）。 */
+  effective?: RoomEffectivePolicy;
   uploadEnabled: boolean | null;
   titleSource: TitleSource | null;
   titleUpdatedAt: string | null;

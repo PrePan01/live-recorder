@@ -1,4 +1,4 @@
-import { platformCheckInterval } from '../config/room-policy.js';
+import { platformCheckInterval, resolveCheckInterval, resolveRoomPolicy } from '../config/room-policy.js';
 import {
   backoffDelayMs,
   detectionLoad,
@@ -143,9 +143,7 @@ export class Scheduler {
   }
 
   private baseIntervalMs(room: Room, settings = this.services.settings.load()): number {
-    return room.checkIntervalSec == null
-      ? platformCheckInterval(room.platform, settings) * 1000
-      : room.checkIntervalSec * 1000;
+    return resolveCheckInterval(room, settings).value * 1000;
   }
 
   /** 检测负载供数（与设置页同一纯函数）：基准间隔折算的合计频率与拉伸房数。 */
@@ -697,8 +695,10 @@ export class Scheduler {
         this.emitRoom(room.id);
         return;
       }
-      const globalAuto = this.services.settings.load()?.autoRecord ?? false;
-      const effectiveAuto = checkedRoom.autoRecord ?? globalAuto;
+      const effectiveAuto = resolveRoomPolicy(
+        checkedRoom,
+        this.services.settings.load(),
+      ).autoRecord.value;
       const autoStoppedThisSession = Boolean(
         checkedRoom.autoRecordStoppedSession,
       );
@@ -992,11 +992,7 @@ export class Scheduler {
     await this.checking.get(roomId);
     const room = this.services.rooms.get(roomId);
     if (!room || this.manager.isRoomActive(roomId)) return;
-    if (!(
-      room.autoRecord ??
-      this.services.settings.load()?.autoRecord ??
-      false
-    ))
+    if (!resolveRoomPolicy(room, this.services.settings.load()).autoRecord.value)
       return;
     await this.checkRoom(room);
   }

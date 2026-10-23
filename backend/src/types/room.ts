@@ -20,6 +20,8 @@ export type LiveStatus = 'live' | 'offline' | 'restricted';
 export type TitleSource = 'adapter' | 'fallback' | 'manual' | 'placeholder';
 
 export interface Room {
+  /** 生效策略（值+来源）：后端唯一出口解析后随房间回传，执行侧同源。 */
+  effective?: EffectiveRoomPolicy;
   id: string;
   platform: Platform;
   url: string;
@@ -78,4 +80,20 @@ export interface Room {
 export interface ActiveRecordingInfo {
   recordingId: string;
   startedAt: string;
+}
+
+/** 生效值来源=最近显式覆盖层（谁定的），与数值是否巧合无关。 */
+export type PolicySource = "room" | "tag" | "global";
+
+export interface EffectiveValue<T> {
+  value: T;
+  source: PolicySource;
+}
+
+/** 继承项生效值（值+来源）：由后端唯一出口解析，执行侧与接口回传同一份规则。 */
+export interface EffectiveRoomPolicy {
+  checkIntervalSec: EffectiveValue<number>;
+  quality: EffectiveValue<Quality>;
+  autoRecord: EffectiveValue<boolean>;
+  danmakuEnabled: EffectiveValue<boolean>;
 }

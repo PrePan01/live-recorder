@@ -1,12 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { InputNumber, Select, Switch } from "antd";
-import type { Platform } from "../../../types/room";
+import type { Platform, RoomEffectivePolicy } from "../../../types/room";
 import type { Settings } from "../../../types/settings";
-import {
-  inheritedInterval,
-  QUALITY_OPTIONS,
-  type RoomPolicy,
-} from "../model/roomPolicy";
+import { QUALITY_OPTIONS, type RoomPolicy } from "../model/roomPolicy";
 
 const INHERIT = "inherit";
 const SKIP = "skip";
@@ -44,6 +40,7 @@ export default function RoomPolicyFields({
   onChange,
   settings,
   platform,
+  effective,
   batch = false,
   disabled = false,
   onValidityChange,
@@ -55,6 +52,8 @@ export default function RoomPolicyFields({
   onChange: (patch: RoomPolicy) => void;
   settings: Settings | null;
   platform?: Platform;
+  /** 后端生效值回传（含来源）；单房呈现优先消费，批量模式无每房生效值。 */
+  effective?: RoomEffectivePolicy;
   batch?: boolean;
   disabled?: boolean;
   onValidityChange?: (valid: boolean) => void;
@@ -64,6 +63,16 @@ export default function RoomPolicyFields({
 }) {
   const consoleMode = presentation === "console";
   const id = useId();
+  // 「跟随全局」标签的基线值=后端 checkIntervalDefaults（含平台默认兑底），前端不再自算。
+  const defaultInterval = platform
+    ? settings?.checkIntervalDefaults?.[platform]
+    : undefined;
+  const intervalFollowLabel =
+    defaultInterval != null ? `${defaultInterval} 秒` : "默认";
+  const intervalDisplay =
+    value.checkIntervalSec ??
+    effective?.checkIntervalSec.value ??
+    defaultInterval;
   const [intervalDraft, setIntervalDraft] = useState<{
     source: number | null | undefined;
     value: number | null;
@@ -178,8 +187,16 @@ export default function RoomPolicyFields({
               onChange={(enabled) => onChange({ enabled })}
             />
           ))}
-        {booleanField("autoRecord", "自动录制", settings?.autoRecord)}
-        {booleanField("danmakuEnabled", "弹幕保存", settings?.danmaku?.enabled)}
+        {booleanField(
+          "autoRecord",
+          "自动录制",
+          effective?.autoRecord.value ?? settings?.autoRecord,
+        )}
+        {booleanField(
+          "danmakuEnabled",
+          "弹幕保存",
+          effective?.danmakuEnabled.value ?? settings?.danmaku?.enabled,
+        )}
         <div
           className="lr-room-policy-notification"
           title="仅控制该直播间的开播提醒，桌面和邮件通知渠道由设置页决定"
@@ -207,7 +224,7 @@ export default function RoomPolicyFields({
           }
           options={[
             ...skip,
-            inherit(`${inheritedInterval(platform, settings)} 秒`),
+            inherit(intervalFollowLabel),
             { value: "custom", label: "自定义间隔" },
           ]}
           onChange={(next) =>
@@ -224,7 +241,7 @@ export default function RoomPolicyFields({
         {value.checkIntervalSec != null && (
           <InputNumber
             aria-label="检测间隔秒数"
-            min={10}
+            min={1}
             max={3600}
             precision={0}
             value={interval}
@@ -244,7 +261,7 @@ export default function RoomPolicyFields({
       </div>
       {value.checkIntervalSec != null && intervalError && (
         <span className="lr-room-policy-error" role="alert">
-          请输入 10–3600 的整数
+          请输入 1–3600 的整数
         </span>
       )}
     </div>
@@ -274,12 +291,12 @@ export default function RoomPolicyFields({
                     : String(value.checkIntervalSec)
                 }
                 labelRender={() =>
-                  `${value.checkIntervalSec ?? inheritedInterval(platform, settings)} 秒`
+                  intervalDisplay != null ? `${intervalDisplay} 秒` : ""
                 }
                 disabled={disabled}
                 popupMatchSelectWidth={220}
                 options={[
-                  inherit(`${inheritedInterval(platform, settings)} 秒`),
+                  inherit(intervalFollowLabel),
                   ...Array.from(
                     new Set([
                       30,
@@ -361,7 +378,10 @@ export default function RoomPolicyFields({
                     QUALITY_OPTIONS.find(
                       (option) =>
                         option.value ===
-                        (value.quality ?? settings?.quality ?? "original"),
+                        (value.quality ??
+                          effective?.quality.value ??
+                          settings?.quality ??
+                          "original"),
                     )?.label
                 : undefined
             }
