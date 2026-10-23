@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { buildApp } from '../../src/api/server.js';
@@ -35,10 +35,15 @@ describe('V5 Batch3 #127: backups & export', () => {
     expect(job.id.startsWith('exp_')).toBe(true);
     expect(job.status).toBe('queued');
 
-    // 等待异步完成。
-    await new Promise((r) => setTimeout(r, 100));
-    const detail = (await inj({ method: 'GET', url: `/api/v1/exports/${job.id}` })).json().export;
-    expect(['ok', 'partial']).toContain(detail.status);
+    // 文件复制与哈希在后台执行；按任务终态等待，避免全量并发测试下 100ms 不够。
+    const detail = await vi.waitFor(async () => {
+      const response = await inj({ method: 'GET', url: `/api/v1/exports/${job.id}` });
+      expect(response.statusCode).toBe(200);
+      const current = response.json().export;
+      expect(['queued', 'running']).not.toContain(current.status);
+      return current;
+    }, { timeout: 5_000, interval: 20 });
+    expect(detail.status).toBe('partial');
     expect(detail.outputPath).not.toBeNull();
     const manifestRaw = await readFile(path.join(detail.outputPath, 'manifest.json'), 'utf8');
     const manifest = JSON.parse(manifestRaw) as { version: string; recordings: Array<{ id: string; file: string | null; hash: string | null; status: string }> };

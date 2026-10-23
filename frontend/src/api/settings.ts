@@ -27,8 +27,15 @@ export async function fetchDouyinCookieStatus(): Promise<DouyinCookieStatus> {
 
 export type BilibiliCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
 
+export type XiaohongshuCookieStatus = 'valid' | 'invalid' | 'unknown' | 'missing';
+
 export async function fetchBilibiliCookieStatus(): Promise<BilibiliCookieStatus> {
   const { data } = await http.get<{ status: BilibiliCookieStatus }>('/settings/bilibili-cookie-status', { timeout: 12_000 });
+  return data.status;
+}
+
+export async function fetchXiaohongshuCookieStatus(): Promise<XiaohongshuCookieStatus> {
+  const { data } = await http.get<{ status: XiaohongshuCookieStatus }>('/settings/xiaohongshu-cookie-status', { timeout: 12_000 });
   return data.status;
 }
 
@@ -44,4 +51,9 @@ export async function validateDirectory(directory: string): Promise<{ ok: boolea
 
 export async function testSmtp(): Promise<void> {
   await http.post('/settings/test-smtp');
+}
+
+export async function fetchYoutubeCookieStatus(): Promise<DouyinCookieStatus> {
+  const { data } = await http.get<{ status: DouyinCookieStatus }>('/settings/youtube-cookie-status');
+  return data.status;
 }

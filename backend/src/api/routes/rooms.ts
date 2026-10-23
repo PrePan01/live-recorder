@@ -1,3 +1,4 @@
+import { defaultDanmakuEnabled, platformCheckInterval, resolveRoomPolicy, validateRoomPolicy, type RoomPolicyPatch, type RoomPolicySettings } from '../../config/room-policy.js';
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../types/error.js";
 import type { Platform } from "../../types/index.js";
@@ -9,9 +10,10 @@ import {
   type LivePrediction,
 } from "../../core/live-prediction.js";
 
+import { registerRoomScreenshotRoutes } from "./room-screenshots.js";
 import { registerRoomCoverRoutes } from "./room-cover.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin"];
+const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 /** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
 const MANUAL_LIVE_FRESH_MS = 10_000;
@@ -36,6 +38,7 @@ export function registerRoomRoutes(
   services: Services,
 ): void {
   registerRoomCoverRoutes(app, services);
+  registerRoomScreenshotRoutes(app, services);
   const danmakuPreview = (req: { params: unknown }) => {
     const { id, token } = req.params as { id: string; token: string };
     if (!/^[a-zA-Z0-9-]{16,96}$/.test(token)) throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");
@@ -62,13 +65,31 @@ export function registerRoomRoutes(
     services.manager.enrichRoom(room);
   let insightCache:
     { key: string; expiresAt: number; body: unknown } | undefined;
-  services.events.on((event) => {
+  let policySettings: RoomPolicySettings | null = services.settings.load();
+  const policySignature = (settings: RoomPolicySettings | null) => JSON.stringify([
+    PLATFORMS.map(platform => platformCheckInterval(platform, settings)), settings?.quality ?? "original",
+    settings?.autoRecord ?? false, defaultDanmakuEnabled(settings),
+  ]);
+  const unsubscribe = services.events.on((event) => {
+    if (event.type === "settings:updated") {
+      const previous = policySettings;
+      policySettings = event.data;
+      if (policySignature(previous) !== policySignature(policySettings)) {
+        // 全局变化只刷新生效值真正改变的房间；显式覆盖值保持不动。
+        for (const room of services.rooms.list()) {
+          if (JSON.stringify(resolveRoomPolicy(room, previous)) === JSON.stringify(resolveRoomPolicy(room, policySettings))) continue;
+          services.events.emit({ type: "room:updated", data: services.manager.enrichRoom(room, policySettings) });
+        }
+      }
+    }
     if (event.type === "room:updated" || event.type === "recording:updated")
       insightCache = undefined;
   });
 
+  app.addHook("onClose", async () => unsubscribe());
+
   app.get("/api/v1/rooms", async (_req, reply) => {
-    return reply.send({ rooms: services.rooms.list().map(enrich) });
+    return reply.send({ rooms: services.manager.enrichRooms(services.rooms.list()) });
   });
 
   app.put("/api/v1/rooms/order", async (req, reply) => {
@@ -79,7 +100,7 @@ export function registerRoomRoutes(
     ) {
       throw new AppError("CONFIG_INVALID", "roomIds 必须是直播间 ID 数组");
     }
-    const rooms = services.rooms.reorder(body.roomIds as string[]).map(enrich);
+    const rooms = services.manager.enrichRooms(services.rooms.reorder(body.roomIds as string[]));
     return reply.send({ rooms });
   });
 
@@ -254,6 +275,11 @@ export function registerRoomRoutes(
       displayName?: string;
       enabled?: boolean;
       liveNotificationEnabled?: boolean;
+      liveEmailNotificationEnabled?: boolean;
+      checkIntervalSec?: number | null;
+      quality?: import("../../types/index.js").Quality | null;
+      autoRecord?: boolean | null;
+      danmakuEnabled?: boolean | null;
     };
     if (typeof body.url !== "string" || body.url.trim().length === 0) {
       throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
@@ -270,22 +296,15 @@ export function registerRoomRoutes(
     if (!platform || !services.adapterFor(platform).validateUrl(body.url)) {
       throw new AppError("ROOM_LINK_INVALID", "链接无效或平台不支持");
     }
+    const policy = validateRoomPolicy(body);
     const adapter = services.adapterFor(platform);
-    if (
-      body.liveNotificationEnabled !== undefined &&
-      typeof body.liveNotificationEnabled !== "boolean"
-    ) {
-      throw new AppError(
-        "ROOM_LINK_INVALID",
-        "liveNotificationEnabled 必须为布尔值",
-      );
-    }
     const room = services.rooms.create({
       platform,
-      url: adapter.normalizeUrl(body.url),
+      url: adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(platform)) : adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === "string" ? body.displayName : "",
       enabled: body.enabled ?? true,
       liveNotificationEnabled: body.liveNotificationEnabled ?? false,
+      ...policy,
     });
     // #162：仅在未填写名称时立即触发检测，让显示名尽快自动解析；
     // 已有名称无需额外请求，避免与用户随后发起的显式检测竞态。
@@ -331,9 +350,11 @@ export function registerRoomRoutes(
         continue;
       }
       const adapter = services.adapterFor(platform);
-      const normalized = adapter.normalizeUrl(url);
+      let normalized: string;
+      try { normalized = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(url, await services.platformCookie(platform)) : adapter.normalizeUrl(url); }
+      catch (error) { failed.push({ url, reason: error instanceof AppError ? error.message : "链接解析失败，请稍后重试" }); continue; }
       const key = `${platform}|${normalized}`;
-      if (existing.has(key) || seen.has(key)) {
+      if (existing.has(key) || seen.has(key) || (platform === "xiaohongshu" && services.rooms.list().some(room => room.platform === platform && room.url === normalized))) {
         failed.push({ url, reason: "该直播间已存在" });
         continue;
       }
@@ -359,9 +380,10 @@ export function registerRoomRoutes(
     const orderedSucceeded = succeeded.map((room) =>
       services.rooms.get(room.id)!,
     );
-    for (const room of orderedSucceeded)
-      services.events.emit({ type: "room:updated", data: enrich(room) });
-    return reply.send({ succeeded: orderedSucceeded.map(enrich), failed });
+    const enriched = services.manager.enrichRooms(orderedSucceeded);
+    for (const room of enriched)
+      services.events.emit({ type: "room:updated", data: room });
+    return reply.send({ succeeded: enriched, failed });
   });
 
   app.patch("/api/v1/rooms/:id", async (req, reply) => {
@@ -373,7 +395,8 @@ export function registerRoomRoutes(
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
       uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
-    };
+    } & RoomPolicyPatch;
+    const policy = validateRoomPolicy(body);
     const patch: {
       url?: string;
       displayName?: string;
@@ -381,7 +404,7 @@ export function registerRoomRoutes(
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
       uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
-    } = {};
+    } & RoomPolicyPatch = { ...policy };
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
       const adapter = services.adapterFor(existing?.platform ?? "bilibili");
@@ -390,42 +413,9 @@ export function registerRoomRoutes(
           roomId: id,
         });
       }
-      patch.url = adapter.normalizeUrl(body.url);
+      patch.url = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(existing!.platform)) : adapter.normalizeUrl(body.url);
     }
     if (body.displayName !== undefined) patch.displayName = body.displayName;
-    if (body.enabled !== undefined) patch.enabled = body.enabled;
-    if (body.autoRecord !== undefined) {
-      // null=恢复继承全局；布尔=单独覆盖。
-      if (body.autoRecord !== null && typeof body.autoRecord !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "autoRecord 必须为布尔值或 null",
-          { roomId: id },
-        );
-      }
-      patch.autoRecord = body.autoRecord;
-    }
-    if (body.liveNotificationEnabled !== undefined) {
-      if (typeof body.liveNotificationEnabled !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "liveNotificationEnabled 必须为布尔值",
-          { roomId: id },
-        );
-      }
-      patch.liveNotificationEnabled = body.liveNotificationEnabled;
-    }
-    if (body.danmakuEnabled !== undefined) {
-      // null=恢复继承全局；布尔=单独覆盖（与 autoRecord 同语义）。
-      if (body.danmakuEnabled !== null && typeof body.danmakuEnabled !== "boolean") {
-        throw new AppError(
-          "ROOM_LINK_INVALID",
-          "danmakuEnabled 必须为布尔值或 null",
-          { roomId: id },
-        );
-      }
-      patch.danmakuEnabled = body.danmakuEnabled;
-    }
     if (body.uploadEnabled !== undefined) {
       // V5：null=继承全局 openlist.enabled；布尔=单独覆盖。
       if (
@@ -441,14 +431,14 @@ export function registerRoomRoutes(
       patch.uploadEnabled = body.uploadEnabled;
     }
     const previous = services.rooms.get(id);
-    const globalAuto = services.settings.load()?.autoRecord ?? false;
+    const settings = services.settings.load();
     const room = services.rooms.update(id, patch);
     services.events.emit({ type: "room:updated", data: enrich(room) });
     if (
       patch.autoRecord !== undefined &&
       previous &&
-      !(previous.autoRecord ?? globalAuto) &&
-      (room.autoRecord ?? globalAuto)
+      !resolveRoomPolicy(previous, settings).autoRecord.value &&
+      resolveRoomPolicy(room, settings).autoRecord.value
     ) {
       await services.scheduler.triggerAutoRecordCheck(id);
     }
@@ -497,6 +487,7 @@ export function registerRoomRoutes(
     await services.manager.stopPreviewStream(id);
     await services.manager.disableHighlightBuffer(id);
     services.rooms.remove(id);
+    services.scheduler.reschedule();
     services.events.emit({
       type: "room:updated",
       data: enrich({ ...existing, enabled: false, monitorState: "disabled" }),
@@ -513,6 +504,16 @@ export function registerRoomRoutes(
         details: { resource: "room" },
       });
     await services.scheduler.triggerImmediateCheck(id);
+    // 解析失败如实报错：永久链接失败已由检测写入状态与告警，这里同步到响应体，
+    // 不让「建了房却什么都没发生」的假象留在接口层（瞬时故障仍按三票门静默、回 ok）。
+    const after = services.rooms.get(id);
+    if (after?.monitorState === "failed" && after.lastError?.code === "ROOM_LINK_INVALID") {
+      throw new AppError(
+        after.lastError.code,
+        after.lastError.message ?? "未找到该频道或直播，请检查链接是否正确",
+        { roomId: id, retryable: false },
+      );
+    }
     return reply.send({ ok: true });
   });
 
@@ -652,9 +653,8 @@ export function registerRoomRoutes(
       | undefined;
     if (room.lastLiveStatus === null && !previewReady) {
       const cookie = await services.platformCookie(room.platform);
-      status = await services
-        .adapterFor(room.platform)
-        .checkLiveStatus(room.url, cookie);
+      const adapter = services.adapterFor(room.platform);
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
       if (
         status.status === "live" ||
         status.status === "offline" ||
@@ -682,9 +682,8 @@ export function registerRoomRoutes(
       services.clock.now() - checkedAtMs <= MANUAL_LIVE_FRESH_MS;
     if (!status && !previewReady && !liveFresh) {
       const cookie = await services.platformCookie(room.platform);
-      status = await services
-        .adapterFor(room.platform)
-        .checkLiveStatus(room.url, cookie);
+      const adapter = services.adapterFor(room.platform);
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
     }
     if (status && status.status !== "live") {
       throw new AppError(

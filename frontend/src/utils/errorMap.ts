@@ -1,4 +1,6 @@
 import type { ErrorCode } from "../types/error";
+import type { Platform } from "../types/room";
+import { PLATFORM_LABEL } from "./roomPlatform";
 
 /**
  * 错误码 → 用户可读文案（兜底用）。
@@ -9,7 +11,7 @@ import type { ErrorCode } from "../types/error";
 const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
   ROOM_LINK_INVALID: "链接无效或平台不支持，请检查后重试",
   ROOM_LINK_DUPLICATE: "该直播间已存在",
-  PLATFORM_ACCESS_RESTRICTED: "平台访问受限，请检查平台授权",
+  PLATFORM_ACCESS_RESTRICTED: "平台访问受限（可能触发风控或授权失效），请到设置页检查平台授权",
   DOUYIN_COOKIE_EXPIRED: "抖音授权已失效，请到设置页重新授权",
   PLATFORM_CHANGED: "平台接口有变动，请稍后重试",
   DIRECTORY_NOT_WRITABLE: "目录不可写，请检查目录是否正确",
@@ -52,7 +54,12 @@ const ERROR_MAP: Partial<Record<ErrorCode, string>> = {
 export function describeError(
   code: ErrorCode | undefined,
   fallback?: string,
+  platform?: Platform,
 ): string {
   // 后端针对具体场景的说明优先；错误码映射只兜底，不能反过来盖掉更具体的原因。
-  return fallback ?? (code ? ERROR_MAP[code] : undefined) ?? "操作失败，请稍后重试";
+  if (fallback) return fallback;
+  if (code === "PLATFORM_ACCESS_RESTRICTED" && platform) {
+    return `${PLATFORM_LABEL[platform]}访问受限（可能触发风控或授权失效），请到设置页检查授权`;
+  }
+  return (code ? ERROR_MAP[code] : undefined) ?? "操作失败，请稍后重试";
 }

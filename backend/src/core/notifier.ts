@@ -21,7 +21,7 @@ const PREFERENCE_KEY: Record<NotifyEvent, PreferenceKey> = {
   recording_failed: 'recordingFailed', recording_remux_failed: 'recordingFailed', disk_space_low: 'diskSpaceLow', upload_failed: 'uploadFailed',
 };
 
-/** 邮件通知：开播、录制失败和磁盘空间不足；同房间同类事件 30 分钟窗口去重；SMTP 失败只告警不影响录制。 */
+/** 通知项目和渠道由全局偏好决定；开播提醒的房间订阅由调度器判断。 */
 export class Notifier {
   private lastSent = new Map<string, number>();
   private pending = 0;

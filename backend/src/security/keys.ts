@@ -3,6 +3,7 @@ export const MAIL_PASSWORD_KEY = 'mail.password';
 export const DOUYIN_COOKIE_KEY = 'douyin.cookie';
 
 export const BILIBILI_COOKIE_KEY = 'bilibili.cookie';
+export const XIAOHONGSHU_COOKIE_KEY = 'xiaohongshu.cookie';
 
 export const OPENLIST_TOKEN_KEY = 'openlist.token';
 
@@ -17,3 +18,4 @@ export function keychainService(): string {
   const dir = process.env.LIVE_RECORDER_DATA_DIR;
   return dir && dir.length > 0 ? 'live-recorder-dev' : KEYCHAIN_SERVICE;
 }
+export const YOUTUBE_COOKIE_KEY = 'youtube.cookie';

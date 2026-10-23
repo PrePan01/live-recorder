@@ -15,8 +15,12 @@ import {
 } from "../../utils/videoFrameTransition";
 
 import type { VideoPlayerProps } from "./types";
+import { advancePreviewLoadProgress, initialPreviewLoadProgress } from "../../utils/previewLoadProgress";
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
+// YouTube resolves formats and starts a separate media downloader before the first
+// frame. Keep that connection alive; the backend already bounds source startup.
+const YOUTUBE_STARTUP_TIMEOUT_MS = 90_000;
 const EVENTS = mpegts.Events as unknown as Record<
   "ERROR" | "LOADING_COMPLETE",
   Parameters<mpegts.Player["on"]>[0]
@@ -36,7 +40,10 @@ export function useVideoPlayback({
   onSeekFirstFrame,
   onSeekError,
   onLiveFirstFrame,
+  onFrameReadyChange,
 }: VideoPlayerProps) {
+  const frameReadyRef = useRef(onFrameReadyChange);
+  frameReadyRef.current = onFrameReadyChange;
   const liveFirstFrameRef = useRef(onLiveFirstFrame);
   liveFirstFrameRef.current = onLiveFirstFrame;
   // 回调随父组件刷新而变化，不代表回看源变化，不能触发销毁/重新加载。
@@ -71,6 +78,7 @@ export function useVideoPlayback({
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
+  const [loadProgress, setLoadProgress] = useState(initialPreviewLoadProgress);
 
   // 记录音量
   useEffect(() => {
@@ -115,11 +123,12 @@ export function useVideoPlayback({
       hasEverPlayedRef.current = false;
       releaseFrame();
     }
+    frameReadyRef.current?.(false);
     setState("loading");
     setErrorMsg("");
     if (!mpegts.isSupported()) {
       setState("error");
-      setErrorMsg("当前浏览器不支持 MSE，请使用 Chrome/Firefox 观看");
+      setErrorMsg("当前环境暂时无法播放直播，请更新应用或浏览器后重试");
       if (thumbnail) previewErrorRef.current?.();
       return;
     }
@@ -132,6 +141,7 @@ export function useVideoPlayback({
     let lastProgressAt = Date.now();
     let hasPlayed = false;
     let playingListener: (() => void) | null = null;
+    let frameReadyListener: (() => void) | null = null;
     let stopWaitingForFrame: (() => void) | null = null;
 
     const video = videoRef.current;
@@ -154,11 +164,14 @@ export function useVideoPlayback({
       video.muted = preferredMuted;
     };
     const destroyPlayer = (deferred = false) => {
+      frameReadyRef.current?.(false);
       stopWaitingForFrame?.();
       stopWaitingForFrame = null;
       if (playingListener && video)
         video.removeEventListener("playing", playingListener);
       playingListener = null;
+      if (frameReadyListener && video) video.removeEventListener('loadeddata', frameReadyListener);
+      frameReadyListener = null;
       const current = player;
       if (current) holdFrame();
       player = null;
@@ -184,10 +197,12 @@ export function useVideoPlayback({
         setErrorMsg("预览连接连续失败，请单独重试播放器。后台录制不受影响。");
         return;
       }
+      frameReadyRef.current?.(false);
       setState("loading");
       const delay =
         RETRY_DELAYS_MS[Math.min(retry, RETRY_DELAYS_MS.length - 1)]!;
       retry += 1;
+      setLoadProgress({ percent: 5, label: `连接中断，准备重试（${retry}/${RETRY_DELAYS_MS.length}）…` });
       timer = setTimeout(() => {
         timer = null;
         create();
@@ -202,34 +217,50 @@ export function useVideoPlayback({
       lastMediaTime = videoRef.current.currentTime;
       lastProgressAt = Date.now();
       hasPlayed = false;
-      const instance = mpegts.createPlayer(
+      setLoadProgress(initialPreviewLoadProgress);
+      const reportProgress = (stage: string) => {
+        if (disposed || player !== instance) return;
+        setLoadProgress(current => advancePreviewLoadProgress(current, stage));
+      };
+      const instance: mpegts.Player = mpegts.createPlayer(
         {
           type: "flv",
           url: previewWsUrl(roomId),
           isLive: true,
           ...(thumbnail ? { hasAudio: false } : {}),
         },
-        livePreviewConfig(thumbnail, thumbnail ? undefined : (origin) => setLiveMediaOrigin(clockVideo, origin)),
+        livePreviewConfig(thumbnail, thumbnail ? undefined : (origin) => setLiveMediaOrigin(clockVideo, origin), platform,
+          thumbnail ? undefined : reportProgress),
       );
       player = instance;
       instance.attachMediaElement(videoRef.current);
-      playingListener = () => {
-        hasPlayed = true;
-        hasEverPlayedRef.current = true;
-        restoreAudioPreference();
-        lastProgressAt = Date.now();
-        retry = 0;
+      frameReadyListener = () => {
+        if (disposed || player !== instance) return;
+        reportProgress('decoded');
         if (!stopWaitingForFrame) {
           stopWaitingForFrame = waitForVideoFrame(
             videoRef.current!,
             () => {
+              if (disposed || player !== instance) return;
+              hasEverPlayedRef.current = true;
+              reportProgress('presented');
+              setState('playing');
               releaseFrame();
+              frameReadyRef.current?.(true);
               liveFirstFrameRef.current?.();
             },
             () => !disposed && player === instance,
           );
         }
       };
+      playingListener = () => {
+        hasPlayed = true;
+        restoreAudioPreference();
+        lastProgressAt = Date.now();
+        retry = 0;
+        frameReadyListener?.();
+      };
+      videoRef.current.addEventListener('loadeddata', frameReadyListener);
       videoRef.current.addEventListener("playing", playingListener);
       instance.on(EVENTS.ERROR, (_t, _detail) => {
         if (player !== instance || disposed) return;
@@ -258,7 +289,10 @@ export function useVideoPlayback({
           retry = 0;
           return;
         }
-        if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+        const timeout = !hasPlayed && platform === "youtube"
+          ? YOUTUBE_STARTUP_TIMEOUT_MS
+          : STALL_TIMEOUT_MS;
+        if (Date.now() - lastProgressAt >= timeout) {
           reportError(
             "live-preview-stall",
             new Error(`无帧超时 played=${hasPlayed} retry=${retry}`),
@@ -295,6 +329,7 @@ export function useVideoPlayback({
     let disposed = false;
     let failed = false;
     const stale = () => disposed || failed || seekGenRef.current !== gen;
+    frameReadyRef.current?.(false);
     setState("loading");
     setErrorMsg("");
     const instance = mpegts.createPlayer(
@@ -320,6 +355,7 @@ export function useVideoPlayback({
       const second =
         positioned && hasFrame ? seek.startSecond + elapsed() : seek.second;
       failed = true;
+      frameReadyRef.current?.(false);
       health.stop();
       stopPreparing();
       stopWaitingForFrame?.();
@@ -340,7 +376,6 @@ export function useVideoPlayback({
     const onPlaying = () => {
       if (stale() || !positioned) return;
       hasEverPlayedRef.current = true;
-      setState("playing");
       if (!stopWaitingForFrame) {
         stopWaitingForFrame = waitForVideoFrame(
           video,
@@ -348,6 +383,8 @@ export function useVideoPlayback({
             hasFrame = true;
             health.presented();
             releaseFrame();
+            setState("playing");
+            frameReadyRef.current?.(true);
             seekCallbacksRef.current.onSeekFirstFrame?.(gen, elapsed());
           },
           () => !stale(),
@@ -411,6 +448,7 @@ export function useVideoPlayback({
     });
     return () => {
       disposed = true;
+      frameReadyRef.current?.(false);
       health.stop();
       cancelAnimationFrame(loadFrame);
       stopWaitingForFrame?.();
@@ -440,5 +478,6 @@ export function useVideoPlayback({
     errorMsg,
     setReloadToken,
     hasEverPlayedRef,
+    loadProgress,
   };
 }

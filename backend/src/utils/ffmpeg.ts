@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -57,5 +58,9 @@ export function resolveBin(name: 'ffmpeg' | 'ffprobe'): string {
       if (existsSync(p)) return p;
     }
   }
+  try {
+    const installer = createRequire(import.meta.url)(name === 'ffmpeg' ? '@ffmpeg-installer/ffmpeg' : '@ffprobe-installer/ffprobe') as { path: string };
+    if (existsSync(installer.path)) return installer.path;
+  } catch { /* unsupported developer architecture */ }
   return name;
 }

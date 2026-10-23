@@ -33,6 +33,10 @@
   background: var(--lr-pink);
 }
 
+.lr-room-avatar--xiaohongshu {
+  background: var(--lr-yellow);
+}
+
 .lr-room-avatar--live {
   outline: 3px solid var(--lr-pink);
   outline-offset: 1px;

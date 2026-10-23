@@ -16,7 +16,10 @@ function render(props: Partial<VideoPlayerProps> = {}) {
 describe("preview video presentation", () => {
   it("normal live preview keeps controls, autoplay and the initial loading indicator", () => {
     const html = render();
-    expect(html).toContain("连接预览流");
+    expect(html).toContain("连接直播");
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-valuenow="5"');
+    expect(html).toContain('5%');
     expect(html).toContain('controls=""');
     expect(html).toContain('autoPlay=""');
     expect(html).toContain("aspect-ratio:16 / 9");
@@ -24,7 +27,8 @@ describe("preview video presentation", () => {
   it("hover thumbnails hide controls and the loading overlay", () => {
     const html = render({ thumbnail: true });
     expect(html).not.toContain('controls=""');
-    expect(html).not.toContain("连接预览流");
+    expect(html).not.toContain("连接直播");
+    expect(html).not.toContain('role="progressbar"');
     expect(html).toContain('muted=""');
   });
   it("seek playback waits for positioning and preserves the transition canvas", () => {

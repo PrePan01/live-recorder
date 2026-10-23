@@ -10,6 +10,8 @@ import {
 } from "@ant-design/icons";
 import mpegts from "mpegts.js";
 import { recordingFileUrl } from "../api/recordings";
+import { fetchRecordingPosition } from "../api/recordings";
+import { FilePlaybackClock } from "../utils/filePlaybackClock";
 import {
   createRecordingMarker,
   deleteRecordingMarker,
@@ -43,6 +45,8 @@ const PLAYBACK_RATES = Array.from({ length: 11 }, (_, index) => {
 
 interface DanmakuPlayerModalProps {
   recordingId: string;
+  platform?: string;
+  durationSeconds?: number;
   roomId?: string;
   title: string;
   /** 完成态文件路径：决定原生 mp4 播放还是 FLV 流式播放。 */
@@ -61,6 +65,8 @@ interface DanmakuPlayerModalProps {
  */
 export function DanmakuPlayerModal({
   recordingId,
+  platform,
+  durationSeconds = 0,
   roomId,
   title,
   filePath,
@@ -73,11 +79,16 @@ export function DanmakuPlayerModal({
   const exportBusyRef = useRef(false);
   const previewEnd = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // Modal 的内容会延迟挂载；元素就绪后再绑定流式播放器。
+  const playbackPrefsRef = useRef({ volume: 1, muted: false, rate: 1 });
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(
     null,
   );
   const attachVideo = useCallback((element: HTMLVideoElement | null) => {
+    if (element) {
+      element.volume = playbackPrefsRef.current.volume;
+      element.muted = playbackPrefsRef.current.muted;
+      element.playbackRate = playbackPrefsRef.current.rate;
+    }
     videoRef.current = element;
     setVideoElement(element);
   }, []);
@@ -91,29 +102,90 @@ export function DanmakuPlayerModal({
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [gaps, setGaps] = useState<DanmakuGap[]>([]);
   const {
-    visible, opacity, density, fontScale, speedMultiplier,
-    setFontScale, setSpeedMultiplier, setVisible, setOpacity, setDensity,
+    visible,
+    opacity,
+    density,
+    fontScale,
+    speedMultiplier,
+    setFontScale,
+    setSpeedMultiplier,
+    setVisible,
+    setOpacity,
+    setDensity,
   } = useDanmakuPrefsStore();
   const [playing, setPlaying] = useState(false);
-  const [current, setCurrent] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [current, setCurrent] = useState(initialSecond);
+  const [duration, setDuration] = useState(durationSeconds);
   const [rate, setRate] = useState(1);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    playbackPrefsRef.current = { volume, muted, rate };
+  }, [volume, muted, rate]);
   const [seekTick, setSeekTick] = useState(0);
   const [markers, setMarkers] = useState<RecordingMarker[]>([]);
   const [videoGaps, setVideoGaps] = useState<RecordingGap[]>([]);
   const [failed, setFailed] = useState(false);
   // 文件回看展示读取结果；采集器在录制结束后 unavailable 不代表文件不可用。
   const [danmakuStatusText, setDanmakuStatusText] = useState("弹幕加载中");
-  const isNative = (filePath ?? "").toLowerCase().endsWith(".mp4");
-  const fileUrl = recordingFileUrl(recordingId);
-
-  const getTimeMs = useCallback(
-    () => (videoRef.current?.currentTime ?? 0) * 1000,
-    [],
+  const compatiblePlayback =
+    platform === "youtube" && !filePath?.toLowerCase().endsWith(".flv");
+  const [playbackGeneration, setPlaybackGeneration] = useState(0);
+  const [playbackStart, setPlaybackStart] = useState(
+    compatiblePlayback ? initialSecond : 0,
   );
+  const fileClockRef = useRef(
+    new FilePlaybackClock(compatiblePlayback ? initialSecond : 0),
+  );
+  const [playbackReady, setPlaybackReady] = useState(!compatiblePlayback);
+  const isNative =
+    !compatiblePlayback && (filePath ?? "").toLowerCase().endsWith(".mp4");
+  const fileUrl =
+    recordingFileUrl(recordingId) +
+    (compatiblePlayback
+      ? `?second=${playbackStart}&generation=${playbackGeneration}`
+      : "");
+
+  const readPosition = useCallback(() => {
+    const video = videoRef.current;
+    if (compatiblePlayback) return fileClockRef.current.read(video);
+    return video &&
+      video.readyState >= 2 &&
+      !video.seeking &&
+      Number.isFinite(video.currentTime)
+      ? video.currentTime
+      : undefined;
+  }, [compatiblePlayback]);
+  const acceptsMediaEvent = (video: HTMLVideoElement) =>
+    video === videoRef.current &&
+    (!compatiblePlayback ||
+      fileClockRef.current.isCurrent(video, playbackGeneration));
+  const getTimeMs = useCallback(() => {
+    const second = readPosition();
+    return second == null ? NaN : second * 1000;
+  }, [readPosition]);
   const getDanmakuVideo = useCallback(() => videoRef.current, []);
+
+  useEffect(() => {
+    if (!compatiblePlayback) return;
+    const controller = new AbortController();
+    // Session elapsed time and the shortened compatibility stream's duration
+    // cannot describe the complete file. Ask the backend for its media range.
+    void fetchRecordingPosition(recordingId, 0, controller.signal)
+      .then((data) => {
+        if (
+          !controller.signal.aborted &&
+          Number.isFinite(data.durationSeconds) &&
+          data.durationSeconds > 0
+        )
+          setDuration(data.durationSeconds);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          message.error("录像时长读取失败，请重新打开回放重试");
+      });
+    return () => controller.abort();
+  }, [compatiblePlayback, recordingId, message]);
 
   const reload = useCallback(
     async (atMs: number) => {
@@ -160,6 +232,7 @@ export function DanmakuPlayerModal({
       .catch(() => undefined);
     const timer = window.setInterval(() => {
       const at = getTimeMs();
+      if (!Number.isFinite(at)) return;
       const window = loadedWindowRef.current;
       if (
         initialSeekAppliedRef.current &&
@@ -179,7 +252,13 @@ export function DanmakuPlayerModal({
   useEffect(() => {
     if (isNative) return undefined;
     const video = videoElement;
-    if (!video) return undefined;
+    if (!video || video !== videoRef.current) return undefined;
+    if (
+      compatiblePlayback &&
+      !fileClockRef.current.attach(video, playbackGeneration)
+    )
+      return;
+    let disposed = false;
     const player = mpegts.createPlayer(
       {
         type: filePath?.toLowerCase().endsWith(".ts") ? "mpegts" : "flv",
@@ -190,19 +269,28 @@ export function DanmakuPlayerModal({
     );
     player.attachMediaElement(video);
     player.on(mpegts.Events.ERROR, () => {
+      if (disposed || video !== videoRef.current) return;
       setFailed(true);
       setPlaying(false);
     });
     player.load();
     playerRef.current = player;
     return () => {
+      disposed = true;
       player.destroy();
       playerRef.current = null;
     };
-  }, [isNative, fileUrl, filePath, videoElement]);
+  }, [
+    isNative,
+    fileUrl,
+    filePath,
+    videoElement,
+    compatiblePlayback,
+    playbackGeneration,
+  ]);
 
   const seek = useCallback(
-    (second: number, mediaDuration = duration) => {
+    (second: number, mediaDuration = duration, play?: boolean) => {
       const video = videoRef.current;
       if (
         !video ||
@@ -213,14 +301,19 @@ export function DanmakuPlayerModal({
       )
         return;
       const target = Math.max(0, Math.min(mediaDuration, second));
-      video.currentTime = target;
-      setCurrent(video.currentTime);
+      if (compatiblePlayback) {
+        setPlaybackStart(target);
+        setPlaybackGeneration(fileClockRef.current.begin(target));
+        setPlaybackReady(false);
+        autoplayAttemptedRef.current = !(play ?? !video.paused);
+      } else video.currentTime = target;
+      setCurrent(target);
       setMessages([]);
       setGaps([]);
       setSeekTick((tick) => tick + 1);
-      void reload(video.currentTime * 1000);
+      void reload(target * 1000);
     },
-    [duration, failed, reload],
+    [duration, failed, reload, compatiblePlayback],
   );
 
   const [selectingRange, setSelectingRange] = useState(false);
@@ -238,17 +331,21 @@ export function DanmakuPlayerModal({
     [],
   );
   const getPosition = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || video.seeking || failed)
-      throw new Error("画面尚未就绪");
-    return video.currentTime;
-  }, [failed]);
+    const second = readPosition();
+    if (second == null || failed) throw new Error("画面尚未就绪");
+    return second;
+  }, [failed, readPosition]);
+  const positionUnavailable = compatiblePlayback && !playbackReady;
   const marking = useSegmentMarking(
     recordingId,
     markers,
     getPosition,
     savedMarker,
-    failed || duration <= 0 || editingRange != null || selectingRange,
+    failed ||
+      positionUnavailable ||
+      duration <= 0 ||
+      editingRange != null ||
+      selectingRange,
   );
   const exports = useSegmentExport(recordingId, markers);
   const updateMarker = async (
@@ -283,9 +380,7 @@ export function DanmakuPlayerModal({
   const addLabel = useCallback(
     async (text: string, second: number) => {
       try {
-        savedMarker(
-          await createRecordingMarker(recordingId, text, second),
-        );
+        savedMarker(await createRecordingMarker(recordingId, text, second));
       } catch (error) {
         message.error(error instanceof Error ? error.message : "标记保存失败");
         throw error;
@@ -300,13 +395,18 @@ export function DanmakuPlayerModal({
           Math.max(max, Number(/^标记 (\d+)$/.exec(m.text)?.[1] ?? 0)),
         0,
       ) + 1;
-    if (!videoRef.current || videoRef.current.readyState < 2 || videoRef.current.seeking || failed) {
+    if (
+      !videoRef.current ||
+      videoRef.current.readyState < 2 ||
+      videoRef.current.seeking ||
+      failed
+    ) {
       message.error("播放位置尚未就绪，请稍后重试");
       return;
     }
-    void getPosition().then(second => addLabel(`标记 ${index}`, second)).catch(
-      () => undefined,
-    );
+    void getPosition()
+      .then((second) => addLabel(`标记 ${index}`, second))
+      .catch(() => undefined);
   }, [markers, addLabel, getPosition, failed, message]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -339,6 +439,10 @@ export function DanmakuPlayerModal({
   };
 
   const updateDuration = () => {
+    if (compatiblePlayback) {
+      initialSeekAppliedRef.current = true;
+      return;
+    }
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.duration) || video.duration <= 0)
       return;
@@ -353,8 +457,10 @@ export function DanmakuPlayerModal({
     const video = videoRef.current;
     if (!video || failed) return;
     if (video.paused) {
-      if (video.ended || (duration > 0 && video.currentTime >= duration))
-        seek(0);
+      if (video.ended || (duration > 0 && (readPosition() ?? 0) >= duration)) {
+        seek(0, duration, true);
+        if (compatiblePlayback) return;
+      }
       void video.play().catch(() => undefined);
     } else video.pause();
   };
@@ -410,46 +516,84 @@ export function DanmakuPlayerModal({
           </div>
         ) : null}
         <video
+          key={compatiblePlayback ? fileUrl : recordingId}
           ref={attachVideo}
           playsInline
           src={isNative ? fileUrl : undefined}
           style={{ width: "100%", height: "100%", display: "block" }}
-          onPlay={() => {
+          onPlay={(event) => {
+            if (!acceptsMediaEvent(event.currentTarget)) return;
             setPlaying(true);
             setFailed(false);
           }}
-          onPause={() => setPlaying(false)}
-          onTimeUpdate={() => {
+          onPause={(event) => {
+            if (acceptsMediaEvent(event.currentTarget)) setPlaying(false);
+          }}
+          onTimeUpdate={(event) => {
+            if (!acceptsMediaEvent(event.currentTarget)) return;
             const v = videoRef.current;
-            if (v) {
-              if (
-                previewEnd.current != null &&
-                v.currentTime >= previewEnd.current
-              ) {
+            const second = readPosition();
+            if (v && second != null) {
+              if (previewEnd.current != null && second >= previewEnd.current) {
                 v.pause();
-                v.currentTime = previewEnd.current;
+                v.currentTime = Math.max(
+                  0,
+                  v.currentTime - (second - previewEnd.current),
+                );
+                setCurrent(previewEnd.current);
                 previewEnd.current = null;
+              } else {
+                setCurrent(second);
               }
-              setCurrent(v.currentTime);
             }
           }}
-          onCanPlay={() => {
+          onLoadedData={(event) => {
+            if (
+              compatiblePlayback &&
+              fileClockRef.current.present(
+                event.currentTarget,
+                playbackGeneration,
+              )
+            )
+              setPlaybackReady(true);
+          }}
+          onCanPlay={(event) => {
+            if (compatiblePlayback) {
+              if (
+                !fileClockRef.current.present(
+                  event.currentTarget,
+                  playbackGeneration,
+                )
+              )
+                return;
+              setPlaybackReady(true);
+            }
             updateDuration();
             const video = videoRef.current;
             if (!video || autoplayAttemptedRef.current || failed) return;
             autoplayAttemptedRef.current = true;
-            // 每次打开只尝试一次，后续跳播或手动暂停不会触发自动播放。
             void video.play().catch(() => undefined);
           }}
-          onLoadedMetadata={updateDuration}
-          onDurationChange={updateDuration}
-          onEnded={() => setPlaying(false)}
-          onRateChange={() => setRate(videoRef.current?.playbackRate ?? 1)}
+          onLoadedMetadata={(event) => {
+            if (acceptsMediaEvent(event.currentTarget)) updateDuration();
+          }}
+          onDurationChange={(event) => {
+            if (acceptsMediaEvent(event.currentTarget)) updateDuration();
+          }}
+          onEnded={(event) => {
+            if (acceptsMediaEvent(event.currentTarget)) setPlaying(false);
+          }}
+          onRateChange={(event) => {
+            if (acceptsMediaEvent(event.currentTarget))
+              setRate(event.currentTarget.playbackRate);
+          }}
           onVolumeChange={(event) => {
+            if (!acceptsMediaEvent(event.currentTarget)) return;
             setVolume(event.currentTarget.volume);
             setMuted(event.currentTarget.muted);
           }}
-          onError={() => {
+          onError={(event) => {
+            if (!acceptsMediaEvent(event.currentTarget)) return;
             setFailed(true);
             setPlaying(false);
           }}
@@ -520,14 +664,28 @@ export function DanmakuPlayerModal({
       <div className="lr-danmaku-player__panel">
         <RecordingTrack
           key={recordingId}
-          onExport={(start, end) => promptRangeExport(recordingId, roomId ?? "", start, end)}
-          selectionDisabled={failed || duration <= 0 || marking.saving || marking.start != null}
+          onExport={(start, end) =>
+            promptRangeExport(recordingId, roomId ?? "", start, end)
+          }
+          selectionDisabled={
+            failed ||
+            positionUnavailable ||
+            duration <= 0 ||
+            marking.saving ||
+            marking.start != null
+          }
           onSelectionChange={setSelectingRange}
           segmentActions={
             <SegmentMarkActions
               marking={marking}
               current={current}
-              disabled={failed || duration <= 0 || editingRange != null || selectingRange}
+              disabled={
+                failed ||
+                positionUnavailable ||
+                duration <= 0 ||
+                editingRange != null ||
+                selectingRange
+              }
             >
               <SegmentExportActions
                 exports={exports}
@@ -566,10 +724,13 @@ export function DanmakuPlayerModal({
           }}
           onMove={async (id, positionSeconds, endPositionSeconds) => {
             const marker = markers.find((m) => m.id === id);
-            if (marker) await updateMarker(marker, {
-              positionSeconds,
-              ...(endPositionSeconds !== undefined ? { endPositionSeconds } : {}),
-            });
+            if (marker)
+              await updateMarker(marker, {
+                positionSeconds,
+                ...(endPositionSeconds !== undefined
+                  ? { endPositionSeconds }
+                  : {}),
+              });
           }}
           onDelete={async (id) => {
             const marker = markers.find((m) => m.id === id);
@@ -582,6 +743,8 @@ export function DanmakuPlayerModal({
           mode="playback"
           previewMode="history"
           previewSecond={current}
+          previewLoading={positionUnavailable}
+          quickAddDisabled={failed || positionUnavailable || duration <= 0}
           getMarkerPosition={getPosition}
           seekDisabled={seekDisabled}
           toolbar={
@@ -609,13 +772,17 @@ export function DanmakuPlayerModal({
           <MarkerNavPanel
             key={recordingId}
             markers={markers}
-            pendingSegment={marking.start != null ? {
-              start: marking.start,
-              text: marking.text,
-              saving: marking.saving,
-              onEdit: marking.rename,
-              onDelete: marking.cancel,
-            } : undefined}
+            pendingSegment={
+              marking.start != null
+                ? {
+                    start: marking.start,
+                    text: marking.text,
+                    saving: marking.saving,
+                    onEdit: marking.rename,
+                    onDelete: marking.cancel,
+                  }
+                : undefined
+            }
             gaps={videoGaps}
             currentSecond={current}
             duration={duration}
@@ -635,17 +802,24 @@ export function DanmakuPlayerModal({
                 endPositionSeconds: end,
               })
             }
-            onAdjustRange={marking.start != null || marking.saving ? undefined : (marker) =>
-              setEditingRange({
-                marker,
-                range: [marker.positionSeconds, marker.endPositionSeconds!],
-              })
+            onAdjustRange={
+              marking.start != null || marking.saving
+                ? undefined
+                : (marker) =>
+                    setEditingRange({
+                      marker,
+                      range: [
+                        marker.positionSeconds,
+                        marker.endPositionSeconds!,
+                      ],
+                    })
             }
             onDelete={removeMarker}
             onPreview={(marker) => {
-              seek(marker.positionSeconds);
+              seek(marker.positionSeconds, duration, true);
               previewEnd.current = marker.endPositionSeconds ?? null;
-              void videoRef.current?.play().catch(() => undefined);
+              if (!compatiblePlayback)
+                void videoRef.current?.play().catch(() => undefined);
             }}
             selectingSegments={exports.selecting}
             selectedSegmentIds={exports.selectedSet}
@@ -665,21 +839,23 @@ export function DanmakuPlayerModal({
           onDensityChange={setDensity}
           onFontScaleChange={setFontScale}
           onSpeedMultiplierChange={setSpeedMultiplier}
-          actions={hasDanmaku ? (
-            <Button
-              size="small"
-              className="lr-danmaku-player__export"
-              icon={<ExportOutlined />}
-              loading={exporting}
-              disabled={seekDisabled}
-              title="导出整段录像的 ASS 滚动弹幕和 SRT 字幕"
-              onClick={() => {
-                void handleExportDanmaku();
-              }}
-            >
-              导出弹幕
-            </Button>
-          ) : undefined}
+          actions={
+            hasDanmaku ? (
+              <Button
+                size="small"
+                className="lr-danmaku-player__export"
+                icon={<ExportOutlined />}
+                loading={exporting}
+                disabled={seekDisabled}
+                title="导出整段录像的 ASS 滚动弹幕和 SRT 字幕"
+                onClick={() => {
+                  void handleExportDanmaku();
+                }}
+              >
+                导出弹幕
+              </Button>
+            ) : undefined
+          }
         />
       </div>
     </Modal>

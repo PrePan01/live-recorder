@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
+import { stat, open, mkdir } from 'node:fs/promises';
 import type { Platform, RecordingFormat } from '../types/index.js';
 
 /** 按 UTF-8 字节截断（不切断多字节字符）：文件名单段上限 255B，扣除模板后缀余量后取 160B。 */
@@ -68,7 +68,7 @@ export async function uniqueTargetPath(
 
 /** 录制文件路径：source_flv 直写用 .flv；mp4_after 录制阶段仍落 .flv，完成后转 MP4。template 为 V5 命名规则。 */
 export function recordingFilePath(recordingDirectory: string, platform: Platform, displayName: string, startedAtIso: string, format?: RecordingFormat, template?: string | null, quality?: string, roomId?: string): string {
-  const ext = format === 'mp4_after' ? '.flv' : '.flv';
+  const ext = platform === 'youtube' ? '.mkv' : '.flv';
   const base = resolveBaseName(displayName, startedAtIso, platform, quality, roomId, template);
   return path.join(recordingDirectory, platform, sanitize(displayName), `${base}${ext}`);
 }
@@ -86,4 +86,16 @@ export function resolveBaseName(displayName: string, startedAtIso: string, platf
     .replaceAll('{roomId}', roomId ?? '');
   name = sanitize(name);
   return name || slug;
+}
+
+/** Reserve atomically when channel and video monitors happen to choose the same name. */
+export async function reserveRecordingPath(preferred: string): Promise<string> {
+  const file = path.parse(preferred);
+  await mkdir(file.dir, { recursive: true });
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const target = await uniqueTargetPath(file.dir, file.name, file.ext, []);
+    try { const handle = await open(target.targetPath, 'wx'); await handle.close(); return target.targetPath; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  }
+  throw new Error('Unable to reserve a recording file');
 }

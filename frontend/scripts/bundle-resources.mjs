@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { bundleYoutube } from "./bundle-youtube.mjs";
+import { createRequire } from "node:module";
 import { copyFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +63,14 @@ if (!src) {
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);
 console.log(`[bundle-resources] node -> ${dest}`);
+await bundleYoutube(destDir);
+const requireBackend = createRequire(join(root, '../backend/package.json'));
+const mediaDir = join(destDir, 'ffmpeg');
+mkdirSync(mediaDir, { recursive: true });
+for (const [name, dependency] of [['ffmpeg', '@ffmpeg-installer/ffmpeg'], ['ffprobe', '@ffprobe-installer/ffprobe']]) {
+  const binary = requireBackend(dependency).path;
+  copyFileSync(binary, join(mediaDir, isWin ? `${name}.exe` : name));
+}
 
 // 使用实际随包运行时检查原生依赖、迁移和路由编译；原生崩溃同样使打包失败。
 const smoke = spawnSync(

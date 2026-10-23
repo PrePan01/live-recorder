@@ -106,7 +106,7 @@ export function usePreviewHighlights(
       .catch((e) =>
         message.error(
           e instanceof ApiError
-            ? describeError(e.code, e.message)
+            ? describeError(e.code, e.message, room.platform)
             : "精彩时刻录制失败",
         ),
       )

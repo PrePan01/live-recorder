@@ -1,3 +1,4 @@
+import { roomLivePageUrl } from "./roomPlatform";
 import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import type { App } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -63,7 +64,7 @@ export function buildMonitorListColumns(
             void favoriteRoom(room.id, !v).catch((e) =>
               message.error(
                 e instanceof ApiError
-                  ? describeError(e.code, e.message)
+                  ? describeError(e.code, e.message, room.platform)
                   : "操作失败",
               ),
             )
@@ -85,7 +86,8 @@ export function buildMonitorListColumns(
         <Space size={4}>
           <RoomAvatar
             platform={room.platform}
-            avatarUrl={room.avatarUrl}
+            roomId={room.id}
+              avatarUrl={room.avatarUrl}
             name={v}
             live={room.lastLiveStatus === "live"}
             size={22}
@@ -156,7 +158,7 @@ export function buildMonitorListColumns(
                 void checkRoomNow(room.id).catch((e) =>
                   message.error(
                     e instanceof ApiError
-                      ? describeError(e.code, e.message)
+                      ? describeError(e.code, e.message, room.platform)
                       : "检测失败",
                   ),
                 )
@@ -199,7 +201,7 @@ export function buildMonitorListColumns(
                   void startRoomRecording(room.id).catch((e) =>
                     message.error(
                       e instanceof ApiError
-                        ? describeError(e.code, e.message)
+                        ? describeError(e.code, e.message, room.platform)
                         : "录制失败",
                     ),
                   )
@@ -212,7 +214,8 @@ export function buildMonitorListColumns(
               size="small"
               type="link"
               icon={<LinkOutlined />}
-              href={room.url}
+              href={roomLivePageUrl(room)}
+              disabled={!roomLivePageUrl(room)}
               target="_blank"
               rel="noopener noreferrer"
             >

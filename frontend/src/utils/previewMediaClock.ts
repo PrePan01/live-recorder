@@ -20,7 +20,7 @@ export function readLiveMediaSecond(video: HTMLVideoElement): number | undefined
 }
 
 export function readPreviewElapsed(video: HTMLVideoElement): number | undefined {
-  if (video.readyState < 2 || !video.buffered.length) return undefined;
+  if (video.readyState < 2 || video.seeking || !video.buffered.length || !Number.isFinite(video.currentTime)) return undefined;
   const clock = clocks.get(video) ?? {};
   clock.seekOrigin ??= video.buffered.start(0);
   clocks.set(video, clock);

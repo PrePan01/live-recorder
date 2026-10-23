@@ -1,4 +1,7 @@
+import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
+import { saveXiaohongshuSource } from '../../platform/xiaohongshu-source-store.js';
 import { writeFile } from 'node:fs/promises';
+import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../platform/xiaohongshu-url.js';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { AppSettings, Platform } from '../../types/index.js';
@@ -47,16 +50,25 @@ export interface ExportConfig {
   recordings: RecordingArchive;
   /** 开播预测的样本与校准数据；按 platform+url 归属，导入时映射到本地房间。 */
   prediction: PredictionArchive;
+  xiaohongshuSources: Array<{ profileUrl: string; roomUrl: string; profileRequestUrl?: string | null }>;
 }
 
 export interface ImportConfigInput {
   version?: number;
   settings?: Partial<AppSettings>;
-  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; danmakuEnabled?: boolean | null; tags?: unknown[] }>;
+  rooms?: Array<{ platform: string; url: string; displayName?: string; enabled?: boolean; danmakuEnabled?: boolean | null; tags?: unknown[] } & RoomPolicyPatch>;
   tags?: unknown[];
   alerts?: Array<{ level: string; source: string; message: string; occurredAt: string; resolved?: boolean }>;
   recordings?: unknown;
   prediction?: unknown;
+  xiaohongshuSources?: ExportConfig['xiaohongshuSources'];
+}
+
+/** Resolve legacy backup profile keys without making network requests. */
+function persistedRoomUrl(services: Services, platform: string, url: string): string {
+  if (platform !== 'xiaohongshu' || parseXiaohongshuUrl(url)?.kind !== 'profile') return url;
+  const source = services.db.prepare('SELECT room_url FROM xiaohongshu_sources WHERE profile_url=?').get(normalizeXiaohongshuUrl(url)) as { room_url: string } | undefined;
+  return source && parseXiaohongshuUrl(source.room_url)?.kind === 'room' ? normalizeXiaohongshuUrl(source.room_url) : url;
 }
 
 function validMoment(value: unknown): string | null {
@@ -117,8 +129,8 @@ function importRecordingArchive(services: Services, input: unknown): RecordingIm
   );
   services.db.transaction(() => {
     for (const group of groups) {
-      if (!group || (group.platform !== 'bilibili' && group.platform !== 'douyin') || typeof group.url !== 'string') continue;
-      const room = roomsByUrl.get(`${group.platform}|${group.url}`);
+      if (!group || (group.platform !== 'bilibili' && group.platform !== 'douyin' && group.platform !== 'xiaohongshu' && group.platform !== 'youtube') || typeof group.url !== 'string') continue;
+      const room = roomsByUrl.get(`${group.platform}|${persistedRoomUrl(services, group.platform, group.url)}`);
       if (!room) {
         summary.skippedRooms += 1;
         continue;
@@ -169,11 +181,13 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
     version: 1,
     exportedAt: services.clock.iso(),
     settings: await settingsView(services),
-    rooms: services.rooms.list(),
+    rooms: services.rooms.list().map(room => ({ ...room, liveEmailNotificationEnabled: false })),
     tags: services.tags.list(),
     alerts: services.alerts.list(),
     recordings: exportRecordingArchive(services),
     prediction: exportPredictionArchive(services),
+    xiaohongshuSources: services.db.prepare(`SELECT s.profile_url AS profileUrl, s.room_url AS roomUrl, s.profile_request_url AS profileRequestUrl FROM xiaohongshu_sources s
+      JOIN rooms r ON r.platform='xiaohongshu' AND (r.url=s.profile_url OR r.url=s.room_url)`).all() as ExportConfig['xiaohongshuSources'],
   };
 }
 
@@ -230,8 +244,11 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
       const merged: AppSettings = {
         ...current,
         ...incoming.settings,
+        checkIntervalSec: { youtube: 120, xiaohongshu: 120, ...current.checkIntervalSec, ...incoming.settings.checkIntervalSec },
         mail: { ...current.mail, ...incoming.settings.mail } as AppSettings['mail'],
       };
+      delete (merged as unknown as Record<string, unknown>).xiaohongshuCookie;
+      delete (merged as unknown as Record<string, unknown>).youtubeCookie;
       validateSettings(merged);
       services.settings.save(merged);
       appliedSettings = true;
@@ -258,27 +275,42 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
         throw new AppError('CONFIG_LOAD_FAILED', '标签导入失败', { details: { appliedSettings } });
       }
     }
+    if (Array.isArray(incoming.xiaohongshuSources)) {
+      for (const source of incoming.xiaohongshuSources) {
+        if (typeof source?.profileUrl !== 'string' || typeof source.roomUrl !== 'string' || parseXiaohongshuUrl(source.profileUrl)?.kind !== 'profile') continue;
+        const canonical = normalizeXiaohongshuUrl(source.profileUrl);
+        const profileRequest = typeof source.profileRequestUrl === 'string' && parseXiaohongshuUrl(source.profileRequestUrl)?.kind === 'profile' &&
+          normalizeXiaohongshuUrl(source.profileRequestUrl) === canonical ? source.profileRequestUrl : null;
+        if (parseXiaohongshuUrl(source.roomUrl)?.kind !== 'room' && !(source.roomUrl === '' && profileRequest)) continue;
+        saveXiaohongshuSource(services.db, canonical, source.roomUrl);
+        services.db.prepare('INSERT INTO xiaohongshu_sources (profile_url,room_url,profile_request_url) VALUES (?,?,?) ON CONFLICT(profile_url) DO UPDATE SET room_url=excluded.room_url, profile_request_url=COALESCE(excluded.profile_request_url,xiaohongshu_sources.profile_request_url)')
+          .run(canonical, source.roomUrl ? normalizeXiaohongshuUrl(source.roomUrl) : '', profileRequest);
+      }
+    }
     if (Array.isArray(incoming.rooms)) {
       const existing = new Map(services.rooms.list().map((r) => [`${r.platform}|${r.url}`, r]));
       try {
         for (const item of incoming.rooms) {
-          if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin')) continue;
-          const key = `${item.platform}|${item.url}`;
+          if (!item || typeof item.url !== 'string' || (item.platform !== 'bilibili' && item.platform !== 'douyin' && item.platform !== 'xiaohongshu' && item.platform !== 'youtube')) continue;
+          const policy = validateRoomPolicy({ ...item });
+          // 旧版备份可能仅订阅邮件；新版将其并入开播提醒，废弃位不再保留为开启状态。
+          if (policy.liveEmailNotificationEnabled === true) policy.liveNotificationEnabled = true;
+          if (policy.liveEmailNotificationEnabled !== undefined) policy.liveEmailNotificationEnabled = false;
+          const url = persistedRoomUrl(services, item.platform, item.url);
+          const key = `${item.platform}|${url}`;
           let room = existing.get(key);
           if (room) skippedRooms += 1;
           else {
             room = services.rooms.create({
               platform: item.platform as Platform,
-              url: item.url,
+              url,
               displayName: typeof item.displayName === 'string' ? item.displayName : '',
               enabled: item.enabled ?? true,
             });
             existing.set(key, room);
             importedRooms += 1;
           }
-          if (item.danmakuEnabled === null || typeof item.danmakuEnabled === 'boolean') {
-            services.rooms.update(room.id, { danmakuEnabled: item.danmakuEnabled });
-          }
+          if (Object.keys(policy).length) services.rooms.update(room.id, policy);
           if (Array.isArray(item.tags)) {
             const roomId = room.id;
             services.db.transaction(() => {
@@ -296,6 +328,7 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
         throw new AppError('CONFIG_LOAD_FAILED', '房间导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
       }
     }
+    services.scheduler.reschedule();
     let recordings: RecordingImportSummary | null = null;
     if (incoming.recordings !== undefined) {
       try {
@@ -309,7 +342,12 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     let prediction: PredictionImportSummary | null = null;
     if (incoming.prediction !== undefined) {
       try {
-        prediction = importPredictionArchive(services, incoming.prediction);
+        const archive = incoming.prediction as { rooms?: unknown } | null;
+        const normalized = Array.isArray(archive?.rooms) ? { ...archive, rooms: archive.rooms.map(group => {
+          if (!group || typeof group.platform !== 'string' || typeof group.url !== 'string') return group;
+          return { ...group, url: persistedRoomUrl(services, group.platform, group.url) };
+        }) } : incoming.prediction;
+        prediction = importPredictionArchive(services, normalized);
       } catch {
         throw new AppError('CONFIG_LOAD_FAILED', '开播预测数据导入失败', { details: { appliedSettings, importedRooms, skippedRooms } });
       }

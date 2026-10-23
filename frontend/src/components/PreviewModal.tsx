@@ -3,6 +3,7 @@ import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
 import { playbackClock } from "../utils/playbackClock";
 import {
+  CameraOutlined,
   CloseOutlined,
   CommentOutlined,
   CompressOutlined,
@@ -33,6 +34,7 @@ import { usePreviewHighlights } from "./preview/usePreviewHighlights";
 import { usePreviewLayout } from "./preview/usePreviewLayout";
 import { usePreviewMarkers } from "./preview/usePreviewMarkers";
 import { usePreviewRecording } from "./preview/usePreviewRecording";
+import { usePreviewScreenshot } from "./preview/usePreviewScreenshot";
 import { usePreviewSeek } from "./preview/usePreviewSeek";
 /**
  * 直播观看弹窗
@@ -51,6 +53,7 @@ export default function PreviewModal({
   enableHighlights?: boolean;
 }) {
   const playerPortalId = useId();
+  const [screenshotFrameReady, setScreenshotFrameReady] = useState(false);
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
   );
@@ -71,6 +74,7 @@ export default function PreviewModal({
   const mediaClock = useRecordingMediaRange(
     activeRecordingId ?? displayedTrack?.id,
     previewVideo,
+    room.platform === "youtube" && recording,
   );
   const trackElapsedSeconds = mediaClock.durationSeconds;
   const {
@@ -148,6 +152,13 @@ export default function PreviewModal({
     seekPlayback,
     previewVideo,
     previewFrameGenerationRef,
+  );
+  const screenshot = usePreviewScreenshot(
+    room.id,
+    previewVideo,
+    screenshotFrameReady,
+    Boolean(displayPreview.loading),
+    seekPlayback?.recordingId ?? activeRecordingId ?? displayedTrack?.id,
   );
   const media = useRecordingMediaPosition(
     activeRecordingId,
@@ -242,6 +253,17 @@ export default function PreviewModal({
           <div className="lr-preview-modal__header">
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
+              <Tooltip title="截图">
+                <Button
+                  type="text"
+                  size="small"
+                  aria-label="截图"
+                  icon={<CameraOutlined />}
+                  disabled={!screenshot.enabled}
+                  loading={screenshot.saving}
+                  onClick={() => void screenshot.takeScreenshot()}
+                />
+              </Tooltip>
               <Popover
                 trigger="click"
                 placement="bottomRight"
@@ -400,7 +422,7 @@ export default function PreviewModal({
             !pictureInPicture &&
               (!previewPlayerBounds || !streamRatioReady) &&
               "lr-preview-player--hidden",
-            (pictureInPicture || (previewPlayerVisible && streamRatioReady)) &&
+            (pictureInPicture || previewPlayerVisible) &&
               "lr-preview-player--visible",
           ]
             .filter(Boolean)
@@ -425,6 +447,7 @@ export default function PreviewModal({
             aspectRatio={streamRatio ?? undefined}
             onStreamAspectRatio={handleStreamAspectRatio}
             onVideoElementChange={setPreviewVideo}
+            onFrameReadyChange={setScreenshotFrameReady}
             seek={seekPlayback}
             onSeekTail={() => {
               if (segmentPreviewActive.current) {

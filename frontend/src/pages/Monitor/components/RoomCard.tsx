@@ -1,3 +1,4 @@
+import { roomLivePageUrl } from "../../../utils/roomPlatform";
 import { memo } from "react";
 import {
   Button,
@@ -54,7 +55,7 @@ export function SortableRoomCardItem({
   );
 }
 
-const QUALITY_ORDER = ["original", "1080p", "720p", "360p"];
+const QUALITY_ORDER = ["original", "1080p", "720p", "540p", "360p"];
 const qualityRank = (q: string) => QUALITY_ORDER.indexOf(q);
 const qualityLabel = (q: string) => (q === "original" ? "原画" : q);
 
@@ -168,7 +169,8 @@ export const RoomCard = memo(function RoomCard({
                     <div className="lr-room-card__avatar-preview">
                       <RoomAvatar
                         platform={room.platform}
-                        avatarUrl={room.avatarUrl}
+                        roomId={room.id}
+              avatarUrl={room.avatarUrl}
                         name={room.displayName}
                         live={onAir}
                         size={120}
@@ -185,7 +187,8 @@ export const RoomCard = memo(function RoomCard({
                   >
                     <RoomAvatar
                       platform={room.platform}
-                      avatarUrl={room.avatarUrl}
+                      roomId={room.id}
+              avatarUrl={room.avatarUrl}
                       name={room.displayName}
                       live={onAir}
                       size={40}
@@ -328,7 +331,8 @@ export const RoomCard = memo(function RoomCard({
               size="middle"
               aria-label="打开直播间"
               icon={<LinkOutlined />}
-              href={room.url}
+              href={roomLivePageUrl(room)}
+              disabled={!roomLivePageUrl(room)}
               target="_blank"
               rel="noopener noreferrer"
             >

@@ -156,8 +156,8 @@ async function unusedPath(preferred: string): Promise<string> {
  *  撞名走命名安全自动加「(n)」序号、绝不覆盖。 */
 export async function convertToMp4(inputPath: string, options: FfmpegRunOptions = {}): Promise<CompressResult | null> {
   if (/\.mp4$/i.test(inputPath)) return null;
-  if (!/\.(flv|ts)$/i.test(inputPath)) return null;
-  const sourceBase = path.basename(inputPath).replace(/\.(flv|ts)$/i, '');
+  if (!/\.(flv|ts|mkv)$/i.test(inputPath)) return null;
+  const sourceBase = path.basename(inputPath).replace(/\.(flv|ts|mkv)$/i, '');
   const { targetPath: outPath } = await uniqueTargetPath(
     path.dirname(inputPath),
     sourceBase,
@@ -184,7 +184,7 @@ export async function compressOrRemux(
 ): Promise<CompressResult | null> {
   const mode = options.encodingMode ?? "auto";
   if (crf === null) return null;
-  const preferredPath = inputPath.replace(/\.(flv|ts|mp4)$/i, '_c.mp4');
+  const preferredPath = inputPath.replace(/\.(flv|ts|mkv|mp4)$/i, '_c.mp4');
   if (preferredPath === inputPath) return null;
   const outPath = await unusedPath(preferredPath);
   const tempPath = `${outPath}.part`;

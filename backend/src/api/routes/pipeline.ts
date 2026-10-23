@@ -1,3 +1,4 @@
+import { finalizeYoutube } from "../../recorder/youtube-media.js";
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
@@ -21,6 +22,10 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法重试管线', { recordingId: id });
+    if (rec.platform === "youtube") {
+      if (rec.state === 'recording' || rec.state === 'reconnecting') throw new AppError('RECORDING_NOT_AVAILABLE', '请先停止录制再处理录像');
+      await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
+    }
     const result = services.pipeline.retry(id, true);
     if (!result.ok) {
       // 409 而非 500：排队/运行中属冲突态（task #59，原 CONFIG_LOAD_FAILED→500 错误类）。
@@ -35,6 +40,10 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法进入管线', { recordingId: id });
+    if (rec.platform === "youtube") {
+      if (rec.state === 'recording' || rec.state === 'reconnecting') throw new AppError('RECORDING_NOT_AVAILABLE', '请先停止录制再处理录像');
+      await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
+    }
     const quick = await services.pipeline.quickMediaCheck(rec.filePath);
     if (!quick.ok) throw new AppError('CONFIG_LOAD_FAILED', `文件不可用，无法进入管线：${quick.reason ?? '未知原因'}`, { recordingId: id });
     // 三态语义：未跑过/failed=全新启动（retry 建新 run）；中断残留 queued/running=处理已录部分（断点续跑，异步推进立即返回）。

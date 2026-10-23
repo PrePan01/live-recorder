@@ -29,6 +29,7 @@ const qualityOptions = [
   { value: "original", label: "原画" },
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
+  { value: "540p", label: "540p" },
   { value: "360p", label: "360p" },
 ];
 
@@ -250,6 +251,16 @@ export default function Setup() {
               <br />
               B站授权：
               {authorizationStatuses.bilibili === "authorized"
+                ? "已登录"
+                : "未登录"}
+              <br />
+              小红书授权：
+              {authorizationStatuses.xiaohongshu === "authorized"
+                ? "已登录"
+                : "未登录"}
+              <br />
+              YouTube授权：
+              {authorizationStatuses.youtube === "authorized"
                 ? "已登录"
                 : "未登录"}
             </Typography.Paragraph>

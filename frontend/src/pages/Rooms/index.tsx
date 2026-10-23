@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   App,
@@ -9,11 +9,12 @@ import {
   Input,
   List,
   Modal,
-  Popover,
+  Checkbox,
+  Empty,
+  Pagination,
+  Spin,
   Select,
   Space,
-  Switch,
-  Table,
   Typography,
 } from "antd";
 import {
@@ -23,10 +24,11 @@ import {
   SnippetsOutlined,
 } from "@ant-design/icons";
 import { guessPlatform, PLATFORM_LABEL } from "../../utils/roomPlatform";
-import { buildRoomColumns } from "../../utils/roomColumns";
+import RoomManagementCard from "./components/RoomManagementCard";
+import BatchRoomPolicy from "./components/BatchRoomPolicy";
+import "./rooms.css";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
-import { useResizableColumns } from "../../hooks/useResizableColumns";
 import TagSelect from "./components/TagSelect";
 import SchedulePanel from "./components/SchedulePanel";
 import TagFilterSelect from "../../components/TagFilterSelect";
@@ -34,10 +36,7 @@ import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/errorMap";
 import { fetchDouyinCookieStatus } from "../../api/settings";
-import {
-  RoomSortableProvider,
-  SortableRoomTableRow,
-} from "../../components/RoomSortable";
+import { RoomSortableProvider } from "../../components/RoomSortable";
 
 export default function Rooms() {
   const { message, modal } = App.useApp();
@@ -51,16 +50,12 @@ export default function Rooms() {
     batchAddRooms,
     editRoom,
     removeRoom,
-    toggleRoom,
-    favoriteRoom,
-    setAutoRecord,
-    setDanmakuEnabled,
-    setLiveNotification,
     updateRoomTags,
     checkRoomNow,
     reorderRooms,
     reorderBusy,
   } = useRoomStore();
+  const [batchPolicyIds, setBatchPolicyIds] = useState<string[] | null>(null);
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -71,11 +66,20 @@ export default function Rooms() {
   > | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 慢路径（解析耗时秒级）才出等待说明；快路径（缓存命中约 1.5s）不允许闪现，故阈值取 2s。
+  const [submitHint, setSubmitHint] = useState(false);
+  const submitHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSubmitHintTimer = useCallback(() => {
+    if (submitHintTimer.current !== null) {
+      clearTimeout(submitHintTimer.current);
+      submitHintTimer.current = null;
+    }
+  }, []);
+  useEffect(() => () => clearSubmitHintTimer(), [clearSubmitHintTimer]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [form] = Form.useForm<{
     url: string;
     displayName?: string;
-    liveNotificationEnabled: boolean;
   }>();
   const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState<string>();
@@ -87,12 +91,6 @@ export default function Rooms() {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
-  const [editingDisplayName, setEditingDisplayName] = useState<{
-    id: string;
-    value: string;
-  } | null>(null);
-  const savingDisplayNameIdRef = useRef<string | null>(null);
-
   useEffect(() => {
     void fetchRooms().catch(() => message.error("直播间列表加载失败"));
   }, [fetchRooms, message]);
@@ -123,9 +121,13 @@ export default function Rooms() {
     });
   }, [rooms, keyword, platform, state, favOnly, filterTagIds]);
 
+  const currentPage = Math.min(
+    page,
+    Math.max(1, Math.ceil(filtered.length / pageSize)),
+  );
   const paginated = useMemo(
-    () => filtered.slice((page - 1) * pageSize, page * pageSize),
-    [filtered, page, pageSize],
+    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filtered, currentPage, pageSize],
   );
 
   const commitRoomOrder = async (roomIds: string[]) => {
@@ -163,159 +165,60 @@ export default function Rooms() {
 
   const resetPage = () => setPage(1);
 
-  const saveDisplayName = async (room: Room) => {
-    const draft = editingDisplayName;
-    if (
-      !draft ||
-      draft.id !== room.id ||
-      savingDisplayNameIdRef.current === room.id
-    )
-      return;
-    savingDisplayNameIdRef.current = room.id;
-    setEditingDisplayName(null);
-    const displayName = draft.value.trim();
-    try {
-      if (displayName !== room.displayName) {
-        await editRoom(room.id, { displayName });
+  const confirmDeleteRooms = useCallback(
+    (targets: Room[]) => {
+      if (targets.length === 0) {
+        return message.warning("请先选择要操作的直播间");
       }
-    } catch (e) {
-      message.error(
-        e instanceof ApiError
-          ? describeError(e.code, e.message)
-          : "显示名保存失败",
+      const recording = targets.filter(
+        (r) =>
+          r.monitorState === "recording" || r.monitorState === "reconnecting",
       );
-    } finally {
-      savingDisplayNameIdRef.current = null;
-    }
-  };
-
-  const runBatch = async (fn: (r: Room) => Promise<void>, okMsg: string) => {
-    const targets = rooms.filter((r) => selectedKeys.includes(r.id));
-    if (targets.length === 0) {
-      message.warning("请先选择要操作的直播间");
-      return;
-    }
-    setBatchBusy(true);
-    try {
-      await Promise.all(targets.map((r) => fn(r)));
-      message.success(`${okMsg} ${targets.length} 个直播间`);
-      setSelectedKeys([]);
-    } catch (e) {
-      message.error(
-        e instanceof ApiError
-          ? describeError(e.code, e.message)
-          : "批量操作失败",
-      );
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
-  const confirmDeleteRooms = (targets: Room[]) => {
-    if (targets.length === 0) {
-      return message.warning("请先选择要操作的直播间");
-    }
-    const recording = targets.filter(
-      (r) =>
-        r.monitorState === "recording" || r.monitorState === "reconnecting",
-    );
-    const multiple = targets.length > 1;
-    modal.confirm({
-      title:
-        recording.length > 0
-          ? multiple
-            ? `所选直播间中有 ${recording.length} 个正在录制，确定删除？`
-            : "该直播间正在录制，确定删除？"
-          : multiple
-            ? `确定删除所选 ${targets.length} 个直播间？`
-            : "确定删除该直播间？",
-      icon:
-        recording.length > 0 ? (
-          <ExclamationCircleFilled style={{ color: "#faad14" }} />
-        ) : undefined,
-      content:
-        recording.length > 0
-          ? "删除会先停止录制并保存已录内容，随后删除直播间。"
-          : "删除后不可恢复。",
-      okText: recording.length > 0 ? "停止录制并删除" : "删除",
-      okButtonProps: { danger: true },
-      cancelText: "取消",
-      onOk: async () => {
-        setBatchBusy(true);
-        try {
-          for (const room of targets) await removeRoom(room.id);
-          setSelectedKeys([]);
-          message.success(`已删除 ${targets.length} 个直播间`);
-        } catch (e) {
-          message.error(
-            e instanceof ApiError
-              ? describeError(e.code, e.message)
-              : "删除失败",
-          );
-        } finally {
-          setBatchBusy(false);
-        }
-      },
-    });
-  };
-
-  const batchActions = (
-    <Space>
-      <Button
-        size="small"
-        disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() => void runBatch((r) => toggleRoom(r.id, true), "已启用")}
-      >
-        批量启用
-      </Button>
-      <Button
-        size="small"
-        disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() => void runBatch((r) => toggleRoom(r.id, false), "已停用")}
-      >
-        批量停用
-      </Button>
-      <Button
-        size="small"
-        disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() =>
-          void runBatch(
-            (r) => setLiveNotification(r.id, true),
-            "已开启开播提醒",
-          )
-        }
-      >
-        开启开播提醒
-      </Button>
-      <Button
-        size="small"
-        disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() =>
-          void runBatch(
-            (r) => setLiveNotification(r.id, false),
-            "已关闭开播提醒",
-          )
-        }
-      >
-        关闭开播提醒
-      </Button>
-      <Button
-        size="small"
-        danger
-        disabled={batchBusy || selectedKeys.length === 0}
-        onClick={() =>
-          confirmDeleteRooms(rooms.filter((r) => selectedKeys.includes(r.id)))
-        }
-      >
-        批量删除
-      </Button>
-    </Space>
+      const multiple = targets.length > 1;
+      modal.confirm({
+        title:
+          recording.length > 0
+            ? multiple
+              ? `所选直播间中有 ${recording.length} 个正在录制，确定删除？`
+              : "该直播间正在录制，确定删除？"
+            : multiple
+              ? `确定删除所选 ${targets.length} 个直播间？`
+              : "确定删除该直播间？",
+        icon:
+          recording.length > 0 ? (
+            <ExclamationCircleFilled style={{ color: "#faad14" }} />
+          ) : undefined,
+        content:
+          recording.length > 0
+            ? "删除会先停止录制并保存已录内容，随后删除直播间。"
+            : "删除后不可恢复。",
+        okText: recording.length > 0 ? "停止录制并删除" : "删除",
+        okButtonProps: { danger: true },
+        cancelText: "取消",
+        onOk: async () => {
+          setBatchBusy(true);
+          try {
+            for (const room of targets) await removeRoom(room.id);
+            setSelectedKeys([]);
+            message.success(`已删除 ${targets.length} 个直播间`);
+          } catch (e) {
+            message.error(
+              e instanceof ApiError
+                ? describeError(e.code, e.message)
+                : "删除失败",
+            );
+          } finally {
+            setBatchBusy(false);
+          }
+        },
+      });
+    },
+    [message, modal, removeRoom],
   );
 
   const openAdd = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldValue("liveNotificationEnabled", false);
     setTagIds([]);
     setModalOpen(true);
   };
@@ -324,28 +227,24 @@ export default function Rooms() {
     if (new URLSearchParams(search).get("add") !== "1") return;
     setEditing(null);
     form.resetFields();
-    form.setFieldValue("liveNotificationEnabled", false);
     setTagIds([]);
     setModalOpen(true);
     navigate("/rooms", { replace: true });
   }, [form, navigate, search]);
 
-  const openEdit = (room: Room) => {
-    setEditing(room);
-    form.setFieldsValue({
-      url: room.url,
-      displayName: room.displayName,
-      liveNotificationEnabled: room.liveNotificationEnabled,
-    });
-    setTagIds(room.tags.map((t) => t.id));
-    setModalOpen(true);
-  };
+  const openEdit = useCallback(
+    (room: Room) => {
+      setEditing(room);
+      form.setFieldsValue({
+        url: room.url,
+        displayName: room.displayName,
+      });
+      setTagIds(room.tags.map((t) => t.id));
+      setModalOpen(true);
+    },
+    [form],
+  );
 
-  /**
-   * 添加抖音直播间后，用设置页同一探测口径检查抖音登录态：未登录（missing）
-   * 或 Cookie 已失效（invalid）时提示去设置页登录授权。探测失败（unknown）
-   * 不做提示，避免把网络异常误报成未登录。
-   */
   const promptDouyinAuthorization = async () => {
     const status = await fetchDouyinCookieStatus().catch(
       () => "unknown" as const,
@@ -356,14 +255,7 @@ export default function Rooms() {
   };
 
   const submit = async () => {
-    // Ant Design rejects when client-side validation fails.  This handler is
-    // invoked with `void submit()`, so validation failures must be consumed
-    // here instead of becoming a window-level unhandled rejection.
-    let values: {
-      url: string;
-      displayName?: string;
-      liveNotificationEnabled: boolean;
-    };
+    let values: { url: string; displayName?: string };
     try {
       values = await form.validateFields();
     } catch {
@@ -371,10 +263,14 @@ export default function Rooms() {
     }
     const platform = guessPlatform(values.url);
     if (!platform) {
-      message.error("仅支持 B站 / 抖音 直播链接");
+      message.error("支持 B站、抖音、小红书、YouTube 直播链接");
       return;
     }
     setSubmitting(true);
+    if (!editing) {
+      clearSubmitHintTimer();
+      submitHintTimer.current = setTimeout(() => setSubmitHint(true), 2000);
+    }
     try {
       if (editing) {
         await editRoom(editing.id, values);
@@ -398,6 +294,8 @@ export default function Rooms() {
         e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
       );
     } finally {
+      clearSubmitHintTimer();
+      setSubmitHint(false);
       setSubmitting(false);
     }
   };
@@ -434,7 +332,6 @@ export default function Rooms() {
       message.success(
         `成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`,
       );
-      // 批量里含抖音也只探测一次，不按房间重复请求。
       if (res.succeeded.some((r) => r.platform === "douyin"))
         void promptDouyinAuthorization();
     } catch (e) {
@@ -448,26 +345,21 @@ export default function Rooms() {
     }
   };
 
-  const columns = buildRoomColumns({
-    favoriteRoom,
-    setAutoRecord,
-    setDanmakuEnabled,
-    setLiveNotification,
-    toggleRoom,
-    editingDisplayName,
-    setEditingDisplayName,
-    saveDisplayName,
-    openEdit,
-    setScheduleRoom,
-    confirmDeleteRooms,
-    message,
-  });
-
-  const { columns: resizedColumns, components: resizableComponents } =
-    useResizableColumns<Room>(columns);
+  const selectRoom = useCallback((id: string, checked: boolean) => {
+    setSelectedKeys((keys) =>
+      checked ? [...new Set([...keys, id])] : keys.filter((key) => key !== id),
+    );
+  }, []);
+  const selectedIds = useMemo(() => {
+    const available = new Set(rooms.map((room) => room.id));
+    return new Set(selectedKeys.map(String).filter((id) => available.has(id)));
+  }, [selectedKeys, rooms]);
+  const selectedVisible = paginated.filter((room) =>
+    selectedIds.has(room.id),
+  ).length;
 
   return (
-    <div className="lr-page">
+    <div className="lr-page lr-rooms-page">
       <Space className="lr-page-header" wrap>
         <Typography.Title level={4} style={{ margin: 0 }}>
           直播间管理
@@ -509,6 +401,8 @@ export default function Rooms() {
           options={[
             { value: "bilibili", label: "B站" },
             { value: "douyin", label: "抖音" },
+            { value: "xiaohongshu", label: "小红书" },
+            { value: "youtube", label: "YouTube" },
           ]}
         />
         <Select
@@ -550,54 +444,104 @@ export default function Rooms() {
         >
           仅看收藏
         </Button>
-        <Popover content={batchActions} trigger="click" placement="bottom">
-          <Button disabled={selectedKeys.length === 0}>批量操作</Button>
-        </Popover>
-        {selectedKeys.length > 0 ? (
+        <Button
+          disabled={selectedIds.size === 0 || batchBusy}
+          onClick={() => setBatchPolicyIds([...selectedIds])}
+        >
+          批量设置
+        </Button>
+        <Button
+          danger
+          disabled={selectedIds.size === 0 || batchBusy}
+          onClick={() =>
+            confirmDeleteRooms(rooms.filter((room) => selectedIds.has(room.id)))
+          }
+        >
+          批量删除
+        </Button>
+        {selectedIds.size > 0 ? (
           <Typography.Text type="secondary">
-            已选 {selectedKeys.length} 项
+            已选 {selectedIds.size} 项
           </Typography.Text>
         ) : null}
       </Space>
-      <RoomSortableProvider
-        allRooms={rooms}
-        visibleRooms={paginated}
-        mode="table"
-        disabled={reorderBusy}
-        onReorder={commitRoomOrder}
-      >
-        <Table
-          rowKey="id"
-          columns={resizedColumns}
-          components={{
-            ...resizableComponents,
-            body: { row: SortableRoomTableRow },
-          }}
-          dataSource={paginated}
-          loading={loading}
-          sticky={{ offsetScroll: 8 }}
-          scroll={{ x: 1500 }}
-          onRow={(room) =>
-            ({ "data-room-id": room.id }) as React.HTMLAttributes<HTMLElement>
+      <div className="lr-rooms-list-toolbar">
+        <Checkbox
+          checked={paginated.length > 0 && selectedVisible === paginated.length}
+          indeterminate={
+            selectedVisible > 0 && selectedVisible < paginated.length
           }
-          rowSelection={{
-            selectedRowKeys: selectedKeys,
-            onChange: setSelectedKeys,
+          disabled={!paginated.length}
+          onChange={(event) => {
+            const visible = new Set(paginated.map((room) => room.id));
+            setSelectedKeys((keys) =>
+              event.target.checked
+                ? [...new Set([...keys, ...visible])]
+                : keys.filter((key) => !visible.has(String(key))),
+            );
           }}
-          pagination={{
-            current: page,
-            pageSize,
-            total: filtered.length,
-            showSizeChanger: true,
-            pageSizeOptions: [10, 20, 50],
-            showTotal: (t) => `共 ${t} 个直播间`,
-            onChange: (p, ps) => {
-              setPage(p);
-              setPageSize(ps);
-            },
-          }}
+        >
+          选择本页
+        </Checkbox>
+        <span>{filtered.length} 个直播间</span>
+      </div>
+      <Spin spinning={loading}>
+        <RoomSortableProvider
+          allRooms={rooms}
+          visibleRooms={paginated}
+          mode="management"
+          disabled={reorderBusy}
+          onReorder={commitRoomOrder}
+        >
+          <div className="lr-room-management-list">
+            {paginated.map((room) => (
+              <RoomManagementCard
+                key={room.id}
+                room={room}
+                selected={selectedIds.has(room.id)}
+                onSelect={selectRoom}
+                onEdit={openEdit}
+                onSchedule={setScheduleRoom}
+                onDelete={confirmDeleteRooms}
+              />
+            ))}
+            {!paginated.length && (
+              <Empty
+                description={
+                  rooms.length
+                    ? "没有符合筛选条件的直播间"
+                    : "添加第一个直播间，开始安排录制"
+                }
+              >
+                {!rooms.length && (
+                  <Button type="primary" onClick={openAdd}>
+                    添加直播间
+                  </Button>
+                )}
+              </Empty>
+            )}
+          </div>
+        </RoomSortableProvider>
+      </Spin>
+      <Pagination
+        className="lr-rooms-pagination"
+        current={currentPage}
+        pageSize={pageSize}
+        total={filtered.length}
+        showSizeChanger
+        pageSizeOptions={[10, 20, 50]}
+        showTotal={(total) => `共 ${total} 个直播间`}
+        onChange={(nextPage, size) => {
+          setPage(nextPage);
+          setPageSize(size);
+        }}
+      />
+      {batchPolicyIds && (
+        <BatchRoomPolicy
+          ids={batchPolicyIds}
+          onClose={() => setBatchPolicyIds(null)}
         />
-      </RoomSortableProvider>
+      )}
       <Modal
         title={editing ? "编辑直播间" : "添加直播间"}
         open={modalOpen}
@@ -605,6 +549,7 @@ export default function Rooms() {
         onOk={() => void submit()}
         confirmLoading={submitting}
         destroyOnHidden
+        width={700}
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -616,7 +561,11 @@ export default function Rooms() {
                 validator: (_, v: string) =>
                   !v || guessPlatform(v)
                     ? Promise.resolve()
-                    : Promise.reject(new Error("仅支持 B站 / 抖音 直播链接")),
+                    : Promise.reject(
+                        new Error(
+                          "支持 B站 / 抖音直播链接、小红书主页或直播分享链接、YouTube 频道或直播视频链接",
+                        ),
+                      ),
               },
             ]}
             extra={
@@ -626,7 +575,7 @@ export default function Rooms() {
             }
           >
             <Input
-              placeholder="https://live.bilibili.com/... 或 https://live.douyin.com/..."
+              placeholder="B站、抖音、小红书直播链接或 YouTube 频道/直播视频链接"
               addonAfter={
                 <Button
                   className="lr-room-url-paste"
@@ -643,17 +592,18 @@ export default function Rooms() {
           <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
             <Input placeholder="主播昵称" />
           </Form.Item>
-          <Form.Item
-            name="liveNotificationEnabled"
-            label="开播提醒"
-            valuePropName="checked"
-          >
-            <Switch aria-label="开播提醒" />
-          </Form.Item>
           <Form.Item label="标签">
             <TagSelect value={tagIds} onChange={setTagIds} />
           </Form.Item>
         </Form>
+        {submitting && submitHint && !editing ? (
+          <div className="lr-room-submit-pending" role="status" aria-live="polite">
+            <Spin size="small" />
+            <Typography.Text type="secondary">
+              正在解析直播间信息，约需 10 秒…
+            </Typography.Text>
+          </div>
+        ) : null}
       </Modal>
       <Modal
         title="批量添加直播间"
@@ -669,13 +619,13 @@ export default function Rooms() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
-          每行一个直播链接，支持 B站 / 抖音 混排，最多 100
+          每行一个直播链接，支持 B站 / 抖音 / 小红书 / YouTube 混排，最多 100
           条。自动去重（含已存在直播间与批内重复）。
         </Typography.Paragraph>
         <Input.TextArea
           rows={6}
           placeholder={
-            "https://live.bilibili.com/...\nhttps://live.douyin.com/..."
+            "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/...\nhttps://www.youtube.com/@频道名\nhttps://www.youtube.com/watch?v=视频ID"
           }
           value={batchText}
           onChange={(e) => setBatchText(e.target.value)}

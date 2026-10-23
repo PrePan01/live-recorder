@@ -117,7 +117,7 @@ const OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
   ],
   quality: [
     { value: "original", label: "原画" },
-    ...["1080p", "720p", "360p"].map((value) => ({ value, label: value })),
+    ...["1080p", "720p", "540p", "360p"].map((value) => ({ value, label: value })),
   ],
   "encoding-mode": [
     { value: "auto", label: "自动（硬件优先）" },

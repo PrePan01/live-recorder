@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 
 /**
  * 后端拉起的 ffmpeg 子进程注册表（评估稿 Q12 收割面）。
@@ -9,13 +9,26 @@ import type { ChildProcess } from 'node:child_process';
  * 再用同步 exit 兜底崩溃路径。
  */
 const live = new Set<ChildProcess>();
+const groups = new Set<ChildProcess>();
+function killTracked(child: ChildProcess, force: boolean): void {
+  if (groups.has(child) && child.pid) {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])], { windowsHide: true, stdio: 'ignore', timeout: 3000 });
+      return;
+    }
+    try { process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM'); return; } catch { /* parent may have exited */ }
+  }
+  child.kill(force ? 'SIGKILL' : 'SIGTERM');
+}
 let exitHookInstalled = false;
 
 /** 登记一个子进程，返回解绑函数（应在该进程 close/error 时调用）。 */
-export function trackFfmpeg(child: ChildProcess): () => void {
+export function trackFfmpeg(child: ChildProcess, processGroup = false): () => void {
   live.add(child);
+  if (processGroup) groups.add(child);
   return () => {
     live.delete(child);
+    groups.delete(child);
   };
 }
 
@@ -34,7 +47,7 @@ export async function reapTrackedFfmpegs(graceMs = 3_000): Promise<number> {
   for (const child of children) {
     live.delete(child);
     try {
-      child.kill('SIGTERM');
+      killTracked(child, false);
     } catch {
       // 已退出或无权限：忽略。
     }
@@ -47,11 +60,12 @@ export async function reapTrackedFfmpegs(graceMs = 3_000): Promise<number> {
   }
   for (const child of alive()) {
     try {
-      child.kill('SIGKILL');
+      killTracked(child, true);
     } catch {
       // 忽略。
     }
   }
+  for (const child of children) groups.delete(child);
   return children.length;
 }
 
@@ -65,7 +79,7 @@ export function installFfmpegExitReap(): void {
   process.once('exit', () => {
     for (const child of live) {
       try {
-        child.kill('SIGKILL');
+        killTracked(child, true);
       } catch {
         // 忽略。
       }

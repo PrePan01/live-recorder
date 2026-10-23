@@ -26,7 +26,15 @@ interface PreviewRoom {
   tail: Buffer[];
   tailBytes: number;
   pendingTags: Buffer;
+  progressStage?: string;
 }
+
+const PREVIEW_PROGRESS_STAGES = new Set([
+  'requested', 'platform_cookie_ready', 'stream_url_ready', 'source_ready',
+  'reused_native_source', 'reused_preview_stream', 'youtube_manifests_ready',
+  'youtube_source_process_started', 'youtube_initial_segments_ready',
+  'youtube_native_stream_ready', 'preview_encoder_started', 'preview_media_ready',
+]);
 
 /** 初始化段安全上限：正常 FLV init（头+metadata+编码器配置）通常 <10KB，64KB 足兜底异常流。 */
 const PREVIEW_HEADER_MAX = 64 * 1024;
@@ -158,6 +166,7 @@ class FlvInitExtractor {
 export const PREVIEW_MAX_SESSIONS = 4;
 
 export class PreviewManager {
+  private progressClients = new WeakSet<WebSocket>();
   private rooms = new Map<string, PreviewRoom>();
   private emptyRoomTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 某房间最后一个预览客户端断开时回调（用于停止 preview-only 拉流）。 */
@@ -175,7 +184,7 @@ export class PreviewManager {
     return (this.rooms.get(roomId)?.sockets.size ?? 0) > 0;
   }
 
-  addClient(roomId: string, ws: WebSocket): void {
+  addClient(roomId: string, ws: WebSocket, progress = false): void {
     this.clearEmptyRoomTimer(roomId);
     let room = this.rooms.get(roomId);
     if (!room) {
@@ -183,6 +192,11 @@ export class PreviewManager {
       this.rooms.set(roomId, room);
     }
     room.sockets.add(ws);
+    if (progress) {
+      this.progressClients.add(ws);
+      room.progressStage ??= 'requested';
+      this.sendProgress(ws, room.progressStage);
+    }
     // 中途加入：先补发 FLV 初始化段 + 近期尾部（接近实时位置），mpegts.js 才能初始化并从实时附近起播。
     const bootstrap = room.header ?? room.extractor.snapshot();
     if (bootstrap && ws.readyState === WebSocket.OPEN) {
@@ -201,6 +215,19 @@ export class PreviewManager {
       // 房间的移除由流生命周期负责：closeRoom（流结束）/resetRoom（新段）清理。
       if (this.rooms.get(roomId) === room && room!.sockets.size === 0) this.deferRoomEmpty(roomId);
     });
+  }
+
+  private sendProgress(ws: WebSocket, stage: string): void {
+    if (!this.progressClients.has(ws) || ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: 'preview_progress', stage })); } catch { /* disconnect */ }
+  }
+
+  reportProgress(roomId: string, stage: string): void {
+    if (!PREVIEW_PROGRESS_STAGES.has(stage)) return;
+    const room = this.rooms.get(roomId);
+    if (!room || room.progressStage === stage) return;
+    room.progressStage = stage;
+    for (const ws of room.sockets) this.sendProgress(ws, stage);
   }
 
   private clearEmptyRoomTimer(roomId: string): void {
@@ -351,6 +378,7 @@ export class PreviewManager {
     room.tail = [];
     room.tailBytes = 0;
     room.pendingTags = Buffer.alloc(0);
+    room.progressStage = 'requested';
     console.log(`[preview] source-reset room=…${roomId.slice(-6)}`);
   }
 
@@ -444,18 +472,16 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.LIMIT));
       return;
     }
-    // 开播但未录制（如 autoRecord=false 的房间点「观看」/直播墙）：启动 preview-only 拉流
-    // （#163：预览=纯观看，不触发录制、不生成录制文件），让预览有数据流。异步执行不阻塞 upgrade。
-    if (!isRecording && isLive) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      preview.addClient(roomId, ws, url.searchParams.get('progress') === '1');
+      // Register the watcher first. This also reactivates an on-demand preview
+      // encoder when joining an existing recording or reconnecting after handoff.
       void services.manager.ensurePreviewStream(room.id).then(() => {
         // Hover previews can leave while platform URL resolution is still pending.
         // The earlier empty-room callback cannot stop a stream that did not exist yet.
         if (!preview.hasClients(room.id))
           return services.manager.stopPreviewStream(room.id);
       }).catch(() => undefined);
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      preview.addClient(roomId, ws);
     });
   };
 

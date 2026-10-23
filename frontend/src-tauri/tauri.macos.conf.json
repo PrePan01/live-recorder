@@ -1,7 +1,9 @@
 {
   "bundle": {
     "resources": {
-      ".bundle/node": "node"
+      ".bundle/node": "node",
+      ".bundle/youtube-runtime": "youtube-runtime",
+      ".bundle/ffmpeg": "ffmpeg"
     }
   }
 }

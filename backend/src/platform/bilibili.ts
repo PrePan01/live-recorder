@@ -12,6 +12,8 @@ const BILI_QN: Record<Quality, number> = {
   original: 10000,
   "1080p": 400,
   "720p": 150,
+  // B站没有独立的 540p 档位，使用低一档并保留实际清晰度回报。
+  "540p": 80,
   "360p": 80,
 };
 

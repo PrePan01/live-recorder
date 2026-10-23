@@ -1,0 +1,114 @@
+[
+  {
+    "mode": "recording",
+    "label": "baseline",
+    "metadataMs": 13963,
+    "source": {
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    },
+    "nativeMs": 30521,
+    "previewMs": 30674,
+    "previewBytes": 1380060
+  },
+  {
+    "mode": "preview",
+    "label": "baseline",
+    "metadataMs": 14154,
+    "previewMs": 32664,
+    "previewBytes": 3476229
+  },
+  {
+    "mode": "recording",
+    "label": "reuse-extraction",
+    "metadataMs": 8546,
+    "source": {
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    },
+    "nativeMs": 21418,
+    "previewMs": 21493,
+    "previewBytes": 6309864
+  },
+  {
+    "mode": "preview",
+    "label": "reuse-extraction",
+    "metadataMs": 7995,
+    "previewMs": 21265,
+    "previewBytes": 3567124
+  },
+  {
+    "mode": "recording",
+    "label": "optimized",
+    "metadataMs": 7508,
+    "source": {
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    },
+    "nativeMs": 20500,
+    "previewMs": 20577,
+    "previewBytes": 2465584
+  },
+  {
+    "mode": "preview",
+    "label": "optimized",
+    "metadataMs": 7435,
+    "error": "Error: {\"code\":\"NETWORK_UNAVAILABLE\",\"message\":\"YouTube 解析或拉流失败，请检查系统网络后重试\",\"roomId\":null,\"recordingId\":null,\"occurredAt\":\"2026-10-17T11:54:23.040Z\",\"retryable\":true}"
+  },
+  {
+    "mode": "recording",
+    "quality": "720p",
+    "label": "optimized-safe",
+    "metadataMs": 8099,
+    "reusedExtraction": true,
+    "source": {
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    },
+    "nativeMs": 22419,
+    "previewMs": 22505,
+    "previewBytes": 1712778
+  },
+  {
+    "mode": "preview",
+    "quality": "720p",
+    "label": "optimized-safe",
+    "metadataMs": 7523,
+    "reusedExtraction": true,
+    "previewMs": 19943,
+    "previewBytes": 1086570
+  },
+  {
+    "mode": "recording",
+    "quality": "1080p",
+    "label": "optimized-bundled-ffmpeg",
+    "metadataMs": 8133,
+    "reusedExtraction": true,
+    "source": {
+      "width": 1920,
+      "height": 1080,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    },
+    "nativeMs": 22793,
+    "previewMs": 22864,
+    "previewBytes": 2323777
+  },
+  {
+    "mode": "preview",
+    "quality": "1080p",
+    "label": "optimized-bundled-ffmpeg",
+    "metadataMs": 7279,
+    "reusedExtraction": true,
+    "previewMs": 23578,
+    "previewBytes": 3944754
+  }
+]

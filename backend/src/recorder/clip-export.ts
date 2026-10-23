@@ -1,3 +1,4 @@
+import { youtubeInput } from "./youtube-media.js";
 import { spawn } from 'node:child_process';
 import { access, stat, unlink } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
@@ -111,12 +112,14 @@ export async function exportClipFile(
 ): Promise<ClipExportResult> {
   const mode = options.encodingMode ?? "auto";
   let source: FlvClipSource | null = null;
+  let youtube: Awaited<ReturnType<typeof youtubeInput>> | undefined;
   try {
     if (!Number.isFinite(startSecond) || !Number.isFinite(endSecond) || startSecond < 0 || endSecond <= startSecond || inputPath === outputPath) {
       return { ok: false, sizeBytes: 0, stderr: 'Invalid clip selection' };
     }
     if (options.signal?.aborted) return { ok: false, sizeBytes: 0, stderr: 'Media job cancelled' };
     source = await openFlvClipSource(inputPath);
+    if (inputPath.endsWith('.mkv')) youtube = await youtubeInput(inputPath);
     return await clipWorkQueue.run(async () => {
       const copyInput = source ? await prepareFlvClipInput(source, startSecond, endSecond, true) : null;
       if (options.signal?.aborted) throw new Error('Media job cancelled');
@@ -138,10 +141,11 @@ export async function exportClipFile(
       const sourceMoved = source && !(await access(inputPath).then(() => true, () => false));
       const inputArgs = input
         ? ['-copyts', '-f', 'flv', '-i', 'pipe:0', '-ss', String(Math.max(0, startSecond - input.baseSecond))]
-        : ['-ss', String(startSecond), '-i', sourceMoved ? 'pipe:0' : inputPath];
-      const runOptions = input ? { ...options, input: input.createStream } : sourceMoved
+        : ['-ss', String(startSecond), ...(youtube ? youtube.args : ['-i', sourceMoved ? 'pipe:0' : inputPath])];
+      const baseOptions = youtube ? { ...options, fileDescriptors: youtube.fileDescriptors } : options;
+      const runOptions = input ? { ...baseOptions, input: input.createStream } : sourceMoved
         ? { ...options, input: () => createFlvSnapshotStream(source!) }
-        : options;
+        : baseOptions;
       const frameSync = input ? await videoPassthroughArgs() : [];
       let res: { ok: boolean; code: number | null; stderr: string } = { ok: false, code: null, stderr: '' };
       let checkedBounds: Map<string, PacketBounds> | null = null;
@@ -195,5 +199,6 @@ export async function exportClipFile(
     return { ok: false, sizeBytes: 0, stderr: error instanceof Error ? error.message : String(error), actualEncoder: null, fallbackReason: null };
   } finally {
     await source?.close().catch(() => undefined);
+    await youtube?.dispose().catch(() => undefined);
   }
 }

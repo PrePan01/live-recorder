@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "kind": "preview_start",
+    "roomId": "room_01M54TDX2YD5P81WX75JY66G1E",
+    "platform": "youtube",
+    "startedAt": "2026-10-17T12:03:47.102Z",
+    "elapsedMs": 21030,
+    "outcome": "ok",
+    "stages": [
+      {
+        "name": "requested",
+        "elapsedMs": 0
+      },
+      {
+        "name": "platform_cookie_ready",
+        "elapsedMs": 15
+      },
+      {
+        "name": "stream_url_ready",
+        "elapsedMs": 16
+      },
+      {
+        "name": "ready",
+        "elapsedMs": 21030
+      }
+    ],
+    "errorCode": null
+  }
+]

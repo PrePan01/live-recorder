@@ -217,6 +217,7 @@ export class SeekService {
     if (!rec.filePath) return undefined;
     if (rec.state !== "recording" && rec.state !== "reconnecting")
       return undefined;
+    if (rec.platform === "youtube" && rec.filePath.endsWith(".mkv")) return { seekIndexState: "ready" };
     if (!rec.filePath.endsWith(".flv")) return { seekIndexState: "missing" };
     return seekIndexOf(rec.filePath, existsSync(seekSidecarPath(rec.filePath)));
   }

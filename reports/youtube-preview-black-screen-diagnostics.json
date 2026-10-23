@@ -1,0 +1,86 @@
+[
+  {
+    "id": 11,
+    "kind": "preview_start",
+    "roomId": "room_01M54TDX2YD5P81WX75JY66G1E",
+    "platform": "youtube",
+    "startedAt": "2026-10-17T11:46:03.978Z",
+    "elapsedMs": 29271,
+    "outcome": "ok",
+    "stages": [
+      {
+        "name": "requested",
+        "elapsedMs": 0
+      },
+      {
+        "name": "platform_cookie_ready",
+        "elapsedMs": 1
+      },
+      {
+        "name": "stream_url_ready",
+        "elapsedMs": 10087
+      },
+      {
+        "name": "ready",
+        "elapsedMs": 29271
+      }
+    ],
+    "errorCode": null
+  },
+  {
+    "id": 9,
+    "kind": "preview_start",
+    "roomId": "room_01M54TDX2YD5P81WX75JY66G1E",
+    "platform": "youtube",
+    "startedAt": "2026-10-17T11:44:38.255Z",
+    "elapsedMs": 27928,
+    "outcome": "ok",
+    "stages": [
+      {
+        "name": "requested",
+        "elapsedMs": 0
+      },
+      {
+        "name": "platform_cookie_ready",
+        "elapsedMs": 3
+      },
+      {
+        "name": "stream_url_ready",
+        "elapsedMs": 8437
+      },
+      {
+        "name": "ready",
+        "elapsedMs": 27928
+      }
+    ],
+    "errorCode": null
+  },
+  {
+    "id": 7,
+    "kind": "preview_start",
+    "roomId": "room_01M54TDX2YD5P81WX75JY66G1E",
+    "platform": "youtube",
+    "startedAt": "2026-10-17T11:43:29.956Z",
+    "elapsedMs": 36310,
+    "outcome": "ok",
+    "stages": [
+      {
+        "name": "requested",
+        "elapsedMs": 0
+      },
+      {
+        "name": "platform_cookie_ready",
+        "elapsedMs": 6
+      },
+      {
+        "name": "stream_url_ready",
+        "elapsedMs": 13061
+      },
+      {
+        "name": "ready",
+        "elapsedMs": 36310
+      }
+    ],
+    "errorCode": null
+  }
+]

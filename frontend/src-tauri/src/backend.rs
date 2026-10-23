@@ -791,6 +791,35 @@ pub fn fetch_ready() -> Option<AppInstance> {
     read_ready_file()
 }
 
+/// Fixed native-only operation: reuse the bundled SecretStore implementation.
+/// The credential stays in an anonymous child-process pipe, never in an HTTP
+/// response, command argument, log, or temporary file.
+pub(crate) fn read_xiaohongshu_cookie() -> Result<String, String> {
+    use std::io::Read;
+    let cwd = backend_cwd().ok_or("无法定位本地凭据运行环境")?;
+    let script = "import {KeytarSecretStore} from './dist/security/keychain-store.js';try{const cookie=await new KeytarSecretStore().get('xiaohongshu.cookie');if(!cookie)process.exit(1);process.stdout.write(cookie);}catch{process.exit(1)}";
+    let mut child = background_command(backend_cmd()).current_dir(cwd)
+        .args(["--input-type=module", "--eval", script])
+        .stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+        .map_err(|_| "无法读取小红书本地授权")?;
+    let stdout = child.stdout.take().ok_or("无法读取小红书本地授权")?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.take(32769).read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let success = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => { let _ = child.kill(); let _ = child.wait(); break false; }
+        }
+    };
+    let bytes = reader.join().ok().and_then(Result::ok).ok_or("无法读取小红书本地授权")?;
+    if !success || bytes.is_empty() || bytes.len() > 32768 { return Err("请重新授权小红书".into()); }
+    String::from_utf8(bytes).map_err(|_| "小红书授权格式无效".into())
+}
+
 pub fn fetch_health(port: u16) -> Option<Health> {
     static CLIENT: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
     let client = CLIENT

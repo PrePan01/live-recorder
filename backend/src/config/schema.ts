@@ -1,6 +1,7 @@
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
 import path from 'node:path';
+import { CHECK_INTERVAL_MIN_SEC, CHECK_INTERVAL_MAX_SEC } from './check-guard.js';
 import { validatePipelineConfig } from './pipeline.js';
 
 /** 配置校验（阶段 B 手写检查；阶段 B-E4 路由层补 JSON Schema）。 */
@@ -22,8 +23,8 @@ export function validateSettings(input: unknown): AppSettings {
   if (s.recordingFormat !== undefined && s.recordingFormat !== 'source_flv' && s.recordingFormat !== 'mp4_after') {
     throw new AppError('CONFIG_INVALID', '录制格式仅支持 source_flv / mp4_after');
   }
-  if (s.quality !== undefined && s.quality !== 'original' && s.quality !== '1080p' && s.quality !== '720p' && s.quality !== '360p') {
-    throw new AppError('CONFIG_INVALID', 'quality 仅支持 original / 1080p / 720p / 360p');
+  if (s.quality !== undefined && s.quality !== 'original' && s.quality !== '1080p' && s.quality !== '720p' && s.quality !== '540p' && s.quality !== '360p') {
+    throw new AppError('CONFIG_INVALID', 'quality 仅支持 original / 1080p / 720p / 540p / 360p');
   }
   if (s.autoRecord !== undefined && typeof s.autoRecord !== 'boolean') {
     throw new AppError('CONFIG_INVALID', 'autoRecord 必须为布尔值');
@@ -47,8 +48,12 @@ export function validateSettings(input: unknown): AppSettings {
     throw new AppError('CONFIG_INVALID', '全局录制按钮大小需在 20-100px 之间');
   }
   const ci = s.checkIntervalSec;
-  if (!ci || [ci.default, ci.bilibili, ci.douyin].some(value => !Number.isInteger(value) || typeof value !== 'number' || value < 10)) {
-    throw new AppError('CONFIG_INVALID', 'checkIntervalSec 需包含 default/bilibili/douyin，且均为不小于 10 秒的整数');
+  const validInterval = (value: unknown) =>
+    typeof value === 'number' && Number.isSafeInteger(value) &&
+    value >= CHECK_INTERVAL_MIN_SEC && value <= CHECK_INTERVAL_MAX_SEC;
+  if (!ci || ![ci.default, ci.bilibili, ci.douyin].every(validInterval) ||
+      [ci.youtube, ci.xiaohongshu].some(value => value !== undefined && !validInterval(value))) {
+    throw new AppError('CONFIG_INVALID', `检测间隔需为 ${CHECK_INTERVAL_MIN_SEC}~${CHECK_INTERVAL_MAX_SEC} 秒的整数`);
   }
   const r = s.retry;
   if (!r || !Array.isArray(r.delaysSeconds) || r.delaysSeconds.length === 0 || typeof r.maxAttempts !== 'number' || r.maxAttempts < 0) {

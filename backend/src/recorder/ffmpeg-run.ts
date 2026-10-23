@@ -24,6 +24,8 @@ export interface FfmpegRunResult {
 }
 
 export interface FfmpegRunOptions {
+  /** Read-only inherited handles for stable snapshots on volumes without hard links. */
+  fileDescriptors?: number[];
   encodingMode?: "auto" | "software";
   onEncoder?: (outcome: import("./hw-encode.js").EncodeOutcome) => void;
   /** 长步骤进度回调（ffmpeg -progress 键值行解析）：outTimeMs=已处理媒体时长，speed=实时倍率（可能未知）。 */
@@ -54,7 +56,7 @@ export function runFfmpegTracked(
     const child = spawn(
       resolveBin("ffmpeg"),
       ["-nostats", "-progress", "pipe:1", ...args],
-      { windowsHide: true, stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"] },
+      { windowsHide: true, stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe", ...(options.fileDescriptors ?? [])] },
     );
     const untrack = trackFfmpeg(child);
     let input: Readable | undefined;
