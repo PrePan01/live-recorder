@@ -31,6 +31,23 @@ import { exportClipFile } from "../../src/recorder/clip-export.js";
 import { convertToMp4 } from "../../src/recorder/pipeline-ffmpeg.js";
 import { reserveRecordingPath } from "../../src/storage/file-organizer.js";
 
+function createCodecFixture(file: string, encoder: string): void {
+  execFileSync(
+    createRequire(import.meta.url)("@ffmpeg-installer/ffmpeg").path,
+    [
+      "-v", "error",
+      "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10",
+      "-f", "lavfi", "-i", "sine=frequency=440",
+      "-t", "1",
+      "-c:v", encoder, "-cpu-used", "8", "-threads", "1",
+      "-c:a", "libopus",
+      // The bundled Linux FFmpeg marks libaom-av1 as experimental.
+      "-strict", "-2",
+      file,
+    ],
+  );
+}
+
 describe("YouTube original-media lifecycle", () => {
   let directory: string, fixture: Buffer;
   beforeAll(async () => {
@@ -227,32 +244,7 @@ describe("YouTube original-media lifecycle", () => {
     "preserves %s originals while generating an H.264 preview",
     async (encoder, codec) => {
       const file = path.join(directory, `${codec}.mkv`);
-      execFileSync(
-        createRequire(import.meta.url)("@ffmpeg-installer/ffmpeg").path,
-        [
-          "-v",
-          "error",
-          "-f",
-          "lavfi",
-          "-i",
-          "testsrc2=size=160x90:rate=10",
-          "-f",
-          "lavfi",
-          "-i",
-          "sine=frequency=440",
-          "-t",
-          "1",
-          "-c:v",
-          encoder!,
-          "-cpu-used",
-          "8",
-          "-threads",
-          "1",
-          "-c:a",
-          "libopus",
-          file,
-        ],
-      );
+      createCodecFixture(file, encoder!);
       const parser = new MatroskaLiveParser();
       parser.push(await readFile(file));
       expect(parser.canCopyToFlv).toBe(false);
@@ -577,8 +569,10 @@ describe("YouTube original-media lifecycle", () => {
   });
   it.each(['vp9', 'av1'])('keeps %s and Opus through the streaming remux stage', async codec => {
     if (process.platform === 'win32') return;
+    const original = path.join(directory, `${codec}-remux-original.mkv`);
+    createCodecFixture(original, codec === 'av1' ? 'libaom-av1' : 'libvpx-vp9');
     const source = path.join(directory, `${codec}-fragmented.mp4`);
-    execFileSync(resolveBin('ffmpeg'), ['-v', 'error', '-i', path.join(directory, `${codec}.mkv`), '-c', 'copy', '-strict', '-2',
+    execFileSync(resolveBin('ffmpeg'), ['-v', 'error', '-i', original, '-c', 'copy', '-strict', '-2',
       '-movflags', '+frag_keyframe+delay_moov+default_base_moof', '-frag_duration', '1000000', source]);
     const script = path.join(directory, `${codec}-extractor`);
     await writeFile(script, `#!${process.execPath}\nif(process.argv.some(a=>a.includes('aac_adtstoasc'))) process.exit(4);process.stdout.write(require('fs').readFileSync(${JSON.stringify(source)}));\n`);
