@@ -1,6 +1,7 @@
+import { youtubeManifest } from "../recorder/youtube-media.js";
 import { hasPendingRecordingBuffer } from '../recorder/buffered-writer.js';
 import { mkdir, stat, unlink } from 'node:fs/promises';
-import { statSync } from 'node:fs';
+import { statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Services } from './services.js';
 import type { PipelineConfig } from '../types/index.js';
@@ -64,6 +65,10 @@ export class PipelineManager {
     if (recording?.filePath && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, recording.filePath)) {
       this.services.recordings.update(recordingId, { pipelineStatus: 'failed' });
       this.log('buffer-pending', recordingId);
+      return;
+    }
+    if (recording?.platform === "youtube" && recording.filePath && existsSync(youtubeManifest(recording.filePath))) {
+      this.services.recordings.update(recordingId, { pipelineStatus: 'failed' });
       return;
     }
     const config = this.pipelineConfig();
@@ -299,7 +304,7 @@ export class PipelineManager {
       const metadata = {
         ...(this.services.recordings.get(recording.id)?.metadata ?? {}),
         durationMs: await probeDurationMs(recording.filePath),
-        segmentCount: 1,
+        segmentCount: recording.platform === "youtube" ? (recording.metadata?.segmentCount ?? 1) : 1,
         quality: recording.quality ?? null,
         size: st.size,
       };

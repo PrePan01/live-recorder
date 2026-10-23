@@ -2,7 +2,7 @@ import type { ErrorObject } from './error.js';
 import type { Quality } from './recording.js';
 import type { Tag } from './tag.js';
 
-export type Platform = 'bilibili' | 'douyin';
+export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu' | 'youtube';
 
 export type MonitorState =
   | 'idle'
@@ -20,19 +20,28 @@ export type LiveStatus = 'live' | 'offline' | 'restricted';
 export type TitleSource = 'adapter' | 'fallback' | 'manual' | 'placeholder';
 
 export interface Room {
+  /** 生效策略（值+来源）：后端唯一出口解析后随房间回传，执行侧同源。 */
+  effective?: EffectiveRoomPolicy;
   id: string;
   platform: Platform;
   url: string;
+  /** Current broadcast page, including resolved links for legacy profile records. */
+  liveRoomUrl?: string;
   displayName: string;
   /** 主播头像 CDN 地址（平台检测周期顺带写入，历史房间可能为 null；UI 需兑底）。 */
   liveCoverUrl?: string | null;
   avatarUrl: string | null;
+  /** null inherits the current platform/global setting. */
+  checkIntervalSec?: number | null;
+  quality?: Quality | null;
   enabled: boolean;
   favorited: boolean;
   /** 是否单独设置自动录制：未设置(undefined/null)=继承全局 settings.autoRecord；false=该房间仅检测不自动录。 */
   autoRecord: boolean | null;
-  /** 是否在该直播间离线转开播时发送桌面提醒；默认关闭。 */
+  /** 是否订阅开播提醒；桌面和邮件渠道由全局通知偏好决定。 */
   liveNotificationEnabled: boolean;
+  /** 历史字段，仅兼容旧数据，不参与通知控制。 */
+  liveEmailNotificationEnabled?: boolean;
   /** 弹幕采集覆盖：未设置(null/undefined)=继承全局 settings.danmaku.enabled；false=该房间不采。 */
   danmakuEnabled?: boolean | null;
   /** 最近一次检测的直播状态：live/offline/restricted，未检测过为 null。 */
@@ -71,4 +80,20 @@ export interface Room {
 export interface ActiveRecordingInfo {
   recordingId: string;
   startedAt: string;
+}
+
+/** 生效值来源=最近显式覆盖层（谁定的），与数值是否巧合无关。 */
+export type PolicySource = "room" | "tag" | "global";
+
+export interface EffectiveValue<T> {
+  value: T;
+  source: PolicySource;
+}
+
+/** 继承项生效值（值+来源）：由后端唯一出口解析，执行侧与接口回传同一份规则。 */
+export interface EffectiveRoomPolicy {
+  checkIntervalSec: EffectiveValue<number>;
+  quality: EffectiveValue<Quality>;
+  autoRecord: EffectiveValue<boolean>;
+  danmakuEnabled: EffectiveValue<boolean>;
 }

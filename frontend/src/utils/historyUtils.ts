@@ -4,6 +4,7 @@ const QUALITY_LABEL: Record<string, string> = {
   original: "原画",
   "1080p": "1080p",
   "720p": "720p",
+  "540p": "540p",
   "360p": "360p",
 };
 function phaseOfUpload(progress: number): "sending" | "cloud" | "verifying" {

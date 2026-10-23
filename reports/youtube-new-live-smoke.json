@@ -1,0 +1,127 @@
+{
+  "roomId": "room_01M55A1HY6ZYMYTEE86P9CQMVH",
+  "recordingId": "rec_01M55A3JF0CFFF58QVQHMBQ9H8",
+  "file": "Lofi_Girl_2026-10-18_00_11_19.mkv",
+  "state": "completed",
+  "bytes": 353084,
+  "metadata": {
+    "durationMs": 3000,
+    "segmentCount": 1,
+    "quality": "720p",
+    "size": 353084,
+    "source": {
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "V_MPEG4/ISO/AVC",
+      "audioCodec": "A_AAC"
+    }
+  },
+  "received": {
+    "preview": 417591,
+    "recording": 327417,
+    "resumed": 446290
+  },
+  "playbackBytes": 34031,
+  "chatMessages": 79,
+  "highlightId": "rec_01M55A385DVHC7MRCNKDN6HC57",
+  "diagnostics": [
+    {
+      "id": 3,
+      "kind": "preview_start",
+      "roomId": "room_01M55A1HY6ZYMYTEE86P9CQMVH",
+      "platform": "youtube",
+      "startedAt": "2026-10-17T16:11:08.961Z",
+      "elapsedMs": 32726,
+      "outcome": "ok",
+      "stages": [
+        {
+          "name": "requested",
+          "elapsedMs": 0
+        },
+        {
+          "name": "platform_cookie_ready",
+          "elapsedMs": 1
+        },
+        {
+          "name": "stream_url_ready",
+          "elapsedMs": 10430
+        },
+        {
+          "name": "ready",
+          "elapsedMs": 32726
+        }
+      ],
+      "errorCode": null
+    },
+    {
+      "id": 2,
+      "kind": "recording_start",
+      "roomId": "room_01M55A1HY6ZYMYTEE86P9CQMVH",
+      "platform": "youtube",
+      "startedAt": "2026-10-17T16:11:08.951Z",
+      "elapsedMs": 31646,
+      "outcome": "ok",
+      "stages": [
+        {
+          "name": "requested",
+          "elapsedMs": 0
+        },
+        {
+          "name": "highlight_buffer_stopped",
+          "elapsedMs": 0
+        },
+        {
+          "name": "storage_checks_ready",
+          "elapsedMs": 1
+        },
+        {
+          "name": "platform_cookie_ready",
+          "elapsedMs": 5
+        },
+        {
+          "name": "stream_url_ready",
+          "elapsedMs": 10440
+        },
+        {
+          "name": "recording_file_ready",
+          "elapsedMs": 10441
+        },
+        {
+          "name": "ready",
+          "elapsedMs": 31646
+        }
+      ],
+      "errorCode": null
+    },
+    {
+      "id": 1,
+      "kind": "preview_start",
+      "roomId": "room_01M55A1HY6ZYMYTEE86P9CQMVH",
+      "platform": "youtube",
+      "startedAt": "2026-10-17T16:10:38.040Z",
+      "elapsedMs": 24583,
+      "outcome": "ok",
+      "stages": [
+        {
+          "name": "requested",
+          "elapsedMs": 0
+        },
+        {
+          "name": "platform_cookie_ready",
+          "elapsedMs": 0
+        },
+        {
+          "name": "stream_url_ready",
+          "elapsedMs": 0
+        },
+        {
+          "name": "ready",
+          "elapsedMs": 24583
+        }
+      ],
+      "errorCode": null
+    }
+  ],
+  "publicVideoId": "rFZHOHl-L8A",
+  "processExitCode": 0
+}

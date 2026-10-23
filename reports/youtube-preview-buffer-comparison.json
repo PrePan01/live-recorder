@@ -1,0 +1,15 @@
+{
+  "label": "player-io-trace",
+  "metadataMs": 3754,
+  "firstBackendPreviewMs": 7369,
+  "chunks": 84,
+  "before": {
+    "firstInputMs": 7369,
+    "extraWaitMs": 0
+  },
+  "after": {
+    "firstInputMs": 7369,
+    "extraWaitMs": 0
+  },
+  "savedParserWaitMs": 0
+}

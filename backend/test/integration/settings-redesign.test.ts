@@ -17,6 +17,30 @@ function setup() {
   return { services, app };
 }
 describe("settings redesign API", () => {
+  it("accepts 1–3600 seconds for every platform and rejects invalid writes atomically", async () => {
+    const { services, app } = setup();
+    try {
+      for (const platform of ["default", "bilibili", "douyin", "xiaohongshu", "youtube"]) {
+        for (const value of [1, 9, 3600]) {
+          const response = await app.inject({ method: "PUT", url: "/api/v1/settings", headers,
+            payload: { checkIntervalSec: { [platform]: value } } });
+          expect(response.statusCode).toBe(200);
+          expect(services.settings.load()!.checkIntervalSec[platform as "default"]).toBe(value);
+        }
+        for (const value of [0, 3601, 1.5, "60"]) {
+          const before = services.settings.load();
+          const response = await app.inject({ method: "PUT", url: "/api/v1/settings", headers,
+            payload: { checkIntervalSec: { [platform]: value } } });
+          expect(response.statusCode).toBe(422);
+          expect(services.settings.load()).toEqual(before);
+        }
+      }
+    } finally {
+      await app.close();
+      services.db.close();
+    }
+  });
+
   it("rejects fractional recording concurrency and platform intervals without persisting them", async () => {
     const { services, app } = setup();
     for (const patch of [

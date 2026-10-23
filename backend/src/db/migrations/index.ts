@@ -1,3 +1,4 @@
+import { saveXiaohongshuSource } from '../../platform/xiaohongshu-source-store.js';
 import type { DB } from "../connection.js";
 
 export interface Migration {
@@ -6,6 +7,8 @@ export interface Migration {
   sql?: string;
   /** 需要幂等/条件判断的迁移（如 ALTER 加列前 PRAGMA 判存在）。与 sql 二选一。 */
   up?: (db: DB) => void;
+  /** Table rebuilds must disable FK actions before opening the transaction. */
+  foreignKeysOff?: boolean;
 }
 
 /** 迁移脚本注册表：按版本号顺序执行，幂等（schema_version 记录已应用版本）。 */
@@ -1011,6 +1014,53 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
       CREATE INDEX idx_clip_batches_recording ON clip_batches(recording_id, created_at, id);
       CREATE INDEX idx_clip_batches_created ON clip_batches(created_at, id);`);
   } },
+  { version: 50, foreignKeysOff: true, up: db => {
+    const original = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='rooms'").get() as { sql: string };
+    const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='rooms' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
+    const create = original.sql.replace(/^CREATE TABLE\s+["`\[]?rooms["`\]]?/i, 'CREATE TABLE rooms_xhs_upgrade')
+      .replace(/CHECK\s*\(platform IN \('bilibili', 'douyin'\)\)/i, "CHECK(platform IN ('bilibili', 'douyin', 'xiaohongshu'))");
+    if (create === original.sql || !create.includes("'xiaohongshu'")) throw new Error('rooms platform constraint could not be upgraded');
+    const columns = (db.prepare('PRAGMA table_info(rooms)').all() as Array<{ name: string }>).map(column => `"${column.name.replaceAll('"', '""')}"`).join(',');
+    db.exec(create);
+    db.exec(`INSERT INTO rooms_xhs_upgrade (${columns}) SELECT ${columns} FROM rooms`);
+    db.exec('DROP TABLE rooms; ALTER TABLE rooms_xhs_upgrade RENAME TO rooms');
+    for (const index of indexes) db.exec(index.sql);
+    db.exec('CREATE TABLE xiaohongshu_sources (profile_url TEXT PRIMARY KEY, room_url TEXT NOT NULL)');
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key validation failed after rooms upgrade');
+  } },
+  { version: 51, up: db => ensureColumn(db, 'xiaohongshu_sources', 'profile_request_url', 'profile_request_url TEXT') },
+  { version: 52, up: db => {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_xiaohongshu_source_room ON xiaohongshu_sources(room_url)');
+    const sources = db.prepare('SELECT profile_url,room_url FROM xiaohongshu_sources').all() as Array<{ profile_url: string; room_url: string }>;
+    for (const source of sources) saveXiaohongshuSource(db, source.profile_url, source.room_url);
+  } },
+  { version: 53, up: db => {
+    ensureColumn(db, 'rooms', 'check_interval_sec', 'check_interval_sec INTEGER');
+    ensureColumn(db, 'rooms', 'quality', 'quality TEXT');
+  } },
+  { version: 54, up: db => {
+    ensureColumn(db, 'rooms', 'live_email_notification_enabled', 'live_email_notification_enabled INTEGER NOT NULL DEFAULT 0');
+  } },
+  { version: 55, up: db => {
+    // 将旧版任一渠道订阅合并为开播提醒，并清空废弃渠道位，避免后续备份再次开启已关闭的提醒。
+    db.exec(`UPDATE rooms SET
+      live_notification_enabled = CASE WHEN live_notification_enabled = 1 OR live_email_notification_enabled = 1 THEN 1 ELSE 0 END,
+      live_email_notification_enabled = 0`);
+  } },
+  { version: 56, foreignKeysOff: true, up: db => {
+    const original = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='rooms'").get() as { sql: string };
+    const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='rooms' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
+    const create = original.sql.replace(/^CREATE TABLE\s+["`\[]?rooms["`\]]?/i, 'CREATE TABLE rooms_youtube_upgrade')
+      .replace(/CHECK\s*\(platform IN \([^)]*\)\)/i, "CHECK(platform IN ('bilibili', 'douyin', 'xiaohongshu', 'youtube'))");
+    if (!create.includes("'youtube'")) throw new Error('rooms platform constraint could not be upgraded');
+    const columns = (db.prepare('PRAGMA table_info(rooms)').all() as Array<{ name: string }>).map(column => `"${column.name.replaceAll('"', '""')}"`).join(',');
+    db.exec(create);
+    db.exec(`INSERT INTO rooms_youtube_upgrade (${columns}) SELECT ${columns} FROM rooms`);
+    db.exec('DROP TABLE rooms; ALTER TABLE rooms_youtube_upgrade RENAME TO rooms');
+    for (const index of indexes) db.exec(index.sql);
+    db.exec('CREATE TABLE youtube_sources (input_url TEXT PRIMARY KEY, channel_url TEXT NOT NULL)');
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key validation failed after YouTube upgrade');
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */
@@ -1092,7 +1142,9 @@ export function runMigrations(db: DB): number {
   let count = 0;
   for (const m of MIGRATIONS) {
     if (applied.has(m.version)) continue;
-    db.transaction(() => {
+    const foreignKeys = db.pragma('foreign_keys', { simple: true });
+    if (m.foreignKeysOff) db.pragma('foreign_keys = OFF');
+    try { db.transaction(() => {
       if (m.up) {
         m.up(db);
       } else if (m.sql) {
@@ -1101,7 +1153,7 @@ export function runMigrations(db: DB): number {
       db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(
         m.version,
       );
-    })();
+    })(); } finally { if (m.foreignKeysOff) db.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`); }
     count += 1;
   }
   return count;

@@ -1,7 +1,14 @@
-import type { BilibiliCookieStatus, DouyinCookieStatus } from '../api/settings';
+import type {
+  BilibiliCookieStatus,
+  DouyinCookieStatus,
+  XiaohongshuCookieStatus,
+} from '../api/settings';
 
-/** 平台登录态探测结果（两个平台口径一致）。 */
-export type CookieProbeStatus = BilibiliCookieStatus | DouyinCookieStatus;
+/** 平台登录态探测结果（各平台口径一致）。 */
+export type CookieProbeStatus =
+  | BilibiliCookieStatus
+  | DouyinCookieStatus
+  | XiaohongshuCookieStatus;
 
 /** 凭证在界面上呈现的状态。 */
 export type CredentialStatus = 'authorized' | 'invalid' | 'unauthorized';

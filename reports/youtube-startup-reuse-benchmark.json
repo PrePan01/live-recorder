@@ -1,0 +1,188 @@
+[
+  {
+    "experiment": "latest-segment-experiment",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "variant": "baseline",
+        "firstMs": 16248,
+        "decoded": true
+      },
+      {
+        "variant": "edge",
+        "error": "Error: NETWORK_UNAVAILABLE"
+      }
+    ]
+  },
+  {
+    "experiment": "same-source-direct-ffmpeg-experiment",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "variant": "direct",
+        "firstMs": 11654,
+        "decoded": true
+      },
+      {
+        "variant": "baseline",
+        "firstMs": 15180,
+        "decoded": true
+      }
+    ]
+  },
+  {
+    "experiment": "production-direct-selected-hls",
+    "publicVideoId": "rFZHOHl-L8A",
+    "results": [
+      {
+        "mode": "recording",
+        "quality": "1080p",
+        "label": "direct-selected-hls",
+        "metadataMs": 10963,
+        "reusedExtraction": true,
+        "source": {
+          "width": 1920,
+          "height": 1080,
+          "videoCodec": "V_MPEG4/ISO/AVC",
+          "audioCodec": "A_AAC"
+        },
+        "nativeMs": 21329,
+        "previewMs": 21420,
+        "previewBytes": 764831,
+        "media": [
+          {
+            "file": "recording.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          },
+          {
+            "file": "capture.mkv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "mode": "preview",
+        "quality": "1080p",
+        "label": "direct-selected-hls",
+        "metadataMs": 0,
+        "reusedExtraction": true,
+        "previewMs": 14099,
+        "previewBytes": 680582,
+        "media": [
+          {
+            "file": "preview.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "experiment": "production-direct-selected-hls-bundled-ffmpeg",
+    "publicVideoId": "rFZHOHl-L8A",
+    "processExitCode": 0,
+    "results": [
+      {
+        "mode": "recording",
+        "quality": "1080p",
+        "label": "direct-selected-hls-bundled",
+        "metadataMs": 8722,
+        "reusedExtraction": true,
+        "source": {
+          "width": 1920,
+          "height": 1080,
+          "videoCodec": "V_MPEG4/ISO/AVC",
+          "audioCodec": "A_AAC"
+        },
+        "nativeMs": 24766,
+        "previewMs": 24836,
+        "previewBytes": 1548712,
+        "media": [
+          {
+            "file": "recording.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          },
+          {
+            "file": "capture.mkv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "mode": "preview",
+        "quality": "1080p",
+        "label": "direct-selected-hls-bundled",
+        "metadataMs": 9102,
+        "reusedExtraction": true,
+        "previewMs": 41192,
+        "previewBytes": 735959,
+        "media": [
+          {
+            "file": "preview.flv",
+            "decoded": true,
+            "streams": [
+              {
+                "codec": "h264",
+                "width": 1920,
+                "height": 1080
+              },
+              {
+                "codec": "aac"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

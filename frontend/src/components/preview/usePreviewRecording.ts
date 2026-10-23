@@ -61,7 +61,7 @@ export function usePreviewRecording(room: Room) {
     void startRoomRecording(room.id).catch((e) =>
       message.error(
         e instanceof ApiError
-          ? describeError(e.code, e.message)
+          ? describeError(e.code, e.message, room.platform)
           : "录制请求失败",
       ),
     );

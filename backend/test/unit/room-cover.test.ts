@@ -46,6 +46,12 @@ function setup() {
 }
 
 describe('cover retrieval', () => {
+  it('accepts YouTube covers and offline channel avatars through the shared image reader', async () => {
+    const youtube = { ...room, platform: 'youtube', liveCoverUrl: 'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg', avatarUrl: 'https://yt3.googleusercontent.com/avatar' } as Room;
+    expect((await fetchRoomCover(youtube, fetcher)).bytes).toEqual(png);
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({ Referer: 'https://www.youtube.com/' });
+    expect((await fetchRoomCover({ ...youtube, lastLiveStatus: 'offline' }, fetcher, 'avatar')).bytes).toEqual(png);
+  });
   it('returns original bytes and checks the image signature, with a platform Referer', async () => {
     expect(await fetchRoomCover(room, fetcher)).toEqual({
       bytes: png,
@@ -54,6 +60,21 @@ describe('cover retrieval', () => {
     });
     expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
       Referer: 'https://live.bilibili.com/',
+    });
+  });
+  it('accepts Xiaohongshu CDN covers and sends the Xiaohongshu Referer', async () => {
+    const xhsRoom = {
+      ...room,
+      platform: 'xiaohongshu',
+      liveCoverUrl: 'https://sns-webpic-qc.xhscdn.com/cover.png',
+    } as Room;
+    expect(await fetchRoomCover(xhsRoom, fetcher)).toEqual({
+      bytes: png,
+      type: 'image/png',
+      extension: 'png',
+    });
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Referer: 'https://www.xiaohongshu.com/',
     });
   });
   it.each([
@@ -128,6 +149,19 @@ describe('cover retrieval', () => {
 });
 
 describe('cover routes', () => {
+  it('serves a stored YouTube avatar without requiring a live broadcast', async () => {
+    const { services } = setup();
+    const created = services.rooms.create({ platform: 'youtube', url: 'https://youtube.com/@creator', displayName: 'Creator' });
+    services.rooms.update(created.id, { avatarUrl: 'https://yt3.ggpht.com/avatar' });
+    const app = Fastify();
+    registerRoomCoverRoutes(app, services, { fetcher });
+    try {
+      const response = await app.inject(`/api/v1/rooms/${created.id}/avatar`);
+      expect(response.statusCode).toBe(200);
+      expect(response.rawPayload).toEqual(png);
+      expect(response.headers['cache-control']).toBe('private, max-age=300');
+    } finally { await app.close(); }
+  });
   it('previews and downloads original bytes with the appropriate headers', async () => {
     const { services, id } = setup();
     const app = Fastify();

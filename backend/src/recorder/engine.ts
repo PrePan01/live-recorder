@@ -1,8 +1,10 @@
 import type { ErrorObject } from "../types/index.js";
+import type { YoutubeMediaSource } from "../platform/adapter.js";
 
 export interface StreamInput {
   url: string;
-  format: "flv" | "hls";
+  format: "flv" | "hls" | "youtube";
+  youtube?: YoutubeMediaSource;
   headers?: Record<string, string>;
 }
 
@@ -22,6 +24,7 @@ export interface RecordingResumeOptions {
 }
 
 export type RecordingEvent =
+  | { type: "media_info"; source: { width: number; height: number; videoCodec: string; audioCodec: string } }
   | { type: "file_created"; filePath: string }
   | { type: "data"; chunk: Buffer; previewForwarded?: boolean; mediaTimestampMs?: number; receivedAt?: number }
   | { type: "preview_data"; chunk: Buffer; recordingOffsetMs?: number | null }
@@ -32,6 +35,7 @@ export type RecordingEvent =
 export interface RecordingEngine {
   /** 在网络块到达时采样，独立于归一化、暂存及写盘进度。 */
   setDownloadObserver?(observer: (bytes: number) => void): void;
+  setStartupObserver?(observer: (stage: string) => void): void;
   /** 分片流的预期数据间隔；连续流返回 0。 */
   expectedDataIntervalMs?(): number;
   /** outputPath 传 null 时为纯预览模式：拉流只产出 data 事件（预览转发），不写文件、不发 file_created。 */
@@ -41,6 +45,11 @@ export interface RecordingEngine {
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent>;
   stop(): Promise<void>;
+  setPreviewActive?(active: boolean): void;
   /** Shared preview attaches/detaches recording without replacing its source. */
   setRecordingActive?(active: boolean): void;
+  /** Attach a recorder to an already running native source without reconnecting. */
+  forkRecording?(quality: string): RecordingEngine | null;
+  hasRecordingConsumers?(): boolean;
+  recordingPreviewOffsetMs?(): number | null;
 }

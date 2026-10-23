@@ -136,8 +136,12 @@ describe('QA stage-B exit: security', () => {
     await app.close();
   });
 
-  it('v1.3: no/expired cookie on restricted douyin room maps to PLATFORM_ACCESS_RESTRICTED + warning alert', async () => {
+  it.each([
+    { cookie: undefined, label: 'missing cookie', immediate: true },
+    { cookie: 'sessionid=authorized', label: 'configured cookie', immediate: false },
+  ])('v1.3: restricted douyin room with $label maps to PLATFORM_ACCESS_RESTRICTED + warning alert (immediate=$immediate)', async ({ cookie, immediate }) => {
     const services = newServices();
+    if (cookie) await services.secretStore.set('douyin.cookie', cookie);
     const { app } = buildApp(services);
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-qa-cookie-rest-'));
     const restrictedOnce = () =>
@@ -163,16 +167,17 @@ describe('QA stage-B exit: security', () => {
     });
     const roomId = created.json().room.id;
 
-    // 三票门：同房同码、票距≥60s，满 3 票才上屏+告警。
-    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
-    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
-    restrictedOnce();
-    (services.clock as FakeClock).advance(60_001);
-    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
-    expect(services.rooms.get(roomId)!.monitorState).not.toBe('failed');
-    restrictedOnce();
-    (services.clock as FakeClock).advance(60_001);
-    await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+    // 缺少授权立即提示；已有 Cookie 的普通受限响应仍需同房同码、票距≥60s 的三票门。
+    for (let vote = 1; vote <= 3; vote += 1) {
+      restrictedOnce();
+      const checked = await app.inject({ method: 'POST', url: `/api/v1/rooms/${roomId}/check`, headers: HOST });
+      expect(checked.statusCode).toBe(200);
+      const shouldFail = immediate || vote === 3;
+      expect(services.rooms.get(roomId)!.monitorState).toBe(shouldFail ? 'failed' : 'idle');
+      expect(services.rooms.get(roomId)!.lastError?.code ?? null).toBe(shouldFail ? 'PLATFORM_ACCESS_RESTRICTED' : null);
+      expect(services.alerts.list().filter((a) => a.errorCode === 'PLATFORM_ACCESS_RESTRICTED')).toHaveLength(shouldFail ? 1 : 0);
+      if (vote < 3) (services.clock as FakeClock).advance(60_001);
+    }
     const room = services.rooms.get(roomId)!;
     expect(room.monitorState).toBe('failed');
     expect(room.lastError?.code).toBe('PLATFORM_ACCESS_RESTRICTED');

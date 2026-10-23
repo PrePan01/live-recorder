@@ -11,7 +11,7 @@ describe('config defaults', () => {
     expect(DEFAULT_DISK_GUARD.minFreePercent).toBe(10);
     expect(DEFAULT_SETTINGS.maxConcurrentRecordings).toBe(2);
     expect(DEFAULT_SETTINGS.autoRecord).toBe(false);
-    expect(DEFAULT_SETTINGS.checkIntervalSec).toEqual({ default: 60, bilibili: 60, douyin: 120 });
+    expect(DEFAULT_SETTINGS.checkIntervalSec).toEqual({ default: 60, bilibili: 60, douyin: 120, youtube: 120, xiaohongshu: 120 });
     expect(DEFAULT_SETTINGS.dedupeWindowMinutes).toBe(30);
   });
 
@@ -55,7 +55,7 @@ describe('error code mapping', () => {
       expect(() => validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: bad as never })).toThrowError(AppError);
     }
     // 合法 quality 通过
-    for (const ok of ['original', '1080p', '720p', '360p']) {
+    for (const ok of ['original', '1080p', '720p', '540p', '360p']) {
       const s = validateSettings({ ...DEFAULT_SETTINGS, recordingDirectory: '/tmp/r', quality: ok as never });
       expect(s.quality).toBe(ok);
     }

@@ -1,6 +1,7 @@
 import {
   DndContext,
   PointerSensor,
+  KeyboardSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -9,6 +10,7 @@ import {
 import {
   SortableContext,
   rectSortingStrategy,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -27,7 +29,7 @@ import { reorderVisibleRooms } from "../utils/roomOrder";
 const INTERACTIVE_SELECTOR =
   "button, a, input, select, textarea, [role=button], [contenteditable=true], .ant-select, .ant-checkbox-wrapper, .ant-switch";
 
-type SortMode = "card" | "table";
+type SortMode = "card" | "table" | "management";
 const SortContext = createContext<{ disabled: boolean }>({ disabled: false });
 
 export function RoomSortableProvider({
@@ -47,6 +49,7 @@ export function RoomSortableProvider({
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 3 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const visibleIds = visibleRooms.map((room) => room.id);
 
@@ -112,6 +115,7 @@ export function useRoomSortableItem(id: string, mode: SortMode) {
     const origin = event.target as HTMLElement;
     const interactive = origin.closest(INTERACTIVE_SELECTOR);
     if (interactive && interactive !== event.currentTarget) return;
+    if (mode === "management" && !origin.closest(".lr-room-policy-drag")) return;
     if (mode === "card" && !origin.closest(".ant-card-head")) return;
     if (mode === "table" && !origin.closest("tr, td")) return;
     listeners?.onPointerDown?.(event);

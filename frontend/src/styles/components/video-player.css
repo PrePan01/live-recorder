@@ -18,6 +18,84 @@
   padding: 24px;
 }
 
+/* 直播加载进度卡：孟菲斯实色拼贴——黑描边+零投影+撞色，深浅主题全走 lr tokens。 */
+.lr-video-player__progress {
+  width: min(340px, 84%);
+  padding: 16px 20px;
+  border: 2px solid var(--lr-ink);
+  border-top: 5px solid var(--lr-pink);
+  border-radius: 0;
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  transform: rotate(-1deg);
+}
+
+.lr-video-player__progress-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--lr-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lr-video-player__progress-heading strong {
+  padding: 1px 8px;
+  border: 2px solid var(--lr-ink);
+  background: var(--lr-yellow);
+  color: #000;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  white-space: nowrap;
+  transform: rotate(2deg);
+}
+
+.lr-video-player__progress-note {
+  margin-top: 8px;
+  color: var(--lr-muted);
+  font-size: 12px;
+}
+
+/* 进度轨：方头黑框+实色填充，覆盖 antd 圆角默认值。 */
+.lr-video-player__progress .ant-progress {
+  margin-top: 12px;
+}
+
+.lr-video-player__progress .ant-progress-rail {
+  height: 16px !important;
+  border: 2px solid var(--lr-ink);
+  border-radius: 0 !important;
+}
+
+.lr-video-player__progress .ant-progress-track {
+  height: 100% !important;
+  border-radius: 0 !important;
+}
+
+/* 高亮层以左端为起点展开，避免默认的中心缩放效果。 */
+.lr-video-player__progress .ant-progress-track::after {
+  transform-origin: left center;
+  animation-name: lr-preview-progress-active;
+}
+
+@keyframes lr-preview-progress-active {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.1;
+  }
+  20% {
+    transform: scaleX(0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
 .lr-video-player__video {
   width: 100%;
 }

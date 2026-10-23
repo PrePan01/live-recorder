@@ -8,6 +8,21 @@ import {
   validateValue,
 } from "./catalog";
 describe("settings catalog", () => {
+  it("小红书设置项与抖音/B站同口径可搜可校验", () => {
+    expect(
+      searchSettings("cookie", false, () => false).map((d) => d.id),
+    ).toEqual(expect.arrayContaining(["xiaohongshu-cookie"]));
+    expect(
+      searchSettings("小红书", false, () => false).map((d) => d.id),
+    ).toEqual(expect.arrayContaining(["xiaohongshu-cookie", "interval-xiaohongshu"]));
+    expect(
+      searchSettings("检测", true, (id) => id === "interval-xiaohongshu").map(
+        (d) => d.id,
+      ),
+    ).toEqual(["interval-xiaohongshu"]);
+    expect(validateValue(BY_ID["interval-xiaohongshu"], 0)).toBeTruthy();
+    expect(validateValue(BY_ID["interval-xiaohongshu"], 120)).toBeUndefined();
+  });
   it("finds authorization and connection synonyms without reading user input", () => {
     expect(
       searchSettings("cookie", false, () => false).map((d) => d.id),
@@ -40,7 +55,7 @@ describe("settings catalog", () => {
     expect(validateValue(BY_ID["pipeline-crf"], null)).toBeUndefined();
     expect(validateValue(BY_ID["concurrency"], null)).toBeTruthy();
     expect(validateValue(BY_ID["concurrency"], 1.5)).toBeTruthy();
-    expect(validateValue(BY_ID["interval-douyin"], 5)).toBeTruthy();
+    expect(validateValue(BY_ID["interval-douyin"], 0)).toBeTruthy();
     expect(validateValue(BY_ID["naming-rule"], "")).toBeTruthy();
   });
   it("validates automatic email edits before enqueueing partial input", () => {

@@ -44,6 +44,7 @@ const CODE_CATEGORY: Record<string, FailureReasonCategory> = {
   PLATFORM_ACCESS_RESTRICTED: "platform",
   DOUYIN_COOKIE_EXPIRED: "platform",
   ROOM_CONTENT_UNAVAILABLE: "platform",
+  ROOM_LINK_INVALID: "platform",
   RECORDING_FILE_CORRUPTED: "file_corrupted",
   RECORDING_REMUX_FAILED: "file_corrupted",
   CONCURRENT_LIMIT_REACHED: "concurrency",

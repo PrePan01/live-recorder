@@ -1,3 +1,5 @@
+import { youtubeManifest } from "../recorder/youtube-media.js";
+import { AppError } from "../types/error.js";
 import { createReadStream, statSync, existsSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { Transform } from "node:stream";
@@ -1137,6 +1139,7 @@ export class UploadManager {
     if (this.services.resetting) return null;
     const rec = this.services.recordings.get(recordingId);
     if (!rec || !rec.filePath) return null;
+    if (rec.platform === "youtube" && existsSync(youtubeManifest(rec.filePath))) throw new AppError("RECORDING_NOT_AVAILABLE", "YouTube 分段尚未合并，请先重试处理后上传");
     const room = this.services.rooms.get(rec.roomId);
     const enabled = room?.uploadEnabled ?? config?.enabled ?? false;
     if (automatic && !enabled) return null;
@@ -1283,6 +1286,7 @@ export class UploadManager {
       this.emit(jobId);
       return;
     }
+    if (rec.platform === "youtube" && existsSync(youtubeManifest(rec.filePath))) throw new AppError("RECORDING_NOT_AVAILABLE", "YouTube 分段尚未合并，请先重试处理后上传");
     const remotePath = this.resolveRemotePath(config, rec.filePath, rec);
     this.repo.update(jobId, {
       status: "running",

@@ -1,12 +1,13 @@
+import { youtubeStorageFiles } from "../../recorder/youtube-media.js";
 import { lstat, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import { AppError } from '../../types/error.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
+import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
 
-const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY];
+const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY];
 
 export function registerResetRoutes(app: FastifyInstance, services: Services, otherWrites: () => number): void {
   app.post('/api/v1/settings/reset', async (req, reply) => {
@@ -37,6 +38,9 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           UNION SELECT path FROM pipeline_artifacts WHERE path IS NOT NULL
         `).all() as { path: string }[];
         const files = new Set(rows.map((row) => row.path).filter(Boolean));
+        for (const row of services.db.prepare("SELECT file_path AS path FROM recordings WHERE platform='youtube' AND file_path IS NOT NULL").all() as Array<{ path: string }>) {
+          for (const file of await youtubeStorageFiles(row.path)) files.add(file);
+        }
         for (const file of files) {
           if (!path.isAbsolute(file)) throw new AppError('CONFIG_INVALID', '录像路径不是绝对路径，重置已取消');
           let info;
@@ -62,6 +66,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           DELETE FROM upload_jobs;
           DELETE FROM export_jobs;
           DELETE FROM recording_schedules;
+          DELETE FROM youtube_sources; DELETE FROM xiaohongshu_sources;
           DELETE FROM room_tags;
           DELETE FROM tags;
           DELETE FROM recordings;

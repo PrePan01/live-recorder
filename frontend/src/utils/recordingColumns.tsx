@@ -126,7 +126,7 @@ export function buildRecordingColumns(
       width: 70,
       render: (q: string | null, r: Recording) => {
         if (!q) return "-";
-        const label = QUALITY_LABEL[q] ?? q;
+        const label = r.platform === "youtube" && r.metadata?.source?.height ? `${r.metadata.source.height}p` : QUALITY_LABEL[q] ?? q;
         const expected = r.expectedQuality;
         if (!expected || expected === q) return label;
         const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，本次实际录制画质为 ${label}（该直播间未提供该档位，或当前账号未取得该清晰度权限）`;
@@ -370,6 +370,7 @@ export function buildRecordingColumns(
               <GapDetail
                 recordingId={r.id}
                 recordingStartedAt={r.startedAt}
+                platform={r.platform}
                 missingMs={gap.totalMissingMs}
                 gapCount={gap.gapCount}
                 estimated={gap.estimated}
@@ -403,7 +404,7 @@ export function buildRecordingColumns(
                   e instanceof ApiError && e.status === 404
                     ? e.code === "RESOURCE_NOT_FOUND" ? "录像文件已删除或不可访问" : "播放接口不可用，请更新或重启本地服务"
                     : e instanceof ApiError
-                      ? describeError(e.code, e.message)
+                      ? describeError(e.code, e.message, r.platform)
                       : "无法打开系统默认播放器，请检查文件关联",
                 );
               }
@@ -451,7 +452,7 @@ export function buildRecordingColumns(
               void openDirectory(r.id).catch((e) =>
                 message.error(
                   e instanceof ApiError
-                    ? describeError(e.code, e.message)
+                    ? describeError(e.code, e.message, r.platform)
                     : "无法打开目录",
                 ),
               )
@@ -465,7 +466,7 @@ export function buildRecordingColumns(
               void removeRecording(r.id).catch((e) =>
                 message.error(
                   e instanceof ApiError
-                    ? describeError(e.code, e.message)
+                    ? describeError(e.code, e.message, r.platform)
                     : "删除失败",
                 ),
               )

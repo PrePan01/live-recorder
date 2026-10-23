@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import yazl from "yazl";
 import { defaultDataDir, type Services } from "../core/services.js";
-import { BILIBILI_COOKIE_KEY, DOUYIN_COOKIE_KEY } from "../security/keys.js";
+import { BILIBILI_COOKIE_KEY, DOUYIN_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY } from "../security/keys.js";
 import { APP_VERSION, API_VERSION } from "../sidecar/types.js";
 import type { PerformanceDiagnostic } from "../core/performance-diagnostics.js";
 
@@ -246,12 +246,13 @@ export async function createDiagnosticBundle(
     options.stateDir ??
     process.env.LIVE_RECORDER_STATE_DIR ??
     path.join(defaultDataDir(), "state");
-  const [currentLog, previousLog, douyinAuthorized, bilibiliAuthorized] =
+  const [currentLog, previousLog, douyinAuthorized, bilibiliAuthorized, xiaohongshuAuthorized] =
     await Promise.all([
       readLog(path.join(stateDir, "backend.log"), sensitiveValues),
       readLog(path.join(stateDir, "backend.previous.log"), sensitiveValues),
       services.secretStore.has(DOUYIN_COOKIE_KEY),
       services.secretStore.has(BILIBILI_COOKIE_KEY),
+      services.secretStore.has(XIAOHONGSHU_COOKIE_KEY),
     ]);
   const exportedAt = services.clock.iso();
   const runtime = {
@@ -270,6 +271,7 @@ export async function createDiagnosticBundle(
     platformAuthorizationConfigured: {
       douyin: douyinAuthorized,
       bilibili: bilibiliAuthorized,
+      xiaohongshu: xiaohongshuAuthorized,
     },
   };
   const readme = [

@@ -225,6 +225,28 @@ describe('#220 录制完成「询问是否保留」', () => {
     expect(deleted).toContain(recordingId);
   });
 
+  it('无需确认的精彩时刻成功后清除 watchdog，不能在两分钟后误删完成录像', async () => {
+    const services = newServices();
+    const clock = services.clock as FakeClock;
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-complete-'));
+    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: false });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/104', displayName: '完成' });
+    const manager = services.manager as unknown as {
+      highlightBuffers: Map<string, unknown>;
+      highlightExportJobs: Map<string, unknown>;
+      finishSegmentProcessing(id: string): void;
+    };
+    vi.spyOn(manager, 'finishSegmentProcessing').mockImplementation(() => {});
+    manager.highlightBuffers.set(room.id, { availableSeconds: () => 30,
+      exportTo: async () => ({ bytes: 10, actualSeconds: 10 }) });
+    const { recordingId } = await services.manager.exportHighlight(room.id, 10);
+    await vi.waitFor(() => expect(services.recordings.get(recordingId)!.state).toBe('completed'));
+    expect(manager.highlightExportJobs.has(recordingId)).toBe(false);
+    clock.advance(HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS + 1);
+    expect(services.recordings.get(recordingId)!.state).toBe('completed');
+    services.db.close();
+  });
+
   it('精彩时刻导出 watchdog 会中止卡住的复制并收口为失败，不会永久停在待确认', async () => {
     const services = newServices();
     const clock = services.clock as FakeClock;

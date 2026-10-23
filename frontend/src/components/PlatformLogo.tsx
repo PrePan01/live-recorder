@@ -5,9 +5,16 @@ const PLATFORM_STYLE: Record<
   Platform,
   { color: string; bg: string; label: string; icon: string }
 > = {
+  youtube: { color: "#ff0000", bg: "rgba(255,0,0,0.08)", label: "YouTube", icon: "https://www.youtube.com/favicon.ico" },
+  xiaohongshu: {
+    color: "#ff2442",
+    bg: "rgba(255,36,66,0.1)",
+    label: "小红书",
+    icon: "https://www.xiaohongshu.com/favicon.ico",
+  },
   bilibili: {
     color: "#fb7299",
-    bg: "rgba(251,114,153,0.12)",
+    bg: "#e6f7ff",
     label: "B站",
     icon: "https://www.bilibili.com/favicon.ico",
   },
@@ -38,11 +45,7 @@ export function PlatformIcon({
   );
 }
 
-export function PlatformLogoTag({
-  platform,
-}: {
-  platform: Platform;
-}) {
+export function PlatformLogoTag({ platform }: { platform: Platform }) {
   const style = PLATFORM_STYLE[platform];
   return (
     <Tag

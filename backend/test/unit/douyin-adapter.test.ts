@@ -76,7 +76,7 @@ describe("DouyinAdapter", () => {
     }));
     const url = 'https://www.douyin.com/root/live/123456?from=web';
     expect((await adapter.checkLiveStatus(url, 'sessionid=x')).status).toBe('live');
-    expect((await adapter.getStreamUrl(url, '720p', 'sessionid=x')).url).toBe('https://pull.example.com/sd1.flv');
+    expect((await adapter.getStreamUrl(url, '720p', 'sessionid=x')).url).toBe('https://pull.example.com/sd2.flv');
     expect((await adapter.resolveRecordingSource(url, '720p', 'sessionid=x')).status).toBe('live');
     expect(roomIds).toEqual(['123456', '123456', '123456']);
   });
@@ -106,8 +106,8 @@ describe("DouyinAdapter", () => {
     expect(result.availableQualities).toEqual([
       "original",
       "1080p",
+      "540p",
       "720p",
-      "360p",
     ]);
   });
 
@@ -299,17 +299,35 @@ describe("DouyinAdapter", () => {
 
     const sd1 = await a.getStreamUrl(
       "https://live.douyin.com/123456",
-      "720p",
+      "540p",
       "sessionid=x",
     );
     expect(sd1.url).toBe("https://pull.example.com/sd1.flv");
+    expect(sd1.actualQuality).toBe("540p");
 
     const sd2 = await a.getStreamUrl(
       "https://live.douyin.com/123456",
-      "360p",
+      "720p",
       "sessionid=x",
     );
     expect(sd2.url).toBe("https://pull.example.com/sd2.flv");
+    expect(sd2.actualQuality).toBe("720p");
+  });
+
+  it.each([
+    [{ SD1: "https://pull.example.com/540.flv" }, "540p"],
+    [{ MD: "https://pull.example.com/360.flv", SD2: "https://pull.example.com/720.flv" }, "360p"],
+    [{ SD2: "https://pull.example.com/720.flv" }, "720p"],
+  ] as const)("reports the actual quality when requesting 540p: %j", async (flv, actualQuality) => {
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload({ stream_url: { flv_pull_url: flv } })));
+    expect(await adapter.getStreamUrl("https://live.douyin.com/123456", "540p", "sessionid=x"))
+      .toMatchObject({ actualQuality, url: Object.values(flv)[0] });
+  });
+
+  it("reports the actual fallback for a legacy 360p request", async () => {
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload()));
+    expect(await adapter.getStreamUrl("https://live.douyin.com/123456", "360p", "sessionid=x"))
+      .toMatchObject({ actualQuality: "540p", url: "https://pull.example.com/sd1.flv" });
   });
 
   it("getStreamUrl reports a retryable platform delay when a newly-live room has no stream url", async () => {

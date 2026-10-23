@@ -492,7 +492,10 @@ export default function History() {
       />
       {danmakuRec ? (
         <DanmakuPlayerModal
+          key={`${danmakuRec.id}:${danmakuAt}`}
           recordingId={danmakuRec.id}
+          platform={danmakuRec.platform}
+          durationSeconds={(danmakuRec.metadata?.durationMs ?? 0) / 1000}
           roomId={danmakuRec.roomId}
           title={danmakuRec.streamTitle || danmakuRec.roomName}
           filePath={danmakuRec.filePath ?? undefined}

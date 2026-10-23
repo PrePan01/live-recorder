@@ -82,7 +82,6 @@
 .lr-preview-modal__player-slot {
   position: absolute;
   inset: 0;
-  background: #000;
   overflow: hidden;
   will-change: width, height;
 }
@@ -125,6 +124,12 @@
 
 .lr-preview-player--hidden {
   visibility: hidden;
+}
+
+/* Waiting for the source dimensions hides the video, not startup/error feedback. */
+.lr-preview-player--hidden .lr-video-player__loading,
+.lr-preview-player--hidden .lr-video-player__message {
+  visibility: visible;
 }
 
 .lr-preview-player--visible {

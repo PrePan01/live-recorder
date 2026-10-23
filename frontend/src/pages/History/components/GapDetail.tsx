@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Popover, Space, Tag, Typography } from "antd";
 import { fetchRecordingGaps } from "../../../api/recordings";
 import type { RecordingGap } from "../../../types/recording";
+import type { Platform } from "../../../types/room";
 import { formatRelative } from "../../../utils/format";
 import { recordingGapSummary } from "../../../utils/recordingGapSummary";
 import { recordingGapText } from "../../../utils/recordingGapText";
@@ -22,6 +23,7 @@ function gapText(gap: RecordingGap): string {
 export default function GapDetail({
   recordingId,
   recordingStartedAt,
+  platform,
   missingMs,
   gapCount,
   estimated,
@@ -29,6 +31,7 @@ export default function GapDetail({
 }: {
   recordingId: string;
   recordingStartedAt: string;
+  platform?: Platform;
   missingMs: number;
   gapCount?: number;
   /** 旧记录估算位：汇总文案带「约」。 */
@@ -85,7 +88,7 @@ export default function GapDetail({
                 </Typography.Text>
               ) : null}
               {gaps.map((g) => {
-                const { status, reason: reasonRaw } = recordingGapText(g);
+                const { status, reason: reasonRaw } = recordingGapText(g, platform);
                 // 通用空话（未记因）回退 kind 人话：source_stall 等粗归因可辨。
                 const reason =
                   reasonRaw && reasonRaw !== GENERIC_GAP_REASON

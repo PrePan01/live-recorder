@@ -5,7 +5,7 @@ export interface VideoPlayerProps {
   thumbnail?: boolean;
   onPreviewError?: () => void;
   /** 平台：douyin 无 Cookie 受限时加载超时给明确提示 */
-  platform?: "bilibili" | "douyin";
+  platform?: "bilibili" | "douyin" | "xiaohongshu" | "youtube";
   /** 竖屏墙：不写死宽高比，画面撑满容器高度并按真实比例显示。 */
   fill?: boolean;
   /** 直播墙窗口模式中供重复格子镜像主画面。 */
@@ -33,4 +33,6 @@ export interface VideoPlayerProps {
   onSeekRetry?: () => void;
   /** 实时流首帧（切实时段掍表打点）。 */
   onLiveFirstFrame?: () => void;
+  /** 是否已有当前源真正呈现的画面，供截图按钮使用。 */
+  onFrameReadyChange?: (ready: boolean) => void;
 }

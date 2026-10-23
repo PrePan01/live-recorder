@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from '../../src/core/clock.js';
-import { Notifier } from '../../src/core/notifier.js';
+import { Notifier, type NotifyEvent } from '../../src/core/notifier.js';
 import { buildServices, type Services } from '../../src/core/services.js';
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type MailConfig } from '../../src/types/index.js';
 
@@ -60,6 +61,55 @@ describe('Notifier', () => {
     expect(mailer.sent).toHaveLength(0);
     const alerts = services.alerts.list();
     expect(alerts.some((a) => a.source === 'smtp' && a.message.includes('SMTP 通知发送失败'))).toBe(true);
+  });
+
+  it.each<NotifyEvent>(['recording_started', 'recording_ended', 'recording_failed', 'recording_remux_failed', 'disk_space_low', 'upload_failed'])('uses global channels for %s regardless of room reminder and legacy channel switches', async (event) => {
+    const { services } = newServices();
+    const preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCE);
+    for (const key of Object.keys(preferences.desktop) as Array<keyof typeof preferences.desktop>) {
+      preferences.desktop[key] = true;
+      preferences.email[key] = true;
+    }
+    services.settings.save({ ...structuredClone(DEFAULT_SETTINGS), mail: MAIL, notifications: preferences });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/800', displayName: '通知测试' });
+    const mailer = services.mailer as FakeMailer;
+    const notices: string[] = [];
+    services.events.on(e => { if (e.type === 'desktop:notification') notices.push(e.data.body); });
+    for (const channels of [{ desktop: false, email: false }, { desktop: true, email: false }, { desktop: false, email: true }, { desktop: true, email: true }]) {
+      services.notifier.reset();
+      mailer.sent.length = 0;
+      notices.length = 0;
+      services.rooms.update(room.id, { liveNotificationEnabled: channels.desktop, liveEmailNotificationEnabled: channels.email });
+      await services.notifier.notify(event, room.id);
+      await services.notifier.notify(event, room.id);
+      expect(notices).toHaveLength(1);
+      expect(mailer.sent).toHaveLength(1);
+    }
+    services.db.close();
+  });
+
+  it('uses current global event preferences and mail configuration even when room reminders are disabled', async () => {
+    const { services } = newServices();
+    const preferences = structuredClone(DEFAULT_NOTIFICATION_PREFERENCE);
+    preferences.desktop.recordingStarted = false;
+    preferences.email.recordingStarted = true;
+    preferences.desktop.recordingEnded = true;
+    preferences.email.recordingEnded = false;
+    services.settings.save({ ...structuredClone(DEFAULT_SETTINGS), mail: MAIL, notifications: preferences });
+    const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/801', displayName: '通知项目', liveNotificationEnabled: false, liveEmailNotificationEnabled: false });
+    const mailer = services.mailer as FakeMailer;
+    const notices: string[] = [];
+    services.events.on(e => { if (e.type === 'desktop:notification') notices.push(e.data.body); });
+    await services.notifier.notify('recording_started', room.id);
+    await services.notifier.notify('recording_ended', room.id);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('录制已结束');
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]!.subject).toContain('录制已开始');
+    services.settings.save({ ...services.settings.load()!, mail: { ...MAIL, enabled: false } });
+    await services.notifier.notify('recording_failed', room.id);
+    expect(mailer.sent).toHaveLength(1);
+    services.db.close();
   });
 
   it('邮件发送 30 秒硬顶：SMTP 挂起不再拖住录制收尾关键链（M-1）', async () => {

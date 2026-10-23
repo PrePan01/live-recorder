@@ -12,7 +12,7 @@ import { describeError } from "../../utils/errorMap";
 import type { RefObject } from "react";
 
 export function usePreviewMarkers(
-  _room: Room,
+  room: Room,
   _live: Room,
   activeRecordingId: string | undefined,
   activeRecordingRef: RefObject<string | undefined>,
@@ -56,7 +56,7 @@ export function usePreviewMarkers(
     } catch (error) {
       message.error(
         error instanceof ApiError
-          ? describeError(error.code, error.message)
+          ? describeError(error.code, error.message, room.platform)
           : "标记保存失败",
       );
       throw error;
@@ -94,7 +94,7 @@ export function usePreviewMarkers(
       .catch((error) =>
         message.error(
           error instanceof ApiError
-            ? describeError(error.code, error.message)
+            ? describeError(error.code, error.message, room.platform)
             : "打点失败",
         ),
       )

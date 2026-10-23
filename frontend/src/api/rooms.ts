@@ -1,5 +1,6 @@
 import { baseUrl, http } from "./client";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
+import { guessPlatform } from "../utils/roomPlatform";
 
 export async function fetchRooms(): Promise<Room[]> {
   const { data } = await http.get<{ rooms: Room[] }>("/rooms");
@@ -14,7 +15,8 @@ export async function reorderRooms(roomIds: string[]): Promise<Room[]> {
 }
 
 export async function createRoom(input: RoomCreateInput): Promise<Room> {
-  const { data } = await http.post<{ room: Room }>("/rooms", input);
+  const { data } = await http.post<{ room: Room }>("/rooms", input,
+    guessPlatform(input.url) === "youtube" ? { timeout: 90_000 } : guessPlatform(input.url) === "xiaohongshu" ? { timeout: 30_000 } : undefined);
   return data.room;
 }
 
@@ -26,7 +28,8 @@ export interface BatchRoomResult {
 export async function batchCreateRooms(
   urls: string[],
 ): Promise<BatchRoomResult> {
-  const { data } = await http.post<BatchRoomResult>("/rooms/batch", { urls });
+  const timeout = 10_000 + urls.reduce((total, url) => total + (guessPlatform(url) === 'youtube' ? 90_000 : guessPlatform(url) === 'xiaohongshu' ? 30_000 : 0), 0);
+  const { data } = await http.post<BatchRoomResult>("/rooms/batch", { urls }, { timeout });
   return data;
 }
 
@@ -34,7 +37,8 @@ export async function updateRoom(
   id: string,
   input: RoomUpdateInput,
 ): Promise<Room> {
-  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input);
+  const { data } = await http.patch<{ room: Room }>(`/rooms/${id}`, input,
+    input.url && guessPlatform(input.url) === "youtube" ? { timeout: 90_000 } : input.url && guessPlatform(input.url) === "xiaohongshu" ? { timeout: 30_000 } : undefined);
   return data.room;
 }
 
@@ -63,7 +67,7 @@ export async function setRoomFavorite(
 }
 
 export async function checkRoomNow(id: string): Promise<void> {
-  await http.post(`/rooms/${id}/check`);
+  await http.post(`/rooms/${id}/check`, undefined, { timeout: 90_000 });
 }
 
 /** 提交全部启用直播间的开播检测；相同的在途批次会被后端合并。 */
@@ -85,6 +89,7 @@ export async function startRoomRecording(
   await http.post(
     `/rooms/${id}/start-recording`,
     origin ? { origin } : undefined,
+    { timeout: 90_000 },
   );
 }
 

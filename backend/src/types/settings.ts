@@ -1,3 +1,4 @@
+import type { Platform } from "./room.js";
 import type { Quality } from './recording.js';
 import type { OpenListConfig } from './upload.js';
 
@@ -15,6 +16,8 @@ export interface CheckIntervalSec {
   default: number;
   bilibili: number;
   douyin: number;
+  xiaohongshu?: number;
+  youtube?: number;
 }
 
 export interface MailConfig {
@@ -156,6 +159,15 @@ export interface SettingsView {
   recordingFormat: RecordingFormat;
   autoRecord: boolean;
   checkIntervalSec: CheckIntervalSec;
+  /** 各平台生效检测间隔默认（含平台默认兜底，单出口解析）：批量弹窗「跟随全局」标签用。 */
+  checkIntervalDefaults: Record<Platform, number>;
+  /** 检测负载供数（与调度器同一纯函数出数）：设置页提示行用，不含任何凭据。 */
+  detectionLoad: {
+    perMinute: number;
+    limitPerMinute: number;
+    staggered: boolean;
+    queued: number;
+  };
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
   mail: MailConfigView;
@@ -163,6 +175,8 @@ export interface SettingsView {
   douyinCookie: { hasCookie: boolean };
   /** B站 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）；用于获取蓝光/原画档位。 */
   bilibiliCookie: { hasCookie: boolean };
+  xiaohongshuCookie?: { hasCookie: boolean };
+  youtubeCookie?: { hasCookie: boolean };
   /** V5 界面主题偏好。 */
   theme: ThemePreference;
   floatingRecorderSize: number;

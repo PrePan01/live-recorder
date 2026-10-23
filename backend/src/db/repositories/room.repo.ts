@@ -1,3 +1,4 @@
+import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
 import type { DB } from '../connection.js';
 import { AppError, type ErrorObject, type LiveStatus, type MonitorState, type Platform, type Quality, type Room, type TitleSource, type Tag } from '../../types/index.js';
 import { newId, nowIso } from '../../utils/id.js';
@@ -11,10 +12,13 @@ interface RoomRow {
   avatar_url: string | null;
   live_cover_url: string | null;
   danmaku_enabled: number | null;
+  check_interval_sec: number | null;
+  quality: Quality | null;
   enabled: number;
   favorited: number;
   auto_record: number | null;
   live_notification_enabled: number;
+  live_email_notification_enabled: number;
   last_live_status: string | null;
   live_started_at: string | null;
   current_stream_title: string | null;
@@ -59,10 +63,13 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
     avatarUrl: row.avatar_url,
     liveCoverUrl: row.live_cover_url ?? null,
     danmakuEnabled: row.danmaku_enabled === null || row.danmaku_enabled === undefined ? null : Boolean(row.danmaku_enabled),
+    checkIntervalSec: row.check_interval_sec ?? null,
+    quality: row.quality ?? null,
     enabled: row.enabled === 1,
     favorited: row.favorited === 1,
     autoRecord: row.auto_record === null ? null : row.auto_record === 1,
     liveNotificationEnabled: row.live_notification_enabled === 1,
+    liveEmailNotificationEnabled: row.live_email_notification_enabled === 1,
     lastLiveStatus: (row.last_live_status as LiveStatus) ?? null,
     liveStartedAt: row.live_started_at,
     autoRecordStoppedSession:
@@ -84,12 +91,13 @@ export function rowToRoom(row: RoomRow, tags: Tag[] = []): Room {
   };
 }
 
-export interface NewRoomInput {
+export interface NewRoomInput extends RoomPolicyPatch {
   platform: Platform;
   url: string;
   displayName: string;
   enabled?: boolean;
   liveNotificationEnabled?: boolean;
+  liveEmailNotificationEnabled?: boolean;
 }
 
 export class RoomRepository {
@@ -117,6 +125,7 @@ export class RoomRepository {
   }
 
   create(input: NewRoomInput): Room {
+    const policy = validateRoomPolicy({ ...input });
     const now = nowIso();
     const first = this.db.prepare('SELECT MIN(sort_order) AS value FROM rooms').get() as { value: number | null };
     const room: Room = {
@@ -129,7 +138,11 @@ export class RoomRepository {
       enabled: input.enabled ?? true,
       favorited: false,
       autoRecord: null,
+      checkIntervalSec: null,
+      quality: null,
+      danmakuEnabled: null,
       liveNotificationEnabled: input.liveNotificationEnabled ?? false,
+      liveEmailNotificationEnabled: input.liveEmailNotificationEnabled ?? false,
       lastLiveStatus: null,
       liveStartedAt: null,
       currentStreamTitle: null,
@@ -160,6 +173,7 @@ export class RoomRepository {
       }
       throw err;
     }
+    if (Object.keys(policy).length) return this.update(room.id, policy);
     return room;
   }
 
@@ -168,7 +182,8 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'uploadEnabled' | 'danmakuEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'liveEmailNotificationEnabled' | 'uploadEnabled' | 'danmakuEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed' | 'checkIntervalSec' | 'quality'>>): Room {
+    validateRoomPolicy({ ...patch });
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });
     const next: Room = { ...existing, ...patch, updatedAt: nowIso() };
@@ -178,7 +193,7 @@ export class RoomRepository {
     try {
       this.db
         .prepare(
-          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, live_cover_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, upload_enabled = ?, danmaku_enabled = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE rooms SET url = ?, display_name = ?, avatar_url = ?, live_cover_url = ?, enabled = ?, favorited = ?, auto_record = ?, live_notification_enabled = ?, live_email_notification_enabled = ?, upload_enabled = ?, danmaku_enabled = ?, check_interval_sec = ?, quality = ?, title_source = ?, title_updated_at = ?, title_fallback_used = ?, monitor_state = ?, updated_at = ? WHERE id = ?`,
         )
         .run(
           next.url,
@@ -189,8 +204,11 @@ export class RoomRepository {
           next.favorited ? 1 : 0,
           next.autoRecord === null ? null : next.autoRecord ? 1 : 0,
           next.liveNotificationEnabled ? 1 : 0,
+          next.liveEmailNotificationEnabled ? 1 : 0,
           next.uploadEnabled === null ? null : next.uploadEnabled ? 1 : 0,
           next.danmakuEnabled === null || next.danmakuEnabled === undefined ? null : next.danmakuEnabled ? 1 : 0,
+          next.checkIntervalSec ?? null,
+          next.quality ?? null,
           next.titleSource ?? null,
           next.titleUpdatedAt ?? null,
           next.titleFallbackUsed ? 1 : 0,

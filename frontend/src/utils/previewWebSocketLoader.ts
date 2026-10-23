@@ -1,4 +1,5 @@
 import { FlvMediaOriginReader } from "./previewMediaClock";
+import { isServerPreviewProgressStage } from './previewLoadProgress';
 import type mpegts from "mpegts.js";
 
 /** WebSocket callbacks must stop before the player releases its IO controller. */
@@ -15,8 +16,10 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
   private receivedLength = 0;
   private originReader?: FlvMediaOriginReader;
   private onOrigin?: (milliseconds: number) => void;
-  constructor(_seekHandler?: unknown, _config?: unknown, onOrigin?: (milliseconds: number) => void) {
+  private onProgress?: (stage: string) => void;
+  constructor(_seekHandler?: unknown, _config?: unknown, onOrigin?: (milliseconds: number) => void, onProgress?: (stage: string) => void) {
     this.onOrigin = onOrigin;
+    this.onProgress = onProgress;
   }
   get status() {
     return this._status;
@@ -34,13 +37,16 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
     this.originReader = this.onOrigin ? new FlvMediaOriginReader(this.onOrigin) : undefined;
     this._status = 1;
     try {
-      const socket = new WebSocket(dataSource.url);
+      const url = new URL(dataSource.url);
+      if (this.onProgress) url.searchParams.set('progress', '1');
+      const socket = new WebSocket(url.href);
       this.socket = socket;
       socket.binaryType = "arraybuffer";
       const active = () => this.socket === socket;
       socket.onopen = () => {
         if (active()) {
           this._status = 2;
+          this.onProgress?.('connected');
         }
       };
       socket.onmessage = (event) => {
@@ -59,6 +65,14 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
                   error instanceof Error ? error.message : "读取预览数据失败",
                 );
             });
+        } else if (typeof event.data === 'string') {
+          try {
+            if (event.data.length > 4096) throw new Error('oversized control frame');
+            const message = JSON.parse(event.data);
+            if (message?.type === 'preview_progress' && isServerPreviewProgressStage(message.stage)) this.onProgress?.(message.stage);
+            // Control frames never belong to the media byte stream. stream_end
+            // is followed by the server close; retain the existing EOF handling.
+          } catch { this.fail('预览连接收到无效的控制消息'); }
         } else {
           this.fail("预览连接收到不支持的数据格式");
         }
@@ -98,6 +112,7 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
 
   private deliver(buffer: ArrayBuffer) {
     const start = this.receivedLength;
+    if (!start && buffer.byteLength) this.onProgress?.('receiving_media');
     this.receivedLength += buffer.byteLength;
     this.originReader?.push(buffer);
     this.onDataArrival(buffer, start, this.receivedLength);

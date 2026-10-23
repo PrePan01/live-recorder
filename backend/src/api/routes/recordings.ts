@@ -1,3 +1,5 @@
+import { finalizeYoutube, removeYoutubeParts } from "../../recorder/youtube-media.js";
+import { openYoutubePlayback, stopYoutubePlayback } from "../../recorder/youtube-playback.js";
 import { recordedSeconds, assertSegmentRange } from '../../core/recording-range.js';
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
@@ -86,6 +88,12 @@ export function registerRecordingRoutes(
   app: FastifyInstance,
   services: Services,
 ): void {
+  const youtubePlays = new Set<AbortController>();
+  app.addHook('preClose', async () => { for (const controller of youtubePlays) controller.abort(); youtubePlays.clear(); });
+  services.events.on(event => {
+    if (event.type === 'recording:deleted') { stopYoutubePlayback(`file:${event.data.id}`); stopYoutubePlayback(`seek:${event.data.id}`); }
+    else if (event.type === 'recording:updated' && !['recording', 'reconnecting'].includes(event.data.state)) stopYoutubePlayback(`seek:${event.data.id}`);
+  });
   // A file database can be safely opened read-only by the exporter. In-memory
   // test databases are connection-local, so retain the direct implementation.
   const csvWorkers =
@@ -443,6 +451,14 @@ export function registerRecordingRoutes(
         details: { resource: "recording" },
       });
     }
+    if (rec.platform === "youtube" && rec.filePath?.endsWith('.mkv')) {
+      if (!["recording", "reconnecting"].includes(rec.state) || second >= await recordedSeconds(services, rec)) throw new AppError("RECORDING_NOT_AVAILABLE", "该位置暂无可播放内容");
+      const controller = new AbortController();
+      youtubePlays.add(controller);
+      reply.raw.once('close', () => { controller.abort(); youtubePlays.delete(controller); });
+      const stream = await openYoutubePlayback(`seek:${id}`, rec.filePath, second, services.settings.load()?.encodingMode ?? 'auto', controller.signal);
+      return reply.header('Content-Type', 'video/x-flv').header('Cache-Control', 'no-store').header('X-Seek-Start-Second', String(second)).send(stream);
+    }
     const controller = new AbortController();
     const abort = () => controller.abort();
     const close = () => { if (!reply.raw.writableFinished) abort(); cleanup(); };
@@ -494,6 +510,10 @@ export function registerRecordingRoutes(
         recordingId: id,
         details: { resource: "recording" },
       });
+    }
+    if (rec.platform === "youtube" && rec.filePath?.endsWith('.mkv')) {
+      if (!["recording", "reconnecting"].includes(rec.state) || second >= await recordedSeconds(services, rec)) throw new AppError("RECORDING_NOT_AVAILABLE", "该位置暂无可播放内容");
+      return reply.status(202).send({ ok: true, startSecond: second });
     }
     const result = await services.seek.prewarm(rec, second, body.prepareStream === true);
     return reply.status(202).send({ ok: true, ...result });
@@ -646,6 +666,15 @@ export function registerRecordingRoutes(
         retryable: false,
       });
     }
+    if (rec.platform === "youtube" && !rec.filePath.endsWith(".flv")) {
+      const second = Number((req.query as { second?: string }).second ?? 0);
+      if (!Number.isFinite(second) || second < 0) throw new AppError('CONFIG_INVALID', '播放位置无效');
+      const controller = new AbortController();
+      youtubePlays.add(controller);
+      reply.raw.once('close', () => { controller.abort(); youtubePlays.delete(controller); });
+      const stream = await openYoutubePlayback(`file:${id}`, rec.filePath, second, services.settings.load()?.encodingMode ?? 'auto', controller.signal);
+      return reply.header('Content-Type', 'video/x-flv').header('Cache-Control', 'no-store').send(stream);
+    }
     const range = parseSingleRange(req.headers.range, size);
     if (range === "invalid") {
       reply.header("Content-Range", `bytes */${size}`);
@@ -686,12 +715,18 @@ export function registerRecordingRoutes(
     }
     const title = body.streamTitle.trim();
     // 重命名同步改名落盘文件（保留目录与扩展名），文件缺失时仅改记录并容错。
+    if (rec.platform === "youtube" && (rec.state === 'recording' || rec.state === 'reconnecting')) {
+      const updated = services.recordings.update(id, { streamTitle: title });
+      services.events.emit({ type: "recording:updated", data: updated });
+      return reply.send({ recording: updated });
+    }
     if (rec.filePath) {
       const dir = dirname(rec.filePath);
       const ext = extnameOf(rec.filePath);
       const nextName = sanitizeFileBase(title) + ext;
       const nextPath = join(dir, nextName);
       try {
+        if (rec.platform === "youtube") await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
         await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
         await services.danmaku.moveSidecar(id, rec.filePath, nextPath);
         await moveMarkerSidecar(rec.filePath, nextPath);
@@ -739,6 +774,7 @@ export function registerRecordingRoutes(
     services.manager.cancelClipExport(id);
     // 连带删除文件；文件缺失容错（记录仍删除）。
     if (rec.filePath) {
+      if (rec.platform === "youtube") await removeYoutubeParts(rec.filePath);
       await unlink(rec.filePath).catch(() => undefined);
       await removeMarkerSidecar(rec.filePath);
       await removeSeekIndexSidecar(rec.filePath);
@@ -882,7 +918,8 @@ export function registerRecordingRoutes(
       services.pipeline.cancel(id, "录制已删除");
       services.manager.cancelClipExport(id);
       if (rec.filePath) {
-        await unlink(rec.filePath).catch(() => undefined);
+        if (rec.platform === "youtube") await removeYoutubeParts(rec.filePath);
+      await unlink(rec.filePath).catch(() => undefined);
       }
       services.recordings.remove(id);
       services.events.emit({ type: "recording:deleted", data: { id } });
@@ -1060,7 +1097,8 @@ async function renameRecordingFile(
     `${sanitizeFileBase(base)}${ext}`,
   );
   try {
-    await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
+    if (rec.platform === "youtube") await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
+        await renameRecordingWithBuffer(services.recordingBufferDirectory, rec.filePath, nextPath);
     services.recordings.update(rec.id, {
       streamTitle: base.trim(),
       filePath: nextPath,

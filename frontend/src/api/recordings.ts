@@ -205,6 +205,6 @@ export async function confirmRecordingKeep(
   return data?.recording ?? null;
 }
 
-export async function fetchRecordingPosition(id: string, lagSeconds = 0): Promise<{durationSeconds:number; positionSeconds:number; previewOffsetSeconds:number|null}> {
-  const {data} = await http.get(`/recordings/${id}/marker-position`, {params:{lagSeconds}}); return data;
+export async function fetchRecordingPosition(id: string, lagSeconds = 0, signal?: AbortSignal): Promise<{durationSeconds:number; positionSeconds:number; previewOffsetSeconds:number|null}> {
+  const {data} = await http.get(`/recordings/${id}/marker-position`, {params:{lagSeconds}, signal}); return data;
 }
