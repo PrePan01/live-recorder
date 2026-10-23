@@ -98,9 +98,7 @@ describe("usePreviewScreenshot", () => {
     expect(h.success).not.toHaveBeenCalled();
     finish({ filePath: "/recordings/截图/image.png" });
     await pending;
-    expect(h.success).toHaveBeenCalledWith(
-      "截图已保存：/recordings/截图/image.png",
-    );
+    expect(h.success).toHaveBeenCalledExactlyOnceWith("截图已保存");
     expect(render().saving).toBe(false);
   });
   it("supports preview without recording and prevents capture during source switches or native seeking", async () => {
