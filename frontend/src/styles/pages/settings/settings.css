@@ -270,6 +270,7 @@
 .lr-settings-note {
   font-size: 12px;
   color: var(--lr-muted);
+  margin-top: 0;
 }
 .lr-settings-vars {
   display: flex;
@@ -520,6 +521,36 @@
 .lr-settings-page .lr-settings-connection.is-error {
   color: var(--lr-error);
   border-left: 3px solid var(--lr-error);
+}
+
+/* Upload warnings keep the same colors in both light and dark themes. */
+.lr-settings-page #upload .lr-settings-connection.is-error,
+.lr-settings-page #upload .lr-settings-save.is-error,
+.lr-settings-page #upload .lr-settings-save.is-invalid,
+.lr-settings-page .lr-upload-warning-alert,
+.lr-upload-warning-message .ant-message-notice-content,
+.lr-upload-warning-popconfirm .ant-popover-inner {
+  background: rgb(201 41 85 / 0.25) !important;
+  color: #000 !important;
+}
+.lr-settings-page #upload .lr-settings-save {
+  padding: 8px 12px;
+}
+.lr-settings-page #upload .lr-settings-connection.is-error {
+  border-left: none;
+}
+.lr-upload-warning-message .ant-message-warning,
+.lr-upload-warning-message .anticon,
+.lr-upload-warning-popconfirm .ant-popconfirm-title,
+.lr-upload-warning-popconfirm .ant-popconfirm-description,
+.lr-upload-warning-popconfirm .ant-popconfirm-message-icon,
+.lr-settings-page .lr-upload-warning-alert .ant-alert-icon,
+.lr-settings-page .lr-upload-warning-alert .ant-alert-title,
+.lr-settings-page .lr-upload-warning-alert .ant-alert-description {
+  color: #000 !important;
+}
+.lr-upload-warning-popconfirm .ant-popover-arrow {
+  --ant-tooltip-arrow-background-color: #c92955;
 }
 
 /* Authorization owns its separators and spacing; do not inherit generic details chrome. */

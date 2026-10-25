@@ -4,6 +4,7 @@ export type Domain =
   | "pipeline"
   | "notifications"
   | "naming"
+  | "qmsg"
   | "email"
   | "openlist"
   | "appearance";
@@ -15,7 +16,7 @@ export const SECTIONS = [
   ["highlights", "精彩时刻", "直播回溯缓存"],
   ["pipeline", "录制后处理", "录制完成后的文件处理"],
   ["authorization", "平台授权", "平台登录与凭据管理"],
-  ["notifications", "通知与邮件", "事件提醒与邮件连接"],
+  ["notifications", "消息通知", "桌面、邮件与 QQ 消息提醒"],
   ["upload", "自动上传", "OpenList 连接与上传行为"],
   ["maintenance", "运行信息", "诊断、备份与危险操作"],
 ] as const;
@@ -146,21 +147,22 @@ export const DEFINITIONS: SettingDefinition[] = [
     "录制完成后询问是否保留",
     "等待保留确认时，后处理和上传将暂缓执行。",
   ),
-  ...(["default", "bilibili", "douyin", "xiaohongshu", "youtube"] as const).map((platform, index) =>
-    field(
-      `interval-${platform}`,
-      "monitoring",
-      "settings",
-      `checkIntervalSec.${platform}`,
-      `${["全局默认", "B站", "抖音", "小红书", "YouTube"][index]}检测间隔`,
-      "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
-      {
-        min: 1,
-        max: 3600,
-        unit: "秒",
-        keywords: "检测频率 轮询",
-      },
-    ),
+  ...(["default", "bilibili", "douyin", "xiaohongshu", "youtube"] as const).map(
+    (platform, index) =>
+      field(
+        `interval-${platform}`,
+        "monitoring",
+        "settings",
+        `checkIntervalSec.${platform}`,
+        `${["全局默认", "B站", "抖音", "小红书", "YouTube"][index]}检测间隔`,
+        "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
+        {
+          min: 1,
+          max: 3600,
+          unit: "秒",
+          keywords: "检测频率 轮询",
+        },
+      ),
   ),
   field(
     "recording-directory",
@@ -305,8 +307,24 @@ export const DEFINITIONS: SettingDefinition[] = [
     "授权用于获取可用的高画质档位；凭据已保存不等于授权有效。",
     { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
   ),
-  field("youtube-cookie", "authorization", "settings", "youtubeCookie", "YouTube 授权", "点击登录并授权，在授权窗口完成 YouTube 登录。", { restorable: false, secret: true, keywords: "登录 账户 YouTube" }),
-  field("xiaohongshu-cookie", "authorization", "settings", "xiaohongshuCookie", "小红书授权", "在授权窗口登录，或手动保存完整 Cookie。", { restorable: false, secret: true, keywords: "Cookie 登录 账户" }),
+  field(
+    "youtube-cookie",
+    "authorization",
+    "settings",
+    "youtubeCookie",
+    "YouTube 授权",
+    "点击登录并授权，在授权窗口完成 YouTube 登录。",
+    { restorable: false, secret: true, keywords: "登录 账户 YouTube" },
+  ),
+  field(
+    "xiaohongshu-cookie",
+    "authorization",
+    "settings",
+    "xiaohongshuCookie",
+    "小红书授权",
+    "在授权窗口登录，或手动保存完整 Cookie。",
+    { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
+  ),
   field(
     "notification-dedupe",
     "notifications",
@@ -315,6 +333,24 @@ export const DEFINITIONS: SettingDefinition[] = [
     "重复提醒间隔",
     "同类重复事件在此时间窗口内合并提醒。",
     { min: 1, max: 1440, unit: "分钟" },
+  ),
+  field(
+    "qmsg-enabled",
+    "notifications",
+    "qmsg",
+    "enabled",
+    "启用 QQ 通知",
+    "关闭后保留 Key 和通知事件偏好。",
+    { keywords: "Qmsg QQ" },
+  ),
+  field(
+    "qmsg-key",
+    "notifications",
+    "qmsg",
+    "key",
+    "Qmsg API Key",
+    "保存后还需在 Qmsg 控制台添加机器人并完成绑定。",
+    { secret: true, restorable: false, keywords: "QQ Qmsg 凭据" },
   ),
   field(
     "email-enabled",
@@ -400,16 +436,16 @@ export const NOTIFICATION_EVENTS = [
   ["pipelineFailed", "后处理失败"],
 ] as const;
 for (const [key, label] of NOTIFICATION_EVENTS)
-  for (const channel of ["desktop", "email"])
+  for (const channel of ["desktop", "email", "qq"])
     DEFINITIONS.push(
       field(
         `notify-${channel}-${key}`,
         "notifications",
         "notifications",
         `${channel}.${key}`,
-        `${label} · ${channel === "desktop" ? "桌面" : "邮件"}`,
+        `${label} · ${channel === "desktop" ? "桌面" : channel === "qq" ? "QQ" : "邮件"}`,
         "控制此事件的通知渠道。",
-        channel === "email" ? { dependsOn: "email-enabled" } : {},
+        {},
       ),
     );
 export const BY_ID = Object.fromEntries(DEFINITIONS.map((d) => [d.id, d]));
@@ -433,6 +469,12 @@ export function validateValue(
   value: unknown,
 ): string | undefined {
   if (def.nullable && value === null) return undefined;
+  if (
+    def.id === "qmsg-key" &&
+    value &&
+    !/^[a-zA-Z0-9_-]{1,256}$/.test(String(value))
+  )
+    return "请输入有效的 Qmsg Key";
   if (def.id === "upload-serverUrl" && value) {
     try {
       const url = new URL(String(value));

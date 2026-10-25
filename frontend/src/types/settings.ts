@@ -59,6 +59,7 @@ export interface Settings {
   retry: RetryPolicy;
   diskGuard: DiskGuard;
   mail: MailSettings;
+  qmsg?: { enabled: boolean; keySet: boolean };
   douyinCookie: { hasCookie: boolean };
   bilibiliCookie: { hasCookie: boolean };
   xiaohongshuCookie?: { hasCookie: boolean };
@@ -95,6 +96,7 @@ export interface SettingsDefaults {
   naming: { namingRule: string };
   openlist: { enabled: boolean; deleteSourceAfterUpload: boolean };
   email: { enabled: boolean };
+  qmsg: { enabled: boolean };
 }
 
 export interface MailInput {

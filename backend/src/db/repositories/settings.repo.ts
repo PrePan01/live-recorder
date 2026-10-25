@@ -28,6 +28,7 @@ export class SettingsRepository {
       parsed.checkIntervalSec = { youtube: 120, xiaohongshu: 120, ...parsed.checkIntervalSec };
       delete (parsed as unknown as Record<string, unknown>).xiaohongshuCookie;
       delete (parsed as unknown as Record<string, unknown>).youtubeCookie;
+      if (parsed.qmsg) parsed.qmsg = { enabled: parsed.qmsg.enabled === true };
       if (parsed.mail) delete (parsed.mail as { password?: string }).password;
       // v4 之前已保存的设置没有 autoRecord 字段，历史行为是自动录制默认开启。
       // 新的首次使用默认关闭只适用于完全没有 settings 记录的用户，不能倒改旧用户。
@@ -62,6 +63,7 @@ export class SettingsRepository {
         ...settings.mail,
       } as MailConfig,
     };
+    if (safe.qmsg) safe.qmsg = { enabled: safe.qmsg.enabled === true };
     delete (safe.mail as { password?: string }).password;
     delete (safe as unknown as Record<string, unknown>).xiaohongshuCookie;
     delete (safe as unknown as Record<string, unknown>).youtubeCookie;

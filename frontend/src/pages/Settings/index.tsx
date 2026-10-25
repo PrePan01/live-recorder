@@ -56,10 +56,10 @@ import {
   DirectoryRow,
   NamingPanel,
   PipelinePanel,
-  AuthorizationPanel,
-  NotificationPanel,
-  ConnectionPanel,
 } from "./components/SettingsPanels";
+import { AuthorizationPanel } from "./components/AuthorizationPanel";
+import { NotificationPanel } from "./components/NotificationPanels";
+import { ConnectionPanel } from "./components/ConnectionPanel";
 import ResetSettingsCard from "./components/ResetSettingsCard";
 import SelfDiagnosticsCard from "./components/SelfDiagnosticsCard";
 import AlertsCard from "./components/AlertsCard";
@@ -358,7 +358,6 @@ function SettingsContent() {
     notifications: (
       <>
         <NotificationPanel />
-        <ConnectionPanel domain="email" />
       </>
     ),
     upload: <ConnectionPanel domain="openlist" />,
@@ -415,6 +414,7 @@ function SettingsContent() {
         .map(([domain, error]) => (
           <Alert
             key={domain}
+            className={domain === "openlist" ? "lr-upload-warning-alert" : undefined}
             type="error"
             showIcon
             title={error}

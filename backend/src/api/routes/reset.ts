@@ -7,7 +7,9 @@ import type { Services } from '../../core/services.js';
 import { AppError } from '../../types/error.js';
 import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
 
-const SECRET_KEYS = [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY];
+import { QMSG_KEY } from '../../security/keys.js';
+
+const SECRET_KEYS = [QMSG_KEY, MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY];
 
 export function registerResetRoutes(app: FastifyInstance, services: Services, otherWrites: () => number): void {
   app.post('/api/v1/settings/reset', async (req, reply) => {
@@ -17,7 +19,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
     }
     if (services.resetting || otherWrites() > 1 || services.scheduler.isChecking ||
         services.manager.busy || services.pipeline.busy || services.uploader.busy ||
-        services.exporter.busy || services.notifier.busy) {
+        services.exporter.busy || services.notifier.busy || services.qmsg.busy) {
       throw new AppError('DIAGNOSTIC_CONFLICT', '存在进行中的检测、录制、转码、上传或导出任务，请结束后重试');
     }
     services.resetting = true;
@@ -87,6 +89,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
       services.manager.clearPendingConfirmations();
       services.statsCache = undefined;
       services.notifier.reset();
+      services.qmsg.invalidate();
       services.uploader.resetIdleState();
       const retainedFiles: string[] = [];
       for (const file of staged) {

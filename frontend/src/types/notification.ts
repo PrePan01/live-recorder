@@ -12,12 +12,14 @@ export interface NotificationEventPreference {
 export interface NotificationPreference {
   desktop: NotificationEventPreference;
   email: NotificationEventPreference;
+  qq: NotificationEventPreference;
   dedupeWindowMinutes: number;
 }
 
 export interface NotificationPreferenceInput {
   desktop?: Partial<NotificationEventPreference>;
   email?: Partial<NotificationEventPreference>;
+  qq?: Partial<NotificationEventPreference>;
   dedupeWindowMinutes?: number;
 }
 

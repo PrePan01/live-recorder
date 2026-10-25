@@ -47,5 +47,6 @@ export function settingsDefaults() {
     naming: { namingRule: DEFAULT_NAMING_RULE },
     openlist: { enabled: false, deleteSourceAfterUpload: false },
     email: { enabled: false },
+    qmsg: { enabled: false },
   });
 }

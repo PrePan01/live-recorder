@@ -221,8 +221,7 @@ jobs:
       - name: Compile backend
         run: npm --prefix backend run build
 
-      # package.mjs 随后会 prune backend/node_modules；必须在裁剪前保存完整依赖，
-      # 否则下一次命中缓存时会缺少 vitest/typescript 等测试依赖。
+      # Cache full dependencies; packaging trims an isolated .bundle/backend copy.
       - name: Save installed dependencies
         if: steps.node_modules.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -238,7 +237,6 @@ jobs:
           # The Linux quality gate covers the shared test suite; this job only
           # needs the backend compiled for the platform-specific package.
           LR_SKIP_BACKEND_BUILD: '1'
-          LR_SKIP_BACKEND_RESTORE: '1'
           LR_REQUIRE_SIGNATURE: '1'
         run: npm run package
 
@@ -276,6 +274,9 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24.20.0
+
+      - name: Verify native packaging paths and dependency pruning
+        run: node --test scripts/package-payload.test.mjs scripts/bundle-youtube.test.mjs
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

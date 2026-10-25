@@ -852,3 +852,23 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+.lr-room-policy-console .lr-room-policy-behaviors .lr-room-policy-group-fields {
+  max-width: 520px;
+}
+
+.lr-room-policy-warning {
+  color: var(--lr-error);
+  text-decoration: underline;
+  font-weight: 700;
+  white-space: normal;
+}
+.lr-room-policy-notification > .lr-console-pad > .lr-console-pad-label {
+  flex-wrap: wrap;
+  white-space: normal;
+  flex: 1;
+  min-width: 0;
+}
+.lr-room-policy-notification > .lr-console-pad > .ant-switch {
+  flex: none;
+}

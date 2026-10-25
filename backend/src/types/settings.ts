@@ -62,6 +62,7 @@ export interface AppSettings {
   floatingRecorderSize: number;
   /** V5 通知偏好（开播/录制/磁盘事件预设+开关）。 */
   notifications?: NotificationPreference;
+  qmsg?: { enabled: boolean };
   /** V5 后处理管线配置（Batch2 主干基建；P0 阶段先立契约与默认值）。 */
   pipeline?: PipelineConfig;
   /** V5 录制文件命名模板；修改只影响新录制。 */
@@ -99,19 +100,23 @@ export interface NotificationEventPreference {
   diskSpaceLow: boolean;
   /** 上传失败提醒（OpenList 等）。 */
   uploadFailed: boolean;
+  pipelineCompleted: boolean;
+  pipelineFailed: boolean;
 }
 
 /** 通知偏好按投递渠道保存；邮件还需 mail.enabled 和有效 SMTP 配置。 */
 export interface NotificationPreference {
   desktop: NotificationEventPreference;
   email: NotificationEventPreference;
+  qq: NotificationEventPreference;
   dedupeWindowMinutes: number;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCE: NotificationPreference = {
-  desktop: { liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true },
+  desktop: { liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, pipelineCompleted: false, pipelineFailed: false },
   // 保持历史邮件实际覆盖范围；新增事件默认不额外发送邮件。
-  email: { liveStarted: true, recordingStarted: false, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: false },
+  email: { liveStarted: true, recordingStarted: false, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: false, pipelineCompleted: false, pipelineFailed: false },
+  qq: { liveStarted: true, recordingStarted: true, recordingEnded: true, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, pipelineCompleted: true, pipelineFailed: true },
   dedupeWindowMinutes: 30,
 };
 
@@ -171,6 +176,7 @@ export interface SettingsView {
   retry: RetryConfig;
   diskGuard: DiskGuardConfig;
   mail: MailConfigView;
+  qmsg: { enabled: boolean; keySet: boolean };
   /** v1.3：抖音 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）。 */
   douyinCookie: { hasCookie: boolean };
   /** B站 Cookie 是否已配置（值存 SecretStore，不落盘、不回显）；用于获取蓝光/原画档位。 */

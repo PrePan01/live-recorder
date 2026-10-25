@@ -1,3 +1,4 @@
+import { fetchQmsg, updateQmsg } from "../../../api/qmsg";
 import {
   useCallback,
   useEffect,
@@ -66,6 +67,7 @@ export function useSettingsModel() {
         ? {
             settings: asPatch(settings),
             email: asPatch(settings.mail),
+            ...(settings.qmsg ? { qmsg: asPatch(settings.qmsg) } : {}),
             ...(settings.pipeline
               ? { pipeline: asPatch(settings.pipeline) }
               : {}),
@@ -107,6 +109,7 @@ export function useSettingsModel() {
       ["settings", fetchSettings],
       ["pipeline", fetchPipelineConfig],
       ["email", fetchEmail],
+      ["qmsg", fetchQmsg],
       ["openlist", fetchOpenListConfig],
       ["naming", async () => ({ namingRule: await fetchNamingRule() })],
       ["notifications", fetchNotifications],
@@ -162,6 +165,7 @@ export function useSettingsModel() {
           ...m,
           settings: asPatch(settings),
           email: asPatch(settings.mail),
+          ...(settings.qmsg ? { qmsg: asPatch(settings.qmsg) } : {}),
           ...(settings.pipeline
             ? { pipeline: asPatch(settings.pipeline) }
             : {}),
@@ -236,6 +240,7 @@ export function useSettingsModel() {
       saved = {
         namingRule: await updateNamingRule(String(payload.namingRule)),
       };
+    else if (domain === "qmsg") saved = asPatch(await updateQmsg(payload));
     else if (domain === "email") saved = asPatch(await updateEmail(payload));
     else if (domain === "openlist") {
       saved = asPatch(await updateOpenListConfig(payload));
@@ -363,6 +368,14 @@ export function useSettingsModel() {
   };
   return {
     models,
+    clearQmsgKey: () => {
+      discard("qmsg-key-manual", ["qmsg-key"]);
+      queue.discard("qmsg-key");
+      queue.enqueue("qmsg-key", {}, async () => {
+        const saved = await updateQmsg({ clearKey: true });
+        setModels(m => ({ ...m, qmsg: asPatch(saved) }));
+      });
+    },
     connection,
     setConnection,
     testUploadConnection: () => uploadConnection.verify("check"),

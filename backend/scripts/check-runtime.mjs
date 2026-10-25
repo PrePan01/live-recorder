@@ -3,6 +3,8 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 const root = process.argv[2]
   ? path.resolve(process.argv[2])
   : fileURLToPath(new URL('..', import.meta.url));
@@ -31,6 +33,27 @@ for (let round = 0; round < 5; round++) {
   global.gc?.();
 }
 require('keytar');
+if (process.argv.includes('--packaged')) {
+  // Exercise the trimmed dependency tree with the bundled Node. These checks run
+  // during packaging/installation validation, never in normal application boot.
+  const youtube = await import(pathToFileURL(require.resolve('youtubei.js')));
+  assert.equal(typeof youtube.Innertube.create, 'function');
+  assert.equal(typeof require('nodemailer').createTransport, 'function');
+  assert.equal(typeof require('ws').WebSocket, 'function');
+  const { resolveBin } = await import(pathToFileURL(path.join(root, 'dist/utils/ffmpeg.js')));
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = '';
+    for (const name of ['ffmpeg', 'ffprobe']) {
+      const binary = resolveBin(name);
+      assert.equal(path.dirname(binary), path.join(path.dirname(process.execPath), 'ffmpeg'));
+      assert.match(execFileSync(binary, ['-version'], { encoding: 'utf8', timeout: 10000 }), new RegExp(`^${name} version`));
+    }
+  } finally {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+  }
+}
 console.log(
   `runtime smoke passed: Node ${process.version}, SQLite addon ${require('better-sqlite3/package.json').version}, ${process.platform}/${process.arch}`,
 );
