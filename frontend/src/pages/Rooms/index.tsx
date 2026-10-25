@@ -87,7 +87,7 @@ export default function Rooms() {
   const [favOnly, setFavOnly] = useState<boolean>(false);
   const [filterTagIds, setFilterTagIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
@@ -539,7 +539,7 @@ export default function Rooms() {
         pageSize={pageSize}
         total={filtered.length}
         showSizeChanger
-        pageSizeOptions={[10, 20, 50]}
+        pageSizeOptions={[10, 20, 50, 100, 200]}
         showTotal={(total) => `共 ${total} 个直播间`}
         onChange={(nextPage, size) => {
           setPage(nextPage);
