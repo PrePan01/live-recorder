@@ -1,3 +1,4 @@
+import { QMSG_KEY } from '../../security/keys.js';
 import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
 import type { Services } from "../../core/services.js";
 import { DEFAULT_SETTINGS } from "../../config/defaults.js";
@@ -44,6 +45,7 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     retry: settings.retry,
     diskGuard: settings.diskGuard,
     mail,
+    qmsg: { enabled: settings.qmsg?.enabled ?? false, keySet: await services.secretStore.has(QMSG_KEY) },
     douyinCookie: { hasCookie: hasDouyinCookie },
     bilibiliCookie: { hasCookie: hasBilibiliCookie },
     xiaohongshuCookie: { hasCookie: hasXiaohongshuCookie },

@@ -1,7 +1,13 @@
+import { Link } from "react-router-dom";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { InputNumber, Select, Switch } from "antd";
+import { InputNumber, Select, Switch, Tooltip } from "antd";
 import type { Platform, RoomEffectivePolicy } from "../../../types/room";
 import type { Settings } from "../../../types/settings";
+import { bridge } from "../../../stores/bootStore";
+import {
+  liveNotifyChannels,
+  liveNotifySentence,
+} from "../../../utils/liveNotifyChannels";
 import { QUALITY_OPTIONS, type RoomPolicy } from "../model/roomPolicy";
 
 const INHERIT = "inherit";
@@ -73,6 +79,13 @@ export default function RoomPolicyFields({
     value.checkIntervalSec ??
     effective?.checkIntervalSec.value ??
     defaultInterval;
+  // 悬浮提示=真启用渠道清单（开关开+渠道已启用可用）；桌面按系统通知可用计。
+  const liveNotify = liveNotifyChannels(
+    settings,
+    bridge.isDesktop ||
+      (typeof Notification !== "undefined" &&
+        Notification.permission === "granted"),
+  );
   const [intervalDraft, setIntervalDraft] = useState<{
     source: number | null | undefined;
     value: number | null;
@@ -102,12 +115,10 @@ export default function RoomPolicyFields({
         : String(value[key]);
   const booleanField = (
     key:
-      | "enabled"
-      | "autoRecord"
-      | "danmakuEnabled"
-      | "liveNotificationEnabled",
+      "enabled" | "autoRecord" | "danmakuEnabled" | "liveNotificationEnabled",
     label: string,
     inherited?: boolean,
+    suffix?: ReactNode,
   ) => {
     const active = value[key] ?? inherited ?? false;
     return (
@@ -118,6 +129,7 @@ export default function RoomPolicyFields({
         <span className={consoleMode ? "lr-console-pad-label" : undefined}>
           {consoleMode && <i aria-hidden="true" />}
           {label}
+          {suffix}
         </span>
         {!batch ? (
           <Switch
@@ -161,17 +173,19 @@ export default function RoomPolicyFields({
   const intervalTouched = useRef(false);
   const commitInterval = () => {
     if (disabled) return;
-    if (consoleMode && (!intervalTouched.current || intervalDraft.source !== value.checkIntervalSec)) return;
+    if (
+      consoleMode &&
+      (!intervalTouched.current ||
+        intervalDraft.source !== value.checkIntervalSec)
+    )
+      return;
     if (intervalError) return;
     intervalTouched.current = false;
     if (interval !== value.checkIntervalSec)
       onChange({ checkIntervalSec: interval });
   };
   const behaviors = (
-    <section
-      className="lr-room-policy-behaviors"
-      aria-label="录制与通知"
-    >
+    <section className="lr-room-policy-behaviors" aria-label="录制与通知">
       <div className="lr-room-policy-group-heading">
         <h3>录制与通知</h3>
         {status}
@@ -197,12 +211,31 @@ export default function RoomPolicyFields({
           "弹幕保存",
           effective?.danmakuEnabled.value ?? settings?.danmaku?.enabled,
         )}
-        <div
-          className="lr-room-policy-notification"
-          title="仅控制该直播间的开播提醒，桌面和邮件通知渠道由设置页决定"
+        <Tooltip
+          title={
+            liveNotify.length
+              ? liveNotifySentence(liveNotify)
+              : "未启用任何通知渠道"
+          }
         >
-          {booleanField("liveNotificationEnabled", "开播提醒")}
-        </div>
+          <div className="lr-room-policy-notification">
+            {booleanField(
+              "liveNotificationEnabled",
+              "开播提醒",
+              undefined,
+              !batch &&
+                value.liveNotificationEnabled === true &&
+                liveNotify.length === 0 ? (
+                <Link
+                  className="lr-room-policy-warning"
+                  to="/settings#notifications"
+                >
+                  未启用任何通知渠道
+                </Link>
+              ) : undefined,
+            )}
+          </div>
+        </Tooltip>
       </div>
     </section>
   );

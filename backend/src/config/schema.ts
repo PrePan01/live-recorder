@@ -1,3 +1,4 @@
+import { normalizeNotifications, validateNotifications } from './notifications.js';
 import { AppError } from '../types/error.js';
 import type { AppSettings } from '../types/settings.js';
 import path from 'node:path';
@@ -66,6 +67,18 @@ export function validateSettings(input: unknown): AppSettings {
   const m = s.mail;
   if (m && (typeof m.host !== 'string' || typeof m.port !== 'number' || !Array.isArray(m.recipients))) {
     throw new AppError('CONFIG_INVALID', '邮件配置非法');
+  }
+  if (s.qmsg !== undefined) {
+    if (!s.qmsg || typeof s.qmsg !== 'object' || Array.isArray(s.qmsg) || typeof s.qmsg.enabled !== 'boolean') {
+      throw new AppError('CONFIG_INVALID', 'QQ 通知开关必须为布尔值');
+    }
+    // Only ordinary configuration belongs in the settings repository (including imports).
+    s.qmsg = { enabled: s.qmsg.enabled };
+  }
+  if (s.notifications !== undefined) {
+    s.notifications = normalizeNotifications(s.notifications);
+    const error = validateNotifications(s.notifications);
+    if (error) throw error;
   }
   if (s.pipeline !== undefined) {
     const error = validatePipelineConfig(s.pipeline);

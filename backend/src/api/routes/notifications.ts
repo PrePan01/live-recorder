@@ -1,7 +1,8 @@
+import { normalizeNotifications, validateNotifications } from '../../config/notifications.js';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
-import { DEFAULT_NOTIFICATION_PREFERENCE, type NotificationPreference, type NotificationEventPreference } from '../../types/index.js';
+import { type NotificationPreference } from '../../types/index.js';
 import type { AppSettings } from '../../types/index.js';
 import { calculateLivePrediction, recordingCoverageIntervals, recordingFallbackEvents, type LivePrediction } from '../../core/live-prediction.js';
 
@@ -9,29 +10,7 @@ export type { LivePrediction, PredictionConfidence } from '../../core/live-predi
 
 /** V5 通知偏好读写（GET/PUT /settings/notifications，随 settings 存储）。 */
 export function notificationPreference(services: Services): NotificationPreference {
-  const settings = services.settings.load() as AppSettings | null;
-  const stored = settings?.notifications;
-  const legacy = stored as (Partial<NotificationEventPreference> & { desktopEnabled?: boolean; dedupeWindowMinutes?: number }) | undefined;
-  if (stored && !('desktop' in stored)) {
-    const desktopEnabled = legacy?.desktopEnabled ?? true;
-    return {
-      desktop: {
-        liveStarted: desktopEnabled && (legacy?.liveStarted ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.liveStarted),
-        recordingStarted: desktopEnabled && (legacy?.recordingStarted ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingStarted),
-        recordingEnded: desktopEnabled && (legacy?.recordingEnded ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingEnded),
-        recordingFailed: desktopEnabled && (legacy?.recordingFailed ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.recordingFailed),
-        diskSpaceLow: desktopEnabled && (legacy?.diskSpaceLow ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.diskSpaceLow),
-        uploadFailed: desktopEnabled && (legacy?.uploadFailed ?? DEFAULT_NOTIFICATION_PREFERENCE.desktop.uploadFailed),
-      },
-      email: { ...DEFAULT_NOTIFICATION_PREFERENCE.email },
-      dedupeWindowMinutes: legacy?.dedupeWindowMinutes ?? DEFAULT_NOTIFICATION_PREFERENCE.dedupeWindowMinutes,
-    };
-  }
-  return {
-    desktop: { ...DEFAULT_NOTIFICATION_PREFERENCE.desktop, ...(stored?.desktop ?? {}) },
-    email: { ...DEFAULT_NOTIFICATION_PREFERENCE.email, ...(stored?.email ?? {}) },
-    dedupeWindowMinutes: stored?.dedupeWindowMinutes ?? DEFAULT_NOTIFICATION_PREFERENCE.dedupeWindowMinutes,
-  };
+  return normalizeNotifications(services.settings.load()?.notifications);
 }
 
 /**
@@ -72,12 +51,14 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
 
   app.put('/api/v1/settings/notifications', async (req, reply) => {
     const body = (req.body ?? {}) as Partial<NotificationPreference>;
+    normalizeNotifications(body); // Reject malformed channel values before merging.
     const current = notificationPreference(services);
-    const merged: NotificationPreference = {
+    const merged = normalizeNotifications({
       desktop: { ...current.desktop, ...(body.desktop ?? {}) },
       email: { ...current.email, ...(body.email ?? {}) },
+      qq: { ...current.qq, ...(body.qq ?? {}) },
       dedupeWindowMinutes: body.dedupeWindowMinutes ?? current.dedupeWindowMinutes,
-    };
+    });
     const err = validateNotifications(merged);
     if (err) throw err;
     const settings = services.settings.load() as AppSettings | null;
@@ -90,7 +71,6 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
 
   // 一键测试：按当前偏好发一封测试通知（邮件走 SMTP；桌面通知 FE 侧触发，此处返回 ok 让 FE 弹系统通知）。
   app.post('/api/v1/notifications/test', async (_req, reply) => {
-    const prefs = notificationPreference(services);
     const settings = services.settings.load();
     let email: 'sent' | 'skipped' | 'failed' = 'skipped';
     if (settings?.mail.host && settings.mail.enabled) {
@@ -117,15 +97,4 @@ export function registerNotificationRoutes(app: FastifyInstance, services: Servi
   });
 }
 
-/** V5 通知偏好校验：返回 AppError 或 null。 */
-export function validateNotifications(prefs: NotificationPreference): AppError | null {
-  for (const channel of ['desktop', 'email'] as const) {
-    for (const k of ['liveStarted', 'recordingStarted', 'recordingEnded', 'recordingFailed', 'diskSpaceLow', 'uploadFailed'] as const) {
-      if (typeof prefs[channel]?.[k] !== 'boolean') return new AppError('CONFIG_INVALID', `${channel}.${k} 必须为布尔值`);
-    }
-  }
-  if (typeof prefs.dedupeWindowMinutes !== 'number' || prefs.dedupeWindowMinutes < 1 || prefs.dedupeWindowMinutes > 1440) {
-    return new AppError('CONFIG_INVALID', 'dedupeWindowMinutes 需在 1-1440 之间');
-  }
-  return null;
-}
+export { validateNotifications } from '../../config/notifications.js';

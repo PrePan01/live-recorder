@@ -1,3 +1,4 @@
+import { registerQmsgRoutes } from './routes/qmsg.js';
 import { registerXhsNativeRoutes } from "../platform/xiaohongshu-native.js";
 import Fastify, { type FastifyInstance } from 'fastify';
 import { defaultMessageFor, AppError, httpStatusFor } from '../types/error.js';
@@ -167,6 +168,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerDiagnosticRoutes(app, services);
   registerDiagnosticExportRoutes(app, services);
   registerNotificationRoutes(app, services);
+  registerQmsgRoutes(app, services);
   registerPipelineRoutes(app, services);
   registerNamingRoutes(app, services);
   registerOpenListRoutes(app, services);
@@ -180,6 +182,8 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   // 留给 onClose 会太晚——server.close() 会一直等这些连接（forceCloseConnections 只销毁普通连接），
   // 直播墙开着预览时退出/重启服务就被拖到 Rust 侧超时强杀（#直播墙退出卡住）。
   app.addHook('preClose', async () => {
+    services.notifier.stop();
+    await services.qmsg.dispose();
     ws.dispose();
     preview.closeAll(1001);
   });

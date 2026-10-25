@@ -1,3 +1,5 @@
+import { QmsgQueue } from '../notifications/qmsg.js';
+import { QMSG_KEY } from '../security/keys.js';
 import { YoutubeAdapter } from "../platform/youtube.js";
 import { YoutubeRecordingEngine } from "../recorder/youtube-recorder.js";
 import { YOUTUBE_COOKIE_KEY } from "../security/keys.js";
@@ -63,6 +65,7 @@ import { notificationPreference } from "../api/routes/notifications.js";
 export type AdapterMode = "fake" | "real";
 
 export interface Services {
+  qmsg: QmsgQueue;
   resetting?: boolean;
   xhsNative: XiaohongshuNativeBroker;
   mode: AdapterMode;
@@ -213,6 +216,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
 
   const services: Services = {
     mode,
+    qmsg: undefined as unknown as QmsgQueue,
     xhsNative,
     startedAt: clock.now(),
     events: new AppEventBus(),
@@ -287,6 +291,10 @@ export function buildServices(opts: BuildOptions = {}): Services {
   services.mailer = useKeychain
     ? new SmtpMailer(() => services.secretStore.get(MAIL_PASSWORD_KEY))
     : new FakeMailer(() => clock.iso());
+  services.qmsg = new QmsgQueue(clock, () => secretStore.get(QMSG_KEY), mode === 'real' ? undefined : async () => {}, () => {
+    const alert = services.alerts.createOrRefresh({ level: 'warning', source: 'qmsg', message: 'QQ 推送队列已满', occurredAt: clock.iso(), retryable: false });
+    services.events.emit({ type: 'alert:created', data: alert });
+  });
   services.notifier = new Notifier(
     services.mailer,
     clock,
@@ -295,6 +303,9 @@ export function buildServices(opts: BuildOptions = {}): Services {
     () => notificationPreference(services),
     services.events,
     () => notificationPreference(services).dedupeWindowMinutes * 60 * 1000,
+    services.qmsg,
+    () => services.settings.load()?.qmsg?.enabled ?? false,
+    roomId => { const room = services.rooms.get(roomId); return Boolean(room?.enabled && room.liveNotificationEnabled); },
   );
   services.manager = new RecorderManager(services, services.notifier);
   services.danmaku = new DanmakuManager(services);

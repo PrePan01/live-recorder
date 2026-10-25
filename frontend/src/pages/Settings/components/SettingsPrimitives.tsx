@@ -117,7 +117,10 @@ const OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
   ],
   quality: [
     { value: "original", label: "原画" },
-    ...["1080p", "720p", "540p", "360p"].map((value) => ({ value, label: value })),
+    ...["1080p", "720p", "540p", "360p"].map((value) => ({
+      value,
+      label: value,
+    })),
   ],
   "encoding-mode": [
     { value: "auto", label: "自动（硬件优先）" },
@@ -163,7 +166,9 @@ export function SettingControl({
     !model.loaded(id) ||
     !!dependent ||
     (!!connectionDraft && value !== true) ||
-    (id === "upload-enabled" && value !== true && model.connection.phase === "checking") ||
+    (id === "upload-enabled" &&
+      value !== true &&
+      model.connection.phase === "checking") ||
     (id === "pipeline-delete" && model.value("pipeline-enabled") !== true);
   const common = {
     id: `${id}-control`,
@@ -240,6 +245,7 @@ export function SettingControl({
     control =
       (id === "upload-delete" || id === "pipeline-delete") && !value ? (
         <Popconfirm
+          classNames={id === "upload-delete" ? { root: "lr-upload-warning-popconfirm" } : undefined}
           title="确认开启自动删除源文件？"
           description="成功处理后删除的源文件无法撤销。"
           onConfirm={() => change(true)}
@@ -255,7 +261,7 @@ export function SettingControl({
         {...common}
         value={typeof value === "string" ? value : ""}
         autoComplete="new-password"
-        placeholder="留空不修改现有凭据"
+        placeholder="留空将不会修改"
         onChange={(e) => change(e.target.value, manualGroup ? 0 : 500)}
       />
     );

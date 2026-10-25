@@ -33,7 +33,10 @@
 - 后处理管线：校验 → 获取封面 → 切片 → 导出音频 → 格式转换 → 压缩 → 归档
 - 录制命名规则自定义
 - 支持保存为 FLV、MP4 到本地或直传网盘（依赖[OpenList](https://github.com/OpenListTeam/OpenList)）自动上传：进度 / 重试 / 取消
-- 邮件通知（SMTP 预设，失败提醒去重）
+
+### 消息通知
+
+- 支持桌面、邮件与 QQ 通知（依赖 [Qmsg酱](https://qmsg.zendee.cn/)）
 
 ### 桌面客户端
 - 支持 macOS / Windows 桌面端
