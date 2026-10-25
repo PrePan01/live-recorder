@@ -304,7 +304,9 @@ jobs:
           needs.prepare.outputs.should_release == 'true' &&
           (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Uploads have a 45-minute total bound and a 5-minute no-progress watchdog.
+    # Leave time for checkpoint recovery, verification and version-index sync.
+    timeout-minutes: 60
     permissions:
       contents: write
       actions: read
