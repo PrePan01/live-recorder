@@ -1,5 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Live Recorder Dev",
-  "identifier": "com.live-recorder.desktop.dev"
+  "identifier": "com.live-recorder.desktop.dev",
+  "bundle": {
+    "resources": null
+  }
 }

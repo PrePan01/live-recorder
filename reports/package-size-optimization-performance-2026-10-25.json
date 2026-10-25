@@ -1,0 +1,321 @@
+{
+  "method": "15 alternating samples per payload after 2 warmup pairs; same bundled Node; backend imports+migrations+health, 100k SQLite selects, yt-dlp --version",
+  "summary": {
+    "baseline": {
+      "startupMs": {
+        "median": 92.58,
+        "p95": 95.08
+      },
+      "sqliteMs": {
+        "median": 13.65,
+        "p95": 14.9
+      },
+      "rssMiB": {
+        "median": 93.56,
+        "p95": 96.5
+      },
+      "processWallMs": {
+        "median": 133.11,
+        "p95": 135.72
+      },
+      "ytdlpVersionMs": {
+        "median": 168.22,
+        "p95": 172.5
+      }
+    },
+    "optimized": {
+      "startupMs": {
+        "median": 92.91,
+        "p95": 95.12
+      },
+      "sqliteMs": {
+        "median": 14.31,
+        "p95": 14.61
+      },
+      "rssMiB": {
+        "median": 96.34,
+        "p95": 96.47
+      },
+      "processWallMs": {
+        "median": 131.82,
+        "p95": 135.88
+      },
+      "ytdlpVersionMs": {
+        "median": 167.87,
+        "p95": 172.46
+      }
+    }
+  },
+  "samples": [
+    {
+      "startupMs": 93.02954100000001,
+      "sqliteMs": 13.653207999999992,
+      "rssMiB": 93.734375,
+      "label": "baseline",
+      "round": 2,
+      "processWallMs": 133.504125,
+      "ytdlpVersionMs": 168.18299999999996
+    },
+    {
+      "startupMs": 93.035417,
+      "sqliteMs": 14.430667,
+      "rssMiB": 96.15625,
+      "label": "optimized",
+      "round": 2,
+      "processWallMs": 132.58637500000003,
+      "ytdlpVersionMs": 168.8592080000002
+    },
+    {
+      "startupMs": 92.91025,
+      "sqliteMs": 14.319541999999998,
+      "rssMiB": 96.359375,
+      "label": "optimized",
+      "round": 3,
+      "processWallMs": 131.42891599999996,
+      "ytdlpVersionMs": 167.46962500000006
+    },
+    {
+      "startupMs": 92.634084,
+      "sqliteMs": 13.589709,
+      "rssMiB": 93.28125,
+      "label": "baseline",
+      "round": 3,
+      "processWallMs": 132.9850829999999,
+      "ytdlpVersionMs": 168.21729099999993
+    },
+    {
+      "startupMs": 92.24449999999999,
+      "sqliteMs": 13.885749999999987,
+      "rssMiB": 93.71875,
+      "label": "baseline",
+      "round": 4,
+      "processWallMs": 132.77820799999995,
+      "ytdlpVersionMs": 166.78270799999996
+    },
+    {
+      "startupMs": 93.150625,
+      "sqliteMs": 14.5595,
+      "rssMiB": 96.390625,
+      "label": "optimized",
+      "round": 4,
+      "processWallMs": 134.82962500000008,
+      "ytdlpVersionMs": 167.1542909999997
+    },
+    {
+      "startupMs": 93.331916,
+      "sqliteMs": 14.273375000000001,
+      "rssMiB": 96.359375,
+      "label": "optimized",
+      "round": 5,
+      "processWallMs": 132.75550000000004,
+      "ytdlpVersionMs": 168.1330000000001
+    },
+    {
+      "startupMs": 92.274375,
+      "sqliteMs": 13.603750000000005,
+      "rssMiB": 93.515625,
+      "label": "baseline",
+      "round": 5,
+      "processWallMs": 132.36891699999998,
+      "ytdlpVersionMs": 172.50370800000024
+    },
+    {
+      "startupMs": 92.408792,
+      "sqliteMs": 13.42670799999999,
+      "rssMiB": 93.5625,
+      "label": "baseline",
+      "round": 6,
+      "processWallMs": 131.62029200000003,
+      "ytdlpVersionMs": 168.01920800000002
+    },
+    {
+      "startupMs": 92.673292,
+      "sqliteMs": 14.133667000000003,
+      "rssMiB": 96.3125,
+      "label": "optimized",
+      "round": 6,
+      "processWallMs": 131.7102499999998,
+      "ytdlpVersionMs": 171.51979199999977
+    },
+    {
+      "startupMs": 95.119875,
+      "sqliteMs": 14.121792,
+      "rssMiB": 96.34375,
+      "label": "optimized",
+      "round": 7,
+      "processWallMs": 135.87995900000038,
+      "ytdlpVersionMs": 168.9102499999997
+    },
+    {
+      "startupMs": 95.082167,
+      "sqliteMs": 13.485833,
+      "rssMiB": 93.59375,
+      "label": "baseline",
+      "round": 7,
+      "processWallMs": 135.71783300000018,
+      "ytdlpVersionMs": 169.99675000000013
+    },
+    {
+      "startupMs": 92.197542,
+      "sqliteMs": 13.75595899999999,
+      "rssMiB": 93.78125,
+      "label": "baseline",
+      "round": 8,
+      "processWallMs": 132.22474999999977,
+      "ytdlpVersionMs": 167.22170800000046
+    },
+    {
+      "startupMs": 95.051917,
+      "sqliteMs": 14.306041000000008,
+      "rssMiB": 96.296875,
+      "label": "optimized",
+      "round": 8,
+      "processWallMs": 133.72974999999965,
+      "ytdlpVersionMs": 167.86983300000014
+    },
+    {
+      "startupMs": 92.407416,
+      "sqliteMs": 14.274666999999994,
+      "rssMiB": 96.265625,
+      "label": "optimized",
+      "round": 9,
+      "processWallMs": 131.25391700000046,
+      "ytdlpVersionMs": 167.25549999999956
+    },
+    {
+      "startupMs": 92.432375,
+      "sqliteMs": 13.720292,
+      "rssMiB": 93.484375,
+      "label": "baseline",
+      "round": 9,
+      "processWallMs": 132.24387500000034,
+      "ytdlpVersionMs": 167.32158399999975
+    },
+    {
+      "startupMs": 91.79754100000001,
+      "sqliteMs": 14.903334000000001,
+      "rssMiB": 93.34375,
+      "label": "baseline",
+      "round": 10,
+      "processWallMs": 133.68470800000054,
+      "ytdlpVersionMs": 168.5517910000005
+    },
+    {
+      "startupMs": 93.39462499999999,
+      "sqliteMs": 14.612167,
+      "rssMiB": 96.46875,
+      "label": "optimized",
+      "round": 10,
+      "processWallMs": 132.43670800000018,
+      "ytdlpVersionMs": 166.8235840000003
+    },
+    {
+      "startupMs": 92.836708,
+      "sqliteMs": 14.349375000000009,
+      "rssMiB": 96.171875,
+      "label": "optimized",
+      "round": 11,
+      "processWallMs": 131.28116700000004,
+      "ytdlpVersionMs": 166.94283299999935
+    },
+    {
+      "startupMs": 92.51570799999999,
+      "sqliteMs": 13.574708999999999,
+      "rssMiB": 93.484375,
+      "label": "baseline",
+      "round": 11,
+      "processWallMs": 133.17816699999963,
+      "ytdlpVersionMs": 169.03325
+    },
+    {
+      "startupMs": 93.223042,
+      "sqliteMs": 13.599500000000006,
+      "rssMiB": 93.515625,
+      "label": "baseline",
+      "round": 12,
+      "processWallMs": 133.315584,
+      "ytdlpVersionMs": 167.88108300000016
+    },
+    {
+      "startupMs": 92.186291,
+      "sqliteMs": 14.253957999999997,
+      "rssMiB": 96.34375,
+      "label": "optimized",
+      "round": 12,
+      "processWallMs": 130.48904199999978,
+      "ytdlpVersionMs": 169.65366599999942
+    },
+    {
+      "startupMs": 92.69595799999999,
+      "sqliteMs": 14.451458000000002,
+      "rssMiB": 96.375,
+      "label": "optimized",
+      "round": 13,
+      "processWallMs": 131.63724999999982,
+      "ytdlpVersionMs": 167.04304100000033
+    },
+    {
+      "startupMs": 92.93575000000001,
+      "sqliteMs": 13.728959000000003,
+      "rssMiB": 93.5,
+      "label": "baseline",
+      "round": 13,
+      "processWallMs": 133.10949999999977,
+      "ytdlpVersionMs": 170.50308299999983
+    },
+    {
+      "startupMs": 92.762917,
+      "sqliteMs": 13.864250000000013,
+      "rssMiB": 93.71875,
+      "label": "baseline",
+      "round": 14,
+      "processWallMs": 134.69787500000052,
+      "ytdlpVersionMs": 169.87474999999995
+    },
+    {
+      "startupMs": 93.166708,
+      "sqliteMs": 14.279791000000003,
+      "rssMiB": 96.4375,
+      "label": "optimized",
+      "round": 14,
+      "processWallMs": 134.6615419999999,
+      "ytdlpVersionMs": 167.75112500000057
+    },
+    {
+      "startupMs": 92.84775,
+      "sqliteMs": 14.450540999999987,
+      "rssMiB": 96.34375,
+      "label": "optimized",
+      "round": 15,
+      "processWallMs": 131.81545900000026,
+      "ytdlpVersionMs": 169.34737500000097
+    },
+    {
+      "startupMs": 93.086333,
+      "sqliteMs": 14.484708999999995,
+      "rssMiB": 96.5,
+      "label": "baseline",
+      "round": 15,
+      "processWallMs": 133.7047499999997,
+      "ytdlpVersionMs": 169.02600000000058
+    },
+    {
+      "startupMs": 92.576833,
+      "sqliteMs": 13.550541999999993,
+      "rssMiB": 93.59375,
+      "label": "baseline",
+      "round": 16,
+      "processWallMs": 131.4346250000007,
+      "ytdlpVersionMs": 167.92458399999964
+    },
+    {
+      "startupMs": 92.406959,
+      "sqliteMs": 14.259457999999995,
+      "rssMiB": 96.15625,
+      "label": "optimized",
+      "round": 16,
+      "processWallMs": 131.77087500000084,
+      "ytdlpVersionMs": 172.45983299999955
+    }
+  ]
+}
