@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { YTDLP_ASSETS, YTDLP_VERSION } from '../frontend/scripts/bundle-youtube.mjs';
 import { verifyOptimizedYoutubeRuntime } from '../frontend/scripts/optimize-youtube-runtime.mjs';
+import { detachDmg } from './dmg-cleanup.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const release = path.join(root, 'release');
 const expected = JSON.parse(
@@ -21,6 +22,7 @@ const expected = JSON.parse(
 let temporary;
 let uninstaller;
 let mounted = false;
+let validationError;
 function run(command, args, timeout = 60000) {
   const result = spawnSync(command, args, {
     stdio: 'inherit',
@@ -103,9 +105,9 @@ try {
       throw new Error(`Installed yt-dlp ${YTDLP_VERSION} integrity mismatch`);
     run(youtube, ['--ignore-config', '--version']);
   }
-  console.log(
-    `installation payload verified: ${expected}, ${process.platform}/${process.arch}`,
-  );
+} catch (error) {
+  validationError = error;
+  throw error;
 } finally {
   if (uninstaller && existsSync(uninstaller)) {
     try {
@@ -114,7 +116,17 @@ try {
       console.warn(`NSIS uninstall cleanup failed: ${error.message}`);
     }
   }
-  if (mounted) run('hdiutil', ['detach', temporary]);
-  if (temporary)
-    rmSync(temporary, { recursive: true, force: true, maxRetries: 5 });
+  try {
+    if (mounted) {
+      await detachDmg(temporary);
+      mounted = false;
+    }
+    // Never remove a directory while its disk image may still be mounted.
+    if (temporary) rmSync(temporary, { recursive: true, force: true, maxRetries: 5 });
+  } catch (error) {
+    if (!validationError) throw error;
+    // Keep the actual payload failure as the primary error when cleanup also fails.
+    console.error(`Installation cleanup also failed: ${error.message}`);
+  }
 }
+console.log(`installation payload verified: ${expected}, ${process.platform}/${process.arch}`);
