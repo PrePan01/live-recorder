@@ -276,7 +276,7 @@ jobs:
           node-version: 24.20.0
 
       - name: Verify native packaging paths and dependency pruning
-        run: node --test scripts/package-payload.test.mjs scripts/bundle-youtube.test.mjs
+        run: node --test scripts/package-payload.test.mjs scripts/bundle-youtube.test.mjs scripts/dmg-cleanup.test.mjs
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

@@ -15,6 +15,7 @@ import {
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { optimizeYoutubeRuntime, verifyOptimizedYoutubeRuntime } from './optimize-youtube-runtime.mjs';
+import { detachDmg } from '../../scripts/dmg-cleanup.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tauriConfig = JSON.parse(
@@ -54,12 +55,12 @@ function checked(cmd, args) {
   return result;
 }
 
-function cleanup() {
+async function cleanup() {
   const stale = sh("hdiutil", ["info"])
     .stdout.split("\n")
     .some((line) => line.trimEnd().endsWith(`\t${mountPoint}`));
   if (attached || stale) {
-    checked("hdiutil", ["detach", mountPoint, "-force"]);
+    await detachDmg(mountPoint);
     attached = false;
   }
   // 清理临时目录/镜像
@@ -153,12 +154,7 @@ async function run() {
 
   // 3. 应用图标/布局（可选，保持最小）
   // 4. detach
-  const det = sh("hdiutil", ["detach", mountPoint]);
-  if (det.status !== 0) {
-    // detach 可能因 busy 失败，强制
-    checked("hdiutil", ["detach", mountPoint, "-force"]);
-  }
-
+  await detachDmg(mountPoint);
   attached = false;
 
   // 5. 转换 UDZO（压缩只读）
@@ -173,15 +169,16 @@ async function run() {
   ]);
 
   // 6. 清理
-  cleanup();
+  await cleanup();
   console.log(`[bundle:dmg] OK -> ${join(outDir, dmgName)}`);
 }
 
 try {
-  cleanup();
+  await cleanup();
   await run();
 } catch (err) {
   console.error(`[bundle:dmg] 失败: ${err.message}`);
-  cleanup();
+  try { await cleanup(); }
+  catch (cleanupError) { console.error(`[bundle:dmg] 清理失败: ${cleanupError.message}`); }
   process.exit(1);
 }
