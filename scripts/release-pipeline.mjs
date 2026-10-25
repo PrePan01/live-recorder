@@ -277,7 +277,8 @@ export function asyncCommand(program, args, options = {}) {
   const { label = program, timeout = 300000, liveOutput = false, idleTimeout = 0, ...execution } = options;
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    let lastProgress = started, lastAmount = '', progress = 'waiting for output';
+    let lastProgress = started, lastAmount = 0, progress = 'waiting for output';
+    const progressTails = ['', ''];
     let stdout = '', stderr = '', stopped, forceKill, settled = false;
     const child = spawn(program, args, { ...execution, stdio: ['ignore', 'pipe', 'pipe'] });
     const stop = reason => {
@@ -306,10 +307,15 @@ export function asyncCommand(program, args, options = {}) {
       if (stdout.length + stderr.length > 16 * 1024 * 1024) stop(`${label}: output limit exceeded`);
       if (liveOutput) process.stdout.write(output.replace(/\r/g, '\n'));
       progress = output.trim().split(/[\r\n]+/).at(-1) || progress;
-      for (const match of output.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
-        const amount = `${match[1]} ${match[2]}`;
-        if (amount !== lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
+      // Pipe chunks need not end on a progress-record boundary. Keep a bounded
+      // tail per stream and only count increasing byte totals as real activity.
+      const streamIndex = isError ? 1 : 0;
+      const progressOutput = progressTails[streamIndex] + output;
+      for (const match of progressOutput.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
+        const amount = Number(match[1]) * ({ Bytes: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3 })[match[2]];
+        if (amount > lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
       }
+      progressTails[streamIndex] = progressOutput.slice(-128);
     });
     child.on('error', error => finish(error));
     child.on('close', (code, signal) => {
@@ -320,13 +326,17 @@ export function asyncCommand(program, args, options = {}) {
   });
 }
 
+function isS3PermissionError(error) {
+  return /\((403|AccessDenied|InvalidAccessKeyId|SignatureDoesNotMatch)\) when calling the \w+ operation/i.test(error.message);
+}
+
 async function retryTransfer(fn) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (error) {
       if (
-        attempt === 3 ||
+        attempt === 3 || isS3PermissionError(error) ||
         /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify|upload budget exceeded/.test(
           error.message,
         )
@@ -344,7 +354,7 @@ function retry(fn) {
       return fn();
     } catch (e) {
       error = e;
-      if (/HTTP 404|\((404|NoSuchKey|NotFound)\)/.test(e.message)) throw e;
+      if (isS3PermissionError(e) || /HTTP 404|\((404|NoSuchKey|NotFound)\)/.test(e.message)) throw e;
       if (attempt < 3)
         Atomics.wait(
           new Int32Array(new SharedArrayBuffer(4)),
@@ -646,7 +656,7 @@ export class ReleaseRemote {
       return JSON.parse(retry(() => this.aws(["head-object", "--key", key])));
     } catch (error) {
       if (/\((404|NoSuchKey|NotFound)\)/.test(error.message)) return null;
-      throw error;
+      throw new Error(`Cannot inspect CDN object ${key}: ${error.message}`);
     }
   }
   readObject(key, head = this.objectHead(key)) {
@@ -662,7 +672,10 @@ export class ReleaseRemote {
     const fingerprint = hashBytes(JSON.stringify([...entries].sort()));
     const staging = join(this.scratch, "cdn-upload");
     const started = Date.now();
-    const budget = 25 * 60 * 1000;
+    // The 1.5.0 upload was still advancing at 25 minutes (198/200 MiB).
+    // Allow slow but active transfers to finish; stop stalls separately and
+    // retain a hard overall bound below the workflow's 60-minute job limit.
+    const budget = 45 * 60 * 1000;
     await retryTransfer(async () => {
       rmSync(staging, { recursive: true, force: true });
       mkdirSync(staging, { recursive: true });
@@ -694,7 +707,8 @@ export class ReleaseRemote {
         "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
         "--cache-control", "public, max-age=31536000, immutable",
       ], {
-        label: "CDN batch upload", liveOutput: true, timeout: remaining, idleTimeout: 180000,
+        label: "CDN batch upload", liveOutput: true, timeout: remaining,
+        idleTimeout: 5 * 60 * 1000,
       });
     });
   }
