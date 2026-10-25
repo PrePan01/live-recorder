@@ -1,7 +1,7 @@
 {
   "releases": [
     {
-      "version": "1.5.1",
+      "version": "1.5.2",
       "publishedAt": "2026-10-25",
       "notes": [
         "新增：新增 QQ 消息通知，现在可以使用 QQ 接收消息了",
