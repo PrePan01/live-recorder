@@ -221,8 +221,9 @@ test('CDN uploads use one recursive AWS batch, native progress and transfer defa
     assert(!args.includes('--cli-read-timeout'));
     assert(args.includes('--metadata'));
     assert(!args.includes('--only-show-errors'));
-    assert(options.timeout > 19 * 60 * 1000);
-    assert.equal(options.idleTimeout, undefined);
+    assert(options.timeout > 44 * 60 * 1000);
+    assert(options.timeout <= 45 * 60 * 1000);
+    assert.equal(options.idleTimeout, 5 * 60 * 1000);
     assert(args.includes('--recursive'));
     assert.equal(options.liveOutput, true);
     const staging = args[args.indexOf('cp') + 1];
@@ -535,6 +536,45 @@ test('a partially completed AWS batch retries only missing files', async () => {
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('CDN transfer can finish after the former 25-minute cutoff', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-slow-cdn-'));
+  writeFileSync(join(directory, 'app.dmg'), 'fixture');
+  const realNow = Date.now;
+  const started = realNow();
+  let elapsed = 0, uploads = 0;
+  const remote = new ReleaseRemote(directory, state.version, async (_program, _args, options) => {
+    uploads++;
+    assert(options.timeout > 26 * 60 * 1000);
+    assert.equal(options.idleTimeout, 5 * 60 * 1000);
+    elapsed = 26 * 60 * 1000;
+  });
+  remote.objectHead = () => null;
+  Date.now = () => started + elapsed;
+  try {
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash']]);
+    assert.equal(uploads, 1);
+  } finally { Date.now = realNow; remote.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('HeadObject 403 during recovery identifies the key and never treats it as a missing object', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-cdn-permissions-'));
+  writeFileSync(join(directory, 'app.exe'), 'fixture');
+  let uploads = 0, probes = 0;
+  const remote = new ReleaseRemote(directory, state.version, async () => {
+    uploads++;
+    throw new Error('CDN batch upload timed out after 1493s');
+  });
+  remote.aws = () => {
+    probes++;
+    throw new Error(`An error occurred (${uploads ? '403' : '404'}) when calling the HeadObject operation: ${uploads ? 'Forbidden' : 'Not Found'}`);
+  };
+  try {
+    await assert.rejects(remote.ensureObjects([['app.exe', 'app.exe', 'win-hash']]), /Cannot inspect CDN object app\.exe:.*\(403\)/);
+    assert.equal(uploads, 1);
+    assert.equal(probes, 2); // One 404 before upload, one fatal 403 on recovery.
+  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('native upload progress is visible even when the subprocess fails', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { asyncCommand } from './scripts/release-pipeline.mjs';
@@ -550,4 +590,23 @@ test('active byte progress extends the idle window while stalled uploads stop', 
   const result = await asyncCommand(process.execPath, ['-e', 'let n=0;const timer=setInterval(()=>{console.log(`Completed ${++n}.0 MiB/9.0 MiB`);if(n===5){clearInterval(timer)}},150)'], { timeout: 3000, idleTimeout: 500 });
   assert.match(result, /Completed 5.0 MiB/);
   await assert.rejects(asyncCommand(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeout: 2000, idleTimeout: 80 }), /no upload progress/);
+});
+
+test('split progress records keep an active upload alive', async () => {
+  const result = await asyncCommand(process.execPath, ['-e', `
+    let n = 0;
+    const timer = setInterval(() => {
+      process.stdout.write('Completed ');
+      setTimeout(() => process.stdout.write(++n + '.0 MiB/9.0 MiB\\r'), 30);
+      if (n === 4) clearInterval(timer);
+    }, 150);
+  `], { timeout: 3000, idleTimeout: 400 });
+  assert.match(result, /Completed 5\.0 MiB/);
+});
+
+test('repeated or regressing progress totals cannot hide a stalled upload', async () => {
+  await assert.rejects(asyncCommand(process.execPath, ['-e', `
+    let n = 0;
+    setInterval(() => console.log('Completed ' + (++n % 2 + 1) + '.0 MiB/9.0 MiB'), 50);
+  `], { timeout: 2500, idleTimeout: 300 }), /no upload progress/);
 });
