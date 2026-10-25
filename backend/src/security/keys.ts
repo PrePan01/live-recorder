@@ -19,3 +19,5 @@ export function keychainService(): string {
   return dir && dir.length > 0 ? 'live-recorder-dev' : KEYCHAIN_SERVICE;
 }
 export const YOUTUBE_COOKIE_KEY = 'youtube.cookie';
+
+export const QMSG_KEY = 'qmsg-api-key';

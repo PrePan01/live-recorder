@@ -41,6 +41,22 @@
   line-height: 1.4;
 }
 
+.lr-monitor-room-title {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lr-monitor-room-title:hover {
+  text-decoration: underline;
+}
+
 .lr-room-card__header-actions .lr-quality-light {
   padding-inline: 8px;
 }

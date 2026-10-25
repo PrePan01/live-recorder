@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { optimizeYoutubeRuntime, verifyOptimizedYoutubeRuntime } from './optimize-youtube-runtime.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tauriConfig = JSON.parse(
@@ -99,18 +100,25 @@ function ensureValidAppSignature() {
   }
 }
 
-function run() {
+async function run() {
   if (!existsSync(appPath)) {
     console.error(`[bundle:dmg] 未找到 ${appPath}，请先 tauri build 产出 .app`);
     process.exit(1);
   }
+  const youtube = join(appPath, 'Contents/Resources/youtube-runtime');
+  const receipt = await optimizeYoutubeRuntime(youtube, {
+    arch: process.arch,
+    receiptPath: join(root, 'src-tauri/.bundle', `youtube-optimized-${process.arch}.json`),
+  });
   ensureValidAppSignature();
+  if (!await verifyOptimizedYoutubeRuntime(youtube, receipt, process.arch))
+    throw new Error('YouTube runtime changed while sealing application resources');
   console.log(`[bundle:dmg] 生成 ${dmgName}`);
   mkdirSync(tmpDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
 
   // 1. 暂存 .app + Applications 快捷方式
-  cpSync(appPath, join(tmpDir, `${productName}.app`), { recursive: true });
+  cpSync(appPath, join(tmpDir, `${productName}.app`), { recursive: true, verbatimSymlinks: true });
   try {
     rmSync(join(tmpDir, "Applications"), { force: true });
   } catch {}
@@ -171,7 +179,7 @@ function run() {
 
 try {
   cleanup();
-  run();
+  await run();
 } catch (err) {
   console.error(`[bundle:dmg] 失败: ${err.message}`);
   cleanup();

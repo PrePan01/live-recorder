@@ -23,6 +23,7 @@ import type { Room } from "../types/room";
 type MessageApi = ReturnType<typeof App.useApp>["message"];
 
 export interface MonitorListColumnsDeps {
+  onManageRoom: (room: Room) => void;
   favoriteRoom: (id: string, favorited: boolean) => Promise<unknown>;
   checkRoomNow: (id: string) => Promise<unknown>;
   startRoomRecording: (id: string) => Promise<unknown>;
@@ -38,6 +39,7 @@ export function buildMonitorListColumns(
   deps: MonitorListColumnsDeps,
 ): ColumnsType<Room> {
   const {
+    onManageRoom,
     favoriteRoom,
     checkRoomNow,
     startRoomRecording,
@@ -92,7 +94,13 @@ export function buildMonitorListColumns(
             live={room.lastLiveStatus === "live"}
             size={22}
           />
-          <span>{v}</span>
+          <button
+            type="button"
+            className="lr-monitor-room-title"
+            onClick={() => onManageRoom(room)}
+          >
+            {v}
+          </button>
           {room.titleFallbackUsed ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               （回退）

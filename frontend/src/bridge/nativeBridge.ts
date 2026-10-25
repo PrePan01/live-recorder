@@ -198,7 +198,8 @@ class TauriBridge implements NativeBridge {
     );
     let granted = await isPermissionGranted();
     if (!granted) granted = (await requestPermission()) === 'granted';
-    if (granted) sendNotification({ title, body });
+    if (!granted) throw new Error('系统通知权限未获允许，请在系统设置中开启通知');
+    sendNotification({ title, body });
   }
 
   async pickDirectory(): Promise<string | null> {
@@ -375,14 +376,11 @@ class BrowserBridge implements NativeBridge {
   }
 
   async notify(title: string, body: string): Promise<void> {
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
-        new Notification(title, { body });
-      } else if (Notification.permission !== 'denied') {
-        const permission = await Notification.requestPermission();
-        if (permission === 'granted') new Notification(title, { body });
-      }
-    }
+    if (!('Notification' in window)) throw new Error('当前浏览器不支持系统通知');
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('通知权限未获允许，请在浏览器设置中开启通知');
+    new Notification(title, { body });
   }
 
   async pickDirectory(): Promise<string | null> {

@@ -10,6 +10,9 @@ import {
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { YTDLP_ASSETS, YTDLP_VERSION } from '../frontend/scripts/bundle-youtube.mjs';
+import { verifyOptimizedYoutubeRuntime } from '../frontend/scripts/optimize-youtube-runtime.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const release = path.join(root, 'release');
 const expected = JSON.parse(
@@ -84,8 +87,22 @@ try {
     '--expose-gc',
     path.join(backend, 'scripts/check-runtime.mjs'),
     backend,
+    '--packaged',
   ]);
   run(node, [path.join(backend, 'scripts/check-startup.mjs'), backend]);
+  if (process.platform === 'darwin') {
+    // Anchor hashes in the build-side receipt, not the installer's own manifest.
+    const receipt = JSON.parse(readFileSync(path.join(root, 'frontend/src-tauri/.bundle', `youtube-optimized-${process.arch}.json`), 'utf8'));
+    const youtube = path.join(resources, 'youtube-runtime');
+    if (!await verifyOptimizedYoutubeRuntime(youtube, receipt, process.arch))
+      throw new Error('Installed YouTube runtime integrity mismatch');
+    run(path.join(youtube, 'yt-dlp_macos'), ['--ignore-config', '--version']);
+  } else {
+    const youtube = path.join(resources, 'yt-dlp.exe');
+    if (createHash('sha256').update(readFileSync(youtube)).digest('hex') !== YTDLP_ASSETS.win32[1])
+      throw new Error(`Installed yt-dlp ${YTDLP_VERSION} integrity mismatch`);
+    run(youtube, ['--ignore-config', '--version']);
+  }
   console.log(
     `installation payload verified: ${expected}, ${process.platform}/${process.arch}`,
   );

@@ -87,7 +87,7 @@ export default function Rooms() {
   const [favOnly, setFavOnly] = useState<boolean>(false);
   const [filterTagIds, setFilterTagIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
@@ -139,29 +139,39 @@ export default function Rooms() {
   };
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(search);
     const focusId = params.get("focus");
-    if (!focusId || rooms.length === 0) return;
-    const idx = rooms.findIndex((r) => r.id === focusId);
-    if (idx === -1) return;
+    if (!focusId || !rooms.some((room) => room.id === focusId)) return;
+    const idx = filtered.findIndex((room) => room.id === focusId);
+    if (idx === -1) {
+      setKeyword("");
+      setPlatform(undefined);
+      setState(undefined);
+      setFavOnly(false);
+      setFilterTagIds([]);
+      return;
+    }
     const targetPage = Math.floor(idx / pageSize) + 1;
-    setPage(targetPage);
-    const timer = setTimeout(() => {
-      const el = document.querySelector(
-        `[data-room-id="${focusId}"]`,
-      ) as HTMLElement | null;
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.style.transition = "background 1s ease";
-        el.style.background = "var(--lr-hover-bg)";
-        setTimeout(() => {
-          el.style.background = "";
-        }, 2000);
-      }
-    }, 400);
-    window.history.replaceState({}, "", "/rooms");
-    return () => clearTimeout(timer);
-  }, [rooms, pageSize]);
+    if (currentPage !== targetPage) {
+      setPage(targetPage);
+      return;
+    }
+    // Wait for the target page to commit before locating its card.
+    const frame = requestAnimationFrame(() => {
+      const el = Array.from(
+        document.querySelectorAll<HTMLElement>(".lr-room-management-card[data-room-id]"),
+      ).find((card) => card.dataset.roomId === focusId);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.animate(
+        [{ backgroundColor: "var(--lr-hover-bg)" }, { backgroundColor: "transparent" }],
+        { duration: 2000 },
+      );
+      params.delete("focus");
+      navigate({ pathname: "/rooms", search: params.toString() }, { replace: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [search, rooms, filtered, pageSize, currentPage, navigate]);
 
   const resetPage = () => setPage(1);
 
@@ -529,7 +539,7 @@ export default function Rooms() {
         pageSize={pageSize}
         total={filtered.length}
         showSizeChanger
-        pageSizeOptions={[10, 20, 50]}
+        pageSizeOptions={[10, 20, 50, 100, 200]}
         showTotal={(total) => `共 ${total} 个直播间`}
         onChange={(nextPage, size) => {
           setPage(nextPage);

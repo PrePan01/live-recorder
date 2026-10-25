@@ -72,6 +72,7 @@ function bestQuality(qualities: string[]): string | null {
 
 export const RoomCard = memo(function RoomCard({
   room,
+  onManageRoom,
   onWatch,
   onCheck,
   onStop,
@@ -92,6 +93,7 @@ export const RoomCard = memo(function RoomCard({
   floatingReady,
 }: {
   room: Room;
+  onManageRoom: (r: Room) => void;
   onWatch: (r: Room) => void;
   onCheck: (r: Room) => void;
   onStop: (r: Room) => void;
@@ -202,13 +204,19 @@ export const RoomCard = memo(function RoomCard({
             </div>
             <Space className="lr-room-card__title-row" align="center">
               <Tooltip title={room.displayName}>
-                <Typography.Text
-                  className="lr-room-card__title"
-                  strong
-                  ellipsis
+                <button
+                  type="button"
+                  className="lr-monitor-room-title"
+                  onClick={() => onManageRoom(room)}
                 >
-                  {room.displayName}
-                </Typography.Text>
+                  <Typography.Text
+                    className="lr-room-card__title"
+                    strong
+                    ellipsis
+                  >
+                    {room.displayName}
+                  </Typography.Text>
+                </button>
               </Tooltip>
             </Space>
           </>

@@ -459,7 +459,13 @@ export default function Monitor() {
     }
   };
 
+  const onManageRoom = useCallback(
+    (room: Room) => navigate(`/rooms?focus=${encodeURIComponent(room.id)}`),
+    [navigate],
+  );
+
   const listColumns = buildMonitorListColumns({
+    onManageRoom,
     favoriteRoom,
     checkRoomNow,
     startRoomRecording,
@@ -564,6 +570,7 @@ export default function Monitor() {
               <SortableRoomCardItem key={room.id} roomId={room.id}>
                 <RoomCard
                   room={room}
+                  onManageRoom={onManageRoom}
                   acting={actingRoomId === room.id}
                   actingAction={
                     actingRoomId === room.id

@@ -17,7 +17,7 @@ vi.mock("react", async original => ({
     return hooks.slots[slot] ??= { current: initial };
   },
 }));
-vi.mock("antd", () => ({ InputNumber: "number", Select: "select", Switch: "switch" }));
+vi.mock("antd", () => ({ InputNumber: "number", Select: "select", Switch: "switch", Tooltip: "tooltip" }));
 import RoomPolicyFields from "./RoomPolicyFields";
 
 function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {

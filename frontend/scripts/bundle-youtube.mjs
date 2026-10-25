@@ -26,7 +26,7 @@ export const YTDLP_ASSETS = {
 };
 const digest = data => createHash('sha256').update(data).digest('hex');
 
-async function runtimeFiles(root, relative = '') {
+export async function runtimeFiles(root, relative = '') {
   const files = [];
   for (const entry of await readdir(join(root, relative), { withFileTypes: true })) {
     if (!relative && entry.name === 'runtime-manifest.json') continue;

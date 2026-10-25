@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { bundleYoutube } from "./bundle-youtube.mjs";
+import { stageBackend } from "./stage-backend.mjs";
 import { createRequire } from "node:module";
 import { copyFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -71,13 +72,18 @@ for (const [name, dependency] of [['ffmpeg', '@ffmpeg-installer/ffmpeg'], ['ffpr
   const binary = requireBackend(dependency).path;
   copyFileSync(binary, join(mediaDir, isWin ? `${name}.exe` : name));
 }
+const stagedBackend = join(destDir, 'backend');
+stageBackend(join(root, '../backend'), stagedBackend, {
+  platform: process.platform, arch: process.arch,
+  musl: process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime,
+});
 
 // 使用实际随包运行时检查原生依赖、迁移和路由编译；原生崩溃同样使打包失败。
 const smoke = spawnSync(
   dest,
-  ["--expose-gc", join(root, "../backend/scripts/check-runtime.mjs")],
+  ["--expose-gc", join(stagedBackend, 'scripts/check-runtime.mjs'), stagedBackend, '--packaged'],
   {
-    cwd: join(root, "../backend"),
+    cwd: stagedBackend,
     stdio: "inherit",
     timeout: 30_000,
     windowsHide: true,

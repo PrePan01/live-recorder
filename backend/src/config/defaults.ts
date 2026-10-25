@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'system' as const,
   floatingRecorderSize: 36,
   notifications: DEFAULT_NOTIFICATION_PREFERENCE,
+  qmsg: { enabled: false },
   pipeline: DEFAULT_PIPELINE_CONFIG,
   namingRule: '{room}_{date}_{time}',
   confirmAfterComplete: false,

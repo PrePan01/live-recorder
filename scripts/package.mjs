@@ -43,23 +43,6 @@ const run = (cmd, args, cwd) => {
   }
 };
 
-const backendDir = path.join(root, "backend");
-
-function restoreBackendDeps() {
-  if (process.env.LR_SKIP_BACKEND_RESTORE === "1") return;
-  console.log("[package] 恢复后端完整依赖（npm ci）…");
-  const r = spawnSync("npm", ["ci", "--include=dev"], {
-    cwd: backendDir,
-    stdio: "inherit",
-    shell: isWin,
-  });
-  if (r.error || r.status !== 0) {
-    console.warn(
-      "[package] 恢复 npm ci 失败，如需开发请手动 cd backend && npm ci",
-    );
-  }
-}
-
 try {
   console.log("[package] 1/4 构建后端 dist…");
   if (process.env.LR_SKIP_BACKEND_BUILD === "1") {
@@ -73,24 +56,8 @@ try {
     run("npm", ["run", "build"], path.join(root, "backend"));
   }
 
-  console.log("[package] 精简后端 node_modules 为生产依赖…");
-  run("npm", ["prune", "--omit=dev"], backendDir);
-
-  const stripDepTests = (dir) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const child = path.join(dir, e.name);
-      if (e.name === "test" || e.name === "tests")
-        rmSync(child, { recursive: true, force: true });
-      else stripDepTests(child);
-    }
-  };
-  const depRoot = path.join(backendDir, "node_modules");
-  if (existsSync(depRoot)) {
-    stripDepTests(depRoot);
-    console.log("[package] 已清理依赖内 test/tests 目录");
-  }
-
+  // bundle-resources prepares a production-only backend in .bundle/backend;
+  // the development checkout is never pruned or reinstalled during packaging.
   console.log("[package] 2/4 tauri build…");
   process.env.LR_SKIP_BACKEND_BUILD = "1";
   run(
@@ -149,6 +116,7 @@ try {
         if (f === ".DS_Store") continue;
         cpSync(path.join(macosDir, f), path.join(release, f), {
           recursive: true,
+          verbatimSymlinks: true,
         });
         products.push(f);
         console.log(`[package] 拷贝 -> release/${f}`);
@@ -223,8 +191,6 @@ try {
   if (!(error instanceof StepError) && error && error.stack)
     console.error(error.stack);
   exitCode = error instanceof StepError ? error.exitCode : 1;
-} finally {
-  restoreBackendDeps();
 }
 
 if (exitCode === 0) {

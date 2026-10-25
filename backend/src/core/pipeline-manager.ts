@@ -115,7 +115,7 @@ export class PipelineManager {
     this.aborts.get(recordingId)?.abort();
     const run = this.pipelineRepo.runForRecording(recordingId);
     if (run && (run.status === 'queued' || run.status === 'running' || pending.some(entry => entry.runId === run.id))) {
-      this.finish(run.id, 'failed');
+      this.finish(run.id, 'failed', reason === '心跳超时强制收割');
     }
     this.running.delete(recordingId);
   }
@@ -547,11 +547,17 @@ export class PipelineManager {
     return true;
   }
 
-  private finish(runId: string, status: PipelineRunStatus): void {
+  private finish(runId: string, status: PipelineRunStatus, notify = true): void {
+    const previous = this.pipelineRepo.getRun(runId);
+    const terminal = previous && ['ok', 'partial', 'failed'].includes(previous.status);
     this.lastProgressEmitAt.delete(runId);
     this.pipelineRepo.setRunStatus(runId, status, this.services.clock.iso());
     const run = this.pipelineRepo.getRun(runId);
     if (run) {
+      if (notify && !terminal && ['ok', 'partial', 'failed'].includes(status)) {
+        const recording = this.services.recordings.get(run.recordingId);
+        if (recording) void this.services.notifier.notify(status === 'ok' ? 'pipeline_completed' : 'pipeline_failed', recording.roomId, { title: recording.roomName }).catch(() => undefined);
+      }
       // 同步 recordings.pipelineStatus 与 state。
       const pipelineStatus = status === 'ok' ? 'ok' : status === 'partial' ? 'partial' : status === 'failed' ? 'failed' : 'queued';
       this.services.recordings.update(run.recordingId, { state: 'completed', pipelineStatus });
