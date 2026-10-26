@@ -25,7 +25,7 @@ test('verifier accepts signatures produced by the installed Tauri CLI', () => {
   try {
     const cli = resolve('frontend/node_modules/@tauri-apps/cli/tauri.js');
     const run = (args) => {
-      // Never print signer output: generation may include the temporary key.
+      // 签名工具可能输出临时私钥，不能打印其输出。
       const env = { ...process.env };
       delete env.TAURI_SIGNING_PRIVATE_KEY;
       delete env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;

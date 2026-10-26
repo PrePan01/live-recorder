@@ -2,8 +2,7 @@ import { spawnSync } from 'node:child_process';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Only detach the caller's own mount. An EBUSY after executing a mounted binary
-// can be transient; retry normally before forcing that same mount to detach.
+// 只卸载指定挂载点；遇到占用先重试，再尝试强制卸载。
 export async function detachDmg(mountPoint, { execute = spawnSync, pause = wait, warn = console.warn } = {}) {
   const detach = force => execute('hdiutil', ['detach', mountPoint, ...(force ? ['-force'] : [])], {
     encoding: 'utf8', timeout: 15000, windowsHide: true,
