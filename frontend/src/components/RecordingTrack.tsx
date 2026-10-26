@@ -20,6 +20,7 @@ import type { RecordingTrackProps } from "./recording-track/types";
 import { useRecordingTrack } from "./recording-track/useRecordingTrack";
 import { useTimelineZoom } from "./recording-track/useTimelineZoom";
 import { TIMELINE_VISUAL_OVERFLOW } from "../utils/timeline/timelineZoom";
+import { formatAltShortcut } from "../utils/keyboardShortcuts";
 export default function RecordingTrack(props: RecordingTrackProps) {
   const {
     mode = "recording",
@@ -150,7 +151,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
               </Button>
             )}
             {onQuickAdd && (
-              <Tooltip title="标记当前位置（Alt+M）">
+              <Tooltip title={`标记当前位置（${formatAltShortcut("M")}）`}>
                 <Button
                   size="small"
                   icon={<PushpinOutlined />}
