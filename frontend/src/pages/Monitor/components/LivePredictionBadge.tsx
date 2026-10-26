@@ -7,6 +7,7 @@ import {
   timelineShowsNow,
   predictionTitle,
   lastOpeningValue,
+  lastOpeningTagValue,
   predictionAccuracyText,
   predictionDisplayLikelihood,
   predictionDisplayLevel,
@@ -177,7 +178,7 @@ export default function LivePredictionBadge({
           {value.lastRecordedQuality === "platform"
             ? "上次开播"
             : "上次检测到开播"}{" "}
-          {value.lastRecordedAt}
+          {lastOpeningTagValue(value)}
         </Tag>
       </PredictionHint>
     );

@@ -7,6 +7,49 @@ import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
 const HOST = { host: '127.0.0.1:43120' };
 
 describe('room insight batch endpoint', () => {
+  it.each(['platform', 'transition', 'recording', 'imported'] as const)(
+    'retains the last %s opening after its prediction samples expire', async (source) => {
+      const clock = new FakeClock(Date.parse('2026-10-07T12:00:00Z'));
+      const services = buildServices({ dbPath: ':memory:', clock, mode: 'fake' });
+      const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/108', displayName: 'Old history' });
+      const empty = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/109', displayName: 'No history' });
+      const startedAt = '2026-01-01T10:00:00.000Z';
+      if (source === 'platform' || source === 'transition') {
+        services.liveEvents.record(room.id, source === 'platform' ? '2026-01-01T10:05:00.000Z' : startedAt, {
+          source,
+          platformStartedAt: source === 'platform' ? startedAt : null,
+        });
+        // A later recording of this same broadcast must not replace its opening time.
+        services.predictionCalibration.recordRecordingSession(room.id, '2026-01-01T10:10:00.000Z', 'same-broadcast');
+        // Future observations must not hide the most recent actual opening.
+        services.liveEvents.record(room.id, '2027-01-01T10:00:00.000Z');
+      } else if (source === 'recording') {
+        const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: 'old', streamTitle: '' });
+        services.recordings.update(rec.id, { startedAt, endedAt: '2026-01-01T11:00:00.000Z', state: 'completed' });
+      } else {
+        services.predictionCalibration.recordRecordingSession(room.id, startedAt, 'imported-old');
+      }
+      const { app } = buildApp(services);
+      try {
+        const response = await app.inject({ method: 'POST', url: '/api/v1/rooms/insights/batch', headers: HOST, payload: { roomIds: [room.id, empty.id] } });
+        expect(response.statusCode).toBe(200);
+        expect(response.json().insights[room.id].prediction).toMatchObject({
+          kind: 'observation', lastRecordedTimestamp: startedAt,
+          lastRecordedQuality: source === 'platform' ? 'platform' : source === 'transition' ? 'transition' : 'legacy',
+          sampleCount: 0, basedOnDays: 0, confidence: null, slots: [], recentObservations: [],
+        });
+        expect(response.json().insights[empty.id].prediction).toMatchObject({ kind: 'unavailable', lastRecordedTimestamp: null });
+        // A new observation replaces the historical display and is the only model sample.
+        services.liveEvents.record(room.id, clock.iso(), { source: 'platform', platformStartedAt: clock.iso() });
+        services.events.emit({ type: 'room:updated', data: services.manager.enrichRoom(services.rooms.get(room.id)!) });
+        const updated = await app.inject({ method: 'POST', url: '/api/v1/rooms/insights/batch', headers: HOST, payload: { roomIds: [room.id] } });
+        expect(updated.json().insights[room.id].prediction).toMatchObject({ lastRecordedTimestamp: clock.iso(), sampleCount: 1, basedOnDays: 1 });
+      } finally {
+        await app.close();
+        services.db.close();
+      }
+    },
+  );
   it.each([[false, false], [true, false], [false, true]])('records the live observation after authorization recovery (history=%s, recording=%s)', async (withHistory, recording) => {
     const clock = new FakeClock(Date.parse('2026-10-07T12:00:00Z'));
     const services = buildServices({ dbPath: ':memory:', clock, mode: 'fake' });
