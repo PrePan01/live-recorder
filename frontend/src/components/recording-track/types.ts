@@ -26,6 +26,7 @@ export type RecordingTrackProps = {
   segmentActions?: import("react").ReactNode;
   temporarySegment?: [number,number] | null;
   rangeSelection?: [number,number] | null;
+  showRangeNudge?: boolean;
   /** 临时选区直接导出，不保存为标记。 */
   onExport?: (start: number, end: number) => void;
   selectionDisabled?: boolean;

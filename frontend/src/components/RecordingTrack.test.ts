@@ -33,6 +33,17 @@ function render(props: Partial<RecordingTrackProps> = {}) {
 }
 
 describe("recording and file playback track", () => {
+  it("only offers the two split nudge buttons during enabled segment adjustment", () => {
+    expect(render({ showRangeNudge: true })).not.toContain("lr-recording-track__range-nudge");
+    expect(render({ rangeSelection: [10, 20] })).not.toContain("lr-recording-track__range-nudge");
+    const html = render({ rangeSelection: [10, 20], showRangeNudge: true });
+    expect(html.match(/class="ant-btn[^"]*lr-recording-track__range-nudge/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="起始手柄向前1秒或5秒"');
+    expect(html).toContain('aria-label="终止手柄向后1秒或5秒"');
+    expect(html.match(/data-step="1"/g)).toHaveLength(2);
+    expect(html.match(/data-step="5"/g)).toHaveLength(2);
+    expect(html.indexOf('data-step="5"')).toBeLessThan(html.indexOf("保存范围"));
+  });
   it("keeps temporary export handles separate from saved segment adjustment", () => {
     const onExport = () => {};
     const normal = render({ onExport });

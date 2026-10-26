@@ -558,6 +558,7 @@ export function useRecordingTrack({
     railJump,
     toggleCollapsed,
     onHandleKeyDown,
+    nudgeRange,
     startPosition,
     endPosition,
     timeLabelClass,

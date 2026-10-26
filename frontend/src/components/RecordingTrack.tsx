@@ -3,6 +3,7 @@ import {
   CaretUpOutlined,
   DeleteOutlined,
   ForwardOutlined,
+  BackwardOutlined,
   ExportOutlined,
   TagOutlined,
   PushpinOutlined,
@@ -40,6 +41,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     onSaveRange,
     onExport,
     rangeSelection,
+    showRangeNudge = false,
     onCancelRange,
     onSeekIntent,
     onSeekCommit,
@@ -78,6 +80,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     railJump,
     toggleCollapsed,
     onHandleKeyDown,
+    nudgeRange,
     startPosition,
     endPosition,
     timeLabelClass,
@@ -176,6 +179,31 @@ export default function RecordingTrack(props: RecordingTrackProps) {
             {segmentActions}
             {rangeSelection != null ? (
               <>
+                {showRangeNudge && (["start", "end"] as const).map((kind) => (
+                  <Button
+                    key={kind}
+                    size="small"
+                    className="lr-recording-track__range-nudge"
+                    aria-label={kind === "start" ? "起始手柄向前1秒或5秒" : "终止手柄向后1秒或5秒"}
+                    title={`${kind === "start" ? "起始手柄向前" : "终止手柄向后"}：点击对应秒数；键盘 Enter 移动1秒，Shift+Enter 移动5秒`}
+                    disabled={
+                      busy || recordingEnd <= 0 ||
+                      (kind === "start" ? range[0] <= 0 : range[1] >= recordingEnd)
+                    }
+                    onClick={(event) => {
+                      const targetStep = (event.target as Element)
+                        .closest("[data-step]")?.getAttribute("data-step");
+                      const step = targetStep === "5" || event.shiftKey ? 5 : 1;
+                      nudgeRange(kind, kind === "start" ? -step : step);
+                    }}
+                  >
+                    <span className="lr-recording-track__nudge-option" data-step="1">
+                      {kind === "start" ? <BackwardOutlined /> : <ForwardOutlined />}
+                      1秒
+                    </span>
+                    <span className="lr-recording-track__nudge-option" data-step="5">5秒</span>
+                  </Button>
+                ))}
                 <Button
                   size="small"
                   type="primary"

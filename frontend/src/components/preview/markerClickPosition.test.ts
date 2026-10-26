@@ -60,6 +60,29 @@ beforeEach(() => {
 });
 
 describe("marker click position", () => {
+  it("nudges each adjustment handle by 1 or 5 seconds and clamps to the recording bounds", () => {
+    const onSeekCommit = vi.fn();
+    const onMove = vi.fn();
+    const props = { rangeSelection: [10, 20] as [number, number], onSeekCommit, onMove };
+    let track = RecordingTrackHarness(props);
+    // Apply the initial selected segment, just as the range-selection effect does.
+    hooks.effects.forEach(effect => effect());
+    track = RecordingTrackHarness(props);
+    track.nudgeRange("start", -1);
+    track.nudgeRange("end", 1);
+    track = RecordingTrackHarness(props);
+    expect(track.range).toEqual([9, 21]);
+    track.nudgeRange("start", -5);
+    track.nudgeRange("end", 5);
+    track = RecordingTrackHarness(props);
+    expect(track.range).toEqual([4, 26]);
+    track.nudgeRange("start", -5);
+    for (let i = 0; i < 20; i++) track.nudgeRange("end", 5);
+    track = RecordingTrackHarness(props);
+    expect(track.range).toEqual([0, 93]);
+    expect(onSeekCommit).not.toHaveBeenCalled();
+    expect(onMove).not.toHaveBeenCalled();
+  });
   it.each([
     [0, 8, 8, 0], [0, 8, 18, 10],
     [100, 92, 92, 100], [100, 92, 82, 90],
