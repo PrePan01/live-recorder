@@ -12,7 +12,7 @@ import type { Tag } from "../../../types/tag";
 import {
   MONITOR_SORT_OPTIONS,
   type MonitorSort,
-} from "../../../utils/monitorSort";
+} from "../../../utils/room/monitorSort";
 
 export interface MonitorToolbarProps {
   sort: MonitorSort;

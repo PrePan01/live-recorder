@@ -15,7 +15,7 @@ import {
 } from "@ant-design/icons";
 import { liveCoverSrc, saveLiveCover } from "../../../api/rooms";
 import type { Room } from "../../../types/room";
-import { hoverPreview } from "../../../utils/hoverPreview";
+import { hoverPreview } from "../../../utils/player/hoverPreview";
 
 const VideoPlayer = lazy(() => import("../../../components/VideoPlayer"));
 

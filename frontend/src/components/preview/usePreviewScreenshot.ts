@@ -4,7 +4,7 @@ import { savePreviewScreenshot } from "../../api/screenshots";
 import {
   canCaptureVideoFrame,
   captureVideoFrame,
-} from "../../utils/captureVideoFrame";
+} from "../../utils/player/captureVideoFrame";
 
 export function usePreviewScreenshot(
   roomId: string,

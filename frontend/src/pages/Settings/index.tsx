@@ -32,10 +32,10 @@ import {
   exportDiagnosticsToFile,
 } from "../../api/diagnostics";
 import { fetchSelfCheck, type SelfCheckItem } from "../../api/service";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes } from "../../utils/format";
-import { recentErrorDiagnostics } from "../../utils/errorDiagnostics";
+import { recentErrorDiagnostics } from "../../utils/error/errorDiagnostics";
 import { useSettingsModelContext } from "./model/SettingsContext";
 import { SettingsProvider } from "./model/SettingsProvider";
 import {

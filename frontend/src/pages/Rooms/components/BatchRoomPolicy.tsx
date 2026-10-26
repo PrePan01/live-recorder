@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Alert, Button, Drawer } from "antd";
 import { useRoomStore } from "../../../stores/roomStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
-import { applyRoomBatch, type RoomPolicy } from "../model/roomPolicy";
+import { applyRoomBatch, type RoomPolicy } from "../utils/roomPolicy";
 import RoomPolicyFields from "./RoomPolicyFields";
 
 export default function BatchRoomPolicy({

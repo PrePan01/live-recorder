@@ -44,20 +44,20 @@ vi.mock("mpegts.js", () => ({ default: {
   }),
 } }));
 vi.mock("../../api/client", () => ({ previewWsUrl: vi.fn() }));
-vi.mock("../../utils/errorDiagnostics", () => ({ reportError: vi.fn() }));
-vi.mock("../../utils/livePreviewConfig", () => ({ livePreviewConfig: vi.fn() }));
-vi.mock("../../utils/previewMediaClock", () => ({ resetPreviewMediaClock: vi.fn(), setLiveMediaOrigin: vi.fn(), readPreviewElapsed: () => 1.25 }));
-vi.mock("../../utils/prepareSeekPlayback", () => ({ prepareSeekPlayback: (_video: unknown, _offset: unknown, ready: () => void) => {
+vi.mock("../../utils/error/errorDiagnostics", () => ({ reportError: vi.fn() }));
+vi.mock("../../utils/player/livePreviewConfig", () => ({ livePreviewConfig: vi.fn() }));
+vi.mock("../../utils/player/previewMediaClock", () => ({ resetPreviewMediaClock: vi.fn(), setLiveMediaOrigin: vi.fn(), readPreviewElapsed: () => 1.25 }));
+vi.mock("../../utils/player/prepareSeekPlayback", () => ({ prepareSeekPlayback: (_video: unknown, _offset: unknown, ready: () => void) => {
   h.ready = ready;
   return vi.fn();
 } }));
-vi.mock("../../utils/seekPlaybackHealth", () => ({ watchSeekPlayback: () => ({ stop: vi.fn(), presented: vi.fn() }) }));
-vi.mock("../../utils/videoFrameTransition", () => ({ holdVideoFrame: vi.fn(), releaseVideoFrame: vi.fn(), waitForVideoFrame: (_video: unknown, frame: () => void) => {
+vi.mock("../../utils/player/seekPlaybackHealth", () => ({ watchSeekPlayback: () => ({ stop: vi.fn(), presented: vi.fn() }) }));
+vi.mock("../../utils/player/videoFrameTransition", () => ({ holdVideoFrame: vi.fn(), releaseVideoFrame: vi.fn(), waitForVideoFrame: (_video: unknown, frame: () => void) => {
   h.frame = frame;
   return vi.fn();
 } }));
 import { useVideoPlayback } from "./useVideoPlayback";
-import { livePreviewConfig } from "../../utils/livePreviewConfig";
+import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
 
 function render(props: VideoPlayerProps, video: HTMLVideoElement) {
   h.cursor = 0;

@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import type { RecordingGap, RecordingMarker } from "../../types/recording";
 
-import { type RecordingTrackMode } from "../../utils/recordingTimeline";
+import { type RecordingTrackMode } from "../../utils/timeline/recordingTimeline";
 
 export type RecordingTrackProps = {
   elapsedSeconds: number;

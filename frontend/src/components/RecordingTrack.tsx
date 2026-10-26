@@ -1,4 +1,4 @@
-import { playbackClock as clock } from "../utils/playbackClock";
+import { playbackClock as clock } from "../utils/player/playbackClock";
 import {
   CaretUpOutlined,
   DeleteOutlined,
@@ -8,18 +8,18 @@ import {
   PushpinOutlined,
 } from "@ant-design/icons";
 import { Button, Input, Modal, Popconfirm, Tooltip } from "antd";
-import { recordingGapText } from "../utils/recordingGapText";
+import { recordingGapText } from "../utils/recording/recordingGapText";
 
 import {
   GENERIC_GAP_REASON,
   recordingGapKindText,
-} from "../utils/recordingGapKindText";
-import { recordingSeekTarget } from "../utils/recordingTimeline";
+} from "../utils/recording/recordingGapKindText";
+import { recordingSeekTarget } from "../utils/timeline/recordingTimeline";
 
 import type { RecordingTrackProps } from "./recording-track/types";
 import { useRecordingTrack } from "./recording-track/useRecordingTrack";
 import { useTimelineZoom } from "./recording-track/useTimelineZoom";
-import { TIMELINE_VISUAL_OVERFLOW } from "../utils/timelineZoom";
+import { TIMELINE_VISUAL_OVERFLOW } from "../utils/timeline/timelineZoom";
 export default function RecordingTrack(props: RecordingTrackProps) {
   const {
     mode = "recording",

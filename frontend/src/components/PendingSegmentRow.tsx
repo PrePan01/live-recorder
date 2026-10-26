@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button, Input, Modal, Tooltip } from "antd";
 import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
-import { playbackClock } from "../utils/playbackClock";
+import { playbackClock } from "../utils/player/playbackClock";
 
 export interface PendingSegment {
   start: number;

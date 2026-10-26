@@ -3,7 +3,7 @@ import { App, Input, Modal, Space, Typography } from "antd";
 import { useUploadStore } from "../stores/uploadStore";
 import { fetchUploads, submitOpenList2fa } from "../api/openlist";
 import { ApiError } from "../types/error";
-import { describeError } from "../utils/errorMap";
+import { describeError } from "../utils/error/errorMap";
 
 /** 上传任务错误中标记 OpenList 需要 2FA 验证（BE #13 契约）。 */
 const OPENLIST_2FA_MARKER = "OpenList 需要 2FA 验证";

@@ -12,7 +12,7 @@ import {
 } from "antd";
 import { PlusOutlined, SettingOutlined } from "@ant-design/icons";
 import { useTagStore } from "../../../stores/tagStore";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import { ApiError } from "../../../types/error";
 
 const PRESET_COLORS = [

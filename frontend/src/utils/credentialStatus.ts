@@ -1,3 +1,4 @@
+// 根据登录检测结果和本地凭证，判断平台授权状态。
 import type {
   BilibiliCookieStatus,
   DouyinCookieStatus,

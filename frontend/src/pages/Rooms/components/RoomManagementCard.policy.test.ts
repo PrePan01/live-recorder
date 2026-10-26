@@ -1,7 +1,7 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Room } from "../../../types/room";
-import { DEFAULT_ROOM_POLICY, type RoomPolicy } from "../model/roomPolicy";
+import { DEFAULT_ROOM_POLICY, type RoomPolicy } from "../utils/roomPolicy";
 
 const hooks = vi.hoisted(() => ({
   slots: [] as unknown[], cursor: 0,

@@ -1,5 +1,5 @@
 import { http } from "./client";
-import type { ErrorDiagnostic } from "../utils/errorDiagnostics";
+import type { ErrorDiagnostic } from "../utils/error/errorDiagnostics";
 import type {
   DiagnosticDetail,
   DiagnosticStatus,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LiveDanmakuSnapshot } from '../api/danmaku';
 import { createLiveDanmakuSession } from '../api/liveDanmakuSession';
 import type { DanmakuMessage, DanmakuStatus } from '../types/danmaku';
-import { mergeLiveDanmakuWindow } from '../utils/liveDanmakuWindow';
+import { mergeLiveDanmakuWindow } from '../utils/danmaku/liveDanmakuWindow';
 
 /** One incremental subscription for the modal, independent of whether recording starts/stops. */
 export function useLiveDanmaku(roomId: string, enabled: boolean, video: HTMLVideoElement | null) {

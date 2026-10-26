@@ -1,21 +1,21 @@
-import { resetPreviewMediaClock, setLiveMediaOrigin, readPreviewElapsed } from "../../utils/previewMediaClock";
+import { resetPreviewMediaClock, setLiveMediaOrigin, readPreviewElapsed } from "../../utils/player/previewMediaClock";
 import mpegts from "mpegts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { previewWsUrl } from "../../api/client";
-import { reportError } from "../../utils/errorDiagnostics";
-import { livePreviewConfig } from "../../utils/livePreviewConfig";
-import { prepareSeekPlayback } from "../../utils/prepareSeekPlayback";
-import { isPlausibleSeekOffset } from "../../utils/recordingTimeline";
-import { seekPlaybackConfig } from "../../utils/seekPlaybackConfig";
-import { watchSeekPlayback } from "../../utils/seekPlaybackHealth";
+import { reportError } from "../../utils/error/errorDiagnostics";
+import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
+import { prepareSeekPlayback } from "../../utils/player/prepareSeekPlayback";
+import { isPlausibleSeekOffset } from "../../utils/timeline/recordingTimeline";
+import { seekPlaybackConfig } from "../../utils/player/seekPlaybackConfig";
+import { watchSeekPlayback } from "../../utils/player/seekPlaybackHealth";
 import {
   holdVideoFrame,
   releaseVideoFrame,
   waitForVideoFrame,
-} from "../../utils/videoFrameTransition";
+} from "../../utils/player/videoFrameTransition";
 
 import type { VideoPlayerProps } from "./types";
-import { advancePreviewLoadProgress, initialPreviewLoadProgress } from "../../utils/previewLoadProgress";
+import { advancePreviewLoadProgress, initialPreviewLoadProgress } from "../../utils/player/previewLoadProgress";
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
 // YouTube resolves formats and starts a separate media downloader before the first

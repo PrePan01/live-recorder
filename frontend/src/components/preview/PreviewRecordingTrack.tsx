@@ -1,5 +1,5 @@
-import { promptRangeExport } from "../../utils/promptRangeExport";
-import { playbackClock } from "../../utils/playbackClock";
+import { promptRangeExport } from "../../utils/timeline/promptRangeExport";
+import { playbackClock } from "../../utils/player/playbackClock";
 import {
   createRecordingMarker,
   deleteRecordingMarker,

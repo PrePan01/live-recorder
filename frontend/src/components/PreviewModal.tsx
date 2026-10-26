@@ -1,7 +1,7 @@
 import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
 import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
-import { playbackClock } from "../utils/playbackClock";
+import { playbackClock } from "../utils/player/playbackClock";
 import {
   CameraOutlined,
   CloseOutlined,

@@ -8,10 +8,10 @@ import {
 } from "../../api/recordings";
 import { useRecordingStore } from "../../stores/recordingStore";
 import { ApiError } from "../../types/error";
-import { describeError } from "../../utils/errorMap";
-import { observePreviewProgress } from "../../utils/observePreviewProgress";
-import { isPlausibleSeekOffset } from "../../utils/recordingTimeline";
-import { retrySeekRequest } from "../../utils/retrySeekRequest";
+import { describeError } from "../../utils/error/errorMap";
+import { observePreviewProgress } from "../../utils/player/observePreviewProgress";
+import { isPlausibleSeekOffset } from "../../utils/timeline/recordingTimeline";
+import { retrySeekRequest } from "../../utils/player/retrySeekRequest";
 
 export function usePreviewSeek(
   roomId: string,

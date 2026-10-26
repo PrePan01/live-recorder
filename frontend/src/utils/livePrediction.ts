@@ -1,3 +1,4 @@
+// 将开播预测结果转成页面上的时间、倒计时和可信程度说明。
 import type { RoomInsight } from "../api/rooms";
 type Prediction = RoomInsight["prediction"];
 export function clockMinutes(value: string): number {

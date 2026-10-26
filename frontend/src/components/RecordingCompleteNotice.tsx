@@ -8,12 +8,12 @@ import {
 import { useRoomStore } from "../stores/roomStore";
 import { confirmRecordingKeep, exportRecordingClip } from "../api/recordings";
 import { ApiError } from "../types/error";
-import { describeError } from "../utils/errorMap";
-import { failurePrimaryText } from "../utils/failureReason";
+import { describeError } from "../utils/error/errorMap";
+import { failurePrimaryText } from "../utils/error/failureReason";
 import {
   describeEndReason,
   isInterruptedEnd,
-} from "../utils/recordingEndReason";
+} from "../utils/recording/recordingEndReason";
 import RecordingKeepConfirmModal from "./RecordingKeepConfirmModal";
 import type { Recording } from "../types/recording";
 

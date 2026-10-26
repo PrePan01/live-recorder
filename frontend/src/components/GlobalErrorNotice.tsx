@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { App } from "antd";
-import { isExpectedCancellation, reportError } from "../utils/errorDiagnostics";
+import { isExpectedCancellation, reportError } from "../utils/error/errorDiagnostics";
 
 /** Global handlers diagnose unexpected async failures without replacing the running UI. */
 export default function GlobalErrorNotice() {

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { layoutRoomMasonry } from "../../../utils/roomMasonry";
+import { layoutRoomMasonry } from "../../../utils/room/roomMasonry";
 
 /** Keep DOM/sort order while placing each next card in the shortest column. */
 export default function RoomMasonry({ children }: { children: ReactNode }) {

@@ -3,7 +3,7 @@ import { App, Input, List, Segmented, Space, Typography } from "antd";
 import type { InputRef } from "antd";
 import { useNavigate } from "react-router-dom";
 import { searchGlobal } from "../api/search";
-import { describeError } from "../utils/errorMap";
+import { describeError } from "../utils/error/errorMap";
 import { ApiError } from "../types/error";
 import { formatRelative } from "../utils/format";
 import type { SearchItem, SearchItemType } from "../types/search";
