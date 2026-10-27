@@ -1,6 +1,8 @@
 export interface VideoPlayerProps {
   roomId: string;
   muted?: boolean;
+  /** 观看弹窗记住上次手动设置的音量和静音状态。 */
+  rememberAudio?: boolean;
   /** Hover cover: silent, no controls/retries, bounded buffers. */
   thumbnail?: boolean;
   onPreviewError?: () => void;

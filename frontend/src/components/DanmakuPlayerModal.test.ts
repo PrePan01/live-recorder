@@ -46,7 +46,7 @@ vi.mock('../api/recordings', () => ({
 vi.mock('../api/danmakuWindow', () => ({ fetchDanmakuWindow: async () => ({ messages: [], gaps: [] }) }));
 vi.mock('../api/danmaku', () => ({ exportDanmaku: vi.fn() }));
 vi.mock('../api/config', () => ({ pickDirectory: vi.fn() }));
-vi.mock('../utils/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
+vi.mock('../utils/timeline/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
 vi.mock('../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null }) }));
 vi.mock('../hooks/useSegmentExport', () => ({ useSegmentExport: () => ({}) }));
 vi.mock('../stores/danmakuPrefsStore', () => ({ useDanmakuPrefsStore: () => ({ visible: true, opacity: 1, density: 100, fontScale: 1, speedMultiplier: 1 }) }));

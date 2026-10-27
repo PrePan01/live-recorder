@@ -19,7 +19,7 @@ import {
 } from "../../api/settings";
 import { credentialStatus } from "../../utils/credentialStatus";
 import { ApiError } from "../../types/error";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 import type { Platform, Room } from "../../types/room";
 import RoomMasonry from "./components/RoomMasonry";
 import RoomGrid from "./components/RoomGrid";
@@ -27,9 +27,9 @@ import {
   isMonitorSort,
   sortMonitorRooms,
   type MonitorSort,
-} from "../../utils/monitorSort";
+} from "../../utils/room/monitorSort";
 import { RoomCard, SortableRoomCardItem } from "./components/RoomCard";
-import { buildMonitorListColumns } from "../../utils/monitorListColumns";
+import { buildMonitorListColumns } from "../../utils/room/monitorListColumns";
 import { MonitorToolbar } from "./components/MonitorToolbar";
 import {
   RoomSortableProvider,

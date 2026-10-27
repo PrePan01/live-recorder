@@ -1,14 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   App,
-  Alert,
   Button,
   Drawer,
-  Form,
   Input,
-  List,
-  Modal,
   Checkbox,
   Empty,
   Pagination,
@@ -21,22 +17,21 @@ import {
   PlusOutlined,
   StarOutlined,
   ExclamationCircleFilled,
-  SnippetsOutlined,
 } from "@ant-design/icons";
-import { guessPlatform, PLATFORM_LABEL } from "../../utils/roomPlatform";
 import RoomManagementCard from "./components/RoomManagementCard";
 import BatchRoomPolicy from "./components/BatchRoomPolicy";
+import RoomEditorModal from "./components/RoomEditorModal";
+import BatchAddRoomsModal from "./components/BatchAddRoomsModal";
 import "./rooms.css";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
-import TagSelect from "./components/TagSelect";
 import SchedulePanel from "./components/SchedulePanel";
 import TagFilterSelect from "../../components/TagFilterSelect";
 import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
-import { describeError } from "../../utils/errorMap";
-import { fetchDouyinCookieStatus } from "../../api/settings";
+import { describeError } from "../../utils/error/errorMap";
 import { RoomSortableProvider } from "../../components/RoomSortable";
+import { useRoomList } from "./hooks/useRoomList";
 
 export default function Rooms() {
   const { message, modal } = App.useApp();
@@ -46,12 +41,7 @@ export default function Rooms() {
     rooms,
     loading,
     fetchRooms,
-    addRoom,
-    batchAddRooms,
-    editRoom,
     removeRoom,
-    updateRoomTags,
-    checkRoomNow,
     reorderRooms,
     reorderBusy,
   } = useRoomStore();
@@ -59,35 +49,7 @@ export default function Rooms() {
   const tags = useTagStore((s) => s.tags);
   const [modalOpen, setModalOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [batchBusy2, setBatchBusy2] = useState(false);
-  const [batchText, setBatchText] = useState("");
-  const [batchResult, setBatchResult] = useState<Awaited<
-    ReturnType<typeof batchAddRooms>
-  > | null>(null);
   const [editing, setEditing] = useState<Room | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  // 慢路径（解析耗时秒级）才出等待说明；快路径（缓存命中约 1.5s）不允许闪现，故阈值取 2s。
-  const [submitHint, setSubmitHint] = useState(false);
-  const submitHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearSubmitHintTimer = useCallback(() => {
-    if (submitHintTimer.current !== null) {
-      clearTimeout(submitHintTimer.current);
-      submitHintTimer.current = null;
-    }
-  }, []);
-  useEffect(() => () => clearSubmitHintTimer(), [clearSubmitHintTimer]);
-  const [tagIds, setTagIds] = useState<string[]>([]);
-  const [form] = Form.useForm<{
-    url: string;
-    displayName?: string;
-  }>();
-  const [keyword, setKeyword] = useState("");
-  const [platform, setPlatform] = useState<string>();
-  const [state, setState] = useState<string>();
-  const [favOnly, setFavOnly] = useState<boolean>(false);
-  const [filterTagIds, setFilterTagIds] = useState<string[]>([]);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
   const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
@@ -102,33 +64,25 @@ export default function Rooms() {
       .catch(() => undefined);
   }, []);
 
-  const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    return rooms.filter((r) => {
-      if (
-        kw &&
-        !r.displayName.toLowerCase().includes(kw) &&
-        !r.url.toLowerCase().includes(kw)
-      )
-        return false;
-      if (platform && r.platform !== platform) return false;
-      if (state && r.monitorState !== state) return false;
-      if (favOnly && !r.favorited) return false;
-      return !(
-        filterTagIds.length > 0 &&
-        !filterTagIds.some((tagId) => r.tags.some((tag) => tag.id === tagId))
-      );
-    });
-  }, [rooms, keyword, platform, state, favOnly, filterTagIds]);
-
-  const currentPage = Math.min(
-    page,
-    Math.max(1, Math.ceil(filtered.length / pageSize)),
-  );
-  const paginated = useMemo(
-    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [filtered, currentPage, pageSize],
-  );
+  const {
+    keyword,
+    setKeyword,
+    platform,
+    setPlatform,
+    state,
+    setState,
+    favOnly,
+    setFavOnly,
+    filterTagIds,
+    setFilterTagIds,
+    pageSize,
+    setPageSize,
+    setPage,
+    currentPage,
+    filtered,
+    paginated,
+    resetPage,
+  } = useRoomList(rooms);
 
   const commitRoomOrder = async (roomIds: string[]) => {
     try {
@@ -137,43 +91,6 @@ export default function Rooms() {
       message.error("排序保存失败，已恢复服务端顺序");
     }
   };
-
-  useEffect(() => {
-    const params = new URLSearchParams(search);
-    const focusId = params.get("focus");
-    if (!focusId || !rooms.some((room) => room.id === focusId)) return;
-    const idx = filtered.findIndex((room) => room.id === focusId);
-    if (idx === -1) {
-      setKeyword("");
-      setPlatform(undefined);
-      setState(undefined);
-      setFavOnly(false);
-      setFilterTagIds([]);
-      return;
-    }
-    const targetPage = Math.floor(idx / pageSize) + 1;
-    if (currentPage !== targetPage) {
-      setPage(targetPage);
-      return;
-    }
-    // Wait for the target page to commit before locating its card.
-    const frame = requestAnimationFrame(() => {
-      const el = Array.from(
-        document.querySelectorAll<HTMLElement>(".lr-room-management-card[data-room-id]"),
-      ).find((card) => card.dataset.roomId === focusId);
-      if (!el) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.animate(
-        [{ backgroundColor: "var(--lr-hover-bg)" }, { backgroundColor: "transparent" }],
-        { duration: 2000 },
-      );
-      params.delete("focus");
-      navigate({ pathname: "/rooms", search: params.toString() }, { replace: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [search, rooms, filtered, pageSize, currentPage, navigate]);
-
-  const resetPage = () => setPage(1);
 
   const confirmDeleteRooms = useCallback(
     (targets: Room[]) => {
@@ -228,132 +145,20 @@ export default function Rooms() {
 
   const openAdd = () => {
     setEditing(null);
-    form.resetFields();
-    setTagIds([]);
     setModalOpen(true);
   };
 
   useEffect(() => {
     if (new URLSearchParams(search).get("add") !== "1") return;
     setEditing(null);
-    form.resetFields();
-    setTagIds([]);
     setModalOpen(true);
     navigate("/rooms", { replace: true });
-  }, [form, navigate, search]);
+  }, [navigate, search]);
 
-  const openEdit = useCallback(
-    (room: Room) => {
-      setEditing(room);
-      form.setFieldsValue({
-        url: room.url,
-        displayName: room.displayName,
-      });
-      setTagIds(room.tags.map((t) => t.id));
-      setModalOpen(true);
-    },
-    [form],
-  );
-
-  const promptDouyinAuthorization = async () => {
-    const status = await fetchDouyinCookieStatus().catch(
-      () => "unknown" as const,
-    );
-    if (status === "missing" || status === "invalid") {
-      message.warning("如需观看、录制抖音直播间，请在设置内登录并授权", 5);
-    }
-  };
-
-  const submit = async () => {
-    let values: { url: string; displayName?: string };
-    try {
-      values = await form.validateFields();
-    } catch {
-      return;
-    }
-    const platform = guessPlatform(values.url);
-    if (!platform) {
-      message.error("支持 B站、抖音、小红书、YouTube 直播链接");
-      return;
-    }
-    setSubmitting(true);
-    if (!editing) {
-      clearSubmitHintTimer();
-      submitHintTimer.current = setTimeout(() => setSubmitHint(true), 2000);
-    }
-    try {
-      if (editing) {
-        await editRoom(editing.id, values);
-        if (tagIds.length > 0 || editing.tags.length > 0) {
-          await updateRoomTags(editing.id, tagIds);
-        }
-        message.success("直播间已更新");
-      } else {
-        const room = await addRoom({ ...values, platform });
-        if (tagIds.length > 0) {
-          await updateRoomTags(room.id, tagIds);
-        }
-        message.success("直播间已添加");
-        // 添加后立即检测，让显示名/直播状态即时解析（不必等调度器最长 120s）。
-        void checkRoomNow(room.id).catch(() => undefined);
-        if (platform === "douyin") void promptDouyinAuthorization();
-      }
-      setModalOpen(false);
-    } catch (e) {
-      message.error(
-        e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
-      );
-    } finally {
-      clearSubmitHintTimer();
-      setSubmitHint(false);
-      setSubmitting(false);
-    }
-  };
-
-  const urlValue = Form.useWatch("url", form);
-
-  const pasteRoomUrl = async () => {
-    try {
-      const url = await navigator.clipboard.readText();
-      if (!url.trim()) {
-        message.warning("剪贴板中没有可粘贴的内容");
-        return;
-      }
-      form.setFieldValue("url", url.trim());
-    } catch {
-      message.error("无法读取剪贴板，请检查系统剪贴板权限");
-    }
-  };
-
-  const submitBatch = async () => {
-    const urls = batchText
-      .split(/\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (urls.length === 0) {
-      message.warning("请粘贴至少一行直播链接");
-      return;
-    }
-    setBatchBusy2(true);
-    setBatchResult(null);
-    try {
-      const res = await batchAddRooms(urls);
-      setBatchResult(res);
-      message.success(
-        `成功 ${res.succeeded.length} 条，失败 ${res.failed.length} 条`,
-      );
-      if (res.succeeded.some((r) => r.platform === "douyin"))
-        void promptDouyinAuthorization();
-    } catch (e) {
-      message.error(
-        e instanceof ApiError
-          ? describeError(e.code, e.message)
-          : "批量添加失败",
-      );
-    } finally {
-      setBatchBusy2(false);
-    }
-  };
+  const openEdit = useCallback((room: Room) => {
+    setEditing(room);
+    setModalOpen(true);
+  }, []);
 
   const selectRoom = useCallback((id: string, checked: boolean) => {
     setSelectedKeys((keys) =>
@@ -552,132 +357,12 @@ export default function Rooms() {
           onClose={() => setBatchPolicyIds(null)}
         />
       )}
-      <Modal
-        title={editing ? "编辑直播间" : "添加直播间"}
+      <RoomEditorModal
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={() => void submit()}
-        confirmLoading={submitting}
-        destroyOnHidden
-        width={700}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="url"
-            label="直播间链接"
-            rules={[
-              { required: true, message: "请输入直播间链接" },
-              {
-                validator: (_, v: string) =>
-                  !v || guessPlatform(v)
-                    ? Promise.resolve()
-                    : Promise.reject(
-                        new Error(
-                          "支持 B站 / 抖音直播链接、小红书主页或直播分享链接、YouTube 频道或直播视频链接",
-                        ),
-                      ),
-              },
-            ]}
-            extra={
-              urlValue && guessPlatform(urlValue)
-                ? `识别为：${PLATFORM_LABEL[guessPlatform(urlValue)!]}`
-                : undefined
-            }
-          >
-            <Input
-              placeholder="B站、抖音、小红书直播链接或 YouTube 频道/直播视频链接"
-              addonAfter={
-                <Button
-                  className="lr-room-url-paste"
-                  type="text"
-                  size="small"
-                  icon={<SnippetsOutlined />}
-                  onClick={() => void pasteRoomUrl()}
-                >
-                  粘贴
-                </Button>
-              }
-            />
-          </Form.Item>
-          <Form.Item name="displayName" label="显示名（可选，留空自动解析）">
-            <Input placeholder="主播昵称" />
-          </Form.Item>
-          <Form.Item label="标签">
-            <TagSelect value={tagIds} onChange={setTagIds} />
-          </Form.Item>
-        </Form>
-        {submitting && submitHint && !editing ? (
-          <div className="lr-room-submit-pending" role="status" aria-live="polite">
-            <Spin size="small" />
-            <Typography.Text type="secondary">
-              正在解析直播间信息，约需 10 秒…
-            </Typography.Text>
-          </div>
-        ) : null}
-      </Modal>
-      <Modal
-        title="批量添加直播间"
-        open={batchOpen}
-        onCancel={() => {
-          setBatchOpen(false);
-          setBatchResult(null);
-          setBatchText("");
-        }}
-        onOk={() => void submitBatch()}
-        confirmLoading={batchBusy2}
-        okText="批量添加"
-        destroyOnHidden
-      >
-        <Typography.Paragraph type="secondary">
-          每行一个直播链接，支持 B站 / 抖音 / 小红书 / YouTube 混排，最多 100
-          条。自动去重（含已存在直播间与批内重复）。
-        </Typography.Paragraph>
-        <Input.TextArea
-          rows={6}
-          placeholder={
-            "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/...\nhttps://www.youtube.com/@频道名\nhttps://www.youtube.com/watch?v=视频ID"
-          }
-          value={batchText}
-          onChange={(e) => setBatchText(e.target.value)}
-        />
-        {batchResult ? (
-          <div style={{ marginTop: 12 }}>
-            {batchResult.failed.length > 0 ? (
-              <Alert
-                type="warning"
-                showIcon
-                message={`失败 ${batchResult.failed.length} 条`}
-                description={
-                  <List
-                    size="small"
-                    dataSource={batchResult.failed}
-                    renderItem={(f) => (
-                      <List.Item>
-                        <Typography.Text
-                          type="secondary"
-                          ellipsis
-                          style={{ maxWidth: 260 }}
-                        >
-                          {f.url}
-                        </Typography.Text>
-                        <Typography.Text type="danger">
-                          {f.reason}
-                        </Typography.Text>
-                      </List.Item>
-                    )}
-                  />
-                }
-              />
-            ) : (
-              <Alert
-                type="success"
-                showIcon
-                message={`全部成功（${batchResult.succeeded.length} 条）`}
-              />
-            )}
-          </div>
-        ) : null}
-      </Modal>
+        room={editing}
+        onClose={() => setModalOpen(false)}
+      />
+      <BatchAddRoomsModal open={batchOpen} onClose={() => setBatchOpen(false)} />
       <Drawer
         title={`定时计划：${scheduleRoom?.displayName ?? ""}`}
         open={scheduleRoom !== null}

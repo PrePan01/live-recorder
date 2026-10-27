@@ -17,7 +17,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { useDiagnosticStore } from '../../stores/diagnosticStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { useResizableColumns } from '../../hooks/useResizableColumns';
-import { describeError } from '../../utils/errorMap';
+import { describeError } from '../../utils/error/errorMap';
 import { ApiError } from '../../types/error';
 import { formatRelative } from '../../utils/format';
 import type { Diagnostic, DiagnosticStatus } from '../../types/diagnostic';

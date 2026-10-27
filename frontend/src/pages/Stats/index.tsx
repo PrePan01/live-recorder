@@ -21,7 +21,7 @@ import type { EChartsOption } from "echarts";
 import { fetchRecordingsStats } from "../../api/stats";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 import { ApiError } from "../../types/error";
 import { formatBytes } from "../../utils/format";
 import type { RecordingsStats, StatsByDay } from "../../types/stats";

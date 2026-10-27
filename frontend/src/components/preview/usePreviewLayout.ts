@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { fitPreviewBox, fitPreviewContent } from "../../utils/previewLayout";
+import { fitPreviewBox, fitPreviewContent } from "../../utils/player/previewLayout";
 
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;

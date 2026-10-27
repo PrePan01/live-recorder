@@ -15,7 +15,7 @@ import {
   uploadRecording,
 } from "../../../api/openlist";
 import type { UploadJob } from "../../../api/openlist";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import { ApiError } from "../../../types/error";
 import { formatRelative } from "../../../utils/format";
 import { useShallow } from "zustand/react/shallow";
@@ -23,11 +23,11 @@ import { useUploadStore } from "../../../stores/uploadStore";
 import {
   describeUploadError,
   classifyUploadError,
-} from "../../../utils/uploadError";
+} from "../../../utils/upload/uploadError";
 import {
   uploadPhaseLabel,
   uploadPhaseText,
-} from "../../../utils/uploadProgress";
+} from "../../../utils/upload/uploadProgress";
 import { bridge } from "../../../stores/bootStore";
 
 const STATUS_COLOR: Record<string, string> = {

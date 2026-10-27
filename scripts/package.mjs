@@ -9,10 +9,8 @@ import {
   rmSync,
 } from "node:fs";
 import path from "node:path";
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot as root } from "./project-utils.mjs";
 
-const root = path.join(dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
 const bundle = path.join(
   root,
@@ -56,8 +54,7 @@ try {
     run("npm", ["run", "build"], path.join(root, "backend"));
   }
 
-  // bundle-resources prepares a production-only backend in .bundle/backend;
-  // the development checkout is never pruned or reinstalled during packaging.
+  // 仅在 .bundle/backend 副本中裁剪依赖，保留开发目录。
   console.log("[package] 2/4 tauri build…");
   process.env.LR_SKIP_BACKEND_BUILD = "1";
   run(
@@ -72,7 +69,6 @@ try {
     path.join(root, "frontend"),
   );
 
-  // 3) macOS dmg
   if (!isWin) {
     console.log("[package] 3/4 生成 dmg…");
     const dmgDir = path.join(bundle, "dmg");

@@ -4,10 +4,10 @@ import { fetchRecordingGaps } from "../../../api/recordings";
 import type { RecordingGap } from "../../../types/recording";
 import type { Platform } from "../../../types/room";
 import { formatRelative } from "../../../utils/format";
-import { recordingGapSummary } from "../../../utils/recordingGapSummary";
-import { recordingGapText } from "../../../utils/recordingGapText";
-import { recordingGapPosition } from "../../../utils/recordingGapPosition";
-import { GENERIC_GAP_REASON, recordingGapKindText } from "../../../utils/recordingGapKindText";
+import { recordingGapSummary } from "../../../utils/recording/recordingGapSummary";
+import { recordingGapText } from "../../../utils/recording/recordingGapText";
+import { recordingGapPosition } from "../../../utils/recording/recordingGapPosition";
+import { GENERIC_GAP_REASON, recordingGapKindText } from "../../../utils/recording/recordingGapKindText";
 
 function gapPositionMs(gap: RecordingGap): number | undefined {
   return gap.positionMs != null && Number.isFinite(gap.positionMs)

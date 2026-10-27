@@ -24,7 +24,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Room } from "../types/room";
-import { reorderVisibleRooms } from "../utils/roomOrder";
+import { reorderVisibleRooms } from "../utils/room/roomOrder";
 
 const INTERACTIVE_SELECTOR =
   "button, a, input, select, textarea, [role=button], [contenteditable=true], .ant-select, .ant-checkbox-wrapper, .ant-switch";

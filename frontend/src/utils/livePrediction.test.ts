@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   predictionTitle,
   lastOpeningValue,
+  lastOpeningTagValue,
   predictionAccuracyText,
   predictionCountdownText,
   predictionDisplayLevel,
@@ -36,6 +37,57 @@ function prediction(
   };
 }
 describe("live prediction display", () => {
+  it("keeps the backend-selected evening session after the morning opening", () => {
+    const value = prediction({
+      nextDate: "2026-09-14",
+      startAt: "20:00",
+      windowStart: "19:45",
+      windowEnd: "20:15",
+      startTimestamp: new Date("2026-09-14T20:00:00").toISOString(),
+      windowStartTimestamp: new Date("2026-09-14T19:45:00").toISOString(),
+      windowEndTimestamp: new Date("2026-09-14T20:15:00").toISOString(),
+      lastRecordedAt: "09:00",
+      slots: [
+        { startAt: "08:45", endAt: "09:15", likelihood: "low" },
+        { startAt: "19:45", endAt: "20:15", likelihood: "low" },
+      ],
+    });
+    const now = new Date("2026-09-14T09:05:00");
+    expect(predictionTitle(value, now)).toBe("预计今天 20:00 左右开播");
+    expect(predictionOpeningDetail(value, now)).toBe("今天 20:00 左右");
+    expect(predictionTitle(value, new Date("2026-09-14T21:00:00"))).toBe("暂无预测");
+  });
+  it.each([
+    ["2026-09-15T23:00:00", "20:15"],
+    ["2026-09-16T20:15:00", "20:15"],
+    ["2026-09-16T20:15:01", "9月15日 20:15"],
+    ["2026-09-20T12:00:00", "9月15日 20:15"],
+    ["2027-01-01T12:00:00", "9月15日 20:15"],
+  ])("formats a single opening at %s as %s", (now, expected) => {
+    expect(
+      lastOpeningTagValue(
+        prediction({
+          kind: "observation",
+          basedOnDays: 1,
+          sampleCount: 1,
+          lastRecordedAt: "20:15",
+          lastRecordedTimestamp: new Date("2026-09-15T20:15:00").toISOString(),
+        }),
+        new Date(now),
+      ),
+    ).toBe(expected);
+  });
+  it("keeps the clock for older responses with missing or invalid timestamps", () => {
+    for (const lastRecordedTimestamp of [undefined, "invalid"]) {
+      expect(
+        lastOpeningTagValue(
+          prediction({ lastRecordedAt: "20:15", lastRecordedTimestamp }),
+          new Date("2026-09-20T12:00:00"),
+        ),
+      ).toBe("20:15");
+    }
+    expect(lastOpeningTagValue(prediction())).toBeNull();
+  });
   it("uses a relative day for the latest opening yesterday", () => {
     expect(
       lastOpeningValue(
@@ -444,11 +496,14 @@ describe("possibility wording follows the backend accuracy", () => {
         ),
       ).toBe("预计明天 10:00 左右开播");
     });
-    it("picks the earliest period of a future dated prediction too", () => {
+    it("preserves the selected period of a future dated prediction", () => {
       expect(
         predictionTitle(
           prediction({
             nextDate: "2026-09-16",
+            startAt: "20:00",
+            windowStart: "19:45",
+            windowEnd: "20:15",
             slots: [
               { startAt: "20:00", endAt: "21:00", likelihood: "medium" },
               { startAt: "15:00", endAt: "16:00", likelihood: "medium" },
@@ -456,7 +511,7 @@ describe("possibility wording follows the backend accuracy", () => {
           }),
           now,
         ),
-      ).toBe("预计后天 15:00 左右开播");
+      ).toBe("预计后天 20:00 左右开播");
     });
   });
   it("falls back to a period word instead of a false-precision clock", () => {

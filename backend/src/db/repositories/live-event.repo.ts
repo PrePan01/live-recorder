@@ -54,4 +54,17 @@ export class LiveEventRepository {
       `SELECT id, room_id AS roomId, detected_at AS detectedAt, source, lower_bound_at AS lowerBoundAt, platform_started_at AS platformStartedAt FROM live_events WHERE room_id IN (${placeholders}) AND detected_at >= ? ORDER BY detected_at ASC`,
     ).all(...roomIds, from) as LiveEvent[];
   }
+
+  /** 每个房间只读取最后一条历史观察，避免为展示载入全部开播历史。 */
+  latestForRooms(roomIds: string[], until: string): LiveEvent[] {
+    if (roomIds.length === 0) return [];
+    const placeholders = roomIds.map(() => '?').join(',');
+    return this.db.prepare(
+      `SELECT id, room_id AS roomId, detected_at AS detectedAt, source, lower_bound_at AS lowerBoundAt, platform_started_at AS platformStartedAt
+       FROM live_events WHERE id IN (
+         SELECT (SELECT id FROM live_events WHERE room_id = rooms.id AND detected_at <= ? ORDER BY detected_at DESC LIMIT 1)
+         FROM rooms WHERE id IN (${placeholders})
+       )`,
+    ).all(until, ...roomIds) as LiveEvent[];
+  }
 }

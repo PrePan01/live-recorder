@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { useRecordingMediaPosition } from "./useRecordingMediaPosition";
-import { resetPreviewMediaClock, setLiveMediaOrigin } from "../utils/previewMediaClock";
+import { resetPreviewMediaClock, setLiveMediaOrigin } from "../utils/player/previewMediaClock";
 vi.mock("react", () => ({
   useState: () => [8, vi.fn()],
   useEffect: () => {},

@@ -29,6 +29,41 @@
   transition: transform 1000ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+.lr-recording-track__topline .ant-btn.lr-recording-track__range-nudge {
+  padding-inline: 0;
+  gap: 0;
+}
+
+.lr-recording-track__nudge-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100%;
+  gap: 4px;
+  padding-inline: 6px;
+  line-height: 1;
+}
+
+.lr-recording-track__nudge-option .anticon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+.lr-recording-track__nudge-option .anticon svg {
+  display: block;
+}
+
+.lr-recording-track__nudge-option + .lr-recording-track__nudge-option {
+  border-left: 1px solid currentColor;
+}
+
+.lr-recording-track__range-nudge:not(:disabled)
+  .lr-recording-track__nudge-option:hover {
+  background: var(--lr-surface-alt);
+}
+
 .lr-recording-track__toggle.ant-btn {
   width: 28px;
   min-width: 28px;
@@ -49,19 +84,31 @@
   margin-left: auto;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-end {
   background: #ffd500 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end:not(:disabled) {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-end:not(:disabled) {
   color: #000 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-cancel {
   background: #b20061 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel:not(:disabled) {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-cancel:not(:disabled) {
   color: #fff !important;
 }
 
@@ -85,7 +132,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 6px;
   color: var(--lr-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { readPreviewElapsed } from "../../utils/previewMediaClock";
+import { readPreviewElapsed } from "../../utils/player/previewMediaClock";
 import { fetchDanmakuWindow } from "../../api/danmakuWindow";
 import { fetchRecordingGaps } from "../../api/recordings";
 import { useLiveDanmaku } from "../../hooks/useLiveDanmaku";

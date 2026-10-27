@@ -1,6 +1,6 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RoomPolicy } from "../model/roomPolicy";
+import type { RoomPolicy } from "../utils/roomPolicy";
 
 const hooks = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0 }));
 vi.mock("react", async original => ({

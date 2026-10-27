@@ -16,7 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { validateDirectory, updateSettings } from "../../api/settings";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useServiceStore } from "../../stores/serviceStore";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 import { ApiError } from "../../types/error";
 import DirectoryPicker from "../../components/DirectoryPicker";
 import PlatformAuthorizationList, {

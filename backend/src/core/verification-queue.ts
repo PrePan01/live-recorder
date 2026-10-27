@@ -1,26 +1,36 @@
-import { statSync } from 'node:fs';
-import type { Recording } from '../types/index.js';
-import type { Services } from './services.js';
-import { checkFileIntegrityDetailed } from '../recorder/integrity.js';
-import { AppError } from '../types/error.js';
+import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import type { Recording } from "../types/index.js";
+import type { Services } from "./services.js";
+import {
+  checkFileIntegrityDetailed,
+  type IntegrityCheckDetail,
+} from "../recorder/integrity.js";
 
 interface VerifyJob {
   recordingId: string;
   filePath: string;
+  fingerprint: string;
   key: string;
   createdAt: string;
+  result: Promise<IntegrityCheckDetail>;
+  resolve: (result: IntegrityCheckDetail) => void;
 }
 
 const VERIFY_CONCURRENCY = 2;
-const VERIFY_TTL_MS = 10 * 60_000;
+const fingerprint = (
+  st: { dev: number; ino: number; size: number; mtimeMs: number } | null,
+) => (st ? `${st.dev}|${st.ino}|${st.size}|${st.mtimeMs}` : "unavailable");
 
-/**
- * 完整性校验队列：收尾/启动恢复/手动重试三个入口共用。
- * 幂等键=文件路径+修改时间（同一文件不重复入队）；新录优先；单任务超时兜底（不永挂）。
- */
+/** Recording completion, recovery, manual checks and pipeline checks share two probe slots. */
 export class VerificationQueue {
   private queue: VerifyJob[] = [];
-  private keys = new Set<string>();
+  private jobs = new Map<string, VerifyJob>();
+  // Only recent, unchanged files are reused by the pipeline; manual enqueue always rechecks.
+  private completed = new Map<
+    string,
+    { key: string; result: IntegrityCheckDetail }
+  >();
   private active = 0;
 
   constructor(private services: Services) {}
@@ -30,38 +40,93 @@ export class VerificationQueue {
     return idx >= 0 ? idx + 1 : null;
   }
 
+  private identity(rec: Recording): { key: string; fingerprint: string } {
+    let stamp = "unavailable";
+    try {
+      stamp = fingerprint(statSync(rec.filePath!));
+    } catch {
+      /* Missing storage can be retried. */
+    }
+    return { key: `${rec.id}|${rec.filePath}|${stamp}`, fingerprint: stamp };
+  }
+
   enqueue(rec: Recording): boolean {
     if (!rec.filePath) return false;
-    let mtime = 0;
-    try {
-      mtime = statSync(rec.filePath).mtimeMs;
-    } catch {
-      // 文件可能已被删除/卷未挂载：仍然允许以 0 修正一次（缺文件会得到 failed）。
-    }
-    const key = `${rec.filePath}|${mtime}`;
-    if (this.keys.has(key)) return false;
-    this.keys.add(key);
-    this.queue.push({ recordingId: rec.id, filePath: rec.filePath, key, createdAt: rec.createdAt });
-    // 新录优先：用户正在等的先校验，历史积压垫后。
-    this.queue.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
-    this.services.recordings.update(rec.id, { integrityState: 'queued' } as never);
-    // 排队态变化也实时上屏（与其余校验态同口径配对事件）。
-    this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(rec.id)! });
-    console.log(`[verify] 入队 ${rec.id}（第 ${this.positionOf(rec.id)} 位）`);
-    this.pump();
+    const identity = this.identity(rec);
+    if (this.jobs.has(identity.key)) return false;
+    this.schedule(rec, identity);
     return true;
   }
 
-  /** 启动恢复：把被打断/从未校验过的记录全部重新入队（不设年龄阈值，全量捡起）。 */
+  /** Await an existing job rather than launching a second ffprobe from the pipeline. */
+  verify(rec: Recording): Promise<IntegrityCheckDetail> {
+    if (!rec.filePath)
+      return Promise.resolve({
+        outcome: "unverifiable",
+        detail: "录像文件暂不可访问",
+      });
+    const identity = this.identity(rec);
+    const job = this.jobs.get(identity.key);
+    if (job) return job.result;
+    const cached = this.completed.get(rec.id);
+    if (cached?.key === identity.key) return Promise.resolve(cached.result);
+    return this.schedule(rec, identity).result;
+  }
+
+  private schedule(
+    rec: Recording,
+    identity: { key: string; fingerprint: string },
+  ): VerifyJob {
+    let resolve!: VerifyJob["resolve"];
+    const result = new Promise<IntegrityCheckDetail>((done) => {
+      resolve = done;
+    });
+    const job: VerifyJob = {
+      recordingId: rec.id,
+      filePath: rec.filePath!,
+      ...identity,
+      createdAt: rec.createdAt,
+      result,
+      resolve,
+    };
+    this.completed.delete(rec.id);
+    this.jobs.set(job.key, job);
+    this.queue.push(job);
+    this.queue.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    this.services.recordings.update(rec.id, {
+      integrityState: "queued",
+      integrity: "pending",
+      integrityError: null,
+    });
+    this.emit(rec.id);
+    console.log(`[verify] 入队 ${rec.id}（第 ${this.positionOf(rec.id)} 位）`);
+    this.pump();
+    return job;
+  }
+
+  /** Boot pagination is intentionally unchanged here. */
   requeuePending(): number {
-    const rows = this.services.recordings.list({ pageSize: 100000, page: 1 }).items;
+    const rows = this.services.recordings.list({
+      pageSize: 100000,
+      page: 1,
+    }).items;
     let count = 0;
     for (const rec of rows) {
-      const state = (rec as { integrityState?: string | null }).integrityState;
-      const stale = state == null || state === 'pending' || state === 'queued' || state === 'verifying';
+      const state = rec.integrityState;
+      const stale =
+        state == null ||
+        state === "pending" ||
+        state === "queued" ||
+        state === "verifying";
       if (stale && this.enqueue(rec)) count += 1;
     }
     return count;
+  }
+
+  private emit(recordingId: string): void {
+    const rec = this.services.recordings.get(recordingId);
+    if (rec)
+      this.services.events.emit({ type: "recording:updated", data: rec });
   }
 
   private pump(): void {
@@ -76,60 +141,88 @@ export class VerificationQueue {
   }
 
   private async run(job: VerifyJob): Promise<void> {
-    let settled = false;
-    const ttl = this.services.clock.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      this.keys.delete(job.key);
-      this.services.recordings.update(job.recordingId, {
-        integrityState: 'unverifiable',
-        integrityError: '校验超时，可重试',
-      } as never);
-      console.log(`[verify] 超时未完成 ${job.recordingId}`);
-      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(job.recordingId)! });
-    }, VERIFY_TTL_MS);
+    let result: IntegrityCheckDetail = {
+      outcome: "unverifiable",
+      detail: "校验异常，可重试",
+    };
     try {
       const prev = this.services.recordings.get(job.recordingId);
+      if (!prev || prev.filePath !== job.filePath) return;
       this.services.recordings.update(job.recordingId, {
-        integrityState: 'verifying',
-        integrityAttempts: ((prev as { integrityAttempts?: number } | null)?.integrityAttempts ?? 0) + 1,
+        integrityState: "verifying",
+        integrity: "pending",
+        integrityError: null,
+        integrityAttempts: (prev.integrityAttempts ?? 0) + 1,
         integrityLastAttempt: this.services.clock.iso(),
-      } as never);
-      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(job.recordingId)! });
-      const { outcome, detail } = await checkFileIntegrityDetailed(job.filePath);
-      if (settled) return;
-      settled = true;
-      const state = outcome === 'ok' ? 'ok' : outcome === 'failed' ? 'failed' : 'unverifiable';
-      const legacy = outcome === 'ok' ? 'verified' : outcome === 'failed' ? 'failed' : 'pending';
+      });
+      this.emit(job.recordingId);
+      try {
+        result = await checkFileIntegrityDetailed(job.filePath);
+      } catch {
+        /* Unexpected probe errors use the same unavailable result. */
+      }
+      // A delayed source check must not overwrite the result of a replacement file.
+      const stamp = fingerprint(await stat(job.filePath).catch(() => null));
+      const current = this.services.recordings.get(job.recordingId);
+      if (
+        !current ||
+        current.filePath !== job.filePath ||
+        stamp !== job.fingerprint
+      ) {
+        result = {
+          outcome: "unverifiable",
+          detail: "录像文件已变化，请重新校验",
+        };
+        const newerJob = [...this.jobs.values()].some(
+          (other) => other !== job && other.recordingId === job.recordingId,
+        );
+        if (current && current.integrityState === "verifying" && !newerJob) {
+          this.services.recordings.update(job.recordingId, {
+            integrity: "pending",
+            integrityState: "unverifiable",
+            integrityError: result.detail,
+          });
+          this.emit(job.recordingId);
+        }
+        return;
+      }
+      const legacy =
+        result.outcome === "ok"
+          ? "verified"
+          : result.outcome === "failed"
+            ? "failed"
+            : "pending";
       this.services.recordings.update(job.recordingId, {
         integrity: legacy,
-        integrityState: state,
-        integrityError: outcome === 'ok' ? null : detail,
-      } as never);
-      console.log(`[verify] ${job.recordingId} → ${state}${detail ? `（${detail}）` : ''}`);
-      if (outcome === 'failed') {
+        integrityState: result.outcome,
+        integrityError: result.outcome === "ok" ? null : result.detail,
+      });
+      if (result.outcome !== "unverifiable") {
+        this.completed.delete(job.recordingId);
+        this.completed.set(job.recordingId, { key: job.key, result });
+        if (this.completed.size > 128)
+          this.completed.delete(this.completed.keys().next().value!);
+      }
+      console.log(
+        `[verify] ${job.recordingId} → ${result.outcome}${result.detail ? `（${result.detail}）` : ""}`,
+      );
+      if (result.outcome === "failed") {
         this.services.alerts.createOrRefresh({
-          level: 'warning',
-          source: 'recorder',
-          message: '录制文件校验失败，可能损坏或截断',
+          level: "warning",
+          source: "recorder",
+          message: "录制文件校验失败，可能损坏或截断",
           occurredAt: this.services.clock.iso(),
-          roomId: this.services.recordings.get(job.recordingId)?.roomId ?? null,
-          errorCode: 'RECORDING_FILE_CORRUPTED',
+          roomId: current.roomId,
+          errorCode: "RECORDING_FILE_CORRUPTED",
           retryable: false,
         });
       }
-      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(job.recordingId)! });
-    } catch (error) {
-      if (settled) return;
-      settled = true;
-      this.services.recordings.update(job.recordingId, {
-        integrityState: 'unverifiable',
-        integrityError: error instanceof AppError ? error.message : '校验异常，可重试',
-      } as never);
-      this.services.events.emit({ type: 'recording:updated', data: this.services.recordings.get(job.recordingId)! });
+      this.emit(job.recordingId);
+    } catch {
+      // Shutdown/deletion must still release the shared probe slot and all waiters.
     } finally {
-      this.services.clock.clearTimeout(ttl);
-      this.keys.delete(job.key);
+      this.jobs.delete(job.key);
+      job.resolve(result);
     }
   }
 }

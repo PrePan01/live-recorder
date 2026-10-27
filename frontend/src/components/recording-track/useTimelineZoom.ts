@@ -11,7 +11,7 @@ import {
   timelineTicks,
   visibleTimelineLabels,
   zoomTimeline,
-} from "../../utils/timelineZoom";
+} from "../../utils/timeline/timelineZoom";
 
 export function useTimelineZoom(timelineEnd: number, dragging: boolean) {
   const viewportRef = useRef<HTMLDivElement>(null);

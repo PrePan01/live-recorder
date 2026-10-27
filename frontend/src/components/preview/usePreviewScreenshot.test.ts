@@ -34,13 +34,13 @@ vi.mock("react", () => ({
   },
 }));
 vi.mock("../../api/screenshots", () => ({ savePreviewScreenshot: vi.fn() }));
-vi.mock("../../utils/captureVideoFrame", () => ({
+vi.mock("../../utils/player/captureVideoFrame", () => ({
   canCaptureVideoFrame: (video: HTMLVideoElement | null) =>
     Boolean(video && !video.seeking),
   captureVideoFrame: vi.fn(),
 }));
 import { savePreviewScreenshot } from "../../api/screenshots";
-import { captureVideoFrame } from "../../utils/captureVideoFrame";
+import { captureVideoFrame } from "../../utils/player/captureVideoFrame";
 import { usePreviewScreenshot } from "./usePreviewScreenshot";
 const video = Object.assign(new EventTarget(), {
   seeking: false,

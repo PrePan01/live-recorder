@@ -2,7 +2,7 @@
  * 管线步骤名文案
  */
 export const STEP_LABEL: Record<string, string> = {
-  verify: "完整性校验",
+  verify: "文件校验",
   sidecar: "信息文件",
   cover: "封面",
   segment: "切片",

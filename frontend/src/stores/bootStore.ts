@@ -8,7 +8,7 @@ import type {
 import { detectBridge } from '../bridge/nativeBridge';
 import { useServiceStore } from './serviceStore';
 import { EndpointResolver } from '../api/endpoint';
-import { setErrorDiagnosticContext } from '../utils/errorDiagnostics';
+import { setErrorDiagnosticContext } from '../utils/error/errorDiagnostics';
 
 export const bridge = detectBridge();
 

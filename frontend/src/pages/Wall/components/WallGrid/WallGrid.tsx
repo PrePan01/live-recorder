@@ -16,7 +16,7 @@ import {
 } from "../../../../stores/wallStore";
 import WallLiveCard from "../WallLiveCard/WallLiveCard";
 import styles from "./WallGrid.module.css";
-import { stableSlotEntries } from "../../../../utils/wallSlots";
+import { stableSlotEntries } from "../../../../utils/wall/wallSlots";
 
 interface WallGridProps {
   rooms: Room[];

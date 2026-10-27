@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from 'react';
 import { Button, Result } from 'antd';
-import { reportError } from '../utils/errorDiagnostics';
+import { reportError } from '../utils/error/errorDiagnostics';
 
 interface Props {
   children: ReactNode;

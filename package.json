@@ -1,6 +1,6 @@
 {
   "name": "live-recorder",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "description": "Live Recorder desktop application",
   "scripts": {
@@ -22,5 +22,8 @@
   },
   "dependencies": {
     "prettier": "^3.9.6"
+  },
+  "devDependencies": {
+    "yaml": "2.9.1"
   }
 }

@@ -76,12 +76,14 @@ export function IntegrityTag({
   integrityState,
   verifyQueuePosition,
   integrityError,
+  showTooltip = true,
 }: {
   integrity: RecordingIntegrity | null;
   /** 校验细分态：缺省时沿用旧三态显示，老数据/老后端展示不破版。 */
   integrityState?: RecordingIntegrityState;
   verifyQueuePosition?: number | null;
   integrityError?: string | null;
+  showTooltip?: boolean;
 }) {
   if (integrityState === undefined) {
     if (!integrity) return <Tag>待校验</Tag>;
@@ -107,7 +109,8 @@ export function IntegrityTag({
     );
   if (integrityState === "verifying")
     return <Tag color="processing">校验中</Tag>;
-  if (integrityState === "unverifiable")
+  if (integrityState === "unverifiable") {
+    if (!showTooltip) return <Tag color="warning">无法校验</Tag>;
     return (
       <Tooltip
         title={integrityError || "环境或文件原因无法完成校验，可点校验重试"}
@@ -115,12 +118,15 @@ export function IntegrityTag({
         <Tag color="warning">无法校验</Tag>
       </Tooltip>
     );
-  if (integrityState === "failed")
+  }
+  if (integrityState === "failed") {
+    if (!showTooltip) return <Tag color="error">校验失败</Tag>;
     return (
       <Tooltip title={integrityError || "校验失败，可点校验重试"}>
         <Tag color="error">校验失败</Tag>
       </Tooltip>
     );
+  }
   return (
     <Tag color="green" style={DONE_TAG_STYLE}>
       已校验

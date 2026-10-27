@@ -29,7 +29,6 @@ class FakeRemote {
   latestGitHubVersion() { return this.latestVersion; }
   readObject(key) { return this.objects.get(key); }
   ensureDraft(commit) { this.event('draft'); this.tag ??= commit; }
-  isDraft() { return this.draft; }
   release() { return { draft: this.draft }; }
   readAsset(name) { return name === 'release-state.json' ? this.journal ?? this.assets.get(name) : this.assets.get(name); }
   requireCheckpoint(saved) { this.event('journal'); this.journal = JSON.stringify(saved); }
@@ -47,7 +46,7 @@ class FakeRemote {
   verifyStaged() { this.event('verify'); }
   verifyPointers() { this.event('verify-pointers'); }
   reportStatus(status) { this.status = status; }
-  publishGitHub() { this.event('publish'); this.draft = false; }
+  publishGitHub(commit) { this.assertTag(commit); this.event('publish'); this.draft = false; }
   updatePointer(name) {
     this.event(`pointer:${name}`);
     this.objects.set(name, name === 'latest.json'
@@ -294,7 +293,7 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
   let reads = 0;
   remote.api = () => { reads++; return [{ tag_name: remote.tag, draft: true, assets: [] }]; };
   try {
-    remote.release(); remote.release(); remote.isDraft(); remote.readAsset('missing');
+    remote.release(); remote.release(); remote.readAsset('missing');
     assert.equal(reads, 1);
     remote.release(true);
     assert.equal(reads, 2);
@@ -303,8 +302,7 @@ test('release snapshot avoids repeated reads and refreshes only when requested',
 
 test('draft lookup uses the release list without a redundant by-tag request', () => {
   const remote = new ReleaseRemote('unused', state.version);
-  // This fixture has no internal checkpoint. Model that explicitly so a CI
-  // GITHUB_SHA does not trigger an unrelated Actions artifact lookup.
+  // 显式模拟无发布记录，避免 CI 环境变量触发真实产物查询。
   remote.journalBundle = () => null;
   const draft = { id: 123, tag_name: 'v1.2.3', draft: true, assets: [] };
   const reads = [];
@@ -315,10 +313,9 @@ test('draft lookup uses the release list without a redundant by-tag request', ()
   };
   try {
     assert.equal(remote.release(), draft);
-    assert.equal(remote.isDraft(), true);
+    assert.equal(remote.release().draft, true);
     assert.equal(remote.readAsset('release-state.json'), null);
     assert.equal(reads.length, 1);
-    // Existing drafts must not be recreated or mistaken for published releases.
     remote.ensureDraft(state.commit);
     assert.equal(remote.release(), draft);
     assert.equal(reads.length, 2);
@@ -523,12 +520,12 @@ test('a partially completed AWS batch retries only missing files', async () => {
       catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
     });
     batches.push(names);
-    // Native uploads carry no custom metadata; retries must verify their bytes.
+    // 上传不附带自定义摘要，重试时需要核对文件内容。
     uploaded.set(names[0], { ContentLength: Buffer.byteLength(names[0]) });
     if (batches.length === 1) throw new Error('connection interrupted after first file');
   });
   remote.objectHead = key => uploaded.get(key) ?? null;
-  remote.readObject = key => { reads.push(key); return Buffer.from(key); };
+  remote.objectDigest = async key => { reads.push(key); return createHash('sha256').update(key).digest('hex'); };
   try {
     await remote.ensureObjects(['app.dmg', 'app.exe'].map(name => [name, name, createHash('sha256').update(name).digest('hex')]));
     assert.deepEqual(batches, [['app.dmg', 'app.exe'], ['app.exe']]);
@@ -572,7 +569,7 @@ test('HeadObject 403 during recovery identifies the key and never treats it as a
   try {
     await assert.rejects(remote.ensureObjects([['app.exe', 'app.exe', 'win-hash']]), /Cannot inspect CDN object app\.exe:.*\(403\)/);
     assert.equal(uploads, 1);
-    assert.equal(probes, 2); // One 404 before upload, one fatal 403 on recovery.
+    assert.equal(probes, 3); // 一次 404，再用 HEAD 和只读 GET 诊断 403。
   } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -610,4 +607,43 @@ test('repeated or regressing progress totals cannot hide a stalled upload', asyn
     let n = 0;
     setInterval(() => console.log('Completed ' + (++n % 2 + 1) + '.0 MiB/9.0 MiB'), 50);
   `], { timeout: 2500, idleTimeout: 300 }), /no upload progress/);
+});
+
+test('HEAD 403 is absent only after an authoritative read-only GET 404', () => {
+  const remote = new ReleaseRemote('unused', state.version);
+  const calls = [];
+  remote.aws = args => {
+    calls.push(args);
+    throw new Error(`An error occurred (${args[0] === 'head-object' ? '403' : 'NoSuchKey'}) when calling the ${args[0] === 'head-object' ? 'HeadObject' : 'GetObject'} operation`);
+  };
+  try {
+    assert.equal(remote.objectHead('not-uploaded.exe'), null);
+    assert.deepEqual(calls.map(args => args[0]), ['head-object', 'get-object']);
+    assert(calls[1].includes('bytes=0-0'));
+    remote.aws = args => {
+      if (args[0] === 'head-object') throw new Error('An error occurred (403) when calling the HeadObject operation: Forbidden');
+      return JSON.stringify({ ContentRange: 'bytes 0-0/1234', Metadata: { sha256: 'existing-hash' } });
+    };
+    assert.deepEqual(remote.objectHead('existing.exe'), { ContentRange: 'bytes 0-0/1234', ContentLength: 1234, Metadata: { sha256: 'existing-hash' } });
+    remote.aws = args => {
+      if (args[0] === 'head-object') throw new Error('An error occurred (403) when calling the HeadObject operation: Forbidden');
+      return '{}';
+    };
+    assert.throws(() => remote.objectHead('unknown.exe'), /no authoritative object size/);
+  } finally { remote.close(); }
+});
+
+
+test('existing CDN objects are hashed from disk with bounded asynchronous downloads', async () => {
+  const remote = new ReleaseRemote('unused', state.version, async (program, args, options) => {
+    assert.equal(program, 'aws');
+    assert(args.includes('get-object'));
+    assert(args.includes('--bucket'));
+    assert.equal(options.timeout, 45 * 60000);
+    writeFileSync(args.at(-1), 'existing bytes');
+  });
+  try {
+    assert.equal(await remote.objectDigest('existing.exe', 45 * 60000), createHash('sha256').update('existing bytes').digest('hex'));
+    assert.throws(() => readFileSync(join(remote.scratch, 'existing-object')), { code: 'ENOENT' });
+  } finally { remote.close(); }
 });

@@ -3,13 +3,9 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { readFileSync } from "node:fs";
+import { readProjectJson } from "./project-utils.mjs";
 import { verifyInstallerSignature } from "./verify-installer-signatures.mjs";
-export const updaterPublicKey = JSON.parse(
-  readFileSync(
-    new URL("../frontend/src-tauri/tauri.conf.json", import.meta.url),
-  ),
-).plugins.updater.pubkey;
+export const updaterPublicKey = readProjectJson("frontend/src-tauri/tauri.conf.json").plugins.updater.pubkey;
 
 export function validateReleaseNotes(value, version) {
   const releases =
@@ -41,7 +37,7 @@ export function validateReleaseNotes(value, version) {
   return { releases, current };
 }
 
-/** 读取 tauri build 产出的 `.sig` 内容（客户端清单的 signature 字段要求是签名本身，不是路径）。 */
+// 清单中的 signature 必须是签名内容，不能是文件路径。
 async function readUpdaterSignature(directory, filename) {
   let raw;
   try {
@@ -65,8 +61,7 @@ export async function generateUpdateManifest(
 ) {
   if (!/^\d+\.\d+\.\d+$/.test(version))
     throw new Error("A stable semantic release version is required");
-  // 可选的安装包基址（如七牛 S3 公开读域名）：设置后清单 asset.url 指向对象存储加速下载；
-  // 客户端仍以清单内 SHA256 校验，并在对象存储不可达时回退 GitHub release。
+  // 配置镜像地址时优先使用镜像，否则使用 GitHub 下载地址。
   const base =
     typeof baseUrl === "string" && baseUrl.length > 0
       ? baseUrl.replace(/\/+$/, "")
@@ -78,8 +73,6 @@ export async function generateUpdateManifest(
   );
   const files = await readdir(directory);
   const platforms = {};
-  // NSIS emits an executable setup package; public names are normalized by the
-  // release workflow before this manifest is generated.
   for (const [platform, suffix] of [
     ["macos-aarch64", "_aarch64.dmg"],
     ["windows-x86_64", "_x64-setup.exe"],
@@ -92,9 +85,7 @@ export async function generateUpdateManifest(
         `Expected exactly one ${platform} installer for ${version}`,
       );
     const filename = candidates[0];
-    // GitHub rewrites whitespace in release-asset names. Refuse to produce a
-    // manifest for an unnormalized staging directory, otherwise its URL would
-    // not match the uploaded asset and clients would receive a 404.
+    // GitHub 会改写文件名中的空白，必须提前统一名称，避免下载地址失效。
     if (/\s/.test(filename))
       throw new Error(
         `Release asset filename must not contain whitespace: ${filename}`,

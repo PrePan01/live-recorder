@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { loadDanmakuPref, saveDanmakuPref, DANMUKU_DENSITY_OPTIONS, normalizeDanmakuScale } from '../utils/danmakuPrefs';
+import { loadDanmakuPref, saveDanmakuPref, DANMUKU_DENSITY_OPTIONS, normalizeDanmakuScale } from '../utils/danmaku/danmakuPrefs';
 
 interface DanmakuPrefsState {
   visible: boolean;

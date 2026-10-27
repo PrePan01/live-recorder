@@ -1,8 +1,6 @@
 import { createPublicKey, verify } from 'node:crypto';
 
-// Tauri encodes a minisign public key and detached signature as base64 text.
-// Match minisign-verify: ED = BLAKE2b-512 prehash, Ed25519 signature plus signed
-// trusted comment. Never accept an unverified comment or a different key ID.
+// 按 Tauri 的 minisign 格式校验密钥编号、BLAKE2b-512 预哈希签名及可信注释签名。
 export function verifyInstallerSignature(pubkey, signature, prehash) {
   const keyLines = Buffer.from(pubkey, 'base64').toString('utf8').trim().split(/\r?\n/);
   const lines = Buffer.from(signature, 'base64').toString('utf8').trim().split(/\r?\n/);

@@ -140,6 +140,19 @@ export function registerRoomRoutes(
       stream_session_id: string | null;
     }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
+    liveEvents.push(...services.liveEvents.latestForRooms(roomIds, new Date(now).toISOString())
+      .filter((event) => event.detectedAt < from60));
+    // 历史录制只补最后一个起点，预测仍然只使用 60 天内的样本。
+    const historicalRecordings = services.db.prepare(`
+      SELECT room_id AS roomId, MAX(started_at) AS startedAt FROM (
+        SELECT room_id, started_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at <= ?
+        UNION ALL
+        SELECT room_id, started_at FROM prediction_recording_sessions WHERE room_id IN (${placeholders}) AND started_at <= ?
+      ) GROUP BY room_id
+    `).all(...roomIds, new Date(now).toISOString(), ...roomIds, new Date(now).toISOString()) as Array<{ roomId: string; startedAt: string }>;
+    const historicalRecordingByRoom = new Map(historicalRecordings
+      .filter((record) => record.startedAt < from60)
+      .map((record) => [record.roomId, record]));
     // Sorting uses all retained history, independently of seven-day card stats.
     const recordingTotals = services.db
       .prepare(`SELECT room_id,
@@ -225,6 +238,7 @@ export function registerRoomRoutes(
               streamSessionId: record.stream_session_id,
             })),
             ...(recordingSessions.get(id) ?? []),
+            ...(historicalRecordingByRoom.has(id) ? [historicalRecordingByRoom.get(id)!] : []),
           ]),
           now,
           generatedAt: services.clock.iso(),

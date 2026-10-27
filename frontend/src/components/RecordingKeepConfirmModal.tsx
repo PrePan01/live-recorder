@@ -1,6 +1,6 @@
 import { Button, Input, Modal, Space, Typography } from "antd";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { startAutoKeepCountdown } from "../utils/autoKeepCountdown";
+import { startAutoKeepCountdown } from "../utils/recording/autoKeepCountdown";
 
 type Props = {
   open: boolean;

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { App, Input, Typography } from "antd";
 import { ApiError } from "../../../types/error";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 
 interface Props {
   id: string;

@@ -16,7 +16,7 @@ import {
   recordingTimelineEnd,
   timelinePercent,
   timelineSecondAt,
-} from "../../utils/recordingTimeline";
+} from "../../utils/timeline/recordingTimeline";
 
 import type { RecordingTrackProps } from "./types";
 import { useLocalPref } from "../../hooks/useLocalPref";
@@ -558,6 +558,7 @@ export function useRecordingTrack({
     railJump,
     toggleCollapsed,
     onHandleKeyDown,
+    nudgeRange,
     startPosition,
     endPosition,
     timeLabelClass,

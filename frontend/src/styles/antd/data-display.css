@@ -14,6 +14,18 @@
   background: var(--lr-teal);
 }
 
+.ant-tag.lr-recording-integrity-unknown {
+  color: #595959;
+  background: #eeeeee;
+  border-color: #d9d9d9;
+}
+
+:root[data-theme="dark"] .ant-tag.lr-recording-integrity-unknown {
+  color: #d9d9d9;
+  background: #3a3a3a;
+  border-color: #595959;
+}
+
 .ant-tag-red,
 .ant-tag-error {
   background: var(--lr-pink);

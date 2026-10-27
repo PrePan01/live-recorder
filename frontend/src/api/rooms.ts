@@ -1,6 +1,6 @@
 import { baseUrl, http } from "./client";
 import type { Room, RoomCreateInput, RoomUpdateInput } from "../types/room";
-import { guessPlatform } from "../utils/roomPlatform";
+import { guessPlatform } from "../utils/room/roomPlatform";
 
 export async function fetchRooms(): Promise<Room[]> {
   const { data } = await http.get<{ rooms: Room[] }>("/rooms");
