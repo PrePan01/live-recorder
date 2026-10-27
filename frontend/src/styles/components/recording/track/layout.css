@@ -59,7 +59,8 @@
   border-left: 1px solid currentColor;
 }
 
-.lr-recording-track__range-nudge:not(:disabled) .lr-recording-track__nudge-option:hover {
+.lr-recording-track__range-nudge:not(:disabled)
+  .lr-recording-track__nudge-option:hover {
   background: var(--lr-surface-alt);
 }
 
@@ -83,19 +84,31 @@
   margin-left: auto;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-end {
   background: #ffd500 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-end:not(:disabled) {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-end:not(:disabled) {
   color: #000 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-cancel {
   background: #b20061 !important;
 }
 
-:root .lr-recording-track .lr-recording-track__actions .ant-btn.lr-segment-mark-cancel:not(:disabled) {
+:root
+  .lr-recording-track
+  .lr-recording-track__actions
+  .ant-btn.lr-segment-mark-cancel:not(:disabled) {
   color: #fff !important;
 }
 
@@ -119,7 +132,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 6px;
   color: var(--lr-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
