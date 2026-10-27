@@ -441,6 +441,7 @@ export default function PreviewModal({
         >
           <VideoPlayer
             fill
+            rememberAudio
             preserveFrameOnSwitch
             roomId={room.id}
             platform={room.platform}

@@ -16,6 +16,18 @@ import {
 
 import type { VideoPlayerProps } from "./types";
 import { advancePreviewLoadProgress, initialPreviewLoadProgress } from "../../utils/player/previewLoadProgress";
+import { readPref, writePref } from "../../utils/prefStorage";
+const AUDIO_PREF_KEY = "live-recorder.preview-audio";
+type AudioPreference = { muted: boolean; volume: number };
+
+function readAudioPreference(fallback: AudioPreference): AudioPreference {
+  const saved = readPref<unknown>(AUDIO_PREF_KEY, null);
+  if (typeof saved !== "object" || saved === null) return fallback;
+  const { muted, volume } = saved as Partial<AudioPreference>;
+  return typeof muted === "boolean" && typeof volume === "number" &&
+    Number.isFinite(volume) && volume >= 0 && volume <= 1
+    ? { muted, volume } : fallback;
+}
 const RETRY_DELAYS_MS = [1_000, 3_000, 5_000];
 const STALL_TIMEOUT_MS = 12_000;
 // YouTube resolves formats and starts a separate media downloader before the first
@@ -29,6 +41,7 @@ const EVENTS = mpegts.Events as unknown as Record<
 export function useVideoPlayback({
   roomId,
   muted = true,
+  rememberAudio = false,
   thumbnail = false,
   onPreviewError,
   platform,
@@ -80,23 +93,29 @@ export function useVideoPlayback({
   const [reloadToken, setReloadToken] = useState(0);
   const [loadProgress, setLoadProgress] = useState(initialPreviewLoadProgress);
 
-  // 记录音量
+  // 仅观看弹窗持久化；封面和直播墙的静音状态不覆盖观看偏好。
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    if (rememberAudio && !thumbnail) {
+      audioPreferenceRef.current = readAudioPreference(audioPreferenceRef.current);
+      video.volume = audioPreferenceRef.current.volume;
+      video.muted = audioPreferenceRef.current.muted;
+    }
     const rememberAudioPreference = () => {
       if (!temporarilyMutedRef.current) {
         audioPreferenceRef.current = {
           muted: video.muted,
           volume: video.volume,
         };
+        if (rememberAudio && !thumbnail)
+          writePref(AUDIO_PREF_KEY, audioPreferenceRef.current);
       }
     };
-    rememberAudioPreference();
     video.addEventListener("volumechange", rememberAudioPreference);
     return () =>
       video.removeEventListener("volumechange", rememberAudioPreference);
-  }, []);
+  }, [rememberAudio, thumbnail]);
 
   // 真实宽高比
   useEffect(() => {
@@ -375,6 +394,11 @@ export function useVideoPlayback({
     const health = watchSeekPlayback(video, fail, () => !stale());
     const onPlaying = () => {
       if (stale() || !positioned) return;
+      if (temporarilyMutedRef.current) {
+        temporarilyMutedRef.current = false;
+        video.volume = audioPreferenceRef.current.volume;
+        video.muted = audioPreferenceRef.current.muted;
+      }
       hasEverPlayedRef.current = true;
       if (!stopWaitingForFrame) {
         stopWaitingForFrame = waitForVideoFrame(
@@ -422,6 +446,7 @@ export function useVideoPlayback({
         // 定位完成后才播放；自动播放被拦时保留原有静音重试。
         void Promise.resolve(instance.play()).catch(() => {
           if (stale()) return;
+          temporarilyMutedRef.current = true;
           video.muted = true;
           void Promise.resolve(instance.play()).catch(() =>
             fail("autoplay failed"),
