@@ -4,7 +4,7 @@ import type { TreeDataNode } from "antd";
 import { FolderOpenOutlined, FolderOutlined } from "@ant-design/icons";
 import { browseDirectories, pickDirectory } from "../api/config";
 import { validateDirectory } from "../api/settings";
-import { describeError } from "../utils/errorMap";
+import { describeError } from "../utils/error/errorMap";
 import { ApiError } from "../types/error";
 
 interface DirectoryPickerProps {

@@ -20,7 +20,7 @@ import { useClipQueueStore } from "../stores/clipQueueStore";
 import { useRecordingStore } from "../stores/recordingStore";
 import type { ClipQueueItem, ClipQueueState } from "../types/clipQueue";
 import { encoderLabel } from "../utils/encoderText";
-import { playbackClock } from "../utils/playbackClock";
+import { playbackClock } from "../utils/player/playbackClock";
 const labels: Record<ClipQueueState, string> = {
   queued: "等待导出",
   running: "导出中",

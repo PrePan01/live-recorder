@@ -20,7 +20,7 @@ import {
   fetchSchedules,
   updateSchedule,
 } from "../../../api/schedule";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import { ApiError } from "../../../types/error";
 import { formatTime } from "../../../utils/format";
 import type { RecordingSchedule, ScheduleInput } from "../../../types/schedule";

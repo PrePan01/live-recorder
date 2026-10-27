@@ -19,7 +19,6 @@ test('release manifest requires both platforms and describes real bytes', async 
   try {
     const notes = join(dir, 'release-notes.json');
     await writeFile(notes, JSON.stringify({ releases: [{ version: '0.5.112', publishedAt: '2026-09-13', notes: ['修复安装问题'] }] }));
-    // Release assets must already use GitHub's public, space-free names.
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
     await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /windows/);
@@ -68,7 +67,6 @@ test('windows installer must carry an updater signature', async () => {
     await writeFile(join(dir, 'Live.Recorder_0.5.112_aarch64.dmg'), 'abc');
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe'), 'abcd');
     await writeSignature(dir, 'Live.Recorder_0.5.112_aarch64.dmg');
-    // 漏签名的发版必须在生成清单时就失败，而不是发一个校验不过的更新出去。
     await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /Missing updater signature/);
     await writeFile(join(dir, 'Live.Recorder_0.5.112_x64-setup.exe.sig'), '  \n');
     await assert.rejects(generateUpdateManifest(dir, '0.5.112', undefined, notes, pubkey), /Empty updater signature/);

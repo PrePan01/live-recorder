@@ -1,12 +1,16 @@
-export type PredictionConfidence = 'high' | 'medium' | 'low';
-export type PredictionAccuracy = 'high' | 'fairly_high' | 'medium' | 'fairly_low' | 'low';
-export type PredictionKind = 'unavailable' | 'observation' | 'typical' | 'next';
-export type PredictionBasis = 'daily' | 'weekday' | 'day_type' | 'interval' | 'all';
-export type PredictionTimeGranularity = 'exact' | 'quarter_hour' | 'approximate' | 'period';
-export type PredictionObservationQuality = 'platform' | 'transition' | 'initial_live' | 'legacy';
+export type PredictionConfidence = "high" | "medium" | "low";
+export type PredictionAccuracy =
+  "high" | "fairly_high" | "medium" | "fairly_low" | "low";
+export type PredictionKind = "unavailable" | "observation" | "typical" | "next";
+export type PredictionBasis =
+  "daily" | "weekday" | "day_type" | "interval" | "all";
+export type PredictionTimeGranularity =
+  "exact" | "quarter_hour" | "approximate" | "period";
+export type PredictionObservationQuality =
+  "platform" | "transition" | "initial_live" | "legacy";
 export interface DetectedLiveEvent {
   detectedAt: string;
-  source?: PredictionObservationQuality | 'recording';
+  source?: PredictionObservationQuality | "recording";
   lowerBoundAt?: string | null;
   platformStartedAt?: string | null;
 }
@@ -37,7 +41,12 @@ export interface LivePrediction {
   timeGranularity: PredictionTimeGranularity | null;
   windowStart: string | null;
   windowEnd: string | null;
-  slots: Array<{ startAt: string; endAt: string; likelihood: PredictionConfidence; probabilityKnown: boolean }>;
+  slots: Array<{
+    startAt: string;
+    endAt: string;
+    likelihood: PredictionConfidence;
+    probabilityKnown: boolean;
+  }>;
   todayProbability: PredictionConfidence | null;
   likelihood: PredictionConfidence | null;
   /** Uncalibrated selected-window probability, used as the calibration bucket. */
@@ -48,13 +57,16 @@ export interface LivePrediction {
   /** Distinct local dates with polling coverage in the model window. */
   coverageDays: number;
   /** Provenance of the observations used by the selected time window. */
-  timeSource: 'platform' | 'detected' | 'recording' | 'mixed' | null;
+  timeSource: "platform" | "detected" | "recording" | "mixed" | null;
   lastRecordedAt: string | null;
   lastRecordedTimestamp: string | null;
   lastRecordedQuality?: PredictionObservationQuality;
   nextDateEnd?: string | null;
   typicalDayType?: string | null;
-  recentObservations: Array<{ time: string; quality: PredictionObservationQuality }>;
+  recentObservations: Array<{
+    time: string;
+    quality: PredictionObservationQuality;
+  }>;
 }
 interface Occurrence {
   event: DetectedLiveEvent;
@@ -97,20 +109,33 @@ interface CoverageRange {
   end: number;
 }
 
-function coverageRanges(intervals: PredictionCoverageInterval[]): CoverageRange[] {
+function coverageRanges(
+  intervals: PredictionCoverageInterval[],
+): CoverageRange[] {
   const sorted = intervals
-    .map((interval) => ({ start: Date.parse(interval.startAt), end: Date.parse(interval.endAt) }))
-    .filter((v) => Number.isFinite(v.start) && Number.isFinite(v.end) && v.end >= v.start)
+    .map((interval) => ({
+      start: Date.parse(interval.startAt),
+      end: Date.parse(interval.endAt),
+    }))
+    .filter(
+      (v) =>
+        Number.isFinite(v.start) && Number.isFinite(v.end) && v.end >= v.start,
+    )
     .sort((a, b) => a.start - b.start);
   const merged: CoverageRange[] = [];
   for (const range of sorted) {
     const last = merged[merged.length - 1];
-    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end);
+    if (last && range.start <= last.end)
+      last.end = Math.max(last.end, range.end);
     else merged.push(range);
   }
   return merged;
 }
-function coversRanges(ranges: CoverageRange[], start: number, end: number): boolean {
+function coversRanges(
+  ranges: CoverageRange[],
+  start: number,
+  end: number,
+): boolean {
   let lo = 0,
     hi = ranges.length - 1;
   while (lo <= hi) {
@@ -122,7 +147,11 @@ function coversRanges(ranges: CoverageRange[], start: number, end: number): bool
 }
 
 /** Polling coverage must bracket the whole opening window, with no shutdown gaps. */
-export function coversPredictionWindow(intervals: PredictionCoverageInterval[], start: number, end: number): boolean {
+export function coversPredictionWindow(
+  intervals: PredictionCoverageInterval[],
+  start: number,
+  end: number,
+): boolean {
   return coversRanges(coverageRanges(intervals), start, end);
 }
 
@@ -130,7 +159,9 @@ export function calculateLivePrediction(input: {
   roomId: string;
   events: DetectedLiveEvent[];
   fallbackEvents?: DetectedLiveEvent[];
-  calibration?: Partial<Record<PredictionConfidence, { hits: number; total: number }>> | undefined;
+  calibration?:
+    | Partial<Record<PredictionConfidence, { hits: number; total: number }>>
+    | undefined;
   coverage?: PredictionCoverageInterval[] | undefined;
   now: number;
   generatedAt: string;
@@ -143,17 +174,25 @@ export function calculateLivePrediction(input: {
       .filter((event) => Date.parse(event.detectedAt) <= input.now)
       .map(toOccurrence)
       .filter(
-        (o): o is Occurrence => !!o && o.estimatedAt >= cutoffDate.getTime() && o.estimatedAt <= input.now && o.recordedAt <= input.now,
+        (o): o is Occurrence =>
+          !!o && o.estimatedAt <= input.now && o.recordedAt <= input.now,
       );
   const detected = convert(input.events);
-  // Recording starts can supplement unobserved dates, but never duplicate a
-  // date already represented by detector evidence (first discovery may be late).
   const detectedDays = new Set(detected.map((o) => o.day));
-  const fallback = convert(input.fallbackEvents ?? []).filter((o) => !detectedDays.has(o.day));
+  const fallback = convert(input.fallbackEvents ?? []).filter(
+    (o) => !detectedDays.has(o.day),
+  );
   const platformStarts = new Set<number>();
-  const items = [...detected, ...fallback]
+  const observations = [...detected, ...fallback];
+  // 最后一次开播独立于建模窗口；过期记录仅用于展示，不增加预测样本。
+  const latest = observations.reduce<Occurrence | undefined>(
+    (a, b) => (!a || b.recordedAt > a.recordedAt ? b : a),
+    undefined,
+  );
+  const items = observations
+    .filter((o) => o.estimatedAt >= cutoffDate.getTime())
     .filter((o) => {
-      if (o.quality !== 'platform') return true;
+      if (o.quality !== "platform") return true;
       if (platformStarts.has(o.estimatedAt)) return false;
       platformStarts.add(o.estimatedAt);
       return true;
@@ -163,7 +202,10 @@ export function calculateLivePrediction(input: {
   for (const slot of cluster(items, true)) {
     // Very early standalone openings need a previous-day anchor to retain
     // their leading margin across midnight without negative clock values.
-    if (slot.items.some((o) => o.minute < MIN_WINDOW / 2) && slot.items.every((o) => o.minute < 180)) {
+    if (
+      slot.items.some((o) => o.minute < MIN_WINDOW / 2) &&
+      slot.items.every((o) => o.minute < 180)
+    ) {
       for (const item of slot.items) item.minute += 1440;
     }
     for (const item of slot.items) {
@@ -175,7 +217,6 @@ export function calculateLivePrediction(input: {
     }
   }
   const basedOnDays = distinctDays(items);
-  const latest = items.reduce<Occurrence | undefined>((a, b) => (!a || b.recordedAt > a.recordedAt ? b : a), undefined);
   const base: LivePrediction = {
     roomId: input.roomId,
     startAt: null,
@@ -184,7 +225,7 @@ export function calculateLivePrediction(input: {
     basedOnDays,
     notice: null,
     generatedAt: input.generatedAt,
-    kind: 'unavailable',
+    kind: "unavailable",
     basis: null,
     intervalDays: null,
     intervalDaysMax: null,
@@ -206,31 +247,65 @@ export function calculateLivePrediction(input: {
     timeSource: null,
     ...(latest ? { lastRecordedQuality: latest.quality } : {}),
     lastRecordedAt: latest ? hhmm(minuteOfDay(latest.recordedAt)) : null,
-    lastRecordedTimestamp: latest ? new Date(latest.recordedAt).toISOString() : null,
-    recentObservations: items.slice(-8).map((o) => ({ time: hhmm(minuteOfDay(o.estimatedAt)), quality: o.quality })),
+    lastRecordedTimestamp: latest
+      ? new Date(latest.recordedAt).toISOString()
+      : null,
+    recentObservations: items
+      .slice(-8)
+      .map((o) => ({
+        time: hhmm(minuteOfDay(o.estimatedAt)),
+        quality: o.quality,
+      })),
   };
-  if (!items.length) return { ...base, notice: '检测到更多开播后显示预测' };
+  if (!items.length)
+    return {
+      ...base,
+      kind: latest ? "observation" : "unavailable",
+      startAt: base.lastRecordedAt,
+      notice: "检测到更多开播后显示预测",
+    };
   if (basedOnDays < MIN_DAYS)
-    return { ...base, kind: 'observation', startAt: base.lastRecordedAt, notice: '检测到不同日期的开播记录后形成预测' };
+    return {
+      ...base,
+      kind: "observation",
+      startAt: base.lastRecordedAt,
+      notice: "检测到不同日期的开播记录后形成预测",
+    };
 
   // Unbounded first discovery says when the user saw a live room, not when
   // it opened. Preserve its observation UI but do not infer opening clocks.
-  const usable = items.filter((o) => Number.isFinite(o.uncertainty) && o.uncertainty <= 360);
-  if (distinctDays(usable) < MIN_DAYS) return { ...base, kind: 'observation', startAt: base.lastRecordedAt };
-  const recentItems = usable.filter((o) => o.estimatedAt >= input.now - 21 * 86400000);
+  const usable = items.filter(
+    (o) => Number.isFinite(o.uncertainty) && o.uncertainty <= 360,
+  );
+  if (distinctDays(usable) < MIN_DAYS)
+    return { ...base, kind: "observation", startAt: base.lastRecordedAt };
+  const recentItems = usable.filter(
+    (o) => o.estimatedAt >= input.now - 21 * 86400000,
+  );
   const resuming =
     recentItems.length > 0 &&
     distinctDays(recentItems) < MIN_DAYS &&
     items.some((o) => o.estimatedAt < input.now - 21 * 86400000) &&
     recentItems.reduce((at, o) => Math.min(at, o.estimatedAt), input.now) -
-      items.reduce((at, o) => (o.estimatedAt < input.now - 21 * 86400000 ? Math.max(at, o.estimatedAt) : at), 0) >
+      items.reduce(
+        (at, o) =>
+          o.estimatedAt < input.now - 21 * 86400000
+            ? Math.max(at, o.estimatedAt)
+            : at,
+        0,
+      ) >
       21 * 86400000;
   const coverage = coverageRanges(input.coverage ?? []);
   const models = modelCandidates(usable, input.now, coverage);
   const newestUsable = usable.reduce((at, o) => Math.max(at, o.estimatedAt), 0);
   const stale = input.now - newestUsable > 21 * 86400000;
   const selected = stale ? null : selectUpcomingModel(models, input.now);
-  const model = selected?.model ?? { basis: 'all' as const, key: 'all', items: usable, slots: slotsForItems(usable, input.now) };
+  const model = selected?.model ?? {
+    basis: "all" as const,
+    key: "all",
+    items: usable,
+    slots: slotsForItems(usable, input.now),
+  };
   const slot = selected?.slot ?? dominantSlot(model.slots)!;
   const date = selected?.date;
   if (!date && distinctDays(slot.items) < MIN_DAYS) return base;
@@ -241,15 +316,29 @@ export function calculateLivePrediction(input: {
     history.set(item.day, dayItems);
   }
   const views = model.slots.map((s) => {
-    const confidence = resuming ? ('low' as const) : confidenceFor(model.basis, s);
+    const confidence = resuming
+      ? ("low" as const)
+      : confidenceFor(model.basis, s);
     const raw =
-      date && (model.basis !== 'interval' || model.intervalEnd === model.interval)
+      date &&
+      (model.basis !== "interval" || model.intervalEnd === model.interval)
         ? probabilityForSlot(model, s, date, coverage, history, input.now)
         : null;
     const bucket = raw ? input.calibration?.[raw] : undefined;
-    const calibrated = bucket && bucket.total >= 5 ? probabilityFromRate((bucket.hits + 1) / (bucket.total + 2)) : raw;
-    const likelihood = calibrated ? lowerConfidence(calibrated, confidence) : ('low' as const);
-    return { slot: s, confidence, raw, likelihood, accuracy: predictionAccuracy(bucket, confidence, distinctDays(s.items)) };
+    const calibrated =
+      bucket && bucket.total >= 5
+        ? probabilityFromRate((bucket.hits + 1) / (bucket.total + 2))
+        : raw;
+    const likelihood = calibrated
+      ? lowerConfidence(calibrated, confidence)
+      : ("low" as const);
+    return {
+      slot: s,
+      confidence,
+      raw,
+      likelihood,
+      accuracy: predictionAccuracy(bucket, confidence, distinctDays(s.items)),
+    };
   });
   const view = views.find((v) => v.slot === slot)!;
   const startTimestamp = date ? atMinute(date, slot.representative) : null;
@@ -257,21 +346,29 @@ export function calculateLivePrediction(input: {
   const windowEndTimestamp = date ? atMinute(date, slot.end) : null;
   const days = distinctDays(slot.items);
   const uncertainty = weightedQuantile(slot.items, 0.75, (o) => o.uncertainty);
-  const spread = weightedQuantile(slot.items, 0.75, (o) => o.minute) - weightedQuantile(slot.items, 0.25, (o) => o.minute);
+  const spread =
+    weightedQuantile(slot.items, 0.75, (o) => o.minute) -
+    weightedQuantile(slot.items, 0.25, (o) => o.minute);
   const granularity: PredictionTimeGranularity =
-    days >= 4 && spread <= 15 && slot.end - slot.start <= MIN_WINDOW && uncertainty <= 5
-      ? 'exact'
+    days >= 4 &&
+    spread <= 15 &&
+    slot.end - slot.start <= MIN_WINDOW &&
+    uncertainty <= 5
+      ? "exact"
       : days >= MIN_DAYS && slot.end - slot.start <= 60 && uncertainty <= 30
-        ? 'quarter_hour'
-        : slot.end - slot.start > 180 && periodKey(slot.start) === periodKey(slot.end)
-          ? 'period'
-          : 'approximate';
+        ? "quarter_hour"
+        : slot.end - slot.start > 180 &&
+            periodKey(slot.start) === periodKey(slot.end)
+          ? "period"
+          : "approximate";
   return {
     ...base,
-    kind: date ? 'next' : 'typical',
+    kind: date ? "next" : "typical",
     basis: model.basis,
     nextDate: date ? localDate(date.getTime()) : null,
-    nextDateEnd: selected?.dateEnd ? localDate(selected.dateEnd.getTime()) : null,
+    nextDateEnd: selected?.dateEnd
+      ? localDate(selected.dateEnd.getTime())
+      : null,
     typicalDayType:
       !date &&
       basedOnDays >= MIN_DATED_WEEKDAY_DAYS &&
@@ -285,16 +382,29 @@ export function calculateLivePrediction(input: {
     windowStart: hhmm(slot.start),
     windowEnd: hhmm(slot.end),
     sampleCount: model.items.length,
-    confidence: stale ? 'low' : view.confidence,
+    confidence: stale ? "low" : view.confidence,
     timeGranularity: granularity,
     // 间隔型才带间隔天数：前端据此才说得出「隔天 / 每三天」，而不是只能给日期。
     // intervalDaysMax 与 intervalDays 不同，表示间隔会浮动（隔 2~3 天），不要声称固定。
-    intervalDays: model.basis === 'interval' ? model.interval ?? null : null,
-    intervalDaysMax: model.basis === 'interval' ? model.intervalEnd ?? model.interval ?? null : null,
+    intervalDays: model.basis === "interval" ? (model.interval ?? null) : null,
+    intervalDaysMax:
+      model.basis === "interval"
+        ? (model.intervalEnd ?? model.interval ?? null)
+        : null,
     slots: views
       .sort((a, b) => b.slot.weight - a.slot.weight)
-      .map((v) => ({ startAt: hhmm(v.slot.start), endAt: hhmm(v.slot.end), likelihood: v.likelihood, probabilityKnown: v.raw !== null })),
-    todayProbability: startTimestamp && localDate(startTimestamp.getTime()) === localDate(input.now) && view.raw ? view.likelihood : null,
+      .map((v) => ({
+        startAt: hhmm(v.slot.start),
+        endAt: hhmm(v.slot.end),
+        likelihood: v.likelihood,
+        probabilityKnown: v.raw !== null,
+      })),
+    todayProbability:
+      startTimestamp &&
+      localDate(startTimestamp.getTime()) === localDate(input.now) &&
+      view.raw
+        ? view.likelihood
+        : null,
     likelihood: view.likelihood,
     rawLikelihood: view.raw,
     probabilityKnown: view.raw !== null,
@@ -304,7 +414,11 @@ export function calculateLivePrediction(input: {
   };
 }
 
-function modelCandidates(items: Occurrence[], now: number, coverage: CoverageRange[]): Model[] {
+function modelCandidates(
+  items: Occurrence[],
+  now: number,
+  coverage: CoverageRange[],
+): Model[] {
   const weekdays = new Map<number, Occurrence[]>(),
     types = new Map<string, Occurrence[]>();
   for (const item of items) {
@@ -318,29 +432,53 @@ function modelCandidates(items: Occurrence[], now: number, coverage: CoverageRan
     types.set(type, b);
   }
   const models: Model[] = [];
-  const weekdaySlots = new Map([...weekdays].map(([dow, group]) => [dow, slotsForItems(group, now)]));
+  const weekdaySlots = new Map(
+    [...weekdays].map(([dow, group]) => [dow, slotsForItems(group, now)]),
+  );
   for (const [key, group] of weekdays) {
     if (distinctDays(group) < MIN_DAYS) continue;
     const slots = weekdaySlots.get(key)!;
     models.push({
-      basis: 'weekday',
+      basis: "weekday",
       key,
       items: group,
       slots,
       datedReady:
-        distinctDays(group) >= MIN_DATED_WEEKDAY_DAYS || coverageSupportsSparseWeekday(group, items, dominantSlot(slots)!, coverage),
+        distinctDays(group) >= MIN_DATED_WEEKDAY_DAYS ||
+        coverageSupportsSparseWeekday(
+          group,
+          items,
+          dominantSlot(slots)!,
+          coverage,
+        ),
     });
   }
   for (const [key, group] of types) {
     const dows = [...new Set(group.map((o) => new Date(o.day).getDay()))];
     // A broad fallback is appropriate for sparse onboarding history, or a
     // consistent habit actually observed across the complete day type.
-    const established = dows.some((dow) => distinctDays(weekdays.get(dow)!) >= MIN_DAYS);
-    if (distinctDays(group) < MIN_DAYS || dows.length < 2 || (established && dows.length < (key === 'weekend' ? 2 : 5))) continue;
+    const established = dows.some(
+      (dow) => distinctDays(weekdays.get(dow)!) >= MIN_DAYS,
+    );
+    if (
+      distinctDays(group) < MIN_DAYS ||
+      dows.length < 2 ||
+      (established && dows.length < (key === "weekend" ? 2 : 5))
+    )
+      continue;
     const slots = slotsForItems(group, now),
       main = dominantSlot(slots)!;
-    if (dows.some((dow) => circularDistance(dominantSlot(weekdaySlots.get(dow)!)!.representative, main.representative) > 90)) continue;
-    models.push({ basis: 'day_type', key, items: group, slots });
+    if (
+      dows.some(
+        (dow) =>
+          circularDistance(
+            dominantSlot(weekdaySlots.get(dow)!)!.representative,
+            main.representative,
+          ) > 90,
+      )
+    )
+      continue;
+    models.push({ basis: "day_type", key, items: group, slots });
   }
   const daily = dailyModel(items, now);
   if (daily) models.push(daily);
@@ -349,11 +487,14 @@ function modelCandidates(items: Occurrence[], now: number, coverage: CoverageRan
   return models;
 }
 function dailyModel(items: Occurrence[], now: number): Model | null {
-  const days = [...new Set(items.map((item) => item.day))].sort((a, b) => a - b);
+  const days = [...new Set(items.map((item) => item.day))].sort(
+    (a, b) => a - b,
+  );
   if (days.length < 3) return null;
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
-  if (calendarDay(today.getTime()) - calendarDay(days[days.length - 1]!) > 1) return null;
+  if (calendarDay(today.getTime()) - calendarDay(days[days.length - 1]!) > 1)
+    return null;
   const run = [days[days.length - 1]!];
   for (let index = days.length - 2; index >= 0; index--) {
     if (calendarDay(run[0]!) - calendarDay(days[index]!) !== 1) break;
@@ -363,10 +504,21 @@ function dailyModel(items: Occurrence[], now: number): Model | null {
   const runDays = new Set(run);
   const recent = items.filter((item) => runDays.has(item.day));
   const slots = slotsForItems(recent, now);
-  if (!slots.length || slots.some((slot) => distinctDays(slot.items) < MIN_DAYS)) return null;
+  if (
+    !slots.length ||
+    slots.some((slot) => distinctDays(slot.items) < MIN_DAYS)
+  )
+    return null;
   const main = dominantSlot(slots)!;
   if (main.end - main.start > 180) return null;
-  return { basis: 'daily', key: 'daily', items: recent, slots, lastDay: run[run.length - 1]!, datedReady: true };
+  return {
+    basis: "daily",
+    key: "daily",
+    items: recent,
+    slots,
+    lastDay: run[run.length - 1]!,
+    datedReady: true,
+  };
 }
 function coverageSupportsSparseWeekday(
   weekdayItems: Occurrence[],
@@ -374,13 +526,26 @@ function coverageSupportsSparseWeekday(
   slot: Slot,
   coverage: CoverageRange[],
 ): boolean {
-  const days = [...new Set(weekdayItems.map((item) => item.day))].sort((a, b) => a - b);
+  const days = [...new Set(weekdayItems.map((item) => item.day))].sort(
+    (a, b) => a - b,
+  );
   if (days.length !== 2) return false;
   const eventDays = new Set(allItems.map((item) => item.day));
   let coveredEmptyDays = 0;
-  for (let date = atCalendarOffset(new Date(days[0]!), 1); date.getTime() < days[1]!; date = atCalendarOffset(date, 1)) {
+  for (
+    let date = atCalendarOffset(new Date(days[0]!), 1);
+    date.getTime() < days[1]!;
+    date = atCalendarOffset(date, 1)
+  ) {
     if (eventDays.has(date.getTime())) continue;
-    if (coversRanges(coverage, atMinute(date, slot.start).getTime(), atMinute(date, slot.end).getTime())) coveredEmptyDays++;
+    if (
+      coversRanges(
+        coverage,
+        atMinute(date, slot.start).getTime(),
+        atMinute(date, slot.end).getTime(),
+      )
+    )
+      coveredEmptyDays++;
   }
   return coveredEmptyDays >= 3;
 }
@@ -393,22 +558,46 @@ function calendarDay(at: number): number {
   const d = new Date(at);
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
 }
-function intervalModel(items: Occurrence[], now: number, coverage: CoverageRange[]): Model | null {
-  const days = [...new Set(items.filter((o) => o.estimatedAt >= now - WINDOW_DAYS * 86400000).map((o) => o.day))].sort((a, b) => a - b);
+function intervalModel(
+  items: Occurrence[],
+  now: number,
+  coverage: CoverageRange[],
+): Model | null {
+  const days = [
+    ...new Set(
+      items
+        .filter((o) => o.estimatedAt >= now - WINDOW_DAYS * 86400000)
+        .map((o) => o.day),
+    ),
+  ].sort((a, b) => a - b);
   if (days.length < 4) return null;
-  const gaps = days.slice(1).map((day, i) => calendarDay(day) - calendarDay(days[i]!));
+  const gaps = days
+    .slice(1)
+    .map((day, i) => calendarDay(day) - calendarDay(days[i]!));
   const counts = new Map<number, number>();
   for (const gap of gaps) counts.set(gap, (counts.get(gap) ?? 0) + 1);
   const mode = [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]!;
   if (mode[0] < 2 || mode[0] > 14 || mode[0] === 7) return null;
   const near = gaps.filter((gap) => gap === mode[0] || gap === mode[0] + 1);
-  if (near.length / gaps.length < 0.75 || mode[1] < 2 || gaps.slice(-3).some((gap) => gap !== mode[0] && gap !== mode[0] + 1)) return null;
+  if (
+    near.length / gaps.length < 0.75 ||
+    mode[1] < 2 ||
+    gaps.slice(-3).some((gap) => gap !== mode[0] && gap !== mode[0] + 1)
+  )
+    return null;
   const intervalEnd = near.includes(mode[0] + 1) ? mode[0] + 1 : mode[0];
   const recent = items.filter((o) => o.day >= days[0]!);
   // A gap in discoveries is not proof of a gap in broadcasts. Require actual
   // opening evidence and monitored intervening candidate windows before dating
   // an every-N-days habit; otherwise retain a low-probability typical time.
-  if (recent.some((o) => o.quality !== 'platform' && !(o.event.source === 'transition' && o.uncertainty <= 30))) return null;
+  if (
+    recent.some(
+      (o) =>
+        o.quality !== "platform" &&
+        !(o.event.source === "transition" && o.uncertainty <= 30),
+    )
+  )
+    return null;
   const slots = slotsForItems(recent, now);
   if (slots.length !== 1) return null;
   const slot = slots[0]!;
@@ -418,7 +607,14 @@ function intervalModel(items: Occurrence[], now: number, coverage: CoverageRange
   for (let offset = 1; offset < last - first; offset++) {
     const date = atCalendarOffset(new Date(days[0]!), offset);
     if (daySet.has(date.getTime())) continue;
-    if (!coversRanges(coverage, atMinute(date, slot.start).getTime(), atMinute(date, slot.end).getTime())) return null;
+    if (
+      !coversRanges(
+        coverage,
+        atMinute(date, slot.start).getTime(),
+        atMinute(date, slot.end).getTime(),
+      )
+    )
+      return null;
   }
   // A repeating weekly arrangement is stronger evidence than short gaps such
   // as Mon/Wed/Fri (2,2,3), which must not introduce a Sunday candidate.
@@ -427,39 +623,75 @@ function intervalModel(items: Occurrence[], now: number, coverage: CoverageRange
     const dow = new Date(day).getDay();
     weekdayDays.set(dow, (weekdayDays.get(dow) ?? 0) + 1);
   }
-  if (mode[0] !== 14 && weekdayDays.size <= 3 && [...weekdayDays.values()].every((count) => count >= 2)) return null;
-  return { basis: 'interval', key: 'interval', items: recent, slots, interval: mode[0], intervalEnd, lastDay: days[days.length - 1]! };
+  if (
+    mode[0] !== 14 &&
+    weekdayDays.size <= 3 &&
+    [...weekdayDays.values()].every((count) => count >= 2)
+  )
+    return null;
+  return {
+    basis: "interval",
+    key: "interval",
+    items: recent,
+    slots,
+    interval: mode[0],
+    intervalEnd,
+    lastDay: days[days.length - 1]!,
+  };
 }
-function selectUpcomingModel(models: Model[], now: number): { model: Model; date: Date; slot: Slot; dateEnd?: Date } | null {
-  let best: { model: Model; date: Date; slot: Slot; start: number } | null = null;
-  const multipleSessions = new Map(models.map((model) => [model, hasRecurringDailySessions(model.slots)]));
-  const weekdayModels = models.filter((model) => model.basis === 'weekday');
-  const daily = models.find((model) => model.basis === 'daily');
+function selectUpcomingModel(
+  models: Model[],
+  now: number,
+): { model: Model; date: Date; slot: Slot; dateEnd?: Date } | null {
+  let best: { model: Model; date: Date; slot: Slot; start: number } | null =
+    null;
+  const multipleSessions = new Map(
+    models.map((model) => [model, hasRecurringDailySessions(model.slots)]),
+  );
+  const weekdayModels = models.filter((model) => model.basis === "weekday");
+  const daily = models.find((model) => model.basis === "daily");
   if (daily) {
     const dailySessions = multipleSessions.get(daily)!;
     for (let offset = -1; offset <= 1; offset++) {
       const date = new Date(now);
       date.setHours(0, 0, 0, 0);
       date.setDate(date.getDate() + offset);
-      for (const slot of offset >= 1 && !dailySessions ? [dominantSlot(daily.slots)!] : daily.slots) {
+      for (const slot of offset >= 1 && !dailySessions
+        ? [dominantSlot(daily.slots)!]
+        : daily.slots) {
         const start = atMinute(date, slot.start).getTime(),
           end = atMinute(date, slot.end).getTime();
         if (end < now) continue;
-        if (slot.items.some((item) => item.day === date.getTime() && openingEvidenceInWindow(item.event, start, end) === 'hit')) continue;
+        if (
+          slot.items.some(
+            (item) =>
+              item.day === date.getTime() &&
+              openingEvidenceInWindow(item.event, start, end) === "hit",
+          )
+        )
+          continue;
         return { model: daily, date, slot };
       }
     }
   }
-  const cadence = models.find((m) => m.basis === 'interval');
+  const cadence = models.find((m) => m.basis === "interval");
   if (cadence && cadence.lastDay !== undefined && cadence.interval) {
     let date = atCalendarOffset(new Date(cadence.lastDay), cadence.interval);
-    const dateEnd = atCalendarOffset(new Date(cadence.lastDay), cadence.intervalEnd ?? cadence.interval);
+    const dateEnd = atCalendarOffset(
+      new Date(cadence.lastDay),
+      cadence.intervalEnd ?? cadence.interval,
+    );
     const slot = dominantSlot(cadence.slots)!;
     // A variable interval can still open on its second day, but never advance
     // beyond that range without a newly observed broadcast.
     if (atMinute(dateEnd, slot.end).getTime() >= now) {
       if (atMinute(date, slot.end).getTime() < now) date = dateEnd;
-      return { model: cadence, date, slot, ...(dateEnd.getTime() > date.getTime() ? { dateEnd } : {}) };
+      return {
+        model: cadence,
+        date,
+        slot,
+        ...(dateEnd.getTime() > date.getTime() ? { dateEnd } : {}),
+      };
     }
     return null;
   }
@@ -470,7 +702,8 @@ function selectUpcomingModel(models: Model[], now: number): { model: Model; date
     date.setDate(date.getDate() + offset);
     const dow = date.getDay();
     const model =
-      models.find((m) => m.basis === 'weekday' && m.key === dow) ?? models.find((m) => m.basis === 'day_type' && m.key === dayType(dow));
+      models.find((m) => m.basis === "weekday" && m.key === dow) ??
+      models.find((m) => m.basis === "day_type" && m.key === dayType(dow));
     if (!model) continue;
     // With only two observations of one weekday, keep the learned time as a
     // typical-time hint instead of asserting that the next opening is a week
@@ -478,22 +711,35 @@ function selectUpcomingModel(models: Model[], now: number): { model: Model; date
     // observed weekday models constitute a broader weekly schedule.
     if (
       offset >= 1 &&
-      model.basis === 'weekday' &&
+      model.basis === "weekday" &&
       weekdayModels.length === 1 &&
       !model.datedReady
     )
       continue;
     const dailySessions = multipleSessions.get(model)!;
-    for (const slot of offset >= 1 && !dailySessions ? [dominantSlot(model.slots)!] : model.slots) {
+    for (const slot of offset >= 1 && !dailySessions
+      ? [dominantSlot(model.slots)!]
+      : model.slots) {
       const start = atMinute(date, slot.start).getTime(),
         end = atMinute(date, slot.end).getTime();
       if (end < now || distinctDays(slot.items) < MIN_DAYS) continue;
       // A completed opening is not the next session, even while its uncertainty
       // window remains active. Only proven openings consume a recurring session.
-      if (slot.items.some((item) => item.day === date.getTime() && openingEvidenceInWindow(item.event, start, end) === 'hit')) continue;
+      if (
+        slot.items.some(
+          (item) =>
+            item.day === date.getTime() &&
+            openingEvidenceInWindow(item.event, start, end) === "hit",
+        )
+      )
+        continue;
       // Always select the nearest supported window; unrelated larger groups
       // cannot hide an earlier usable opening.
-      if (!best || Math.max(now, start) < Math.max(now, best.start) || (start === best.start && slot.weight > best.slot.weight))
+      if (
+        !best ||
+        Math.max(now, start) < Math.max(now, best.start) ||
+        (start === best.start && slot.weight > best.slot.weight)
+      )
         best = { model, date, slot, start };
     }
   }
@@ -515,13 +761,16 @@ function probabilityForSlot(
     date.setDate(date.getDate() - offset);
     const dow = date.getDay();
     const matches =
-      model.basis === 'daily'
+      model.basis === "daily"
         ? true
-        : model.basis === 'interval'
-        ? !!model.interval && (calendarDay(target.getTime()) - calendarDay(date.getTime())) % model.interval === 0
-        : model.basis === 'weekday'
-          ? dow === target.getDay()
-          : dayType(dow) === dayType(target.getDay());
+        : model.basis === "interval"
+          ? !!model.interval &&
+            (calendarDay(target.getTime()) - calendarDay(date.getTime())) %
+              model.interval ===
+              0
+          : model.basis === "weekday"
+            ? dow === target.getDay()
+            : dayType(dow) === dayType(target.getDay());
     if (!matches) continue;
     // Opening evidence is not a substitute for coverage on days with no event.
     const start = atMinute(date, slot.start).getTime(),
@@ -534,9 +783,20 @@ function probabilityForSlot(
     // recording deliberately suspends polling, so require coverage up to the
     // detection, rather than incorrectly discarding every recorded broadcast.
     const hit = evidence.some(
-      ({ item, outcome }) => outcome === 'hit' && coversRanges(coverage, start, Math.min(end, Date.parse(item.event.detectedAt))),
+      ({ item, outcome }) =>
+        outcome === "hit" &&
+        coversRanges(
+          coverage,
+          start,
+          Math.min(end, Date.parse(item.event.detectedAt)),
+        ),
     );
-    if (!hit && (evidence.some((v) => v.outcome === 'unknown') || !coversRanges(coverage, start, end))) continue;
+    if (
+      !hit &&
+      (evidence.some((v) => v.outcome === "unknown") ||
+        !coversRanges(coverage, start, end))
+    )
+      continue;
     possible++;
     if (hit) observed++;
   }
@@ -548,7 +808,11 @@ function periodKey(minute: number): number {
 }
 function slotsForItems(items: Occurrence[], now: number): Slot[] {
   let slots = cluster(items);
-  if (distinctDays(items) <= 3 && slots.length > 1 && !hasRecurringDailySessions(slots)) {
+  if (
+    distinctDays(items) <= 3 &&
+    slots.length > 1 &&
+    !hasRecurringDailySessions(slots)
+  ) {
     const min = items.reduce((at, o) => Math.min(at, o.minute), Infinity);
     const max = items.reduce((at, o) => Math.max(at, o.minute), -Infinity);
     if (max - min <= 300 && periodKey(min) === periodKey(max)) {
@@ -565,7 +829,9 @@ function slotsForItems(items: Occurrence[], now: number): Slot[] {
   }
   // Three recent independent dates can reveal a modest schedule shift that
   // would otherwise remain buried inside the old, wider cluster.
-  const recentDays = [...new Set(items.map((o) => o.day))].sort((a, b) => b - a).slice(0, 3);
+  const recentDays = [...new Set(items.map((o) => o.day))]
+    .sort((a, b) => b - a)
+    .slice(0, 3);
   if (recentDays.length === 3 && !hasRecurringDailySessions(slots)) {
     const dates = new Set(recentDays);
     const latest = cluster(items.filter((o) => dates.has(o.day)));
@@ -579,9 +845,16 @@ function slotsForItems(items: Occurrence[], now: number): Slot[] {
       weightedQuantile(fresh.items, 0.75, (o) => o.uncertainty) <= 30
     ) {
       const match = slots.reduce((a, b) =>
-        circularDistance(a.representative, fresh.representative) < circularDistance(b.representative, fresh.representative) ? a : b,
+        circularDistance(a.representative, fresh.representative) <
+        circularDistance(b.representative, fresh.representative)
+          ? a
+          : b,
       );
-      slots = slots.map((slot) => (slot === match ? { ...fresh, weight: Math.max(fresh.weight, old.weight * 1.05) } : slot));
+      slots = slots.map((slot) =>
+        slot === match
+          ? { ...fresh, weight: Math.max(fresh.weight, old.weight * 1.05) }
+          : slot,
+      );
     }
   }
   const cutoff = new Date(now);
@@ -599,9 +872,13 @@ function slotsForItems(items: Occurrence[], now: number): Slot[] {
   )
     return slots;
   const match = slots.reduce((a, b) =>
-    circularDistance(a.representative, promoted.representative) < circularDistance(b.representative, promoted.representative) ? a : b,
+    circularDistance(a.representative, promoted.representative) <
+    circularDistance(b.representative, promoted.representative)
+      ? a
+      : b,
   );
-  if (circularDistance(match.representative, promoted.representative) <= 90) match.weight = Math.max(match.weight, old.weight * 1.05);
+  if (circularDistance(match.representative, promoted.representative) <= 90)
+    match.weight = Math.max(match.weight, old.weight * 1.05);
   return slots;
 }
 function cluster(items: Occurrence[], unwrap = false): Slot[] {
@@ -612,7 +889,11 @@ function cluster(items: Occurrence[], unwrap = false): Slot[] {
     const current = groups[groups.length - 1]!;
     // Limit total cluster span as well as adjacent gaps: a chain of observations
     // must not turn a whole day into one concentrated period.
-    if (item.minute - current[current.length - 1]!.minute > 180 || item.minute - current[0]!.minute > 180) groups.push([item]);
+    if (
+      item.minute - current[current.length - 1]!.minute > 180 ||
+      item.minute - current[0]!.minute > 180
+    )
+      groups.push([item]);
     else current.push(item);
   }
   if (
@@ -620,7 +901,10 @@ function cluster(items: Occurrence[], unwrap = false): Slot[] {
     groups.length > 1 &&
     sorted[sorted.length - 1]!.minute < 1440 &&
     sorted[0]!.minute + 1440 - sorted[sorted.length - 1]!.minute <= 180 &&
-    groups[0]![groups[0]!.length - 1]!.minute + 1440 - groups[groups.length - 1]![0]!.minute <= 180
+    groups[0]![groups[0]!.length - 1]!.minute +
+      1440 -
+      groups[groups.length - 1]![0]!.minute <=
+      180
   ) {
     const first = groups.shift()!;
     for (const item of first) item.minute += 1440;
@@ -639,21 +923,35 @@ function cluster(items: Occurrence[], unwrap = false): Slot[] {
       v.max = Math.max(v.max, item.weight);
       totals.set(item.day, v);
     }
-    const group = unwrap ? rawGroup : rawGroup.map((o) => ({ ...o, weight: (o.weight * totals.get(o.day)!.max) / totals.get(o.day)!.sum }));
+    const group = unwrap
+      ? rawGroup
+      : rawGroup.map((o) => ({
+          ...o,
+          weight: (o.weight * totals.get(o.day)!.max) / totals.get(o.day)!.sum,
+        }));
     const uncertainty =
       !unwrap && distinctDays(group) <= 3
         ? group.reduce((value, o) => Math.max(value, o.uncertainty), 0)
         : weightedQuantile(group, 0.75, (o) => o.uncertainty);
-    const padding = Number.isFinite(uncertainty) ? Math.min(360, uncertainty) / 2 : 90;
+    const padding = Number.isFinite(uncertainty)
+      ? Math.min(360, uncertainty) / 2
+      : 90;
     const days = distinctDays(group);
     const sparse = !unwrap && days >= MIN_DAYS && days <= 3;
     const min = group.reduce((v, o) => Math.min(v, o.minute), Infinity);
     const max = group.reduce((v, o) => Math.max(v, o.minute), -Infinity);
     // Small jitter keeps the narrow 30-minute window; substantial sparse
     // variation retains the observed bounds plus a capped 15–30 minute margin.
-    const sparsePadding = sparse && max - min > 30 ? Math.min(30, Math.max(15, (max - min) / 4)) : 0;
-    const lower = (sparse ? min : weightedQuantile(group, 0.25, (o) => o.minute)) - Math.max(padding, sparsePadding);
-    const upper = (sparse ? max : weightedQuantile(group, 0.75, (o) => o.minute)) + Math.max(padding, sparsePadding);
+    const sparsePadding =
+      sparse && max - min > 30
+        ? Math.min(30, Math.max(15, (max - min) / 4))
+        : 0;
+    const lower =
+      (sparse ? min : weightedQuantile(group, 0.25, (o) => o.minute)) -
+      Math.max(padding, sparsePadding);
+    const upper =
+      (sparse ? max : weightedQuantile(group, 0.75, (o) => o.minute)) +
+      Math.max(padding, sparsePadding);
     const extra = Math.max(0, MIN_WINDOW - (upper - lower)) / 2;
     // Expand narrow windows on both sides, preserving the existing uncertainty
     // padding of wider observations. At midnight keep the full minimum width.
@@ -693,7 +991,10 @@ function splitRecurringSessions(group: Occurrence[]): Occurrence[][] {
     }
   }
   if (boundary < 0) return [group];
-  return [...splitRecurringSessions(group.slice(0, boundary)), ...splitRecurringSessions(group.slice(boundary))];
+  return [
+    ...splitRecurringSessions(group.slice(0, boundary)),
+    ...splitRecurringSessions(group.slice(boundary)),
+  ];
 }
 function hasRecurringDailySessions(slots: Slot[]): boolean {
   const days = new Map<number, Set<number>>();
@@ -725,14 +1026,21 @@ function hasRecurringDailySessions(slots: Slot[]): boolean {
  * 否则会出现「措辞很笃定（常在晚间开播）+ 颜色很淡」这种自相矛盾，
  * 也会让前端的措辞和详情各拿一套口径。
  */
-function confidenceFor(basis: PredictionBasis, slot: Slot): PredictionConfidence {
+function confidenceFor(
+  basis: PredictionBasis,
+  slot: Slot,
+): PredictionConfidence {
   const days = distinctDays(slot.items),
     quality = slot.items.reduce((s, o) => s + o.weight, 0) / slot.items.length;
-  if (basis !== 'all' && days >= 6 && quality >= 0.7) return 'high';
-  if (days >= 4 && quality >= 0.45) return 'medium';
-  return 'low';
+  if (basis !== "all" && days >= 6 && quality >= 0.7) return "high";
+  if (days >= 4 && quality >= 0.45) return "medium";
+  return "low";
 }
-function weightedQuantile(items: Occurrence[], q: number, value: (o: Occurrence) => number): number {
+function weightedQuantile(
+  items: Occurrence[],
+  q: number,
+  value: (o: Occurrence) => number,
+): number {
   const sorted = [...items].sort((a, b) => value(a) - value(b)),
     threshold = sorted.reduce((s, o) => s + o.weight, 0) * q;
   let sum = 0;
@@ -758,24 +1066,35 @@ function coveredCalendarDays(ranges: CoverageRange[]): number {
   }
   return days.size;
 }
-function timeSourceFor(items: Occurrence[]): LivePrediction['timeSource'] {
+function timeSourceFor(items: Occurrence[]): LivePrediction["timeSource"] {
   const sources = new Set(
-    items.map((item) => (item.quality === 'platform' ? 'platform' : item.event.source === 'recording' ? 'recording' : 'detected')),
+    items.map((item) =>
+      item.quality === "platform"
+        ? "platform"
+        : item.event.source === "recording"
+          ? "recording"
+          : "detected",
+    ),
   );
-  return sources.size === 1 ? ([...sources][0] as Exclude<LivePrediction['timeSource'], 'mixed' | null>) : 'mixed';
+  return sources.size === 1
+    ? ([...sources][0] as Exclude<LivePrediction["timeSource"], "mixed" | null>)
+    : "mixed";
 }
 function dominantSlot(slots: Slot[]): Slot | undefined {
-  return slots.reduce<Slot | undefined>((a, b) => (!a || b.weight > a.weight ? b : a), undefined);
+  return slots.reduce<Slot | undefined>(
+    (a, b) => (!a || b.weight > a.weight ? b : a),
+    undefined,
+  );
 }
 function circularDistance(a: number, b: number): number {
   const d = Math.abs(a - b) % 1440;
   return Math.min(d, 1440 - d);
 }
 function dayType(dow: number): string {
-  return dow === 0 || dow === 6 ? 'weekend' : 'weekday';
+  return dow === 0 || dow === 6 ? "weekend" : "weekday";
 }
 function probabilityFromRate(rate: number): PredictionConfidence {
-  return rate >= 0.5 ? 'high' : rate >= 0.25 ? 'medium' : 'low';
+  return rate >= 0.5 ? "high" : rate >= 0.25 ? "medium" : "low";
 }
 function predictionAccuracy(
   calibration: { hits: number; total: number } | undefined,
@@ -784,48 +1103,81 @@ function predictionAccuracy(
 ): PredictionAccuracy {
   if (calibration && calibration.total >= 5) {
     const rate = (calibration.hits + 1) / (calibration.total + 2);
-    return rate >= 0.8 ? 'high' : rate >= 0.65 ? 'fairly_high' : rate >= 0.45 ? 'medium' : rate >= 0.25 ? 'fairly_low' : 'low';
+    return rate >= 0.8
+      ? "high"
+      : rate >= 0.65
+        ? "fairly_high"
+        : rate >= 0.45
+          ? "medium"
+          : rate >= 0.25
+            ? "fairly_low"
+            : "low";
   }
-  if (confidence === 'high') return days >= 8 ? 'high' : 'fairly_high';
-  if (confidence === 'medium') return 'medium';
-  return days >= 3 ? 'fairly_low' : 'low';
+  if (confidence === "high") return days >= 8 ? "high" : "fairly_high";
+  if (confidence === "medium") return "medium";
+  return days >= 3 ? "fairly_low" : "low";
 }
-function lowerConfidence(a: PredictionConfidence, b: PredictionConfidence): PredictionConfidence {
+function lowerConfidence(
+  a: PredictionConfidence,
+  b: PredictionConfidence,
+): PredictionConfidence {
   const order = { low: 0, medium: 1, high: 2 };
   return order[a] <= order[b] ? a : b;
 }
 function toOccurrence(event: DetectedLiveEvent): Occurrence | null {
   const detectedAt = Date.parse(event.detectedAt);
   if (!Number.isFinite(detectedAt)) return null;
-  const platform = event.platformStartedAt ? Date.parse(event.platformStartedAt) : NaN;
+  const platform = event.platformStartedAt
+    ? Date.parse(event.platformStartedAt)
+    : NaN;
   const lower = event.lowerBoundAt ? Date.parse(event.lowerBoundAt) : NaN;
-  const validLower = Number.isFinite(lower) && lower <= detectedAt && event.source !== 'initial_live';
+  const validLower =
+    Number.isFinite(lower) &&
+    lower <= detectedAt &&
+    event.source !== "initial_live";
   const interval = validLower ? (detectedAt - lower) / MINUTE_MS : Infinity;
   const platformValid =
-    event.source === 'platform' && Number.isFinite(platform) && platform <= detectedAt && (!validLower || platform >= lower);
-  const estimatedAt = platformValid ? platform : validLower && interval <= 360 ? lower + (detectedAt - lower) / 2 : detectedAt;
+    event.source === "platform" &&
+    Number.isFinite(platform) &&
+    platform <= detectedAt &&
+    (!validLower || platform >= lower);
+  const estimatedAt = platformValid
+    ? platform
+    : validLower && interval <= 360
+      ? lower + (detectedAt - lower) / 2
+      : detectedAt;
   const quality: PredictionObservationQuality = platformValid
-    ? 'platform'
-    : event.source === 'transition'
-      ? 'transition'
-      : event.source === 'initial_live'
-        ? 'initial_live'
-        : 'legacy';
+    ? "platform"
+    : event.source === "transition"
+      ? "transition"
+      : event.source === "initial_live"
+        ? "initial_live"
+        : "legacy";
   // Old detector times retain approximate usefulness; missing bounds never
   // establish minute precision. Recording starts and first discovery are weaker.
   const uncertainty = platformValid
     ? 0
-    : event.source === 'recording'
+    : event.source === "recording"
       ? 90
-      : quality === 'legacy'
+      : quality === "legacy"
         ? 30
-        : quality === 'initial_live'
+        : quality === "initial_live"
           ? Infinity
           : interval;
   const weight = platformValid
     ? 1
-    : (quality === 'transition' ? 1 : quality === 'initial_live' ? 0.4 : event.source === 'recording' ? 0.3 : 0.8) *
-      (interval <= 120 || quality === 'legacy' ? 1 : interval <= 360 ? 0.7 : 0.45);
+    : (quality === "transition"
+        ? 1
+        : quality === "initial_live"
+          ? 0.4
+          : event.source === "recording"
+            ? 0.3
+            : 0.8) *
+      (interval <= 120 || quality === "legacy"
+        ? 1
+        : interval <= 360
+          ? 0.7
+          : 0.45);
   const day = new Date(estimatedAt);
   day.setHours(0, 0, 0, 0);
   return {
@@ -840,19 +1192,32 @@ function toOccurrence(event: DetectedLiveEvent): Occurrence | null {
   };
 }
 /** Only a platform time or a fully contained transition interval proves a hit. */
-export function openingEvidenceInWindow(event: DetectedLiveEvent, start: number, end: number): 'hit' | 'outside' | 'unknown' {
+export function openingEvidenceInWindow(
+  event: DetectedLiveEvent,
+  start: number,
+  end: number,
+): "hit" | "outside" | "unknown" {
   const occurrence = toOccurrence(event);
-  if (!occurrence) return 'unknown';
-  if (occurrence.quality === 'platform') return occurrence.estimatedAt >= start && occurrence.estimatedAt <= end ? 'hit' : 'outside';
+  if (!occurrence) return "unknown";
+  if (occurrence.quality === "platform")
+    return occurrence.estimatedAt >= start && occurrence.estimatedAt <= end
+      ? "hit"
+      : "outside";
   const upper = Date.parse(event.detectedAt),
     lower = event.lowerBoundAt ? Date.parse(event.lowerBoundAt) : NaN;
-  if (event.source === 'transition' && Number.isFinite(lower) && lower <= upper) {
-    if (upper < start || lower > end) return 'outside';
-    return lower >= start && upper <= end ? 'hit' : 'unknown';
+  if (
+    event.source === "transition" &&
+    Number.isFinite(lower) &&
+    lower <= upper
+  ) {
+    if (upper < start || lower > end) return "outside";
+    return lower >= start && upper <= end ? "hit" : "unknown";
   }
-  return upper < start ? 'outside' : 'unknown';
+  return upper < start ? "outside" : "unknown";
 }
-export function recordingFallbackEvents(recordings: Array<{ startedAt: string; streamSessionId?: string | null }>): DetectedLiveEvent[] {
+export function recordingFallbackEvents(
+  recordings: Array<{ startedAt: string; streamSessionId?: string | null }>,
+): DetectedLiveEvent[] {
   const seen = new Set<string>();
   return [...recordings]
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))
@@ -862,7 +1227,7 @@ export function recordingFallbackEvents(recordings: Array<{ startedAt: string; s
       const key = r.streamSessionId?.trim() || `day:${localDate(at)}`;
       if (seen.has(key)) return [];
       seen.add(key);
-      return [{ detectedAt: r.startedAt, source: 'recording' as const }];
+      return [{ detectedAt: r.startedAt, source: "recording" as const }];
     });
 }
 /**
@@ -879,8 +1244,14 @@ export function recordingCoverageIntervals(
     const start = Date.parse(recording.startedAt);
     // 尚未结束的录制延续到此刻。
     const end = recording.endedAt ? Date.parse(recording.endedAt) : now;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
-    return [{ startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString() }];
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
+      return [];
+    return [
+      {
+        startAt: new Date(start).toISOString(),
+        endAt: new Date(end).toISOString(),
+      },
+    ];
   });
 }
 function minuteOfDay(at: number): number {
@@ -889,7 +1260,7 @@ function minuteOfDay(at: number): number {
 }
 function hhmm(minutes: number): string {
   const n = ((Math.round(minutes) % 1440) + 1440) % 1440;
-  return `${minutes >= 1440 ? '次日 ' : ''}${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+  return `${minutes >= 1440 ? "次日 " : ""}${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`;
 }
 function atMinute(date: Date, minutes: number): Date {
   const d = new Date(date);
@@ -898,5 +1269,5 @@ function atMinute(date: Date, minutes: number): Date {
 }
 function localDate(at: number): string {
   const d = new Date(at);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

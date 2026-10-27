@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from "react";
 import { Slider, Switch } from "antd";
 import MemphisRadioGroup from "./MemphisRadioGroup";
-import { DANMUKU_DENSITY_OPTIONS } from "../utils/danmakuPrefs";
+import { DANMUKU_DENSITY_OPTIONS } from "../utils/danmaku/danmakuPrefs";
 
 const DENSITY_OPTIONS = DANMUKU_DENSITY_OPTIONS.map((value, index) => ({
   label: ["低", "中", "高"][index],

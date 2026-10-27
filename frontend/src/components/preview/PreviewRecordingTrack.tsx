@@ -1,5 +1,5 @@
-import { promptRangeExport } from "../../utils/promptRangeExport";
-import { playbackClock } from "../../utils/playbackClock";
+import { promptRangeExport } from "../../utils/timeline/promptRangeExport";
+import { playbackClock } from "../../utils/player/playbackClock";
 import {
   createRecordingMarker,
   deleteRecordingMarker,
@@ -130,30 +130,35 @@ export function PreviewRecordingTrack({
           <div>
             <RecordingTrack
               key={id}
-              onExport={(start, end) =>
-                promptRangeExport(displayedTrack.id, roomId, start, end)
+              onExport={
+                marking.start != null || editingRange != null
+                  ? undefined
+                  : (start, end) =>
+                      promptRangeExport(displayedTrack.id, roomId, start, end)
               }
               selectionDisabled={
                 trackClosing || marking.saving || marking.start != null
               }
               onSelectionChange={setSelectingRange}
               segmentActions={
-                <SegmentMarkActions
-                  marking={marking}
-                  current={media.current}
-                  disabled={
-                    trackClosing ||
-                    displayPreview.loading ||
-                    !media.duration ||
-                    editingRange != null ||
-                    selectingRange
-                  }
-                >
-                  <SegmentExportActions
-                    exports={exports}
-                    disabled={trackClosing || editingRange != null}
-                  />
-                </SegmentMarkActions>
+                editingRange == null ? (
+                  <SegmentMarkActions
+                    marking={marking}
+                    current={media.current}
+                    disabled={
+                      trackClosing ||
+                      displayPreview.loading ||
+                      !media.duration ||
+                      editingRange != null ||
+                      selectingRange
+                    }
+                  >
+                    <SegmentExportActions
+                      exports={exports}
+                      disabled={trackClosing || editingRange != null}
+                    />
+                  </SegmentMarkActions>
+                ) : null
               }
               temporarySegment={
                 marking.start != null
@@ -169,6 +174,7 @@ export function PreviewRecordingTrack({
                   : null
               }
               busy={rangeSaving}
+              showRangeNudge
               onSaveRange={async (start, end) => {
                 if (!editingRange || rangeSaving) return;
                 setRangeSaving(true);

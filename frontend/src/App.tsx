@@ -15,7 +15,7 @@ import {
   subscribeBridgeEvents,
 } from "./stores/bootStore";
 import { useSettingsStore } from "./stores/settingsStore";
-import { recordRecentErrorAction } from "./utils/errorDiagnostics";
+import { recordRecentErrorAction } from "./utils/error/errorDiagnostics";
 import RecordingCompleteNotice from "./components/RecordingCompleteNotice";
 import OpenList2faModal from "./components/OpenList2faModal";
 import GlobalErrorNotice from "./components/GlobalErrorNotice";

@@ -14,7 +14,7 @@ import {
   startPipeline,
 } from "../../../api/pipeline";
 import { usePipelineStore } from "../../../stores/pipelineStore";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import { ApiError } from "../../../types/error";
 import { formatBytes, formatRelative } from "../../../utils/format";
 const PIPELINE_STEP_ORDER = [

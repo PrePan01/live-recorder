@@ -1,12 +1,9 @@
-// 一键启动 Tauri 桌面端开发环境：先构建供 Rust 壳拉起的后端 dist，
-// 再启动 Tauri + Vite。默认使用与正式客户端隔离的开发数据和端口。
+// 先构建后端，再启动 Tauri 和 Vite；开发数据、端口与正式版隔离。
 import { spawn } from "node:child_process";
 import net from "node:net";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { repositoryRoot as root, npmCommand as npm } from './project-utils.mjs';
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const devDataDir =
   process.env.LIVE_RECORDER_DATA_DIR ?? path.join(root, ".dev-data");
 const devPort = process.env.LIVE_RECORDER_PORT ?? "43140";

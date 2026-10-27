@@ -44,20 +44,20 @@ vi.mock("mpegts.js", () => ({ default: {
   }),
 } }));
 vi.mock("../../api/client", () => ({ previewWsUrl: vi.fn() }));
-vi.mock("../../utils/errorDiagnostics", () => ({ reportError: vi.fn() }));
-vi.mock("../../utils/livePreviewConfig", () => ({ livePreviewConfig: vi.fn() }));
-vi.mock("../../utils/previewMediaClock", () => ({ resetPreviewMediaClock: vi.fn(), setLiveMediaOrigin: vi.fn(), readPreviewElapsed: () => 1.25 }));
-vi.mock("../../utils/prepareSeekPlayback", () => ({ prepareSeekPlayback: (_video: unknown, _offset: unknown, ready: () => void) => {
+vi.mock("../../utils/error/errorDiagnostics", () => ({ reportError: vi.fn() }));
+vi.mock("../../utils/player/livePreviewConfig", () => ({ livePreviewConfig: vi.fn() }));
+vi.mock("../../utils/player/previewMediaClock", () => ({ resetPreviewMediaClock: vi.fn(), setLiveMediaOrigin: vi.fn(), readPreviewElapsed: () => 1.25 }));
+vi.mock("../../utils/player/prepareSeekPlayback", () => ({ prepareSeekPlayback: (_video: unknown, _offset: unknown, ready: () => void) => {
   h.ready = ready;
   return vi.fn();
 } }));
-vi.mock("../../utils/seekPlaybackHealth", () => ({ watchSeekPlayback: () => ({ stop: vi.fn(), presented: vi.fn() }) }));
-vi.mock("../../utils/videoFrameTransition", () => ({ holdVideoFrame: vi.fn(), releaseVideoFrame: vi.fn(), waitForVideoFrame: (_video: unknown, frame: () => void) => {
+vi.mock("../../utils/player/seekPlaybackHealth", () => ({ watchSeekPlayback: () => ({ stop: vi.fn(), presented: vi.fn() }) }));
+vi.mock("../../utils/player/videoFrameTransition", () => ({ holdVideoFrame: vi.fn(), releaseVideoFrame: vi.fn(), waitForVideoFrame: (_video: unknown, frame: () => void) => {
   h.frame = frame;
   return vi.fn();
 } }));
 import { useVideoPlayback } from "./useVideoPlayback";
-import { livePreviewConfig } from "../../utils/livePreviewConfig";
+import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
 
 function render(props: VideoPlayerProps, video: HTMLVideoElement) {
   h.cursor = 0;
@@ -188,5 +188,76 @@ describe("seek player lifecycle", () => {
     expect(firstPlayer.destroy).toHaveBeenCalledOnce();
     expect(frameReady).toHaveBeenLastCalledWith(false);
     expect(h.players).toHaveLength(2);
+  });
+});
+
+
+describe("preview audio preference", () => {
+  const key = "live-recorder.preview-audio";
+  const videoElement = () => Object.assign(new EventTarget(), {
+    pause: vi.fn(), currentTime: 0, paused: false, muted: true, volume: 1,
+  }) as unknown as HTMLVideoElement;
+  const unmount = () => {
+    for (const slot of h.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
+    h.slots = [];
+  };
+  let storage: Map<string, string>;
+  let setItem: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    storage = new Map();
+    setItem = vi.fn((name: string, value: string) => storage.set(name, value));
+    vi.stubGlobal("window", { localStorage: {
+      getItem: (name: string) => storage.get(name) ?? null, setItem,
+    } });
+  });
+
+  it.each([false, true])("restores volume and muted=%s after closing and reopening", (muted) => {
+    const first = videoElement();
+    render({ roomId: "first", rememberAudio: true }, first);
+    first.dispatchEvent(new Event("playing"));
+    first.volume = 0.37;
+    first.muted = muted;
+    first.dispatchEvent(new Event("volumechange"));
+    unmount();
+    const reopened = videoElement();
+    render({ roomId: "second", rememberAudio: true }, reopened);
+    expect(reopened.muted).toBe(true); // Temporary autoplay mute.
+    reopened.dispatchEvent(new Event("volumechange"));
+    expect(JSON.parse(storage.get(key)!)).toEqual({ volume: 0.37, muted });
+    reopened.dispatchEvent(new Event("playing"));
+    expect(reopened.volume).toBe(0.37);
+    expect(reopened.muted).toBe(muted);
+  });
+
+  it("ignores thumbnail and wall audio changes", () => {
+    storage.set(key, JSON.stringify({ volume: 0.4, muted: false }));
+    for (const props of [{ thumbnail: true, rememberAudio: true }, {}]) {
+      const video = videoElement();
+      render({ roomId: "room", ...props }, video);
+      video.dispatchEvent(new Event("playing"));
+      expect(video.muted).toBe(true);
+      video.dispatchEvent(new Event("volumechange"));
+      unmount();
+    }
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it.each(["invalid json", '{"volume":2,"muted":false}', '{"volume":0.4}'])
+    ("uses the initial default for invalid storage: %s", (saved) => {
+      storage.set(key, saved);
+      const video = videoElement();
+      render({ roomId: "room", rememberAudio: true }, video);
+      video.dispatchEvent(new Event("playing"));
+      expect(video.volume).toBe(1);
+      expect(video.muted).toBe(true);
+    });
+
+  it("keeps playback working when storage is unavailable", () => {
+    vi.stubGlobal("window", { get localStorage() { throw new Error("unavailable"); } });
+    const video = videoElement();
+    expect(() => render({ roomId: "room", rememberAudio: true }, video)).not.toThrow();
+    video.dispatchEvent(new Event("playing"));
+    video.volume = 0;
+    expect(() => video.dispatchEvent(new Event("volumechange"))).not.toThrow();
   });
 });

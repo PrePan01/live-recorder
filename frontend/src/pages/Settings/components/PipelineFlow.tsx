@@ -233,9 +233,9 @@ export default function PipelineFlow({
           <StepCard
             id="pipeline-verify"
             num="1"
-            label="完整性校验"
-            tip="校验录制文件完整性，源文件损坏时终止管线并保留源文件"
-            desc="完整性校验"
+            label="文件校验"
+            tip="检查录制文件能否解析及是否有有效时长，源文件损坏时终止管线并保留源文件"
+            desc="文件校验"
             on={verifyOn}
             switchNode={<SettingControl id="pipeline-verify" />}
           />

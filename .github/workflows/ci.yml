@@ -11,6 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  workflow-check:
+    uses: ./.github/workflows/check-workflows.yml
+    permissions:
+      contents: read
+
   test:
     name: Typecheck, build and tests
     runs-on: ubuntu-latest
@@ -18,9 +23,9 @@ jobs:
     permissions:
       contents: read
     env:
-      npm_config_audit: 'false'
-      npm_config_fund: 'false'
-      npm_config_prefer_offline: 'true'
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_prefer_offline: "true"
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -31,9 +36,15 @@ jobs:
           node-version: 24.20.0
           cache: npm
           cache-dependency-path: |
-            package-lock.json
             backend/package-lock.json
             frontend/package-lock.json
+
+      - name: Verify release PR notes
+        if: github.event_name == 'pull_request' && github.base_ref == 'release'
+        shell: bash
+        run: |
+          version="$(node scripts/check-release-version.mjs)"
+          node scripts/check-release-notes.mjs "$version" release-notes.json
 
       - name: Install media test dependencies
         run: |
@@ -44,3 +55,29 @@ jobs:
 
       - name: Verify repository quality
         run: node scripts/check-quality.mjs
+
+  native-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TAURI_CONFIG: '{"bundle":{"resources":null}}'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+      - name: Verify native packaging and cleanup
+        run: node --test scripts/package-payload.test.mjs scripts/bundle-youtube.test.mjs scripts/dmg-cleanup.test.mjs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+          cache-on-failure: true
+      - name: Verify native service lifecycle
+        run: cargo test --locked --manifest-path frontend/src-tauri/Cargo.toml --lib

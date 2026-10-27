@@ -7,7 +7,7 @@ import {
 import { ApiError } from "../../types/error";
 import type { RecordingMarker } from "../../types/recording";
 import type { Room } from "../../types/room";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 
 import type { RefObject } from "react";
 

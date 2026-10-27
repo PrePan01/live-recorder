@@ -12,9 +12,9 @@ import { useNavigate } from "react-router-dom";
 import { useAlertStore, isAlertRead } from "../../../stores/alertStore";
 import { useRoomStore } from "../../../stores/roomStore";
 import { ApiError } from "../../../types/error";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import { formatTime } from "../../../utils/format";
-import { ALERT_LEVEL_META, alertSourceText } from "../../../utils/alertText";
+import { ALERT_LEVEL_META, alertSourceText } from "../../../utils/error/alertText";
 
 /** 告警卡：原 Settings/index 内联告警列表整块迁移（store 直连，含查看深链与 retryable 标注）。 */
 export default function AlertsCard() {

@@ -3,7 +3,7 @@ import type { RecordingMarker } from "../types/recording";
 import { App } from "antd";
 import { exportClipSegments } from "../api/clipQueue";
 import { ApiError } from "../types/error";
-import { describeError } from "../utils/errorMap";
+import { describeError } from "../utils/error/errorMap";
 
 export function useSegmentExport(
   recordingId: string | undefined,

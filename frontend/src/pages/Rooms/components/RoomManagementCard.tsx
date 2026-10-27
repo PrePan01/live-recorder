@@ -17,13 +17,13 @@ import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import { MonitorStateTag } from "../../../components/StatusTags";
 import RoomAvatar from "../../Monitor/components/RoomAvatar";
 import { ApiError } from "../../../types/error";
-import { describeError } from "../../../utils/errorMap";
+import { describeError } from "../../../utils/error/errorMap";
 import {
   roomPolicy,
   DEFAULT_ROOM_POLICY,
   isDefaultPolicy,
   type RoomPolicy,
-} from "../model/roomPolicy";
+} from "../utils/roomPolicy";
 import RoomPolicyFields, { RoomEnabledControl } from "./RoomPolicyFields";
 
 const errorText = (error: unknown) =>

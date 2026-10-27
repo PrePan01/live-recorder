@@ -3,11 +3,9 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot as root, npmCommand as npm } from "./project-utils.mjs";
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const isWindows = process.platform === "win32";
-const npm = isWindows ? "npm.cmd" : "npm";
 
 function run(label, command, args, cwd = root, env = process.env) {
   console.log(`\n[verify-release] ${label}`);

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { buildServices } from '../../src/core/services.js';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
-import * as integrity from '../../src/recorder/integrity.js';
+import type { IntegrityCheckDetail } from '../../src/recorder/integrity.js';
 import { DEFAULT_PIPELINE_CONFIG } from '../../src/types/settings.js';
 
 it('old cancelled attempts cannot unregister replacements, bypass concurrency or lose their own cancellation signal', async () => {
@@ -54,20 +54,20 @@ it('a cancelled integrity check settling late cannot publish failure over the re
   const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/2', displayName: 'late-result' });
   const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: 'late', streamTitle: 'late' });
   services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/late-cancel.mp4' });
-  const checks: ((result: 'failed') => void)[] = [];
-  const check = vi.spyOn(integrity, 'checkFileIntegrity').mockImplementation(() => new Promise(resolve => checks.push(resolve)));
+  const checks: ((result: IntegrityCheckDetail) => void)[] = [];
+  const check = vi.spyOn(services.verificationQueue, 'verify').mockImplementation(() => new Promise(resolve => checks.push(resolve)));
   try {
     services.pipeline.enqueue(rec.id, 0, true);
     services.pipeline.cancel(rec.id);
     const retry = services.pipeline.retry(rec.id, true);
     expect(checks).toHaveLength(2);
-    checks[0]!('failed');
+    checks[0]!({ outcome: 'failed', detail: 'old failure' });
     await new Promise(resolve => setImmediate(resolve));
     expect(services.pipeline.repo.getRun(retry.run!.id)?.status).toBe('running');
     expect(services.recordings.get(rec.id)?.pipelineStatus).toBe('running');
     expect(services.alerts.list()).toHaveLength(0);
     services.pipeline.cancel(rec.id);
-    checks[1]!('failed');
+    checks[1]!({ outcome: 'failed', detail: 'cancelled failure' });
     await new Promise(resolve => setImmediate(resolve));
     expect(services.recordings.get(rec.id)?.pipelineStatus).toBe('failed');
     expect(services.pipeline.busy).toBe(false);

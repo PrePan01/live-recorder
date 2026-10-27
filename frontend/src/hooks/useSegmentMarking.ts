@@ -4,7 +4,7 @@ import { createRecordingMarker } from "../api/recordings";
 import type { RecordingMarker } from "../types/recording";
 import { useSegmentDraftStore } from "../stores/segmentDraftStore";
 import { ApiError } from "../types/error";
-import { describeError } from "../utils/errorMap";
+import { describeError } from "../utils/error/errorMap";
 
 export function useSegmentMarking(
   recordingId: string | undefined,

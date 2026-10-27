@@ -26,9 +26,9 @@ import MemphisRadioGroup from "../../components/MemphisRadioGroup";
 import { PlatformIcon } from "../../components/PlatformLogo";
 import LiveStatusTag from "../../components/LiveStatusTag";
 import type { Room } from "../../types/room";
-import { recordRecentErrorAction } from "../../utils/errorDiagnostics";
+import { recordRecentErrorAction } from "../../utils/error/errorDiagnostics";
 import styles from "./index.module.css";
-import { enterWallFullscreen as requestWallFullscreen } from "../../utils/wallFullscreen";
+import { enterWallFullscreen as requestWallFullscreen } from "../../utils/wall/wallFullscreen";
 
 const GRID_OPTIONS = [
   { label: "2x2", value: "2x2" },

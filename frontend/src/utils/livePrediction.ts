@@ -1,3 +1,4 @@
+// 将开播预测结果转成页面上的时间、倒计时和可信程度说明。
 import type { RoomInsight } from "../api/rooms";
 type Prediction = RoomInsight["prediction"];
 export function clockMinutes(value: string): number {
@@ -81,6 +82,17 @@ export function predictionAccuracyText(
     low: "低",
   } as const;
   return `预测准确性${labels[accuracy]}`;
+}
+
+export function lastOpeningTagValue(
+  prediction: Pick<Prediction, "lastRecordedAt" | "lastRecordedTimestamp">,
+  now = new Date(),
+): string | null {
+  if (!prediction.lastRecordedAt) return null;
+  const date = new Date(prediction.lastRecordedTimestamp ?? "");
+  if (now.getTime() - date.getTime() > 86400000)
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${hhmm(date)}`;
+  return prediction.lastRecordedAt;
 }
 
 export function lastOpeningValue(
@@ -235,6 +247,8 @@ function upcomingSlot(
  * 复用"有日期"那套句式渲染挑中的时段，避免两套模板各自漂移。
  */
 function upcomingSlotTitle(prediction: Prediction, now: Date): string | null {
+  // 带日期的预测已由后端排除开过的场次，不能从全部历史时段重新挑选。
+  if (prediction.kind === "next") return null;
   if (prediction.slots.length < 2 || prediction.nextDateEnd) return null;
   const anchor = prediction.nextDate
     ? new Date(`${prediction.nextDate}T00:00:00`)

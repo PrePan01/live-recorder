@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Button, Tooltip } from "antd";
 import Icon from "@ant-design/icons";
 import type { useSegmentMarking } from "../hooks/useSegmentMarking";
+import { formatAltShortcut } from "../utils/keyboardShortcuts";
 
 function SegmentIcon() {
   return (
@@ -31,7 +32,7 @@ export function SegmentMarkActions({
 }) {
   return (
     <>
-      <Tooltip title="Alt+P">
+      <Tooltip title={formatAltShortcut("P")}>
         <Button
           size="small"
           className={marking.start != null ? "lr-segment-mark-end" : undefined}

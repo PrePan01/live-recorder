@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { DanmakuGap, DanmakuMessage } from '../types/danmaku';
-import { DanmakuRenderer } from '../utils/danmakuRenderer';
-import { DanmakuPlayback } from '../utils/danmakuPlayback';
+import { DanmakuRenderer } from '../utils/danmaku/danmakuRenderer';
+import { DanmakuPlayback } from '../utils/danmaku/danmakuPlayback';
 
 const EMPTY_GAPS: DanmakuGap[] = [];
 interface DanmakuLayerProps {

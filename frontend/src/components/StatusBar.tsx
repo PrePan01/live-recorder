@@ -17,7 +17,7 @@ import { useAlertStore, isAlertRead, selectUnreadCount } from "../stores/alertSt
 import { useRoomStore } from "../stores/roomStore";
 import { formatBytes, formatRelative } from "../utils/format";
 import { diskDisplay } from "../utils/diskDisplay";
-import { alertSourceText } from "../utils/alertText";
+import { alertSourceText } from "../utils/error/alertText";
 import GlobalSearch from "./GlobalSearch";
 import { TaskProgressEntry } from "./TaskProgressEntry";
 import { fetchRecordingDownloadSpeed } from "../api/service";

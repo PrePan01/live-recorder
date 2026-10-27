@@ -8,7 +8,7 @@ import {
   Typography,
 } from "antd";
 import { formatTime } from "../../../utils/format";
-import { EXPORT_STATUS_COLOR } from "../../../utils/historyUtils";
+import { EXPORT_STATUS_COLOR } from "../../../utils/recording/historyUtils";
 import { encoderLabel } from "../../../utils/encoderText";
 import type { ExportJob } from "../../../types/export";
 

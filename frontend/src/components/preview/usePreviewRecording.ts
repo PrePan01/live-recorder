@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRoomStore } from "../../stores/roomStore";
 import { ApiError } from "../../types/error";
 import type { Room } from "../../types/room";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 
 export function usePreviewRecording(room: Room) {
   const { message } = App.useApp();

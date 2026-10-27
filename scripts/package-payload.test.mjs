@@ -60,7 +60,7 @@ for (const target of [
       assert.equal(existsSync(path.join(modules, name)), false, name);
     assert.equal(readFileSync(path.join(modules, '@ffmpeg-installer/target/LICENSE'), 'utf8'), 'keep media license');
     assert.equal(readFileSync(path.join(modules, 'library/LICENSE'), 'utf8'), 'keep license');
-    pruneBackendPayload(f.root, target); // Repeat packaging is safe.
+    pruneBackendPayload(f.root, target); // 验证重复打包不会破坏资源。
   } finally { f.close(); }
 });
 
@@ -102,7 +102,7 @@ test('native staging handles spaces and Unicode without pruning the development 
     assert.ok(existsSync(path.join(f.root, 'node_modules/test-only/package.json')));
     assert.ok(existsSync(path.join(f.root, 'node_modules/better-sqlite3/deps/sqlite3/sqlite3.c')));
     assert.ok(readdirSync(path.join(f.root, 'node_modules/better-sqlite3/prebuilds')).length > 1);
-    // A second run starts from the untouched source, not the already pruned copy.
+    // 再次打包仍使用完整源目录，不复用已裁剪的副本。
     stageBackend(f.root, destination);
     assert.deepEqual(readdirSync(path.join(destination, 'node_modules/better-sqlite3/prebuilds')), [sqliteTarget()]);
   } finally { f.close(); }
@@ -127,7 +127,7 @@ test('optimized runtime remains anchored to an external build receipt and target
     assert.equal(await verifyOptimizedYoutubeRuntime(root, receipt, 'arm64'), true);
     assert.equal(await verifyOptimizedYoutubeRuntime(root, receipt, 'x64'), false);
     writeFileSync(path.join(root, 'binary'), 'modified binary');
-    // Rewriting a shipped manifest cannot change the caller's trusted checkpoint.
+    // 改写包内清单不能绕过外部摘要校验。
     writeFileSync(path.join(root, 'runtime-manifest.json'), JSON.stringify({ ...receipt, treeSha256: hash('forged') }));
     assert.equal(await verifyOptimizedYoutubeRuntime(root, receipt, 'arm64'), false);
     assert.equal(await verifyOptimizedYoutubeRuntime(root, { ...receipt, sourceTreeSha256: hash('unknown upstream') }, 'arm64'), false);

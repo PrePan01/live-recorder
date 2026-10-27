@@ -1,4 +1,4 @@
-import { playbackClock as markerClock } from "../utils/playbackClock";
+import { playbackClock as markerClock } from "../utils/player/playbackClock";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
@@ -17,7 +17,7 @@ import {
   ExportOutlined,
 } from "@ant-design/icons";
 import type { RecordingGap, RecordingMarker } from "../types/recording";
-import { markerNeighbors } from "../utils/markerNavigation";
+import { markerNeighbors } from "../utils/timeline/markerNavigation";
 import { PendingSegmentRow, type PendingSegment } from "./PendingSegmentRow";
 
 const MARKER_ROW_HEIGHT = 24;

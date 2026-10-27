@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkFileIntegrity, checkFileIntegrityDetailed } from '../../src/recorder/integrity.js';
 
 const spawnMock = vi.hoisted(() => vi.fn());
+const accessMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
+vi.mock('node:fs/promises', () => ({ access: accessMock }));
 
 function probe() {
   const child = Object.assign(new EventEmitter(), {
@@ -14,7 +16,7 @@ function probe() {
   return child;
 }
 
-beforeEach(() => spawnMock.mockReset());
+beforeEach(() => { spawnMock.mockReset(); accessMock.mockReset().mockResolvedValue(undefined); });
 afterEach(() => vi.useRealTimers());
 
 describe.each([
@@ -57,6 +59,26 @@ describe.each([
     child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
     child.emit('close', -2);
     await expect(result).resolves.toEqual(unavailable);
+  });
+
+  it.each(['ENOENT', 'EACCES', 'EIO'])('does not call inaccessible storage corrupt (%s)', async (code) => {
+    accessMock.mockRejectedValue(Object.assign(new Error(code), { code }));
+    const child = probe();
+    const result = check('offline.flv');
+    child.emit('close', 1);
+    await expect(result).resolves.toEqual(name === 'legacy' ? 'pending' : {
+      outcome: 'unverifiable', detail: '录像文件暂不可访问，请检查存储设备与读取权限后重试',
+    });
+  });
+
+  it('recognizes I/O failure even when the path still exists', async () => {
+    const child = probe();
+    const result = check('offline.flv');
+    child.stderr.write('Input/output error');
+    child.emit('close', 1);
+    await expect(result).resolves.toEqual(name === 'legacy' ? 'pending' : {
+      outcome: 'unverifiable', detail: '录像文件暂不可访问，请检查存储设备与读取权限后重试',
+    });
   });
 
   it('kills a timed-out probe and retains the degraded result after late success', async () => {

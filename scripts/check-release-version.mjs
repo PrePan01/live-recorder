@@ -1,18 +1,10 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { repositoryRoot as root, readProjectJson, JSON_VERSION_FILES } from './project-utils.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const readJson = (relativePath) => JSON.parse(readFileSync(join(root, relativePath), 'utf8'));
-
-const versions = new Map([
-  ['package.json', readJson('package.json').version],
-  ['backend/package.json', readJson('backend/package.json').version],
-  ['frontend/package.json', readJson('frontend/package.json').version],
-  ['frontend/src-tauri/tauri.conf.json', readJson('frontend/src-tauri/tauri.conf.json').version],
-]);
+const versions = new Map(JSON_VERSION_FILES.map(file => [file, readProjectJson(file).version]));
 
 const cargoToml = readFileSync(join(root, 'frontend/src-tauri/Cargo.toml'), 'utf8');
 const cargoVersion = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];

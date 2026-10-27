@@ -222,7 +222,7 @@ export const DEFINITIONS: SettingDefinition[] = [
     "pipeline",
     "pipeline",
     "verify",
-    "完整性校验",
+    "文件校验",
     "校验源文件，损坏时停止处理并保留源文件。",
     { dependsOn: "pipeline-enabled" },
   ),

@@ -1,4 +1,4 @@
-import { roomLivePageUrl } from "../../../utils/roomPlatform";
+import { roomLivePageUrl } from "../../../utils/room/roomPlatform";
 import { memo } from "react";
 import {
   Button,

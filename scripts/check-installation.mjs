@@ -1,4 +1,4 @@
-// Validate the payload users actually install, including bundled Node and native modules.
+// 验证最终安装包中的资源、运行时和后端启动。
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -9,16 +9,13 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { repositoryRoot as root, readProjectJson } from './project-utils.mjs';
 import { createHash } from 'node:crypto';
 import { YTDLP_ASSETS, YTDLP_VERSION } from '../frontend/scripts/bundle-youtube.mjs';
 import { verifyOptimizedYoutubeRuntime } from '../frontend/scripts/optimize-youtube-runtime.mjs';
 import { detachDmg } from './dmg-cleanup.mjs';
-const root = fileURLToPath(new URL('..', import.meta.url));
 const release = path.join(root, 'release');
-const expected = JSON.parse(
-  readFileSync(path.join(root, 'package.json'), 'utf8'),
-).version;
+const expected = readProjectJson('package.json').version;
 let temporary;
 let uninstaller;
 let mounted = false;
@@ -56,8 +53,7 @@ try {
       (name) => name.includes(`_${expected}_`) && name.endsWith('-setup.exe'),
     );
     if (!setup) throw new Error('Windows NSIS setup installer missing');
-    // NSIS requires /D to be the final argument. A temporary, per-run target
-    // makes the CI payload test independent of the runner's user profile.
+    // NSIS 的 /D 必须放在最后；安装到临时目录，避免影响用户环境。
     run(path.join(release, setup), ['/S', `/D=${temporary}`], 120000);
     uninstaller = path.join(temporary, 'uninstall.exe');
     if (!existsSync(uninstaller)) throw new Error('NSIS installer did not create an uninstaller');
@@ -93,7 +89,7 @@ try {
   ]);
   run(node, [path.join(backend, 'scripts/check-startup.mjs'), backend]);
   if (process.platform === 'darwin') {
-    // Anchor hashes in the build-side receipt, not the installer's own manifest.
+    // 以构建时另存的摘要为准，不能只信任安装包内的清单。
     const receipt = JSON.parse(readFileSync(path.join(root, 'frontend/src-tauri/.bundle', `youtube-optimized-${process.arch}.json`), 'utf8'));
     const youtube = path.join(resources, 'youtube-runtime');
     if (!await verifyOptimizedYoutubeRuntime(youtube, receipt, process.arch))
@@ -121,11 +117,11 @@ try {
       await detachDmg(temporary);
       mounted = false;
     }
-    // Never remove a directory while its disk image may still be mounted.
+    // 确认镜像已卸载后才能删除挂载目录。
     if (temporary) rmSync(temporary, { recursive: true, force: true, maxRetries: 5 });
   } catch (error) {
     if (!validationError) throw error;
-    // Keep the actual payload failure as the primary error when cleanup also fails.
+    // 清理也失败时，保留原始验证错误。
     console.error(`Installation cleanup also failed: ${error.message}`);
   }
 }

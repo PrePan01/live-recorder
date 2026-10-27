@@ -86,9 +86,6 @@ jobs:
           echo "source_commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           version="$(node scripts/check-release-version.mjs)"
           tag="v${version}"
-          # Fail before the expensive platform builds when this release has no
-          # corresponding entry in the update manifest's release notes.
-          node scripts/check-release-notes.mjs "$version" release-notes.json
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
@@ -129,7 +126,6 @@ jobs:
           node-version: 24.20.0
           cache: npm
           cache-dependency-path: |
-            package-lock.json
             backend/package-lock.json
             frontend/package-lock.json
 
@@ -189,21 +185,19 @@ jobs:
           node-version: 24.20.0
           cache: npm
           cache-dependency-path: |
-            package-lock.json
             backend/package-lock.json
             frontend/package-lock.json
 
       # setup-node 只缓存 npm 的下载包；这里缓存已安装依赖，命中时可跳过平台打包任务中的 npm ci。
-      # key 包含 OS、Node 主版本和三份 lockfile，避免原生依赖（如 keytar）跨平台或跨依赖树复用。
+      # key 包含 OS、Node 主版本和后端与前端 lockfile，避免原生依赖（如 keytar）跨平台或跨依赖树复用。
       - name: Restore installed dependencies
         id: node_modules
         uses: actions/cache/restore@v4
         with:
           path: |
-            node_modules
             backend/node_modules
             frontend/node_modules
-          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('backend/package-lock.json', 'frontend/package-lock.json') }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -227,10 +221,9 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            node_modules
             backend/node_modules
             frontend/node_modules
-          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'backend/package-lock.json', 'frontend/package-lock.json') }}
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('backend/package-lock.json', 'frontend/package-lock.json') }}
 
       - name: Build installer
         env:
@@ -312,14 +305,11 @@ jobs:
       actions: read
     env:
       # Artifacts retain their original source identity; upload tooling may be newer.
-      RESUME_VERSION: ${{ inputs.resume_version }}
       RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source_commit }}
       RELEASE_PIPELINE: ${{ inputs.resume_version != '' && 'release-tools/scripts/release-pipeline.mjs' || 'scripts/release-pipeline.mjs' }}
       # 对象存储加速（#28）：清单内安装包 URL 指向 CDN 域名（HTTPS，匿名可读）；
       # 客户端安装前核验完整 SHA256 和更新签名；CDN 不可达时回退 GitHub。
       UPDATE_BASE_URL: https://cdn.live-rec.bspartner.top
-      QINIU_AK: ${{ secrets.QINIU_AK }}
-      QINIU_SK: ${{ secrets.QINIU_SK }}
       QINIU_BUCKET: ${{ secrets.QINIU_BUCKET || 'live-recorder' }}
       QINIU_ENDPOINT: ${{ secrets.QINIU_ENDPOINT || 'https://s3.cn-south-1.qiniucs.com' }}
 
@@ -353,7 +343,6 @@ jobs:
         if: needs.prepare.outputs.reuse_release == 'true' || steps.publication.outputs.frozen == 'true' || steps.publication.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           ALREADY_PUBLISHED: ${{ steps.publication.outputs.published }}
         shell: bash
         run: node "$RELEASE_PIPELINE" restore release-assets "${{ needs.prepare.outputs.version }}"
@@ -406,8 +395,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.QINIU_AK }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1
           AWS_EC2_METADATA_DISABLED: 'true'
         run: node "$RELEASE_PIPELINE" publish release-assets "$RELEASE_VERSION"
@@ -418,8 +407,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          AWS_ACCESS_KEY_ID: ${{ env.QINIU_AK }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.QINIU_SK }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.QINIU_AK }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1
           AWS_EC2_METADATA_DISABLED: 'true'
         run: node "$RELEASE_PIPELINE" sync release-assets "$RELEASE_VERSION"

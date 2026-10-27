@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RecordingMediaRange } from "./useRecordingMediaRange";
-import { readPreviewElapsed } from "../utils/previewMediaClock";
+import { readPreviewElapsed } from "../utils/player/previewMediaClock";
 
 export function useRecordingMediaPosition(
   recordingId: string | undefined,

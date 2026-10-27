@@ -11,7 +11,7 @@ import {
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ApiError } from "../../types/error";
 import type { Room } from "../../types/room";
-import { describeError } from "../../utils/errorMap";
+import { describeError } from "../../utils/error/errorMap";
 
 export function usePreviewHighlights(
   room: Room,

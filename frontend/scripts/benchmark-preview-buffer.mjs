@@ -30,7 +30,7 @@ function load(file) {
   return exports;
 }
 const IOController = load(fileURLToPath(new URL('../node_modules/mpegts.js/src/io/io-controller.js', import.meta.url))).default;
-const { livePreviewConfig } = load(fileURLToPath(new URL('../src/utils/livePreviewConfig.ts', import.meta.url)));
+const { livePreviewConfig } = load(fileURLToPath(new URL('../src/utils/player/livePreviewConfig.ts', import.meta.url)));
 function replay(platform) {
   now = 1;
   let loader, firstInputMs = null, total = 0;

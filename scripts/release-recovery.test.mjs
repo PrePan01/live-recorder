@@ -38,7 +38,7 @@ test('partial release restores only the missing platform from the original run a
     const directory = args[args.indexOf('--dir') + 1];
     downloads.push(name);
     assert.equal(name, `live-recorder-windows-${version}`);
-    // Actual packaging artifact names contain spaces; restoration normalizes them.
+    // 模拟带空格的原始产物名，验证恢复时会统一名称。
     copyFileSync(join(f.original, win), join(directory, win.replace('Live.Recorder', 'Live Recorder')));
   });
   remote.assertTag = sha => assert.equal(sha, commit);

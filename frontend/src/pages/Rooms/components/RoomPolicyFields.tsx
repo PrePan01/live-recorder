@@ -7,8 +7,8 @@ import { bridge } from "../../../stores/bootStore";
 import {
   liveNotifyChannels,
   liveNotifySentence,
-} from "../../../utils/liveNotifyChannels";
-import { QUALITY_OPTIONS, type RoomPolicy } from "../model/roomPolicy";
+} from "../../../utils/notification/liveNotifyChannels";
+import { QUALITY_OPTIONS, type RoomPolicy } from "../utils/roomPolicy";
 
 const INHERIT = "inherit";
 const SKIP = "skip";

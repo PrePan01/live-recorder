@@ -34,3 +34,12 @@ export function formatDurationMs(ms: number): string {
   const s = sec % 60;
   return h > 0 ? `${h}h${m}m` : m > 0 ? `${m}m${s}s` : `${s}s`;
 }
+
+/** 录制历史使用中文单位，保留到秒。 */
+export function formatDurationChineseMs(ms: number): string {
+  const sec = Number.isFinite(ms) ? Math.max(Math.floor(ms / 1000), 0) : 0;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0 ? `${h}小时${m}分${s}秒` : m > 0 ? `${m}分${s}秒` : `${s}秒`;
+}
