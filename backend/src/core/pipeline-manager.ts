@@ -1,12 +1,12 @@
 import { youtubeManifest } from "../recorder/youtube-media.js";
-import { hasPendingRecordingBuffer } from '../recorder/buffered-writer.js';
-import { mkdir, stat, unlink } from 'node:fs/promises';
+import { hasPendingRecordingBuffer, recoverRecordingBuffer } from '../recorder/buffered-writer.js';
+import { access, mkdir, stat, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Services } from './services.js';
 import type { PipelineConfig } from '../types/index.js';
 import { PipelineRepository } from '../db/repositories/pipeline.repo.js';
-import { checkFileIntegrity, checkFileIntegrityDetailed } from '../recorder/integrity.js';
 import { resolveBin } from '../utils/ffmpeg.js';
 import { moveMarkerSidecar } from '../storage/recording-markers.js';
 import { removeSeekIndexSidecar } from '../storage/seek-index.js';
@@ -28,6 +28,7 @@ interface QueueEntry {
 export class PipelineManager {
   private queue: QueueEntry[] = [];
   private running = new Set<string>();
+  private mediaChecks = new Map<string, Promise<{ ok: boolean; reason?: string; warning?: string }>>();
   private lastProgressEmitAt = new Map<string, number>();
   /** 槽位看门狗缺省阈值：心跳超时即判挂死强制收割（正常步秒级刷心跳，不会误杀）。 */
   static readonly HEARTBEAT_TIMEOUT_MS = 10 * 60_000;
@@ -62,7 +63,7 @@ export class PipelineManager {
   /** 录制完成时入队（录制优先：仅当运行中 < N 立即执行，否则 FIFO 排队）。 */
   enqueue(recordingId: string, attempt = 0, force = false): void {
     const recording = this.services.recordings.get(recordingId);
-    if (recording?.filePath && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, recording.filePath)) {
+    if (!force && recording?.filePath && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, recording.filePath)) {
       this.services.recordings.update(recordingId, { pipelineStatus: 'failed' });
       this.log('buffer-pending', recordingId);
       return;
@@ -93,7 +94,7 @@ export class PipelineManager {
   /** 重试：为失败/部分成功的录制重新入队（新 run，快照当前配置）。 */
   retry(recordingId: string, force = false): { ok: boolean; run: PipelineRun | null } {
     const rec = this.services.recordings.get(recordingId);
-    if (!rec || !rec.filePath || hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath)) return { ok: false, run: null };
+    if (!rec || !rec.filePath || (!force && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath))) return { ok: false, run: null };
     const existing = this.pipelineRepo.runForRecording(recordingId);
     if (existing && (existing.status === 'queued' || existing.status === 'running')) return { ok: false, run: null };
     this.enqueue(recordingId, (existing?.configSnapshot.attempt as number ?? 0) + 1, force);
@@ -282,16 +283,20 @@ export class PipelineManager {
     const verify = this.stepStart(run, 'verify', signal);
       if (config.verify) {
         this.pipelineRepo.setArtifact(verify.id, { status: 'running', startedAt: this.services.clock.iso() });
-        const integrity = this.stepDone(verify) ? "verified" : await checkFileIntegrity(recording.filePath);
+        const integrity = await this.services.verificationQueue.verify(recording);
         signal?.throwIfAborted();
-        if (integrity === 'failed') {
-          this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: '源文件损坏或截断', endedAt: this.services.clock.iso() });
-          this.services.recordings.update(recording.id, { integrity: 'failed', state: 'completed', pipelineStatus: 'failed' });
+        if (integrity.outcome === 'failed') {
+          this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: integrity.detail, endedAt: this.services.clock.iso() });
           this.finish(run.id, 'failed');
           return;
         }
-        if (integrity === 'verified') this.services.recordings.update(recording.id, { integrity: 'verified' });
-        this.pipelineRepo.setArtifact(verify.id, { status: 'ok', endedAt: this.services.clock.iso() });
+        if (integrity.outcome === 'unverifiable') {
+          // Continue usable media as before, but never cache an unperformed check as success.
+          this.pipelineRepo.setArtifact(verify.id, { status: 'failed', error: integrity.detail, endedAt: this.services.clock.iso() });
+          finalStatus = 'partial';
+        } else {
+          this.pipelineRepo.setArtifact(verify.id, { status: 'ok', error: null, endedAt: this.services.clock.iso() });
+        }
       } else {
         this.pipelineRepo.setArtifact(verify.id, { status: 'skipped', endedAt: this.services.clock.iso() });
       }
@@ -411,7 +416,8 @@ export class PipelineManager {
             await moveMarkerSidecar(sourcePath, converted.outPath);
             recording.filePath = converted.outPath;
             this.pipelineRepo.setArtifact(convertArt.id, { status: 'ok', path: converted.outPath, sizeBytes: converted.sizeBytes, endedAt: this.services.clock.iso() });
-            if (config.deleteSourceAfterConvert) {
+            // Keep the original bytes as the recovery target while a spool remains.
+            if (config.deleteSourceAfterConvert && !hasPendingRecordingBuffer(this.services.recordingBufferDirectory, sourcePath)) {
               try {
                 await unlink(sourcePath);
                 // 定位索引跟随 FLV 字节偏移：源没了索引一并清（转出的 MP4 用不上它）。
@@ -521,21 +527,47 @@ export class PipelineManager {
     }
   }
 
-  /** 启动/继续管线的前置检查：只挡「无文件/空文件」。可读即可跑——损坏/截断的判定交给管线
-   * 内的 verify 步（给明确原因），不在此处误挡尾部截断等可救文件。 */
-  async quickMediaCheck(filePath: string): Promise<{ ok: boolean; reason?: string }> {
+  /** 手动处理前重试补写；存储已恢复时无需重启应用。并发点击共享同一次补写。 */
+  async quickMediaCheck(filePath: string): Promise<{ ok: boolean; reason?: string; warning?: string }> {
+    const key = path.resolve(filePath);
+    const existing = this.mediaChecks.get(key);
+    if (existing) return existing;
+    const check = this.checkAndRecoverMedia(key);
+    this.mediaChecks.set(key, check);
+    try {
+      return await check;
+    } finally {
+      this.mediaChecks.delete(key);
+    }
+  }
+
+  private async checkAndRecoverMedia(filePath: string): Promise<{ ok: boolean; reason?: string; warning?: string }> {
+    let warning: string | undefined;
+    if (hasPendingRecordingBuffer(this.services.recordingBufferDirectory, filePath)) {
+      try {
+        // Replay may extend a partially written file, so its seek index must be rebuilt.
+        await removeSeekIndexSidecar(filePath);
+        const bytes = await recoverRecordingBuffer(this.services.recordingBufferDirectory, filePath);
+        this.log('buffer-recovered', filePath, `replayedBytes=${bytes}`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.log('buffer-recovery-failed', filePath, reason);
+        warning = `暂存补写失败：${reason}；将处理已保存的录像，内容可能不完整，未补写的暂存已保留`;
+      }
+    }
     const st = await stat(filePath).catch(() => null);
-    if (!st || st.size === 0) return { ok: false, reason: '文件为空或不存在' };
-    if (hasPendingRecordingBuffer(this.services.recordingBufferDirectory, filePath)) return { ok: false, reason: '暂存内容尚未补写，请恢复存储设备后重启应用' };
-    return { ok: true };
+    if (!st?.isFile() || st.size === 0) return { ok: false, reason: '文件为空或不存在' };
+    try { await access(filePath, constants.R_OK); }
+    catch { return { ok: false, reason: '录像文件不可读取，请检查存储设备与读取权限' }; }
+    return warning ? { ok: true, warning } : { ok: true };
   }
 
   /** 断点续跑：已完成且产物有效的步骤跳过，缺损步骤从该步重跑（用原 run 配置快照）。 */
-  async resumeRunById(runId: string): Promise<boolean> {
+  async resumeRunById(runId: string, allowPendingBuffer = false): Promise<boolean> {
     const run = this.pipelineRepo.getRun(runId);
     if (!run || run.status === 'ok' || run.status === 'failed') return false;
     const rec = this.services.recordings.get(run.recordingId);
-    if (!rec || !rec.filePath || hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath)) return false;
+    if (!rec || !rec.filePath || (!allowPendingBuffer && hasPendingRecordingBuffer(this.services.recordingBufferDirectory, rec.filePath))) return false;
     if (this.running.has(run.recordingId) || this.queue.some((entry) => entry.recordingId === run.recordingId)) return false;
     const entry: QueueEntry = { recordingId: run.recordingId, attempt: (run.configSnapshot.attempt as number | undefined) ?? 0 };
     // Recovery must share the normal FIFO and concurrency ceiling: a restart

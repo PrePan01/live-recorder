@@ -4,8 +4,23 @@ import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
+import type { Recording } from '../../types/index.js';
 
 export function registerPipelineRoutes(app: FastifyInstance, services: Services): void {
+  async function prepareMedia(rec: Recording): Promise<void> {
+    if (rec.state === 'pending' || rec.state === 'recording' || rec.state === 'reconnecting') {
+      throw new AppError('RECORDING_NOT_AVAILABLE', '请先停止录制再处理录像', { recordingId: rec.id });
+    }
+    if (rec.platform === 'youtube') await finalizeYoutube(rec.filePath!, services.recordingBufferDirectory);
+    const quick = await services.pipeline.quickMediaCheck(rec.filePath!);
+    if (!quick.ok) throw new AppError('CONFIG_LOAD_FAILED', `文件不可用，无法进入管线：${quick.reason ?? '未知原因'}`, { recordingId: rec.id });
+    if (quick.warning) {
+      const alert = services.alerts.create({ level: 'warning', source: 'pipeline', message: `${quick.warning}（${rec.id}）`, occurredAt: services.clock.iso() });
+      services.events.emit({ type: 'alert:created', data: alert });
+    }
+    services.recordings.update(rec.id, { fileSizeBytes: (await stat(rec.filePath!)).size });
+  }
+
   // 录制后处理详情：run + artifacts 步骤时间线。
   app.get('/api/v1/recordings/:id/pipeline', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -22,10 +37,7 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法重试管线', { recordingId: id });
-    if (rec.platform === "youtube") {
-      if (rec.state === 'recording' || rec.state === 'reconnecting') throw new AppError('RECORDING_NOT_AVAILABLE', '请先停止录制再处理录像');
-      await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
-    }
+    await prepareMedia(rec);
     const result = services.pipeline.retry(id, true);
     if (!result.ok) {
       // 409 而非 500：排队/运行中属冲突态（task #59，原 CONFIG_LOAD_FAILED→500 错误类）。
@@ -40,16 +52,11 @@ export function registerPipelineRoutes(app: FastifyInstance, services: Services)
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError('RESOURCE_NOT_FOUND', '录制记录不存在', { recordingId: id, details: { resource: 'recording' } });
     if (!rec.filePath) throw new AppError('CONFIG_LOAD_FAILED', '录制无文件，无法进入管线', { recordingId: id });
-    if (rec.platform === "youtube") {
-      if (rec.state === 'recording' || rec.state === 'reconnecting') throw new AppError('RECORDING_NOT_AVAILABLE', '请先停止录制再处理录像');
-      await finalizeYoutube(rec.filePath, services.recordingBufferDirectory);
-    }
-    const quick = await services.pipeline.quickMediaCheck(rec.filePath);
-    if (!quick.ok) throw new AppError('CONFIG_LOAD_FAILED', `文件不可用，无法进入管线：${quick.reason ?? '未知原因'}`, { recordingId: id });
+    await prepareMedia(rec);
     // 三态语义：未跑过/failed=全新启动（retry 建新 run）；中断残留 queued/running=处理已录部分（断点续跑，异步推进立即返回）。
     const existing = services.pipeline.repo.runForRecording(id);
     if (existing && (existing.status === 'queued' || existing.status === 'running')) {
-      void services.pipeline.resumeRunById(existing.id).catch(() => undefined);
+      void services.pipeline.resumeRunById(existing.id, true).catch(() => undefined);
       return reply.send({ ok: true, run: services.pipeline.repo.getRun(existing.id) });
     }
     const result = services.pipeline.retry(id, true);

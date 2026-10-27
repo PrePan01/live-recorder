@@ -17,20 +17,22 @@ import {
   ExperimentOutlined,
   FolderOpenOutlined,
   InfoCircleOutlined,
-  WarningOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ApiError } from "../../types/error";
 import { failurePrimaryText } from "../error/failureReason";
 import { describeError } from "../error/errorMap";
-import { formatBytes, formatDurationMs, formatTime } from "../format";
+import { formatBytes, formatDurationChineseMs, formatTime } from "../format";
 import { IntegrityTag, RecordingStateTag } from "../../components/StatusTags";
 import { PlatformLogoTag } from "../../components/PlatformLogo";
 import { describeEndReason, isInterruptedEnd } from "./recordingEndReason";
 import { uploadPhaseLabel, uploadPhaseText } from "../upload/uploadProgress";
-import { describeUploadError, classifyUploadError } from "../upload/uploadError";
+import {
+  describeUploadError,
+  classifyUploadError,
+} from "../upload/uploadError";
 import type { Recording } from "../../types/recording";
-import { recordingOutcome } from "./recordingOutcome";
+import { recordingIntegrityLabel, recordingOutcome } from "./recordingOutcome";
 import GapDetail from "../../pages/History/components/GapDetail";
 import EditableRecordingTitle from "../../pages/History/components/EditableRecordingTitle";
 import { QUALITY_LABEL, phaseOfUpload, openExternalUrl } from "./historyUtils";
@@ -113,11 +115,11 @@ export function buildRecordingColumns(
     { title: "结束", dataIndex: "endedAt", width: 120, render: formatTime },
     {
       title: "时长",
-      width: 85,
+      width: 145,
       render: (_, r) =>
         // 可播真值优先：墙钟跨度含无数据时段会虚高；老数据无 metadata 时标注占位，不回退墙钟。
         r.metadata?.durationMs != null
-          ? formatDurationMs(r.metadata.durationMs)
+          ? formatDurationChineseMs(r.metadata.durationMs)
           : "—",
     },
     {
@@ -126,7 +128,10 @@ export function buildRecordingColumns(
       width: 70,
       render: (q: string | null, r: Recording) => {
         if (!q) return "-";
-        const label = r.platform === "youtube" && r.metadata?.source?.height ? `${r.metadata.source.height}p` : QUALITY_LABEL[q] ?? q;
+        const label =
+          r.platform === "youtube" && r.metadata?.source?.height
+            ? `${r.metadata.source.height}p`
+            : (QUALITY_LABEL[q] ?? q);
         const expected = r.expectedQuality;
         if (!expected || expected === q) return label;
         const hint = `设置默认清晰度为 ${QUALITY_LABEL[expected] ?? expected}，本次实际录制画质为 ${label}（该直播间未提供该档位，或当前账号未取得该清晰度权限）`;
@@ -144,33 +149,67 @@ export function buildRecordingColumns(
       title: "完整性",
       dataIndex: "integrity",
       width: 160,
-      render: (v: Recording["integrity"], r) => (
-        <Space orientation="vertical" size={4}>
-          <IntegrityTag
-            integrity={v}
-            integrityState={r.integrityState}
-            verifyQueuePosition={r.verifyQueuePosition}
-            integrityError={r.integrityError}
-          />
-          {recordingOutcome(r) ? (
-            <Typography.Text
-              type={
-                (r.gapSummary?.totalMissingMs ?? r.missingMs ?? 0) > 0
-                  ? "warning"
-                  : "secondary"
-              }
-              style={{ fontSize: 12 }}
+      render: (v: Recording["integrity"], r) => {
+        const outcome = recordingOutcome(r);
+        const label = recordingIntegrityLabel(r);
+        const error =
+          r.integrityError ||
+          (r.integrityState === "unverifiable"
+            ? "环境或文件原因无法完成校验，可点校验重试"
+            : r.integrityState === "failed"
+              ? "校验失败，可点校验重试"
+              : null);
+        const failure = v === "failed" ? r.failureReason?.message : null;
+        const content =
+          outcome || error || failure ? (
+            <Space orientation="vertical" size={4} style={{ maxWidth: 320 }}>
+              {outcome ? (
+                <Typography.Text
+                  type={
+                    (r.gapSummary?.totalMissingMs ?? r.missingMs ?? 0) > 0
+                      ? "warning"
+                      : "secondary"
+                  }
+                >
+                  {outcome}
+                </Typography.Text>
+              ) : null}
+              {error ? (
+                <Typography.Text type="warning">{error}</Typography.Text>
+              ) : null}
+              {failure && failure !== error ? (
+                <Typography.Text type="danger">{failure}</Typography.Text>
+              ) : null}
+            </Space>
+          ) : null;
+        return (
+          <Popover content={content} trigger={["hover", "focus"]}>
+            <span
+              tabIndex={0}
+              style={{
+                display: "inline-block",
+                cursor: content ? "help" : undefined,
+              }}
             >
-              {recordingOutcome(r)}
-            </Typography.Text>
-          ) : null}
-          {v === "failed" && r.failureReason ? (
-            <Tooltip title={`${r.failureReason.message}`}>
-              <WarningOutlined style={{ color: "#ff4d4f" }} />
-            </Tooltip>
-          ) : null}
-        </Space>
-      ),
+              {label === "未知" ? (
+                <Tag className="lr-recording-integrity-unknown">未知</Tag>
+              ) : label === "完整" ? (
+                <Tag color="green">完整</Tag>
+              ) : label === "已校验，有中断" ? (
+                <Tag color="warning">已校验，有中断</Tag>
+              ) : (
+                <IntegrityTag
+                  integrity={v}
+                  integrityState={r.integrityState ?? undefined}
+                  verifyQueuePosition={r.verifyQueuePosition}
+                  integrityError={r.integrityError}
+                  showTooltip={false}
+                />
+              )}
+            </span>
+          </Popover>
+        );
+      },
     },
     {
       title: "状态",
@@ -179,31 +218,43 @@ export function buildRecordingColumns(
       render: (s, r) => {
         const reason = describeEndReason(r.endReason);
         const exporting = s === "processing" && r.progressPercent != null;
-        return (
-          <Space direction="vertical" size={0}>
-            <RecordingStateTag state={s} />
-            {exporting ? (
-              <div
-                className="pipeline-step-progress"
-                aria-label={`片段导出进度 ${r.progressPercent}%`}
-              >
-                <div className="pipeline-step-progress-track">
-                  <span style={{ width: `${r.progressPercent}%` }} />
+        const content =
+          reason || exporting ? (
+            <Space orientation="vertical" size={4} style={{ maxWidth: 320 }}>
+              {exporting ? (
+                <div
+                  className="pipeline-step-progress"
+                  aria-label={`片段导出进度 ${r.progressPercent}%`}
+                >
+                  <div className="pipeline-step-progress-track">
+                    <span style={{ width: `${r.progressPercent}%` }} />
+                  </div>
+                  <Typography.Text className="pipeline-step-progress-percent">
+                    导出中 {r.progressPercent}%
+                  </Typography.Text>
                 </div>
-                <Typography.Text className="pipeline-step-progress-percent">
-                  导出中 {r.progressPercent}%
+              ) : null}
+              {reason ? (
+                <Typography.Text
+                  type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
+                >
+                  {reason}
                 </Typography.Text>
-              </div>
-            ) : null}
-            {reason ? (
-              <Typography.Text
-                type={isInterruptedEnd(r.endReason) ? "warning" : "secondary"}
-                style={{ fontSize: 12 }}
-              >
-                {reason}
-              </Typography.Text>
-            ) : null}
-          </Space>
+              ) : null}
+            </Space>
+          ) : null;
+        return (
+          <Popover content={content} trigger={["hover", "focus"]}>
+            <span
+              tabIndex={0}
+              style={{
+                display: "inline-block",
+                cursor: content ? "help" : undefined,
+              }}
+            >
+              <RecordingStateTag state={s} />
+            </span>
+          </Popover>
         );
       },
     },
