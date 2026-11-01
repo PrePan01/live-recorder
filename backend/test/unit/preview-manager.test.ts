@@ -38,6 +38,27 @@ function socket() {
 function manager(max = 4) { return new PreviewManager({} as Services, max); }
 
 describe('preview initialization across source changes', () => {
+  it.each(['hvc1', 'av01', 'vp09'])('bootstraps enhanced %s from a real keyframe and refreshes its codec configuration', codec => {
+    const preview = manager();
+    const seq = (version: number) => tag(9, Buffer.concat([Buffer.from([0x90]), Buffer.from(codec), Buffer.from([version])]));
+    const key = tag(9, Buffer.concat([Buffer.from([0x93]), Buffer.from(codec), Buffer.from([1, 2, 3])]));
+    const delta = tag(9, Buffer.concat([Buffer.from([0xa1]), Buffer.from(codec), Buffer.alloc(4)]));
+    const stream = Buffer.concat([header, seq(1), audioConfig(), key, delta]);
+    for (let i = 0; i < stream.length; i += 7) preview.broadcastFrame('r', stream.subarray(i, i + 7));
+    const client = socket(); preview.addClient('r', client.ws);
+    expect(client.sent).toEqual([Buffer.concat([header, seq(1), audioConfig()]), Buffer.concat([key, delta])]);
+    preview.broadcastFrame('r', seq(2));
+    expect(client.closes).toEqual([1012]);
+    // SequenceEnd has the keyframe flag but cannot bootstrap a decoder.
+    preview.broadcastFrame('r', tag(9, Buffer.concat([Buffer.from([0x92]), Buffer.from(codec)])));
+    const waiting = socket(); preview.addClient('r', waiting.ws);
+    expect(waiting.sent).toHaveLength(1);
+    expect(waiting.sent[0]!.includes(seq(2))).toBe(true);
+    expect(waiting.sent[0]!.includes(seq(1))).toBe(false);
+    preview.broadcastFrame('r', key);
+    expect(preview.recordingBootstrap('r')!.includes(key)).toBe(true);
+  });
+
   it('uses the current AVC configuration after it rolls out of the tail', () => {
     const preview = manager();
     preview.broadcastFrame('r', init());

@@ -3,16 +3,15 @@ import { PreviewWebSocketLoader } from "./previewWebSocketLoader";
 import type { Platform } from "../../types/room";
 
 /** 平滑观看优先：保留网络抖动余量，通过轻微加速追赶，不反复 seek 到缓冲尾部。 */
-export function livePreviewConfig(thumbnail: boolean, onOrigin?: (milliseconds: number) => void, platform?: Platform, onProgress?: (stage: string) => void): mpegts.Config {
+export function livePreviewConfig(thumbnail: boolean, onOrigin?: (milliseconds: number) => void, _platform?: Platform, onProgress?: (stage: string) => void): mpegts.Config {
   return {
     customLoader: onOrigin || onProgress
       ? class extends PreviewWebSocketLoader { constructor() { super(undefined, undefined, onOrigin, onProgress); } }
       : PreviewWebSocketLoader,
-    // The YouTube server already sends a complete bootstrap/GOP. A byte-count
-    // stash here can hold its first decodable frame until the next HLS burst.
+    // Every platform can deliver a small bootstrap followed by a quiet period.
+    // A byte-count stash can withhold the first decodable frame indefinitely.
     // MSE retains the playback jitter buffer and the parser keeps partial tags.
-    enableStashBuffer: platform !== "youtube",
-    stashInitialSize: 128 * 1024,
+    enableStashBuffer: false,
     liveBufferLatencyChasing: false,
     liveSync: true,
     liveSyncMaxLatency: 4,

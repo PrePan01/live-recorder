@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewWsUrl } from "../../api/client";
 import { reportError } from "../../utils/error/errorDiagnostics";
 import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
+import { liveBufferGapTarget } from "../../utils/player/liveBufferGap";
 import { prepareSeekPlayback } from "../../utils/player/prepareSeekPlayback";
 import { isPlausibleSeekOffset } from "../../utils/timeline/recordingTimeline";
 import { seekPlaybackConfig } from "../../utils/player/seekPlaybackConfig";
@@ -159,6 +160,10 @@ export function useVideoPlayback({
     let lastMediaTime = -1;
     let lastProgressAt = Date.now();
     let hasPlayed = false;
+    let hasPresentedFrame = false;
+    let startedAt = Date.now();
+    let gapRecoveries = 0;
+    let gapRecoveryTarget: number | null = null;
     let playingListener: (() => void) | null = null;
     let frameReadyListener: (() => void) | null = null;
     let stopWaitingForFrame: (() => void) | null = null;
@@ -236,6 +241,10 @@ export function useVideoPlayback({
       lastMediaTime = videoRef.current.currentTime;
       lastProgressAt = Date.now();
       hasPlayed = false;
+      hasPresentedFrame = false;
+      startedAt = Date.now();
+      gapRecoveries = 0;
+      gapRecoveryTarget = null;
       setLoadProgress(initialPreviewLoadProgress);
       const reportProgress = (stage: string) => {
         if (disposed || player !== instance) return;
@@ -261,6 +270,9 @@ export function useVideoPlayback({
             videoRef.current!,
             () => {
               if (disposed || player !== instance) return;
+              hasPresentedFrame = true;
+              lastProgressAt = Date.now();
+              retry = 0;
               hasEverPlayedRef.current = true;
               reportProgress('presented');
               setState('playing');
@@ -276,7 +288,6 @@ export function useVideoPlayback({
         hasPlayed = true;
         restoreAudioPreference();
         lastProgressAt = Date.now();
-        retry = 0;
         frameReadyListener?.();
       };
       videoRef.current.addEventListener('loadeddata', frameReadyListener);
@@ -300,21 +311,41 @@ export function useVideoPlayback({
       watchdogTimer = setInterval(() => {
         const video = videoRef.current;
         if (!video || player !== instance) return;
-        if (video.paused && hasPlayed) return;
-        if (video.currentTime > lastMediaTime + 0.01) {
+        // Audio/initial timestamp seeks can move the clock without a video frame.
+        // Neither clock movement nor a paused autoplay attempt may mask startup failure.
+        if (video.paused && hasPresentedFrame) return;
+        if (hasPresentedFrame && video.currentTime > lastMediaTime + 0.01) {
           hasPlayed = true;
           lastMediaTime = video.currentTime;
           lastProgressAt = Date.now();
           retry = 0;
+          if (gapRecoveryTarget !== null && video.currentTime > gapRecoveryTarget + 0.25) {
+            gapRecoveries = 0;
+            gapRecoveryTarget = null;
+          }
           return;
+        }
+        const waitingMs = Date.now() - (hasPresentedFrame ? lastProgressAt : startedAt);
+        if (waitingMs >= 2_000 && gapRecoveries < 2) {
+          const target = liveBufferGapTarget(video);
+          if (target !== null) {
+            try {
+              video.currentTime = target;
+              gapRecoveryTarget = target;
+              gapRecoveries += 1;
+            } catch {
+              // Keep the original deadline if the media element rejects a seek.
+              gapRecoveries = 2;
+            }
+          }
         }
         const timeout = !hasPlayed && platform === "youtube"
           ? YOUTUBE_STARTUP_TIMEOUT_MS
           : STALL_TIMEOUT_MS;
-        if (Date.now() - lastProgressAt >= timeout) {
+        if (waitingMs >= timeout) {
           reportError(
             "live-preview-stall",
-            new Error(`无帧超时 played=${hasPlayed} retry=${retry}`),
+            new Error(`无帧超时 platform=${platform ?? "unknown"} played=${hasPlayed} presented=${hasPresentedFrame} readyState=${video.readyState} paused=${video.paused} currentTime=${video.currentTime} retry=${retry}`),
           );
           scheduleReconnect();
         }

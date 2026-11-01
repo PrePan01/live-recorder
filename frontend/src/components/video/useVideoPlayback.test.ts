@@ -149,6 +149,7 @@ describe("live startup watchdog", () => {
     render({ roomId: "youtube-room", platform: "youtube" }, video);
     await vi.advanceTimersByTimeAsync(28_000);
     video.dispatchEvent(new Event("playing"));
+    h.frame?.();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(h.players[0].destroy).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2_000);
@@ -160,6 +161,77 @@ describe("live startup watchdog", () => {
     render({ roomId: "douyin-room", platform: "douyin" }, liveVideo());
     await vi.advanceTimersByTimeAsync(12_000);
     expect(h.players[0].destroy).toHaveBeenCalledOnce();
+  });
+
+  it.each(['bilibili', 'douyin', 'xiaohongshu', 'youtube'] as const)(
+    '%s reconnects when the clock advances but no frame is presented, and bounds retries', async (platform) => {
+      vi.useFakeTimers();
+      const video = liveVideo();
+      const props = { roomId: 'no-video-frame', platform };
+      render(props, video);
+      // Repeated playing events and an advancing audio clock used to reset both
+      // the timeout and retry count forever, while the loading overlay stayed up.
+      const clock = setInterval(() => {
+        video.currentTime += 1;
+        video.dispatchEvent(new Event('playing'));
+      }, 1000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      clearInterval(clock);
+      expect(h.players).toHaveLength(4);
+      expect(h.players.every(player => player.destroy.mock.calls.length === 1)).toBe(true);
+      expect(render(props, video).state).toBe('error');
+    },
+  );
+
+  it('does not treat a paused startup attempt as a user pause', async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    render({ roomId: 'paused-startup', platform: 'bilibili' }, video);
+    video.dispatchEvent(new Event('playing'));
+    Object.assign(video, { paused: true });
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(h.players[0].destroy).toHaveBeenCalledOnce();
+  });
+
+  it('respects a user pause after a frame has been presented', async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    render({ roomId: 'paused-playback', platform: 'bilibili' }, video);
+    video.dispatchEvent(new Event('playing'));
+    h.frame?.();
+    Object.assign(video, { paused: true });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.players[0].destroy).not.toHaveBeenCalled();
+  });
+
+  it('bridges a small buffered gap before reconnecting, but keeps the first-frame deadline', async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    Object.assign(video, { readyState: 2, seeking: false, ended: false,
+      buffered: { length: 1, start: () => 0.1, end: () => 3 },
+    });
+    render({ roomId: 'buffer-gap', platform: 'bilibili' }, video);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(video.currentTime).toBeCloseTo(0.15);
+    expect(h.players[0].destroy).not.toHaveBeenCalled();
+    // A seek itself is not evidence of a decoded/presented frame.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.players[0].destroy).toHaveBeenCalledOnce();
+  });
+
+  it('does not skip a buffer gap while the viewer has paused', async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    Object.assign(video, { readyState: 2, seeking: false, ended: false,
+      buffered: { length: 1, start: () => 0.1, end: () => 3 },
+    });
+    render({ roomId: 'paused-buffer-gap', platform: 'bilibili' }, video);
+    video.dispatchEvent(new Event('playing'));
+    h.frame?.();
+    Object.assign(video, { paused: true });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(video.currentTime).toBe(0);
+    expect(h.players[0].destroy).not.toHaveBeenCalled();
   });
 });
 describe("seek player lifecycle", () => {
