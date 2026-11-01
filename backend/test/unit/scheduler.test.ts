@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
-import { DouyinAdapter } from '../../src/platform/douyin.js';
+import { DouyinAdapter } from '../../src/platform/douyin/index.js';
 import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
@@ -1040,6 +1040,83 @@ describe('Scheduler', () => {
     expect(after.lastError).toBeNull();
     // 未开播不是异常：不该落任何告警（以前空响应会被判成 PLATFORM_CHANGED，每个检测周期刷一条）。
     expect(services.alerts.list().filter((a) => a.roomId === room.id)).toHaveLength(0);
+  });
+
+  it.each([4003034, 4003073])('keeps douyin business status %s as one room warning, preserves read state and reports recurrence', async (code) => {
+    const { services, clock } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/123456', displayName: 'business' });
+    let unavailable = true;
+    const adapter = new DouyinAdapter(async () => new Response(JSON.stringify(unavailable
+      ? { status_code: code, data: { message: code === 4003034 ? '不在主播设置的可见范围内' : '进房失败' } }
+      : { status_code: 0, data: { data: [] } })));
+    const original = services.adapterFor.bind(services);
+    services.adapterFor = platform => platform === 'douyin' ? adapter : original(platform);
+    services.platformCookie = async () => 'sessionid=test';
+    const check = async () => {
+      await services.scheduler.triggerImmediateCheck(room.id);
+      clock.advance(60_001);
+    };
+    try {
+      await check();
+      await check();
+      expect(services.alerts.list()).toHaveLength(0);
+      await check();
+      const first = services.alerts.list()[0]!;
+      expect(first).toMatchObject({ roomId: room.id, level: 'warning', errorCode: 'ROOM_CONTENT_UNAVAILABLE', retryable: true });
+      services.alerts.markRead(first.id);
+      await check();
+      await check();
+      expect(services.alerts.list()).toHaveLength(1);
+      expect(services.alerts.get(first.id)).toMatchObject({ read: true, resolved: false });
+      expect(services.rooms.get(room.id)!.lastError?.code).toBe('ROOM_CONTENT_UNAVAILABLE');
+      // A content restriction cannot be treated as confirmed offline or expired credentials.
+      expect(services.rooms.get(room.id)!.lastLiveStatus).toBeNull();
+      unavailable = false;
+      await check();
+      expect(services.alerts.get(first.id)?.resolved).toBe(true);
+      expect(services.rooms.get(room.id)!.lastLiveStatus).toBe('offline');
+      unavailable = true;
+      await check(); await check(); await check();
+      expect(services.alerts.list()).toHaveLength(1);
+      expect(services.alerts.get(first.id)).toMatchObject({ read: false, resolved: false, level: 'warning' });
+    } finally {
+      services.scheduler.stop(); services.quality.stop();
+      await services.manager.shutdown(); services.db.close();
+    }
+  });
+
+  it('uses existing platform backoff for douyin business busy responses without delaying other platforms or adding probes', async () => {
+    const { services, clock } = newServices();
+    services.settings.save({ ...baseSettings(), autoRecord: false });
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/123456', displayName: 'busy', checkIntervalSec: 1 });
+    services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/123', displayName: 'other', checkIntervalSec: 1 });
+    let busy = true;
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(busy
+      ? { status_code: 10001, data: { message: 'Service Unavailable' } }
+      : { status_code: 0, data: { data: [] } })));
+    const adapter = new DouyinAdapter(fetcher);
+    const original = services.adapterFor.bind(services);
+    const other = vi.spyOn(original('bilibili'), 'checkLiveStatus').mockResolvedValue({ status: 'offline' });
+    services.adapterFor = platform => platform === 'douyin' ? adapter : original(platform);
+    services.platformCookie = async () => 'sessionid=test';
+    try {
+      services.scheduler.start();
+      await waitFor(() => fetcher.mock.calls.length === 1 && other.mock.calls.length === 1);
+      await settle(clock, 29_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(other.mock.calls.length).toBeGreaterThan(1);
+      busy = false;
+      await settle(clock, 5_001);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(services.rooms.get(room.id)).toMatchObject({ lastLiveStatus: 'offline', lastError: null });
+      await settle(clock, 1_000);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(services.alerts.list().some(alert => alert.errorCode === 'DOUYIN_COOKIE_EXPIRED')).toBe(false);
+    } finally {
+      services.scheduler.stop(); services.quality.stop();
+      await services.manager.shutdown(); services.db.close(); other.mockRestore();
+    }
   });
 
   it('检测恢复后自动收敛该房间未读的平台告警（过渡期一次误报不该长期挂榜）', async () => {

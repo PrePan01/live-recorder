@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DanmakuAdapter, DanmakuMessage } from '../types.js';
-import { XHS_API, type XiaohongshuAdapter } from '../../platform/xiaohongshu.js';
+import { XHS_API, type XiaohongshuAdapter } from '../../platform/xiaohongshu/index.js';
 
 export function createXiaohongshuDanmakuAdapter(adapter: XiaohongshuAdapter): DanmakuAdapter {
   return {

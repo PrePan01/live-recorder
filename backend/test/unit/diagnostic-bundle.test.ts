@@ -11,6 +11,34 @@ import { buildServices } from "../../src/core/services.js";
 import { FakeClock } from "../../src/core/clock.js";
 
 describe("diagnostic bundle privacy boundary", () => {
+  it("preserves version groups and labels legacy totals without attributing them to the export version", () => {
+    const exported = frontendDiagnosticSummary([
+      { source: "window.error", message: "failure", aggregationScope: "app-version", count: 2, firstSeenAt: 100, lastSeenAt: 200, context: { appVersion: "1.5.3", recentAction: "navigation:/monitor", instanceId: "private-instance" } },
+      { source: "window.error", message: "failure", aggregationScope: "app-version", count: 1, context: { appVersion: "1.5.4" } },
+      { source: "window.error", message: "failure", count: 4756, context: { appVersion: "1.2.2" } },
+    ], []);
+    expect(exported).toEqual([
+      expect.objectContaining({ aggregationScope: "app-version", count: 2, firstSeenAt: 100, lastSeenAt: 200, context: expect.objectContaining({ appVersion: "1.5.3", recentAction: "navigation:/monitor" }) }),
+      expect.objectContaining({ aggregationScope: "app-version", count: 1, context: expect.objectContaining({ appVersion: "1.5.4" }) }),
+      expect.objectContaining({ aggregationScope: "legacy", count: 4756, context: expect.objectContaining({ appVersion: "1.2.2" }) }),
+    ]);
+    expect(JSON.stringify(exported)).not.toContain("private-instance");
+  });
+
+  it("exports only recognized aggregation markers and requires version context for a version group", () => {
+    const exported = frontendDiagnosticSummary([
+      { aggregationScope: "Cookie: secret", context: { appVersion: "1.5.3" } },
+      { aggregationScope: "app-version" },
+      { aggregationScope: "legacy", context: { appVersion: "1.5.3" } },
+    ], []);
+    expect(exported).toEqual([
+      expect.objectContaining({ aggregationScope: "legacy" }),
+      expect.objectContaining({ aggregationScope: "legacy" }),
+      expect.objectContaining({ aggregationScope: "legacy" }),
+    ]);
+    expect(JSON.stringify(exported)).not.toContain("secret");
+  });
+
   it("redacts secrets, URLs, email addresses, paths, and caller-supplied sensitive values", () => {
     const value = redactDiagnosticText(
       "Cookie: SESSDATA=secret Authorization: Bearer abc https://example.test/live?token=abc alice@example.test /Users/alice/Movies/custom-name",

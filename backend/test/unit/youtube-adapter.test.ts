@@ -4,19 +4,19 @@ import {
   YoutubeAdapter,
   youtubeQuality,
   youtubeFormat,
-} from "../../src/platform/youtube.js";
+} from "../../src/platform/youtube/index.js";
 import {
   parseYoutubeUrl,
   normalizeYoutubeUrl,
-} from "../../src/platform/youtube-url.js";
+} from "../../src/platform/youtube/url.js";
 import {
   normalizeYoutubeCookies,
   youtubeError,
   youtubeArguments,
-} from "../../src/platform/youtube-runtime.js";
+} from "../../src/platform/youtube/runtime.js";
 import { youtubeCookieHeader } from "../../src/danmaku/adapters/youtube.js";
 import { AppError } from "../../src/types/error.js";
-import { parseSystemProxy } from "../../src/platform/youtube-network.js";
+import { parseSystemProxy } from "../../src/platform/youtube/network.js";
 
 const video = "abcdefghijk";
 const channel = "UCabcdefghijklmnopqrstuv";

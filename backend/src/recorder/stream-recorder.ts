@@ -5,6 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { BufferedRecordingWriter, type BufferedWriterOptions, recoverRecordingBuffer } from "./buffered-writer.js";
 import { StreamHealth, STREAM_IDLE_MS, MEDIA_IDLE_MS } from "./stream-health.js";
+import { isFlvSequenceHeader, isFlvVideoKeyframe } from "./flv-tags.js";
 import { AppError } from "../types/error.js";
 import type { ErrorObject } from "../types/index.js";
 import { SeekIndexWriter, endSeekWriter, removeSeekIndexSidecar } from "../storage/seek-index.js";
@@ -97,28 +98,11 @@ export class FlvTimestampNormalizer {
     buf[off + 7] = (ts >>> 24) & 0xff;
   }
 
-  /** 是否为 AVC/HEVC/AAC 序列头（编码器配置标签）：不计入时间戳 base——抖音等流序列头 ts≈0 而媒体帧为绝对 PTS。 */
-  private isSequenceHeader(tagType: number, offset: number): boolean {
-    const ds = this.buffer.readUIntBE(offset + 1, 3);
-    if (ds < 2) return false;
-    const d0 = this.buffer[offset + 11]!;
-    const d1 = this.buffer[offset + 12]!;
-    if (tagType === 9) {
-      if (d0 & 0x80) return (d0 & 0x0f) === 0;
-      const codec = d0 & 0x0f;
-      return (codec === 7 || codec === 12) && d1 === 0;
-    }
-    if (tagType === 8) {
-      return d0 >> 4 === 10 && d1 === 0;
-    }
-    return false;
-  }
-
   /** 返回标签写入文件的时间戳（序列头=原样，媒体帧=归一化后）。 */
   private mediaTag(tagType: number, offset: number): number {
     const rawTs = FlvTimestampNormalizer.readTs(this.buffer, offset);
     const shift = this.options.offsetMs ?? 0;
-    if (this.isSequenceHeader(tagType, offset)) {
+    if (isFlvSequenceHeader(this.buffer, offset)) {
       const ts = Math.max(shift, this.maxTs);
       FlvTimestampNormalizer.writeTs(this.buffer, offset, ts);
       return ts;
@@ -158,10 +142,8 @@ export class FlvTimestampNormalizer {
   ): void {
     const onTag = this.options.onTag;
     if (!onTag) return;
-    const d0 = this.buffer[offset + 11]!;
-    const d1 = this.buffer[offset + 12]!;
-    const seq = this.isSequenceHeader(tagType, offset);
-    const keyframe = !seq && tagType === 9 && ((d0 >> 4) & 7) === 1;
+    const seq = isFlvSequenceHeader(this.buffer, offset);
+    const keyframe = isFlvVideoKeyframe(this.buffer, offset);
     if (!seq && !keyframe) return;
     onTag({
       tagType: tagType === 8 ? 8 : 9,
@@ -194,8 +176,8 @@ export class FlvTimestampNormalizer {
       const dataSize = this.buffer.readUIntBE(offset + 1, 3);
       const tagLen = 11 + dataSize + 4; // 标签头 + 数据 + PreviousTagSize
       if (offset + tagLen > this.buffer.length) break;
-      if (this.awaitingKeyframe && (tagType === 8 || tagType === 9) && !this.isSequenceHeader(tagType, offset)) {
-        if (tagType === 9 && dataSize > 0 && ((this.buffer[offset + 11]! >> 4) & 7) === 1) this.awaitingKeyframe = false;
+      if (this.awaitingKeyframe && (tagType === 8 || tagType === 9) && !isFlvSequenceHeader(this.buffer, offset)) {
+        if (isFlvVideoKeyframe(this.buffer, offset)) this.awaitingKeyframe = false;
         else { offset += tagLen; continue; }
       }
       if (tagType === 8 || tagType === 9)
@@ -308,19 +290,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
     this.controller = new AbortController();
-    let res: Response;
-    try {
-      res = await this.fetcher(input.url, {
-        ...(input.headers ? { headers: input.headers } : {}),
-        signal: this.controller!.signal,
-      });
-    } catch (err) {
-      if (this.stopped) return;
-      throw toNetworkError(err);
-    }
-    if (!res.ok || !res.body) {
-      throw httpStreamError(res.status, "拉流");
-    }
+    const res = await this.fetchResponse(input.url, input.headers, "拉流");
     // 续录：追加写入已有文件；文件里已有 FLV 头时不再重复写入（首段 0 字节时仍需补头）。
     const append = Boolean(resume?.append);
     if (append && outputPath && this.writerOptions.directory) {
@@ -362,11 +332,13 @@ export class StreamRecordingEngine implements RecordingEngine {
       : null;
     let size = existing?.size ?? 0;
     if (outputPath) yield { type: "file_created", filePath: outputPath };
-    const reader = res.body.getReader();
+    const reader = res.body!.getReader();
     const health = new StreamHealth(this.stallTimeoutMs, this.stallTimeoutMs === STREAM_IDLE_MS ? MEDIA_IDLE_MS : this.stallTimeoutMs, () => {
       void reader.cancel().catch(() => undefined);
       this.controller?.abort();
     });
+    // The first body read needs the same deadline as every subsequent read.
+    health.received(false);
     try {
       while (!this.stopped) {
         health.begin();
@@ -545,12 +517,22 @@ export class StreamRecordingEngine implements RecordingEngine {
     });
   }
 
-  private async fetchResponse(url: string, headers: Record<string, string> | undefined): Promise<Response> {
-    const timer = setTimeout(() => this.controller?.abort(), this.stallTimeoutMs);
+  private async fetchResponse(url: string, headers: Record<string, string> | undefined, what = "HLS 拉取"): Promise<Response> {
+    const controller = this.controller!;
+    const timer = setTimeout(() => controller.abort(new AppError("NETWORK_UNAVAILABLE", "直播源连接超时，正在恢复", {
+      retryable: true, details: { trigger: "request_timeout", timeoutMs: this.stallTimeoutMs },
+    })), this.stallTimeoutMs);
+    timer.unref();
     try {
-      const res = await this.fetcher(url, { ...(headers ? { headers } : {}), signal: this.controller!.signal });
-      if (!res.ok || !res.body) throw httpStreamError(res.status, "HLS 拉取");
+      const res = await this.fetcher(url, { ...(headers ? { headers } : {}), signal: controller.signal });
+      if (!res.ok || !res.body) {
+        await res.body?.cancel().catch(() => undefined);
+        throw httpStreamError(res.status, what);
+      }
       return res;
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason instanceof AppError) throw controller.signal.reason;
+      throw toNetworkError(error);
     } finally { clearTimeout(timer); }
   }
 

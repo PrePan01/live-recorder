@@ -1,4 +1,4 @@
-import { youtubeFetch } from "../platform/youtube-network.js";
+import { youtubeFetch } from "../platform/youtube/network.js";
 import { youtubeCookieHeader } from "../danmaku/adapters/youtube.js";
 
 /** A failed network probe is unknown, never proof that a saved session expired. */

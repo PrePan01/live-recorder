@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isXhsNativeUrl, XiaohongshuNativeBroker } from '../../src/platform/xiaohongshu-native.js';
+import { isXhsNativeUrl, XiaohongshuNativeBroker } from '../../src/platform/xiaohongshu/native.js';
 
 const url = 'https://live-room.xiaohongshu.com/api/sns/red/live/h5/v1/interaction/get_simple_interaction?roomId=123';
 afterEach(() => vi.useRealTimers());

@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocketServer as WSS } from 'ws';
 import { URL } from 'node:url';
 import type { Services } from '../core/services.js';
 import type { MonitorState } from '../types/index.js';
+import { isFlvSequenceHeader, isFlvVideoKeyframe } from '../recorder/flv-tags.js';
 
 export const WS_CLOSE = {
   NORMAL: 1000,
@@ -50,17 +51,10 @@ const PREVIEW_SOCKET_MAX_PENDING_BYTES = PREVIEW_TAIL_MAX + 4 * 1024 * 1024;
 export const PREVIEW_IDLE_GRACE_MS = 2_000;
 
 /** 是否为视频关键帧 FLV 标签：type=9（视频）且 data[0] 高 4 位 FrameType==1。 */
-function isKeyframeTag(tag: Buffer): boolean {
-  return tag.length >= 13 && tag[0] === 9 && (tag[11]! & 0xf0) === 0x10 && !isSequenceTag(tag);
-}
+const isKeyframeTag = isFlvVideoKeyframe;
 
 /** 比较编码器配置时忽略标签时间戳；重复序列头不应导致播放器重连。 */
-function isSequenceTag(tag: Buffer): boolean {
-  if (tag.length < 17 || tag[12] !== 0) return false;
-  if (tag[0] === 8) return (tag[11]! >> 4) === 10;
-  const codec = tag[11]! & 0x0f;
-  return tag[0] === 9 && (codec === 7 || codec === 12);
-}
+const isSequenceTag = isFlvSequenceHeader;
 
 /**
  * FLV 初始化段提取器：只缓存流头 + onMetaData + AVC/AAC sequence headers，

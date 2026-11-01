@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DouyinAdapter } from "../../src/platform/douyin.js";
+import { DouyinAdapter } from "../../src/platform/douyin/index.js";
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
   return async (url) =>
@@ -553,9 +553,66 @@ describe("DouyinAdapter", () => {
       "sessionid=x",
     );
     expect(result.status).toBe("error");
+    expect(result.error?.code).toBe("PLATFORM_SERVER_ERROR");
+    expect(result.error?.details).toMatchObject({ code: 10001, scope: "douyin-enter" });
     expect(result.error?.message).toContain("繁忙");
     expect(result.error?.message).not.toContain("接口有变动");
     expect(result.error?.retryable).toBe(true);
+  });
+
+  it.each([
+    [10001, "Service Unavailable", "PLATFORM_SERVER_ERROR", true],
+    [10001, "", "PLATFORM_SERVER_ERROR", true],
+    [1777, "", "PLATFORM_SERVER_ERROR", true],
+    [55555, "系统繁忙", "PLATFORM_SERVER_ERROR", true],
+    [88888, "访问频繁", "NETWORK_UNAVAILABLE", true],
+    [4003034, "你不在主播设置的可见范围内", "ROOM_CONTENT_UNAVAILABLE", true],
+    [4003073, "进房失败", "ROOM_CONTENT_UNAVAILABLE", true],
+    [4001038, "该内容暂时无法查看", "ROOM_CONTENT_UNAVAILABLE", true],
+    [8, "请先登录", "DOUYIN_COOKIE_EXPIRED", false],
+    [10011, "Request params error", "PLATFORM_CHANGED", false],
+    [10003, "Request params error", "PLATFORM_CHANGED", true],
+  ])("keeps body status %s consistent across checking, preview lookup and recording recovery", async (code, message, errorCode, retryable) => {
+    const fetcher = vi.fn(mockFetcher(() => ({ status_code: code, data: { message } })));
+    const adapter = new DouyinAdapter(fetcher);
+    const checked = await adapter.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x");
+    expect(checked.error).toMatchObject({ code: errorCode, retryable });
+    await expect(adapter.getStreamUrl("https://live.douyin.com/123456", "original", "sessionid=x"))
+      .rejects.toMatchObject({ code: errorCode, retryable });
+    const recovery = await adapter.resolveRecordingSource("https://live.douyin.com/123456", "original", "sessionid=x");
+    expect(recovery).toMatchObject({
+      status: errorCode === "DOUYIN_COOKIE_EXPIRED" ? "restricted" : "error",
+      error: { code: errorCode, retryable },
+    });
+    // Classification and log aggregation never add a probe or an immediate body-status retry.
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("coalesces repeated business logs across all callers and resets only after a valid response", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let payload: unknown = { status_code: 4003034, data: { message: "不在主播设置的可见范围内" } };
+    const fetcher = vi.fn(mockFetcher(() => payload));
+    const adapter = new DouyinAdapter(fetcher);
+    try {
+      for (let i = 0; i < 20; i++) {
+        expect((await adapter.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x")).error?.code)
+          .toBe("ROOM_CONTENT_UNAVAILABLE");
+      }
+      await expect(adapter.getStreamUrl("https://live.douyin.com/123456", "original", "sessionid=x"))
+        .rejects.toMatchObject({ code: "ROOM_CONTENT_UNAVAILABLE" });
+      expect(await adapter.resolveRecordingSource("https://live.douyin.com/123456", "original", "sessionid=x"))
+        .toMatchObject({ status: "error", error: { code: "ROOM_CONTENT_UNAVAILABLE" } });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(22);
+      payload = { status_code: 0, data: { data: [] } };
+      expect((await adapter.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x")).status).toBe("offline");
+      expect(log).toHaveBeenCalledWith("[douyin-enter] room=123456 recovered suppressed=21");
+      payload = { status_code: 4003034, data: { message: "不在主播设置的可见范围内" } };
+      await adapter.checkLiveStatus("https://live.douyin.com/123456", "sessionid=x");
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(24);
+    } finally { warn.mockRestore(); log.mockRestore(); }
   });
 
   it("maps 抖音 444（边缘节点掐断连接）to a retryable outage, never an authorization failure", async () => {

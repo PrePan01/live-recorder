@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BilibiliAdapter } from '../../src/platform/bilibili.js';
+import { BilibiliAdapter } from '../../src/platform/bilibili/index.js';
 import { AppError } from '../../src/types/error.js';
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {

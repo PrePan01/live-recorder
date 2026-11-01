@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DouyinAdapter } from '../../src/platform/douyin.js';
+import { DouyinAdapter } from '../../src/platform/douyin/index.js';
 import type { LiveStatusResult } from '../../src/platform/adapter.js';
 
 function respond(body: unknown, init?: { status?: number }) {

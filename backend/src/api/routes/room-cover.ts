@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import type { Room } from '../../types/room.js';
 import { AppError } from '../../types/error.js';
-import { youtubeFetch } from '../../platform/youtube-network.js';
+import { youtubeFetch } from '../../platform/youtube/network.js';
 import {
   nativePickSaveFile,
   type SaveFileOptions,

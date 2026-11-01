@@ -5,6 +5,10 @@ dist/
 .env
 bilibili/
 douyin/
+!backend/src/platform/bilibili/
+!backend/src/platform/bilibili/**
+!backend/src/platform/douyin/
+!backend/src/platform/douyin/**
 release/
 .idea/
 *.tsbuildinfo
@@ -12,3 +16,4 @@ release/
 .commandcode/
 .codegraph/
 .mcp.json
+reports/

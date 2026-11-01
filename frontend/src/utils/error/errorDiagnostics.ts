@@ -1,4 +1,4 @@
-// 汇总并保存本地错误诊断，合并重复错误并限制提醒频率。
+// 按应用版本保存本地错误诊断，保留历史累计，并限制重复提醒频率。
 const MAX_ENTRIES = 200;
 const NOTIFICATION_INTERVAL_MS = 30_000;
 const STORAGE_KEY = 'lr-error-diagnostics';
@@ -11,6 +11,8 @@ export interface ErrorDiagnostic {
   firstSeenAt: number;
   lastSeenAt: number;
   count: number;
+  /** legacy 的次数可能跨版本，context 仅代表旧版首次记录，不能精确拆分。 */
+  aggregationScope: 'app-version' | 'legacy';
   context: ErrorDiagnosticContext;
 }
 
@@ -29,13 +31,13 @@ export interface ReportedError {
 let entries: ErrorDiagnostic[] = load();
 const notifiedAt = new Map<string, number>();
 const context: ErrorDiagnosticContext = {
-  appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
+  appVersion: typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : 'unknown',
   runtime: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent.slice(0, 512),
   instanceId: null,
   recentAction: null,
 };
 
-/** Runtime data is local-only and captured with new diagnostic groups. */
+/** Runtime data is local-only; each occurrence captures the latest context. */
 export function setErrorDiagnosticContext(next: Partial<Pick<ErrorDiagnosticContext, 'instanceId' | 'appVersion' | 'runtime'>>): void {
   Object.assign(context, next);
 }
@@ -49,10 +51,40 @@ function load(): ErrorDiagnostic[] {
   try {
     if (typeof localStorage === 'undefined') return [];
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as unknown;
-    return Array.isArray(value) ? value.slice(0, MAX_ENTRIES) as ErrorDiagnostic[] : [];
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item): ErrorDiagnostic[] => {
+      if (!item || typeof item !== 'object') return [];
+      const input = item as Partial<ErrorDiagnostic>;
+      if (typeof input.key !== 'string' || typeof input.source !== 'string' ||
+          typeof input.message !== 'string' || !Number.isFinite(input.firstSeenAt) ||
+          !Number.isFinite(input.lastSeenAt) || !Number.isFinite(input.count) || input.count! < 1) return [];
+      const storedContext = input.context;
+      const appVersion = typeof storedContext?.appVersion === 'string' ? storedContext.appVersion : '';
+      const aggregationScope = input.aggregationScope === 'app-version' && appVersion ? 'app-version' : 'legacy';
+      return [{
+        key: aggregationScope === 'app-version' ? diagnosticKey(appVersion, input.source, input.message) : input.key,
+        source: input.source,
+        message: input.message,
+        ...(typeof input.stack === 'string' ? { stack: input.stack } : {}),
+        firstSeenAt: input.firstSeenAt!,
+        lastSeenAt: input.lastSeenAt!,
+        count: input.count!,
+        aggregationScope,
+        context: {
+          appVersion,
+          runtime: typeof storedContext?.runtime === 'string' ? storedContext.runtime : 'unknown',
+          instanceId: typeof storedContext?.instanceId === 'string' ? storedContext.instanceId : null,
+          recentAction: typeof storedContext?.recentAction === 'string' ? storedContext.recentAction : null,
+        },
+      }];
+    }).sort((a, b) => b.lastSeenAt - a.lastSeenAt).slice(0, MAX_ENTRIES);
   } catch {
     return [];
   }
+}
+
+function diagnosticKey(appVersion: string, source: string, message: string): string {
+  return JSON.stringify([appVersion, source, message]);
 }
 
 function persist(): void {
@@ -89,18 +121,21 @@ export function reportError(source: string, reason: unknown): ReportedError {
   const { message, stack } = details(reason);
   // The message is the stable cross-browser stack summary. Full JS stacks contain
   // caller line numbers, which would turn one repeated failure into a storm.
-  const key = `${source}:${message}`;
+  // Legacy totals cannot be split retrospectively, even if their first version matches.
+  const key = diagnosticKey(context.appVersion, source, message);
   const now = Date.now();
-  let diagnostic = entries.find((entry) => entry.key === key);
+  let diagnostic = entries.find((entry) => entry.aggregationScope === 'app-version' && entry.key === key);
   if (diagnostic) {
     diagnostic.lastSeenAt = now;
     diagnostic.count += 1;
+    diagnostic.stack = stack;
+    diagnostic.context = { ...context };
   } else {
-    diagnostic = { key, source, message, stack, firstSeenAt: now, lastSeenAt: now, count: 1, context: { ...context } };
-    entries = [diagnostic, ...entries].slice(0, MAX_ENTRIES);
+    diagnostic = { key, source, message, stack, firstSeenAt: now, lastSeenAt: now, count: 1, aggregationScope: 'app-version', context: { ...context } };
   }
-  const lastNotice = notifiedAt.get(key) ?? 0;
-  const shouldNotify = now - lastNotice >= NOTIFICATION_INTERVAL_MS;
+  entries = [diagnostic, ...entries.filter((entry) => entry !== diagnostic)].slice(0, MAX_ENTRIES);
+  const lastNotice = notifiedAt.get(key);
+  const shouldNotify = lastNotice === undefined || now - lastNotice >= NOTIFICATION_INTERVAL_MS;
   if (shouldNotify) notifiedAt.set(key, now);
   persist();
   return { diagnostic, shouldNotify };
