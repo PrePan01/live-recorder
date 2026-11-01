@@ -1,8 +1,9 @@
-import { normalizeYoutubeUrl, parseYoutubeUrl } from './youtube-url.js';
+import { normalizeYoutubeUrl, parseYoutubeUrl } from './youtube/url.js';
 import type { PlatformAdapter, LiveStatusResult, StreamUrlResult } from './adapter.js';
 import type { Quality } from '../types/index.js';
-import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from './xiaohongshu-url.js';
-import { normalizeDouyinUrl, parseDouyinRoomId } from './douyin-url.js';
+import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from './xiaohongshu/url.js';
+import { normalizeDouyinUrl, parseDouyinRoomId } from './douyin/url.js';
+import { normalizeBilibiliUrl, validateBilibiliUrl } from './bilibili/url.js';
 
 /**
  * Fake 平台适配器：可编程开播/未开播/受限/错误序列，并生成最小可播放 FLV。
@@ -37,17 +38,16 @@ export class FakePlatformAdapter implements PlatformAdapter {
     if (this.platform === "youtube") return normalizeYoutubeUrl(raw);
     if (this.platform === 'xiaohongshu') return normalizeXiaohongshuUrl(raw);
     if (this.platform === 'douyin') return normalizeDouyinUrl(raw);
-    return raw.trim().replace(/[?#].*$/, '').replace(/\/+$/, '');
+    return normalizeBilibiliUrl(raw);
   }
 
   validateUrl(raw: string): boolean {
     if (this.platform === "youtube") return parseYoutubeUrl(raw) !== null;
     if (this.platform === 'xiaohongshu') return parseXiaohongshuUrl(raw) !== null;
-    const url = raw.trim();
     // 与真实适配器口径一致，便于 fake 模式下按 URL 自动识别平台。
     return this.platform === 'bilibili'
-      ? /^https?:\/\/(live\.bilibili\.com|m\.live\.bilibili\.com|bilibili\.com)\/\d+/.test(url)
-      : parseDouyinRoomId(url) !== null;
+      ? validateBilibiliUrl(raw)
+      : parseDouyinRoomId(raw) !== null;
   }
 }
 

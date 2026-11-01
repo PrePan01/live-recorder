@@ -1,22 +1,22 @@
 import { fileURLToPath } from "node:url";
-import { youtubeProxy } from "./youtube-network.js";
+import { youtubeProxy } from "./network.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { trackFfmpeg } from "../recorder/ffmpeg-registry.js";
-import { AppError } from "../types/error.js";
+import { trackFfmpeg } from "../../recorder/ffmpeg-registry.js";
+import { AppError } from "../../types/error.js";
 
 export function youtubeBinary(): string {
   const name = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const bundled = path.join(path.dirname(process.execPath), name);
   const development = fileURLToPath(
-    new URL(`../../../frontend/src-tauri/.bundle/${name}`, import.meta.url),
+    new URL(`../../../../frontend/src-tauri/.bundle/${name}`, import.meta.url),
   );
   const bundledDirectory = path.join(path.dirname(process.execPath), 'youtube-runtime', 'yt-dlp_macos');
-  const developmentDirectory = fileURLToPath(new URL('../../../frontend/src-tauri/.bundle/youtube-runtime/yt-dlp_macos', import.meta.url));
+  const developmentDirectory = fileURLToPath(new URL('../../../../frontend/src-tauri/.bundle/youtube-runtime/yt-dlp_macos', import.meta.url));
   return (
     process.env.LR_YTDLP_PATH ||
     (process.platform === 'darwin' && existsSync(bundledDirectory) ? bundledDirectory : undefined) ||

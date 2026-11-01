@@ -1,5 +1,5 @@
 import { promisify } from "node:util";
-import { AppError } from "../types/error.js";
+import { AppError } from "../../types/error.js";
 
 export function parseSystemProxy(
   text: string,

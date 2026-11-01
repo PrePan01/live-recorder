@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveBin } from '../dist/utils/ffmpeg.js';
-import { YoutubeAdapter } from '../dist/platform/youtube.js';
+import { YoutubeAdapter } from '../dist/platform/youtube/index.js';
 import { YoutubeRecordingEngine } from '../dist/recorder/youtube-recorder.js';
 const url = process.argv[2];
 if (!url) throw new Error('Usage: youtube-startup-benchmark.mjs <public-live-url> [label]');

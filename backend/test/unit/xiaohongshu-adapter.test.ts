@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { XiaohongshuAdapter, parseXhsState } from '../../src/platform/xiaohongshu.js';
-import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../src/platform/xiaohongshu-url.js';
+import { XiaohongshuAdapter, parseXhsState } from '../../src/platform/xiaohongshu/index.js';
+import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../src/platform/xiaohongshu/url.js';
 import { createXiaohongshuDanmakuAdapter } from '../../src/danmaku/adapters/xiaohongshu.js';
 import { validateXiaohongshuCookie, checkXiaohongshuCookieStatus } from '../../src/security/xiaohongshu-cookie.js';
 import { resetUnknownStatusCounter, unknownStatusSnapshot } from '../../src/platform/status-fallback.js';

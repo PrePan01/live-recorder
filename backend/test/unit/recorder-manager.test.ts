@@ -2062,7 +2062,7 @@ describe("persistent network recovery", () => {
 
 describe('Xiaohongshu broadcast-bound recovery', () => {
   it('finishes the recorded broadcast when profile discovery is unavailable and carries the actual stream session ID', async () => {
-    const { XiaohongshuAdapter } = await import('../../src/platform/xiaohongshu.js');
+    const { XiaohongshuAdapter } = await import('../../src/platform/xiaohongshu/index.js');
     const clock = new FakeClock();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-xhs-end-'));
     const services = buildServices({ dbPath: ':memory:', clock });

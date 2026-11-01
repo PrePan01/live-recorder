@@ -1,6 +1,6 @@
 import { checkYoutubeCookieStatus } from "../../security/youtube-cookie.js";
 import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
-import { normalizeYoutubeCookies } from "../../platform/youtube-runtime.js";
+import { normalizeYoutubeCookies } from "../../platform/youtube/runtime.js";
 import { access, mkdir, readdir, writeFile, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';

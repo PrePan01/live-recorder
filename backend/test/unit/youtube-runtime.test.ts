@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { spawnYoutube, terminateYoutube, youtubeError } from '../../src/platform/youtube-runtime.js';
+import { spawnYoutube, terminateYoutube, youtubeError } from '../../src/platform/youtube/runtime.js';
 import type { ChildProcess } from 'node:child_process';
 
 const children: ChildProcess[] = [];

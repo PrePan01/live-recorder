@@ -1,5 +1,5 @@
 import { AppError } from '../types/error.js';
-import { XHS_UA } from '../platform/xiaohongshu.js';
+import { XHS_UA } from '../platform/xiaohongshu/index.js';
 
 export function normalizeXiaohongshuCookie(raw: string): string {
   return raw.trim().replace(/^cookie\s*:\s*/i, '');

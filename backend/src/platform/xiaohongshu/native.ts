@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AppError } from '../types/error.js';
+import { AppError } from '../../types/error.js';
 import type { FastifyInstance } from 'fastify';
 
 export interface XhsNativeResponse { status: number; text: string }

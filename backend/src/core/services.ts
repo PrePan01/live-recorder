@@ -1,13 +1,14 @@
 import { QmsgQueue } from '../notifications/qmsg.js';
 import { QMSG_KEY } from '../security/keys.js';
-import { YoutubeAdapter } from "../platform/youtube.js";
+import { YoutubeAdapter } from "../platform/youtube/index.js";
 import { YoutubeRecordingEngine } from "../recorder/youtube-recorder.js";
 import { YOUTUBE_COOKIE_KEY } from "../security/keys.js";
-import { saveXiaohongshuSource } from '../platform/xiaohongshu-source-store.js';
+import { saveXiaohongshuSource } from '../platform/xiaohongshu/source-store.js';
+import { XiaohongshuSourceRepository } from '../db/repositories/xiaohongshu-source.repo.js';
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
-import { XiaohongshuNativeBroker } from "../platform/xiaohongshu-native.js";
-import { XiaohongshuAdapter } from "../platform/xiaohongshu.js";
+import { XiaohongshuNativeBroker } from "../platform/xiaohongshu/native.js";
+import { XiaohongshuAdapter } from "../platform/xiaohongshu/index.js";
 import { DanmakuManager } from "../danmaku/manager.js";
 import { QualityHealthService } from "./quality-health.js";
 import { ClipQueueManager } from "./clip-queue.js";
@@ -28,8 +29,8 @@ import {
   XIAOHONGSHU_COOKIE_KEY,
 } from "../security/keys.js";
 import { FakePlatformAdapter } from "../platform/fake-adapter.js";
-import { BilibiliAdapter } from "../platform/bilibili.js";
-import { DouyinAdapter } from "../platform/douyin.js";
+import { BilibiliAdapter } from "../platform/bilibili/index.js";
+import { DouyinAdapter } from "../platform/douyin/index.js";
 import { FakeRecordingEngine } from "../recorder/fake-engine.js";
 import { StreamRecordingEngine } from "../recorder/stream-recorder.js";
 import { FakeDiskGuard } from "../storage/disk-guard.js";
@@ -180,6 +181,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const fakeEngine = new FakeRecordingEngine(clock);
 
   const xhsNative = new XiaohongshuNativeBroker();
+  const xhsSources = new XiaohongshuSourceRepository(db);
   const adapters =
     mode === "real"
       ? {
@@ -190,11 +192,11 @@ export function buildServices(opts: BuildOptions = {}): Services {
           bilibili: new BilibiliAdapter() as PlatformAdapter,
           douyin: new DouyinAdapter() as PlatformAdapter,
           xiaohongshu: new XiaohongshuAdapter(fetch, {
-            load: profile => (db.prepare('SELECT room_url FROM xiaohongshu_sources WHERE profile_url = ?').get(profile) as { room_url: string } | undefined)?.room_url,
+            load: profile => xhsSources.load(profile),
             save: (profile, url) => saveXiaohongshuSource(db, profile, url),
-            profileForRoom: url => (db.prepare('SELECT profile_url FROM xiaohongshu_sources WHERE room_url = ?').get(url) as { profile_url: string } | undefined)?.profile_url,
-            loadProfile: profile => (db.prepare('SELECT profile_request_url FROM xiaohongshu_sources WHERE profile_url = ?').get(profile) as { profile_request_url?: string } | undefined)?.profile_request_url,
-            saveProfile: (profile, url) => { db.prepare('INSERT INTO xiaohongshu_sources (profile_url, room_url, profile_request_url) VALUES (?, ?, ?) ON CONFLICT(profile_url) DO UPDATE SET profile_request_url=excluded.profile_request_url').run(profile, '', url); },
+            profileForRoom: url => xhsSources.profileForRoom(url),
+            loadProfile: profile => xhsSources.loadProfile(profile),
+            saveProfile: (profile, url) => xhsSources.saveProfile(profile, url),
           }, (url, signal, cookie) => {
             const session = /(?:^|;\s*)web_session=([^;\s]+)/.exec(cookie ?? '')?.[1];
             return xhsNative.request(url, signal, session ? createHash('sha256').update(session).digest('hex') : undefined);

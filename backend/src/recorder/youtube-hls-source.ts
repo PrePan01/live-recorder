@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomBytes, createHash } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { youtubeFetch } from '../platform/youtube-network.js';
+import { youtubeFetch } from '../platform/youtube/network.js';
 import type { YoutubeHlsTrack } from './youtube-source.js';
 
 const PLAYLIST_LIMIT = 2 * 1024 * 1024;

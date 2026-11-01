@@ -1,13 +1,17 @@
-import { familyBySemantics, unknownStatusFallback } from './status-fallback.js';
-import { normalizeDouyinUrl, parseDouyinRoomId } from './douyin-url.js';
-import { AppError } from "../types/error.js";
-import type { Quality } from "../types/index.js";
+import {
+  familyBySemantics,
+  unknownStatusFallback,
+} from "../status-fallback.js";
+import { DouyinEnterLog } from "./enter-log.js";
+import { normalizeDouyinUrl, parseDouyinRoomId } from "./url.js";
+import { AppError } from "../../types/error.js";
+import type { Quality } from "../../types/index.js";
 import type {
   LiveStatusResult,
   PlatformAdapter,
   StreamUrlResult,
   RecordingSourceResult,
-} from "./adapter.js";
+} from "../adapter.js";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -136,13 +140,32 @@ function classifyStatusError(
   }
   if (code === 10001 || /service unavailable/i.test(message)) {
     return new AppError(
-      "PLATFORM_CHANGED",
+      "PLATFORM_SERVER_ERROR",
       "抖音接口暂时繁忙，请稍后重试",
-      { retryable: true },
+      {
+        retryable: true,
+        details: {
+          scope: "douyin-enter",
+          code,
+          hint: enterHint(json).slice(0, 160),
+        },
+      },
     );
   }
   // 第二层：语义族归类（文本路优先）。认识语义就不再落通用中性兜底。
-  const family = familyBySemantics({ code, hint: message, scope: "douyin-enter" });
+  const family = familyBySemantics({
+    code,
+    hint: message,
+    scope: "douyin-enter",
+  });
+  // 共享兜底的历史错误码不能把抖音的繁忙语义重新变成“接口变更”。
+  // 使用现有服务端异常码，后台检测可沿用已有平台退避，录制仍持续恢复。
+  if (family?.code === "PLATFORM_CHANGED" && family.retryable) {
+    return new AppError("PLATFORM_SERVER_ERROR", family.message, {
+      retryable: true,
+      ...(family.details ? { details: family.details } : {}),
+    });
+  }
   if (family) return family;
   const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
   if (credentialLike || !hasCookie) {
@@ -155,7 +178,11 @@ function classifyStatusError(
     );
   }
   // 第一层兜底：未知 body 码说中性真话（原码+平台提示透传），不再断言接口变动。
-  return unknownStatusFallback({ code, hint: message.slice(0, 120), scope: "douyin-enter" });
+  return unknownStatusFallback({
+    code,
+    hint: message.slice(0, 120),
+    scope: "douyin-enter",
+  });
 }
 
 /** enter 响应里平台侧的提示文案（message/prompts），用于区分限流/结束等语义。 */
@@ -190,18 +217,16 @@ function hasLiveEntryWithoutStreamUrl(json: DouyinEnterResponse): boolean {
   );
 }
 
-function logEnterShape(
+function enterShape(
   roomId: string,
   json: DouyinEnterResponse,
   outcome: string,
-): void {
+): string {
   const entries = json.data?.data;
   const entry = entries?.[0];
   const flv = entry?.stream_url?.flv_pull_url;
   const hint = enterHint(json);
-  console.warn(
-    `[douyin-enter] room=${roomId} status_code=${json.status_code ?? "absent"} entries=${entries ? entries.length : "missing"} entryStatus=${entry?.status ?? "-"} flvKeys=${flv ? Object.keys(flv).length : "none"} outcome=${outcome} hint=${hint.slice(0, 120)}`,
-  );
+  return `[douyin-enter] room=${roomId} status_code=${json.status_code ?? "absent"} entries=${entries ? entries.length : "missing"} entryStatus=${entry?.status ?? "-"} flvKeys=${flv ? Object.keys(flv).length : "none"} outcome=${outcome} hint=${hint.slice(0, 120)}`;
 }
 
 function isNetworkError(err: unknown): boolean {
@@ -216,6 +241,7 @@ function isNetworkError(err: unknown): boolean {
 
 export class DouyinAdapter implements PlatformAdapter {
   readonly platform = "douyin" as const;
+  private readonly enterLog = new DouyinEnterLog();
 
   private nickCache = new Map<
     string,
@@ -241,14 +267,11 @@ export class DouyinAdapter implements PlatformAdapter {
   ) {}
 
   /**
-   * 主播昵称解析：抖音 enter 接口结构变更后不再返回 user.nickname，
+   * 主播解析：抖音 enter 接口结构变更后不再返回 user.nickname，
    * 改为从直播间页面（live.douyin.com/<roomId>）解析 data-anchor-info/SSR 中的主播昵称。
-   * 带 TTL 缓存避免每次检测都拉大页面。
-   *
-   * 必须携带会话 Cookie：匿名请求会被抖音挡在“验证码中间页”，页面里既没有
+   * 必须携带会话 Cookie
    * data-anchor-info 也没有 nickname 字段，昵称解析必然失败（退化成用直播间标题充当昵称）。
    * 该页面与 enter 接口同属 live.douyin.com，使用同一份凭证不新增信任边界。
-   *
    * 同一次抓取顺带解析头像（avatar/avatar_thumb，仅收 http(s) 直链）——昵称/头像同源同缓存。
    * enter 接口有高清头像时由调用方直接使用；nicknameHint 存在时无需再拉页面。
    */
@@ -358,10 +381,6 @@ export class DouyinAdapter implements PlatformAdapter {
     return parseDouyinRoomId(roomUrl);
   }
 
-  /**
-   * 同一条车道有多个等待者时按到达顺序唤醒；interactive 车道永远先于 background，
-   * 保证用户主动取流只排在“正在跑的那一个”请求后面，而不是整批检测后面。
-   */
   private async runEnterRequest<T>(
     lane: EnterLane,
     request: () => Promise<T>,
@@ -488,14 +507,26 @@ export class DouyinAdapter implements PlatformAdapter {
         const data = await this.fetchRoomInfo(roomId, cookie, lane);
         // 开播状态先于 CDN 拉流地址发布是正常的短暂中间态。立即复查一次，
         // 避免把它误判为授权失效；若仍未就绪，交给下一轮常规检测继续重试。
-        if (!hasLiveEntryWithoutStreamUrl(data)) return data;
+        if (!hasLiveEntryWithoutStreamUrl(data)) {
+          if (
+            isNotLiveResponse(data) ||
+            (data.status_code === 0 &&
+              typeof data.data?.data?.[0]?.status === "number")
+          ) {
+            this.enterLog.recovered(roomId);
+          }
+          return data;
+        }
         lastError = new AppError(
           "NETWORK_UNAVAILABLE",
           "直播刚开播，正在等待平台生成流地址，请稍后重试",
           { retryable: true },
         );
         if (attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) {
-          logEnterShape(roomId, data, "LIVE_WITHOUT_STREAM_URL");
+          this.enterLog.warn(
+            roomId,
+            enterShape(roomId, data, "LIVE_WITHOUT_STREAM_URL"),
+          );
           throw lastError;
         }
       } catch (err) {
@@ -565,7 +596,7 @@ export class DouyinAdapter implements PlatformAdapter {
       // 没有房间条目 = 这个房间当前不在播（未开播 / 刚下播），不是接口变了。
       if (isNotLiveResponse(data)) return { status: "offline" };
       const appErr = classifyStatusError(data, Boolean(cookie));
-      logEnterShape(roomId, data, appErr.code);
+      this.enterLog.warn(roomId, enterShape(roomId, data, appErr.code));
       return {
         status:
           appErr.code === "PLATFORM_ACCESS_RESTRICTED" ||
@@ -644,10 +675,6 @@ export class DouyinAdapter implements PlatformAdapter {
     };
   }
 
-  /**
-   * #128 标题回退：主源缺标题/昵称时，用安全占位（不阻断录制）。
-   * 验证过的回退源 = 房间号兜底占位；如需二级平台源可在 adapter 内扩展。
-   */
   private async titleFallback(
     roomId: string,
     _cookie?: string,
@@ -695,21 +722,71 @@ export class DouyinAdapter implements PlatformAdapter {
     return this.streamFromRoomInfo(data, roomId, quality, cookie);
   }
 
-  async resolveRecordingSource(roomUrl: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult> {
+  async resolveRecordingSource(
+    roomUrl: string,
+    quality: Quality,
+    cookie?: string,
+  ): Promise<RecordingSourceResult> {
     const roomId = this.parseRoomId(roomUrl);
-    if (!roomId) return { status: "error", error: new AppError("ROOM_LINK_INVALID", "无效的直播间链接", {}).toObject() };
-    if (!cookie) return { status: "restricted", error: new AppError("PLATFORM_ACCESS_RESTRICTED", "平台访问受限，请检查抖音授权", { retryable: false }).toObject() };
+    if (!roomId)
+      return {
+        status: "error",
+        error: new AppError(
+          "ROOM_LINK_INVALID",
+          "无效的直播间链接",
+          {},
+        ).toObject(),
+      };
+    if (!cookie)
+      return {
+        status: "restricted",
+        error: new AppError(
+          "PLATFORM_ACCESS_RESTRICTED",
+          "平台访问受限，请检查抖音授权",
+          { retryable: false },
+        ).toObject(),
+      };
     try {
-      const data = await this.fetchRoomInfoWithRetry(roomId, cookie, "interactive");
-      if (isNotLiveResponse(data) || (data.status_code === 0 && data.data?.data?.[0]?.status !== undefined && data.data.data[0].status !== 2)) return { status: "offline" };
-      return { status: "live", stream: this.streamFromRoomInfo(data, roomId, quality, cookie) };
+      const data = await this.fetchRoomInfoWithRetry(
+        roomId,
+        cookie,
+        "interactive",
+      );
+      if (
+        isNotLiveResponse(data) ||
+        (data.status_code === 0 &&
+          data.data?.data?.[0]?.status !== undefined &&
+          data.data.data[0].status !== 2)
+      )
+        return { status: "offline" };
+      return {
+        status: "live",
+        stream: this.streamFromRoomInfo(data, roomId, quality, cookie),
+      };
     } catch (error) {
-      const cause = error instanceof AppError ? error : new AppError("NETWORK_UNAVAILABLE", "平台请求失败", { retryable: true });
-      return { status: cause.code === "PLATFORM_ACCESS_RESTRICTED" || cause.code === "DOUYIN_COOKIE_EXPIRED" ? "restricted" : "error", error: cause.toObject() };
+      const cause =
+        error instanceof AppError
+          ? error
+          : new AppError("NETWORK_UNAVAILABLE", "平台请求失败", {
+              retryable: true,
+            });
+      return {
+        status:
+          cause.code === "PLATFORM_ACCESS_RESTRICTED" ||
+          cause.code === "DOUYIN_COOKIE_EXPIRED"
+            ? "restricted"
+            : "error",
+        error: cause.toObject(),
+      };
     }
   }
 
-  private streamFromRoomInfo(data: DouyinEnterResponse, roomId: string, quality: Quality, cookie?: string): StreamUrlResult {
+  private streamFromRoomInfo(
+    data: DouyinEnterResponse,
+    roomId: string,
+    quality: Quality,
+    cookie?: string,
+  ): StreamUrlResult {
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
       // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
@@ -720,7 +797,7 @@ export class DouyinAdapter implements PlatformAdapter {
           { retryable: false },
         );
       const appErr = classifyStatusError(data, Boolean(cookie));
-      logEnterShape(roomId, data, appErr.code);
+      this.enterLog.warn(roomId, enterShape(roomId, data, appErr.code));
       throw appErr;
     }
     const entry = arr[0];

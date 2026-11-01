@@ -1,4 +1,4 @@
-import { saveXiaohongshuSource } from '../../platform/xiaohongshu-source-store.js';
+import { saveXiaohongshuSource } from '../../platform/xiaohongshu/source-store.js';
 import type { DB } from "../connection.js";
 
 export interface Migration {

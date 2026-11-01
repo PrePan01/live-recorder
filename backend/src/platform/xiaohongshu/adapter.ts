@@ -1,7 +1,7 @@
-import { AppError, type Quality } from '../types/index.js';
-import type { PlatformAdapter, LiveStatusResult, RecordingSourceResult, StreamUrlResult } from './adapter.js';
-import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from './xiaohongshu-url.js';
-import { unknownStatusFallback } from './status-fallback.js';
+import { AppError, type Quality } from '../../types/index.js';
+import type { PlatformAdapter, LiveStatusResult, RecordingSourceResult, StreamUrlResult } from '../adapter.js';
+import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from './url.js';
+import { unknownStatusFallback } from '../status-fallback.js';
 import { createHash } from 'node:crypto';
 
 export const XHS_UA = 'ios/7.830 (ios 17.0; ; iPhone 15 (A2846/A3089/A3090/A3092))';

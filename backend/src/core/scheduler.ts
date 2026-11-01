@@ -807,7 +807,9 @@ export class Scheduler {
       this.createCheckAlert(
         room,
         err,
-        status.status === "restricted" ? "warning" : "error",
+        status.status === "restricted" ||
+          (room.platform === "douyin" && err.code === "ROOM_CONTENT_UNAVAILABLE")
+          ? "warning" : "error",
       );
       return;
     }

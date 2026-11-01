@@ -4,14 +4,14 @@ import type {
   StreamUrlResult,
   RecordingSourceResult,
   Quality,
-} from "./adapter.js";
-import { AppError } from "../types/error.js";
-import { normalizeYoutubeUrl, parseYoutubeUrl } from "./youtube-url.js";
+} from "../adapter.js";
+import { AppError } from "../../types/error.js";
+import { normalizeYoutubeUrl, parseYoutubeUrl } from "./url.js";
 import {
   extractYoutube,
   YOUTUBE_SNAPSHOT_TTL_MS,
   type YoutubeInfo,
-} from "./youtube-runtime.js";
+} from "./runtime.js";
 
 const HEIGHTS: Record<Quality, number> = {
   original: Infinity,

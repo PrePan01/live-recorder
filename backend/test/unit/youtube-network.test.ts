@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const request = vi.hoisted(() => vi.fn<typeof fetch>(async () => new Response('{}')));
 vi.mock('undici', () => ({ fetch: request, ProxyAgent: class { close() { return Promise.resolve(); } } }));
-import { youtubeFetch } from '../../src/platform/youtube-network.js';
+import { youtubeFetch } from '../../src/platform/youtube/network.js';
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 it('bridges a foreign SDK Request into URL, headers and body bytes for proxy fetch', async () => {

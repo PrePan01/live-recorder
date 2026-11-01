@@ -14,7 +14,7 @@ import {
   spawnYoutube,
   terminateYoutube,
   youtubeError,
-} from "../platform/youtube-runtime.js";
+} from "../platform/youtube/runtime.js";
 import { resolveBin } from "../utils/ffmpeg.js";
 import { trackFfmpeg } from "./ffmpeg-registry.js";
 import {

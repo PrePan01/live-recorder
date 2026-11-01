@@ -1,12 +1,13 @@
-import { familyBySemantics, unknownStatusFallback } from "./status-fallback.js";
-import { AppError } from "../types/error.js";
-import type { ErrorObject, Quality } from "../types/index.js";
+import { familyBySemantics, unknownStatusFallback } from "../status-fallback.js";
+import { normalizeBilibiliUrl, parseBilibiliRoomId, validateBilibiliUrl } from "./url.js";
+import { AppError } from "../../types/error.js";
+import type { ErrorObject, Quality } from "../../types/index.js";
 import type {
   LiveStatusResult,
   PlatformAdapter,
   StreamUrlResult,
   RecordingSourceResult,
-} from "./adapter.js";
+} from "../adapter.js";
 
 const BILI_QN: Record<Quality, number> = {
   original: 10000,
@@ -125,24 +126,15 @@ export class BilibiliAdapter implements PlatformAdapter {
   ) {}
 
   normalizeUrl(raw: string): string {
-    return raw
-      .trim()
-      .replace(/[?#].*$/, "")
-      .replace(/\/+$/, "");
+    return normalizeBilibiliUrl(raw);
   }
 
   validateUrl(raw: string): boolean {
-    return /^https?:\/\/(live\.bilibili\.com|m\.live\.bilibili\.com|bilibili\.com)\/\d+/.test(
-      raw.trim(),
-    );
+    return validateBilibiliUrl(raw);
   }
 
   parseRoomId(roomUrl: string): number | null {
-    const m =
-      /^https?:\/\/(?:live\.bilibili\.com|m\.live\.bilibili\.com|bilibili\.com)\/(\d+)/.exec(
-        this.normalizeUrl(roomUrl),
-      );
-    return m ? Number(m[1]) : null;
+    return parseBilibiliRoomId(roomUrl);
   }
 
   private async runPlayRequest<T>(
