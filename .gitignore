@@ -5,7 +5,6 @@ dist/
 .env
 bilibili/
 douyin/
-# 平台源码目录不属于直播录像产物。
 !backend/src/platform/bilibili/
 !backend/src/platform/bilibili/**
 !backend/src/platform/douyin/
@@ -17,3 +16,4 @@ release/
 .commandcode/
 .codegraph/
 .mcp.json
+reports/
