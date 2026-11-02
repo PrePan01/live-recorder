@@ -5,7 +5,7 @@ import {
   type HealthProbe,
   type StreamHealth,
 } from "../../src/core/quality-health.js";
-import { RecorderManager } from "../../src/core/recorder-manager.js";
+import { RecordingSessions } from "../../src/core/recorder/session-controller.js";
 
 const running: QualityHealthService[] = [];
 afterEach(() => {
@@ -131,7 +131,7 @@ describe("录制健康状态", () => {
     });
   });
   it("探针不把历史重试次数当作当前写入错误", () => {
-    const probe = RecorderManager.prototype.healthProbe.call({
+    const probe = RecordingSessions.prototype.healthProbe.call({
       active: new Map([
         [
           "room1",
@@ -146,9 +146,9 @@ describe("录制健康状态", () => {
           },
         ],
       ]),
-      previewSessions: new Map(),
+      host: { previewSessions: new Map() },
       services: { recordings: { get: () => null } },
-    } as unknown as RecorderManager);
+    } as unknown as RecordingSessions);
     expect(probe[0]).toMatchObject({ writeError: false, mediaTsMs: null });
   });
   it("同一降级状态中原因变化也会更新", () => {

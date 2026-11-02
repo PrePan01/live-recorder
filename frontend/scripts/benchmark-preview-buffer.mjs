@@ -8,8 +8,11 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 const input = process.argv[2];
-if (!input) throw new Error('Usage: benchmark-preview-buffer.mjs <startup-benchmark.log>');
-const samples = readFileSync(input, 'utf8').split('\n').filter(Boolean)
+if (!input) throw new Error('Usage: benchmark-preview-buffer.mjs <startup-benchmark.log> | --synthetic');
+const samples = input === '--synthetic' ? [{ label: 'synthetic-bursty-input', previewChunks: [
+  { elapsedMs: 100, bytes: 32 * 1024 },
+  { elapsedMs: 1600, bytes: 256 * 1024 },
+] }] : readFileSync(input, 'utf8').split('\n').filter(Boolean)
   .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
 const trace = samples.find(item => item.previewChunks?.length && !item.error);
 if (!trace) throw new Error('No successful preview trace');
@@ -31,7 +34,7 @@ function load(file) {
 }
 const IOController = load(fileURLToPath(new URL('../node_modules/mpegts.js/src/io/io-controller.js', import.meta.url))).default;
 const { livePreviewConfig } = load(fileURLToPath(new URL('../src/utils/player/livePreviewConfig.ts', import.meta.url)));
-function replay(platform) {
+function replay(platform, legacy = false) {
   now = 1;
   let loader, firstInputMs = null, total = 0;
   class Loader {
@@ -41,6 +44,7 @@ function replay(platform) {
   }
   const io = new IOController({ url: 'ws://localhost/trace-replay' }, {
     ...livePreviewConfig(false, undefined, platform), seekType: 'range', customLoader: Loader,
+    ...(legacy ? { enableStashBuffer: true, stashInitialSize: 128 * 1024 } : {}),
   });
   io.onDataArrival = buffer => { firstInputMs ??= now; return buffer.byteLength; };
   io.open();
@@ -52,7 +56,8 @@ function replay(platform) {
   io.destroy();
   return { firstInputMs, extraWaitMs: firstInputMs == null ? null : firstInputMs - trace.previewChunks[0].elapsedMs };
 }
-const before = replay(undefined), after = replay('youtube');
-console.log(JSON.stringify({ label: trace.label, metadataMs: trace.metadataMs,
+const before = replay('bilibili', true), after = replay('bilibili');
+const platforms = Object.fromEntries(['bilibili', 'douyin', 'xiaohongshu', 'youtube'].map(platform => [platform, replay(platform)]));
+console.log(JSON.stringify({ metric: 'first demux input; not decoded/presented video', label: trace.label, metadataMs: trace.metadataMs,
   firstBackendPreviewMs: trace.previewMs, chunks: trace.previewChunks.length,
-  before, after, savedParserWaitMs: before.firstInputMs == null ? null : before.firstInputMs - after.firstInputMs }, null, 2));
+  before, after, platforms, savedParserWaitMs: before.firstInputMs == null ? null : before.firstInputMs - after.firstInputMs }, null, 2));

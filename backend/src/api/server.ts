@@ -1,5 +1,5 @@
 import { registerQmsgRoutes } from './routes/qmsg.js';
-import { registerXhsNativeRoutes } from "../platform/xiaohongshu-native.js";
+import { registerXhsNativeRoutes } from "../platform/xiaohongshu/native.js";
 import Fastify, { type FastifyInstance } from 'fastify';
 import { defaultMessageFor, AppError, httpStatusFor } from '../types/error.js';
 import type { Services } from '../core/services.js';

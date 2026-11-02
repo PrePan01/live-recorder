@@ -1,7 +1,7 @@
-import { youtubeFetch } from "../../platform/youtube-network.js";
+import { youtubeFetch } from "../../platform/youtube/network.js";
 import type { DanmakuAdapter, DanmakuMessage } from "../types.js";
-import type { YoutubeAdapter } from "../../platform/youtube.js";
-import { normalizeYoutubeCookies } from "../../platform/youtube-runtime.js";
+import type { YoutubeAdapter } from "../../platform/youtube/index.js";
+import { normalizeYoutubeCookies } from "../../platform/youtube/runtime.js";
 
 export function youtubeCookieHeader(cookie: string): string {
   return normalizeYoutubeCookies(cookie)

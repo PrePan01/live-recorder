@@ -1,7 +1,7 @@
 import { validateRoomPolicy, type RoomPolicyPatch } from '../../config/room-policy.js';
-import { saveXiaohongshuSource } from '../../platform/xiaohongshu-source-store.js';
+import { saveXiaohongshuSource } from '../../platform/xiaohongshu/source-store.js';
 import { writeFile } from 'node:fs/promises';
-import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../platform/xiaohongshu-url.js';
+import { normalizeXiaohongshuUrl, parseXiaohongshuUrl } from '../../platform/xiaohongshu/url.js';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { AppSettings, Platform } from '../../types/index.js';

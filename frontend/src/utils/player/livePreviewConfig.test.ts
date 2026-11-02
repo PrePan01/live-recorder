@@ -32,7 +32,7 @@ function ioController() {
   ) => { onDataArrival: (buffer: ArrayBuffer, start: number) => number; open(): void; destroy(): void };
 }
 
-it.each([false, true])('YouTube bootstrap reaches the actual demux consumer without waiting for the next HLS batch (thumbnail=%s)', (thumbnail) => {
+it.each([false, true])('all platforms deliver small bootstrap packets without waiting for more bytes (thumbnail=%s)', (thumbnail) => {
   const IOController = ioController();
   const loaders: Array<{ onDataArrival: (data: ArrayBuffer, start: number, total: number) => void }> = [];
   class Loader {
@@ -41,7 +41,7 @@ it.each([false, true])('YouTube bootstrap reaches the actual demux consumer with
     constructor() { loaders.push(this); }
     open() {} isWorking() { return false; } destroy() {}
   }
-  for (const platform of ['bilibili', 'youtube'] as const) {
+  for (const platform of ['bilibili', 'douyin', 'xiaohongshu', 'youtube', undefined] as const) {
     const consumer = vi.fn((buffer: ArrayBuffer) => buffer.byteLength);
     const io = new IOController({ url: 'ws://localhost/preview' }, {
       ...livePreviewConfig(thumbnail, undefined, platform), seekType: 'range', customLoader: Loader,
@@ -51,17 +51,14 @@ it.each([false, true])('YouTube bootstrap reaches the actual demux consumer with
     const loader = loaders.at(-1)!;
     // A small complete bootstrap/GOP arrives, then the upstream goes quiet.
     const first = new ArrayBuffer(32 * 1024);
-    if (platform === 'youtube') consumer.mockImplementationOnce(buffer => buffer.byteLength - 4);
+    consumer.mockImplementationOnce(buffer => buffer.byteLength - 4);
     loader.onDataArrival(first, 0, first.byteLength);
-    if (platform === 'youtube') {
-      expect(consumer).toHaveBeenCalledWith(first, 0);
-      // Disabling the byte threshold must still retain an incomplete FLV tag
-      // and prepend it to the next network packet, without dropping bytes.
-      const next = new ArrayBuffer(3);
-      loader.onDataArrival(next, first.byteLength, first.byteLength + 3);
-      expect(consumer.mock.calls[1][0].byteLength).toBe(7);
-    }
-    else expect(consumer).not.toHaveBeenCalled();
+    expect(consumer).toHaveBeenCalledWith(first, 0);
+    // Disabling the byte threshold must still retain an incomplete FLV tag
+    // and prepend it to the next network packet, without dropping bytes.
+    const next = new ArrayBuffer(3);
+    loader.onDataArrival(next, first.byteLength, first.byteLength + 3);
+    expect(consumer.mock.calls[1][0].byteLength).toBe(7);
     io.destroy();
   }
 });

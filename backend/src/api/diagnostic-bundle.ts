@@ -18,6 +18,7 @@ export interface FrontendDiagnosticInput {
   firstSeenAt?: unknown;
   lastSeenAt?: unknown;
   count?: unknown;
+  aggregationScope?: unknown;
   context?:
     | { appVersion?: unknown; runtime?: unknown; recentAction?: unknown }
     | unknown;
@@ -158,6 +159,10 @@ export function frontendDiagnosticSummary(
         lastSeenAt:
           typeof input.lastSeenAt === "number" ? input.lastSeenAt : null,
         count: typeof input.count === "number" ? input.count : 0,
+        aggregationScope:
+          input.aggregationScope === "app-version" && string(context.appVersion, 160)
+            ? "app-version"
+            : "legacy",
         context: {
           appVersion: redactDiagnosticText(
             string(context.appVersion, 160) ?? "",
@@ -281,6 +286,7 @@ export async function createDiagnosticBundle(
     `本包包含：已脱敏的后端日志、前端异常摘要、运行环境信息${includePerformance ? "、最近启动性能记录" : ""}${includeRooms ? "、直播间诊断快照（平台、公开房间号及状态）" : ""}。`,
     `本包不包含：密码、Cookie、令牌、邮箱地址、原始直播间链接、自定义直播间名称、标签、设置、录像、数据库数据和本地文件路径${includeRooms ? "" : "，以及任何直播间信息"}。`,
     "诊断包仅在本机生成，不会被应用自动上传；请仅在需要协助排查问题时主动分享。",
+    "前端异常中 aggregationScope=app-version 表示按 context.appVersion 独立累计，堆栈与上下文对应最近一次发生；legacy 表示旧版历史累计，可能跨版本，其中版本与上下文仅代表旧版首次记录，无法精确拆分。runtime.json 中的版本是本次导出时的后端版本，不代表所有历史异常的版本。",
     "",
   ].join("\n");
   const entries = [

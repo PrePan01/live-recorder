@@ -1,9 +1,9 @@
-import { saveXiaohongshuSource } from '../../src/platform/xiaohongshu-source-store.js';
+import { saveXiaohongshuSource } from '../../src/platform/xiaohongshu/source-store.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { buildApp } from '../../src/api/server.js';
 import { XIAOHONGSHU_COOKIE_KEY } from '../../src/security/keys.js';
-import { XiaohongshuAdapter } from '../../src/platform/xiaohongshu.js';
+import { XiaohongshuAdapter } from '../../src/platform/xiaohongshu/index.js';
 import { FakeClock } from '../../src/core/clock.js';
 
 const headers = { host: '127.0.0.1:43120' };

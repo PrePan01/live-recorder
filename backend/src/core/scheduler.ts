@@ -21,6 +21,8 @@ import {
 } from "./live-prediction.js";
 
 const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
+const RECORDING_MISSING_COVER_INTERVAL_MS = 60_000;
+const RECORDING_COVER_INTERVAL_MS = 5 * 60_000;
 /**
  * 开播检测平台级上限
  */
@@ -72,7 +74,7 @@ export class Scheduler {
         const room = event.data;
         const previous = this.pollingRooms.get(room.id);
         this.pollingRooms.set(room.id, room);
-        const signature = JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, manager.isRoomActive(room.id)]);
+        const signature = JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, manager.isRoomActive(room.id), Boolean(room.liveCoverUrl)]);
         if (this.policySignatures.get(room.id) !== signature) {
           this.policySignatures.set(room.id, signature);
           this.scheduleNext(room.platform);
@@ -113,7 +115,7 @@ export class Scheduler {
     const rooms = this.services.rooms.list();
     this.pollingRooms = new Map(rooms.map(room => [room.id, room]));
     this.policySignatures = new Map(rooms.map(room => [room.id,
-      JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, this.manager.isRoomActive(room.id)])]));
+      JSON.stringify([room.enabled, room.checkIntervalSec, room.platform, this.manager.isRoomActive(room.id), Boolean(room.liveCoverUrl)])]));
     // 启动后先完成一轮检测，再开始按平台间隔轮询；恢复服务无需额外等待一个周期。
     for (const platform of PLATFORMS) {
       void this.runPlatformOnce(platform)
@@ -143,6 +145,13 @@ export class Scheduler {
   }
 
   private baseIntervalMs(room: Room, settings = this.services.settings.load()): number {
+    // Recording metadata refreshes share the polling queue and its load/backoff guards.
+    // A missing opening cover needs a faster retry than an already available cover.
+    if (this.manager.isRoomActive(room.id)) {
+      return room.liveCoverUrl
+        ? RECORDING_COVER_INTERVAL_MS
+        : RECORDING_MISSING_COVER_INTERVAL_MS;
+    }
     return resolveCheckInterval(room, settings).value * 1000;
   }
 
@@ -151,7 +160,7 @@ export class Scheduler {
     const settings = this.services.settings.load();
     return detectionLoad(
       [...this.pollingRooms.values()]
-        .filter((room) => room.enabled)
+        .filter((room) => room.enabled || this.manager.isRoomActive(room.id))
         .map((room) => this.baseIntervalMs(room, settings)),
     );
   }
@@ -163,7 +172,7 @@ export class Scheduler {
    */
   private roomDuesAt(platform: Platform, nowMs: number): Map<string, number> {
     const settings = this.services.settings.load();
-    const enabled = [...this.pollingRooms.values()].filter(room => room.enabled);
+    const enabled = [...this.pollingRooms.values()].filter(room => room.enabled || this.manager.isRoomActive(room.id));
     const intervals = new Map(enabled.map(room => [room.id, this.baseIntervalMs(room, settings)]));
     const load = detectionLoad([...intervals.values()]).perMinute;
     const rooms = enabled.filter(room => room.platform === platform);
@@ -230,7 +239,7 @@ export class Scheduler {
     if (!this.running || this.platformTasks.has(platform)) return;
     const previous = this.handles.get(platform);
     if (previous !== undefined) this.services.clock.clearTimeout(previous);
-    if (platform === 'youtube' && ![...this.pollingRooms.values()].some(room => room.platform === 'youtube' && room.enabled)) {
+    if (platform === 'youtube' && ![...this.pollingRooms.values()].some(room => room.platform === 'youtube' && (room.enabled || this.manager.isRoomActive(room.id)))) {
       this.handles.delete(platform);
       return;
     }
@@ -241,7 +250,7 @@ export class Scheduler {
     if (!(platform === 'douyin' && this.douyinCookieExpired)) {
       const dues = this.roomDuesAt(platform, now);
       for (const room of this.pollingRooms.values()) {
-        if (!room.enabled || room.platform !== platform || this.manager.isRoomActive(room.id) || this.checking.has(room.id)) continue;
+        if ((!room.enabled && !this.manager.isRoomActive(room.id)) || room.platform !== platform || this.checking.has(room.id)) continue;
         next = Math.min(next, dues.get(room.id) ?? now);
       }
     }
@@ -274,12 +283,12 @@ export class Scheduler {
     // de-duplication in checkRoom and a bounded per-platform concurrency.
     await this.runChecks(scheduledRooms, { scheduled: true });
     const rooms = this.services.rooms
-      .listEnabled()
-      .filter((r) => r.platform === platform);
+      .list()
+      .filter((r) => r.platform === platform && (r.enabled || this.manager.isRoomActive(r.id)));
     const nowMs = this.services.clock.now();
     const dues = this.roomDuesAt(platform, nowMs);
     await this.runChecks(rooms.filter(room =>
-      !this.manager.isRoomActive(room.id) && nowMs >= (dues.get(room.id) ?? 0),
+      nowMs >= (dues.get(room.id) ?? 0),
     ));
   }
 
@@ -807,7 +816,9 @@ export class Scheduler {
       this.createCheckAlert(
         room,
         err,
-        status.status === "restricted" ? "warning" : "error",
+        status.status === "restricted" ||
+          (room.platform === "douyin" && err.code === "ROOM_CONTENT_UNAVAILABLE")
+          ? "warning" : "error",
       );
       return;
     }

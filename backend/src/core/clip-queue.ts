@@ -2,7 +2,7 @@ import type { Services } from "./services.js";
 import type { ClipQueueItem } from "../db/repositories/clip-queue.repo.js";
 import { AppError } from "../types/error.js";
 import { sanitizeRenameBase } from "../storage/file-organizer.js";
-import { validateClipName } from "./recorder-manager.js";
+import { validateClipName } from "./clip-validation.js";
 import { recordedSeconds, assertSegmentRange } from "./recording-range.js";
 
 /** Persistent task snapshots; markers are never consumed by submission. */

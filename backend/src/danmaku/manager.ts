@@ -1,7 +1,7 @@
 import { createYoutubeDanmakuAdapter } from "./adapters/youtube.js";
-import { YoutubeAdapter } from "../platform/youtube.js";
+import { YoutubeAdapter } from "../platform/youtube/index.js";
 import { createXiaohongshuDanmakuAdapter } from "./adapters/xiaohongshu.js";
-import { XiaohongshuAdapter } from "../platform/xiaohongshu.js";
+import { XiaohongshuAdapter } from "../platform/xiaohongshu/index.js";
 import { randomUUID } from "node:crypto";
 import { AppError } from "../types/error.js";
 import { SharedDanmakuAdapter } from "./shared-adapter.js";
