@@ -520,21 +520,32 @@ describe("RecorderManager", () => {
 
     services.scheduler.start();
     await settle(clock, 60_000);
-    await waitFor(() => services.recordings.activeCount() === 2);
+    const rooms = [r1, r2, r3];
+    await waitFor(() =>
+      services.recordings.activeCount() === 2 &&
+      rooms.some((room) => services.rooms.get(room.id)!.lastError?.code === "CONCURRENT_LIMIT_REACHED"),
+    );
 
     expect(services.manager.activeRoomIds()).toHaveLength(2);
     expect(services.recordings.activeCount()).toBe(2);
-    const r3State = services.rooms.get(r3.id)!;
-    expect(r3State.monitorState).toBe("idle");
-    expect(r3State.lastError?.code).toBe("CONCURRENT_LIMIT_REACHED");
+    // Polling follows room display order; any two rooms may acquire the slots.
+    const active = rooms.filter((room) => services.manager.isRoomActive(room.id));
+    const denied = rooms.filter((room) => !services.manager.isRoomActive(room.id));
+    expect(active).toHaveLength(2);
+    expect(denied).toHaveLength(1);
+    const deniedState = services.rooms.get(denied[0]!.id)!;
+    expect(deniedState.monitorState).toBe("idle");
+    expect(deniedState.lastError?.code).toBe("CONCURRENT_LIMIT_REACHED");
     expect(
       services.alerts
         .list()
         .some((a) => a.errorCode === "CONCURRENT_LIMIT_REACHED"),
     ).toBe(true);
-    expect(services.manager.isRoomActive(r1.id)).toBe(true);
-    expect(services.manager.isRoomActive(r2.id)).toBe(true);
+    for (const room of active) {
+      expect(services.rooms.get(room.id)!.monitorState).toBe("recording");
+    }
     services.scheduler.stop();
+    await Promise.all(rooms.map((room) => services.manager.stopRecording(room.id)));
   });
 
   it("starts at most maxConcurrentRecordings when rooms go live concurrently", async () => {
