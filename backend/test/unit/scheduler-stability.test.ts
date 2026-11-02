@@ -38,6 +38,92 @@ const failure = {
 type Status = Awaited<ReturnType<PlatformAdapter['checkLiveStatus']>>;
 
 describe('scheduler stability', () => {
+  it('retries missing recording covers after a minute, then refreshes every five minutes via SSE', async () => {
+    const { services, rooms, check, advance } = setup('bilibili', 1, 1);
+    const room = rooms[0]!;
+    vi.spyOn(services.manager, 'isRoomActive').mockImplementation(id => id === room.id);
+    const start = vi.spyOn(services.manager, 'maybeStartRecording');
+    const covers: Array<string | null | undefined> = [];
+    services.events.on(event => {
+      if (event.type === 'room:updated' && event.data.id === room.id) covers.push(event.data.liveCoverUrl);
+    });
+    check.mockResolvedValue({ status: 'live' });
+    services.scheduler.start();
+    await settle();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(services.rooms.get(room.id)?.liveCoverUrl).toBeNull();
+    await advance(59_999);
+    expect(check).toHaveBeenCalledTimes(1);
+    const first = 'https://i0.hdslb.com/first.png';
+    check.mockResolvedValue({ status: 'live', liveCoverUrl: first });
+    await advance(1);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(services.rooms.get(room.id)?.liveCoverUrl).toBe(first);
+    expect(covers).toContain(first);
+    expect(services.scheduler.detectionLoadSnapshot().perMinute).toBe(1);
+    await advance(299_999);
+    expect(check).toHaveBeenCalledTimes(2);
+    const second = 'https://i0.hdslb.com/second.png';
+    check.mockResolvedValue({ status: 'live', liveCoverUrl: second });
+    await advance(1);
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(services.rooms.get(room.id)?.liveCoverUrl).toBe(second);
+    expect(covers).toContain(second);
+    check.mockResolvedValue({ status: 'live' });
+    await advance(300_000);
+    expect(check).toHaveBeenCalledTimes(4);
+    expect(services.rooms.get(room.id)?.liveCoverUrl).toBe(second);
+    expect(services.rooms.get(room.id)?.monitorState).toBe('recording');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('refreshes manually recording disabled rooms and resumes their ordinary policy after recording stops', async () => {
+    const { services, rooms, check, advance } = setup('youtube', 1, 10);
+    const room = rooms[0]!;
+    let active = true;
+    vi.spyOn(services.manager, 'isRoomActive').mockImplementation(id => id === room.id && active);
+    services.rooms.update(room.id, { enabled: false });
+    check.mockResolvedValue({ status: 'live' });
+    services.scheduler.start();
+    await settle();
+    await advance(60_000);
+    expect(check).toHaveBeenCalledTimes(2);
+    active = false;
+    services.events.emit({ type: 'room:updated', data: services.rooms.get(room.id)! });
+    await advance(300_000);
+    expect(check).toHaveBeenCalledTimes(2);
+    services.events.emit({ type: 'room:updated', data: services.rooms.update(room.id, { enabled: true }) });
+    await advance(1);
+    expect(check).toHaveBeenCalledTimes(3);
+    await advance(10_000);
+    expect(check).toHaveBeenCalledTimes(4);
+  });
+
+  it('deduplicates manual checks with recording refreshes and preserves recording state on failures and offline results', async () => {
+    const { services, rooms, check, advance } = setup('bilibili', 1);
+    const room = rooms[0]!;
+    vi.spyOn(services.manager, 'isRoomActive').mockImplementation(id => id === room.id);
+    const start = vi.spyOn(services.manager, 'maybeStartRecording');
+    check.mockResolvedValue({ status: 'live' });
+    services.scheduler.start();
+    await settle();
+    let release!: (status: Status) => void;
+    check.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const manual = services.scheduler.triggerImmediateCheck(room.id);
+    await settle();
+    await advance(60_000);
+    expect(check).toHaveBeenCalledTimes(2);
+    release(failure);
+    await manual;
+    await settle();
+    expect(services.rooms.get(room.id)?.monitorState).toBe('recording');
+    check.mockResolvedValue({ status: 'offline' });
+    await advance(60_000);
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(services.rooms.get(room.id)?.monitorState).toBe('recording');
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('keeps pending staggered deadlines after another room finishes and after rescheduling', async () => {
     const { services, check, advance } = setup('xiaohongshu', 3);
     services.scheduler.start();
