@@ -8,10 +8,9 @@ import { AppEventBus } from './events.js';
 export type NotifyEvent = 'live_started' | 'recording_started' | 'recording_ended' | 'recording_failed' | 'recording_remux_failed' | 'disk_space_low' | 'upload_failed' | 'pipeline_completed' | 'pipeline_failed';
 type PreferenceKey = 'liveStarted' | 'recordingStarted' | 'recordingEnded' | 'recordingFailed' | 'diskSpaceLow' | 'uploadFailed' | 'pipelineCompleted' | 'pipelineFailed';
 
-const SUBJECTS: Record<NotifyEvent, string> = {
+const SUBJECTS: Record<Exclude<NotifyEvent, 'live_started'>, string> = {
   pipeline_completed: '[直播录制助手] 后处理完成：{title}',
   pipeline_failed: '[直播录制助手] 后处理失败或部分失败：{title}',
-  live_started: '[直播录制助手] 您订阅的 {title} 已开播{recordingSuffix}',
   recording_started: '[直播录制助手] 录制已开始：{title}',
   recording_ended: '[直播录制助手] 录制已结束：{title}',
   recording_failed: '[直播录制助手] 录制失败：{title}',
@@ -20,8 +19,7 @@ const SUBJECTS: Record<NotifyEvent, string> = {
   upload_failed: '[直播录制助手] 上传失败：{title}',
 };
 // QQ uses a compact plain-text template; transport filtering is confined to this channel.
-const QQ_MESSAGES: Record<NotifyEvent, string> = {
-  live_started: '开播提醒：{title} 已开播{recordingSuffix}',
+const QQ_MESSAGES: Record<Exclude<NotifyEvent, 'live_started'>, string> = {
   recording_started: '录制开始：{title}',
   recording_ended: '录制结束：{title}',
   recording_failed: '录制失败：{title}，请打开应用查看详情',
@@ -60,24 +58,27 @@ export class Notifier {
     private roomSubscribed: (roomId: string) => boolean = () => true,
   ) {}
 
-  async notify(event: NotifyEvent, roomId: string, context: { title?: string; autoRecordingStarted?: boolean } = {}): Promise<void> {
+  async notify(event: NotifyEvent, roomId: string, context: { title?: string; streamTitle?: string | null; autoRecordingStarted?: boolean } = {}): Promise<void> {
     if (this.stopping) return;
-    const subject = SUBJECTS[event]
-      .replace('{title}', context.title ?? '直播')
-      .replace('{recordingSuffix}', context.autoRecordingStarted ? '，自动录制已开始' : '');
+    const title = context.title ?? '直播';
+    const streamTitle = context.streamTitle?.trim();
+    const streamTitleSuffix = streamTitle ? `：${streamTitle}` : '';
+    const recordingSuffix = context.autoRecordingStarted ? '，自动录制已开始' : '';
+    const subject = event === 'live_started'
+      ? `[直播录制助手] 开播提醒：${title} 已开播${streamTitleSuffix}${recordingSuffix}`
+      : SUBJECTS[event].replace('{title}', title);
     const preferenceKey = PREFERENCE_KEY[event];
     const preferences = this.preferences();
     const desktopKey = `desktop:${roomId}:${event}`;
     if (preferences.desktop[preferenceKey] && this.canSend(desktopKey)) {
-      this.events.emit({ type: 'desktop:notification', data: { title: 'Live Recorder提醒', body: subject.replace(/^\[直播录制助手\]\s*/, '') } });
+      const body = event === 'live_started' ? subject : subject.replace(/^\[直播录制助手\]\s*/, '');
+      this.events.emit({ type: 'desktop:notification', data: { title: 'Live Recorder提醒', body } });
       this.lastSent.set(desktopKey, this.clock.now());
     }
     const qqKey = `qq:${roomId}:${event}`;
     if (this.qmsg && this.qqEnabled() && preferences.qq?.[preferenceKey] && this.canSend(qqKey) && !this.qqPending.has(qqKey)) {
       this.qqPending.add(qqKey);
-      const qqText = '[直播录制助手] ' + QQ_MESSAGES[event]
-        .replace('{title}', context.title ?? '直播')
-        .replace('{recordingSuffix}', context.autoRecordingStarted ? '，自动录制已开始' : '');
+      const qqText = event === 'live_started' ? subject : '[直播录制助手] ' + QQ_MESSAGES[event].replace('{title}', title);
       void this.qmsg.enqueue(qqText, () => !this.stopping && this.qqEnabled() && this.preferences().qq[preferenceKey] && (event !== 'live_started' || this.roomSubscribed(roomId)))
         .then(result => { if (result === 'submitted') this.lastSent.set(qqKey, this.clock.now()); })
         .catch(() => {

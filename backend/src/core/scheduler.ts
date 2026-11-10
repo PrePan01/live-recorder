@@ -721,6 +721,7 @@ export class Scheduler {
         if (shouldNotifyLiveStarted()) {
           await this.services.notifier.notify("live_started", room.id, {
             title: checkedRoom.displayName,
+            streamTitle: status.streamTitle ?? null,
           });
         }
         return;
@@ -758,6 +759,7 @@ export class Scheduler {
       if (shouldNotifyLiveStarted()) {
         await this.services.notifier.notify("live_started", room.id, {
           title: this.services.rooms.get(room.id)?.displayName ?? checkedRoom.displayName,
+          streamTitle: status.streamTitle ?? null,
           autoRecordingStarted,
         });
       }

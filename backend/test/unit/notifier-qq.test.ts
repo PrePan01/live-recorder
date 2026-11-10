@@ -38,11 +38,18 @@ describe("QQ notification delivery", () => {
     "pipeline_failed",
   ])("sends and deduplicates %s even with email disabled", async (event) => {
     const { services, queue, notifier, send } = setup();
-    await notifier.notify(event, "room", { title: "主播" });
-    await notifier.notify(event, "room", { title: "主播" });
+    const context = { title: "主播", streamTitle: "今晚的直播" };
+    await notifier.notify(event, "room", context);
+    await notifier.notify(event, "room", context);
     await settle();
     expect(send).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0]).toBeDefined();
+    if (event === "live_started") {
+      expect(send).toHaveBeenCalledWith(
+        "key",
+        "[直播录制助手] 开播提醒：主播 已开播：今晚的直播",
+        expect.any(AbortSignal),
+      );
+    }
     await queue.dispose();
     services.db.close();
   });

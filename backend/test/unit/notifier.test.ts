@@ -21,14 +21,14 @@ describe('Notifier', () => {
 
     await notifier.notify('live_started', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]!.subject).toContain('您订阅的 主播A 已开播');
+    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 开播提醒：主播A 已开播');
 
     await notifier.notify('live_started', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(1);
 
-    await notifier.notify('live_started', 'room2', { title: '主播B', autoRecordingStarted: true });
+    await notifier.notify('live_started', 'room2', { title: '主播B', streamTitle: '今晚的直播', autoRecordingStarted: true });
     expect(mailer.sent).toHaveLength(2);
-    expect(mailer.sent[1]!.subject).toContain('自动录制已开始');
+    expect(mailer.sent[1]!.subject).toBe('[直播录制助手] 开播提醒：主播B 已开播：今晚的直播，自动录制已开始');
 
     await notifier.notify('recording_failed', 'room1', { title: '主播A' });
     expect(mailer.sent).toHaveLength(3);
