@@ -21,11 +21,11 @@ const room = {
   tags: [], liveCoverUrl: 'https://cdn.example.com/cover.jpg',
 } as unknown as Room;
 const noop = () => undefined;
-const render = (currentRoom = room, layout: 'card' | 'list' = 'card') => renderToStaticMarkup(
+const render = (currentRoom = room, layout: 'card' | 'list' = 'card', autoRecordEnabled = false) => renderToStaticMarkup(
   createElement(RoomCard, {
     room: currentRoom, layout, onManageRoom: noop, onWatch: noop, onCheck: noop,
     onStop: noop, onRecord: noop, onFavorite: noop, onEnableFloating: noop,
-    autoRecordEnabled: false, qualityPreference: null, bilibiliAuthorized: true,
+    autoRecordEnabled, qualityPreference: null, bilibiliAuthorized: true,
     floatingEnabled: false, floatingReady: true,
   }),
 );
@@ -47,4 +47,16 @@ it('continues to omit covers for offline rooms and list rows', () => {
   expect(render({ ...room, lastLiveStatus: 'offline' })).not.toContain('lr-room-cover');
   expect(render(room, 'list')).not.toContain('lr-room-cover');
   expect(coverSrc).not.toHaveBeenCalled();
+});
+
+it.each(['card', 'list'] as const)('shows enabled plan tags alongside automatic recording in %s layout', (layout) => {
+  const enabled = render({ ...room, enabledPlans: { schedule: true, keyword: true } }, layout, true);
+  expect(enabled).toContain('自动录制');
+  expect(enabled).toContain('定时计划');
+  expect(enabled).toContain('关键词计划');
+
+  const scheduleOnly = render({ ...room, enabledPlans: { schedule: true, keyword: false } }, layout);
+  expect(scheduleOnly).toContain('定时计划');
+  expect(scheduleOnly).not.toContain('关键词计划');
+  expect(render(room, layout)).not.toContain('定时计划');
 });

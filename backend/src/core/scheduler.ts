@@ -469,12 +469,7 @@ export class Scheduler {
   }
 
   private emitRoom(roomId: string): void {
-    const room = this.services.rooms.get(roomId);
-    if (!room) return;
-    this.services.events.emit({
-      type: "room:updated",
-      data: this.manager.enrichRoom(room),
-    });
+    this.manager.emitRoomUpdate(roomId);
   }
 
   /** 在大于等于三分钟的检测时报出三次相同的错误，就发送告警通知 */
@@ -712,7 +707,16 @@ export class Scheduler {
         checkedRoom.autoRecordStoppedSession,
       );
       // 定时计划是独立的开录指令，不受持续自动录制开关及本场手动停止标记限制。
-      if (!opts.scheduled && (!effectiveAuto || autoStoppedThisSession)) {
+      const startFromExistingTriggers = opts.scheduled || (effectiveAuto && !autoStoppedThisSession);
+      const keywordMatch =
+        !startFromExistingTriggers &&
+        !autoStoppedThisSession &&
+        checkedRoom.enabled &&
+        !status.streamTitleIsPlaceholder &&
+        this.services.keywordPlans.matches(room.id, status.streamTitle);
+      // 检测在途时房间可能已被停用或删除。命中后复用开录路径本就需要的最新房间。
+      const keywordRoom = keywordMatch ? this.services.rooms.get(room.id) : null;
+      if (!startFromExistingTriggers && (!keywordRoom?.enabled || keywordRoom.autoRecordStoppedSession)) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
           lastError: null,
@@ -728,7 +732,7 @@ export class Scheduler {
       }
       let autoRecordingStarted = false;
       try {
-        const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
+        const refreshedRoom = keywordRoom ?? this.services.rooms.get(room.id) ?? checkedRoom;
         autoRecordingStarted = await this.manager.maybeStartRecording(
           { ...refreshedRoom, monitorState: "checking" },
           status,

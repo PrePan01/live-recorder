@@ -68,6 +68,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
           DELETE FROM upload_jobs;
           DELETE FROM export_jobs;
           DELETE FROM recording_schedules;
+          DELETE FROM recording_keyword_plans;
           DELETE FROM youtube_sources; DELETE FROM xiaohongshu_sources;
           DELETE FROM room_tags;
           DELETE FROM tags;
@@ -86,6 +87,8 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
         `);
       })();
       committed = true;
+      services.schedules.clearIndex();
+      services.keywordPlans.clearIndex();
       services.manager.clearPendingConfirmations();
       services.statsCache = undefined;
       services.notifier.reset();

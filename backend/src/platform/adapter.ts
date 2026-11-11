@@ -7,6 +7,8 @@ export interface LiveStatusResult {
   streamSessionId?: string;
   platformStartedAt?: string;
   streamTitle?: string;
+  /** The displayed stream title was synthesized because the platform supplied none. */
+  streamTitleIsPlaceholder?: boolean;
   displayName?: string;
   avatarUrl?: string;
   liveCoverUrl?: string;

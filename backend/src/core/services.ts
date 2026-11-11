@@ -49,6 +49,7 @@ import { AlertRepository } from "../db/repositories/alert.repo.js";
 import { TagRepository } from "../db/repositories/tag.repo.js";
 import { DiagnosticRepository } from "../db/repositories/diagnostic.repo.js";
 import { ScheduleRepository } from "../db/repositories/schedule.repo.js";
+import { KeywordPlanRepository } from "../db/repositories/keyword-plan.repo.js";
 import { LiveEventRepository } from "../db/repositories/live-event.repo.js";
 import { PredictionCalibrationRepository } from "../db/repositories/prediction-calibration.repo.js";
 import os from "node:os";
@@ -85,6 +86,7 @@ export interface Services {
   tags: TagRepository;
   diagnostics: DiagnosticRepository;
   schedules: ScheduleRepository;
+  keywordPlans: KeywordPlanRepository;
   /** V5 统计短缓存（服务端聚合，TTL 5s，键=查询参数）。 */
   statsCache: { key: string; cachedAt: number; body: unknown } | undefined;
   secretStore: SecretStore;
@@ -236,6 +238,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
       undefined as unknown as import("./verification-queue.js").VerificationQueue,
     diagnostics: new DiagnosticRepository(db),
     schedules: new ScheduleRepository(db),
+    keywordPlans: new KeywordPlanRepository(db),
     statsCache: undefined,
     secretStore,
     diskGuard: new FakeDiskGuard(),

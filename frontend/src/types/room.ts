@@ -58,6 +58,7 @@ export interface Room {
   tags: Tag[];
   /** 生效策略值（后端 resolveRoomPolicy 单出口回传）；来源=最近显式覆盖层（T2）。 */
   effective?: RoomEffectivePolicy;
+  enabledPlans?: { schedule: boolean; keyword: boolean };
   uploadEnabled: boolean | null;
   titleSource: TitleSource | null;
   titleUpdatedAt: string | null;

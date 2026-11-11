@@ -501,6 +501,7 @@ export function registerRoomRoutes(
     await services.manager.stopPreviewStream(id);
     await services.manager.disableHighlightBuffer(id);
     services.rooms.remove(id);
+    services.keywordPlans.forgetRoom(id);
     services.scheduler.reschedule();
     services.events.emit({
       type: "room:updated",

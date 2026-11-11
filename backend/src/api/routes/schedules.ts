@@ -141,6 +141,7 @@ export function registerScheduleRoutes(
       : null;
     const updated = services.schedules.update(schedule.id, { nextRunAt: next });
     services.events.emit({ type: "schedule:updated", data: updated });
+    services.manager.emitRoomUpdate(id);
     return reply.status(201).send({ schedule: updated });
   });
 
@@ -164,6 +165,7 @@ export function registerScheduleRoutes(
       nextRunAt: input.enabled ? next : null,
     });
     services.events.emit({ type: "schedule:updated", data: schedule });
+    services.manager.emitRoomUpdate(id);
     return reply.send({ schedule });
   });
 
@@ -179,6 +181,7 @@ export function registerScheduleRoutes(
       type: "schedule:updated",
       data: { ...existing, enabled: false },
     });
+    services.manager.emitRoomUpdate(id);
     return reply.status(204).send();
   });
 }

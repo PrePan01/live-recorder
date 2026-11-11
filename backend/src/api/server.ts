@@ -21,6 +21,7 @@ import { registerPipelineRoutes } from './routes/pipeline.js';
 import { registerNamingRoutes } from './routes/naming.js';
 import { registerOpenListRoutes } from './routes/openlist.js';
 import { registerScheduleRoutes } from './routes/schedules.js';
+import { registerKeywordPlanRoutes } from './routes/keyword-plans.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerResetRoutes } from './routes/reset.js';
 import { SSEBroadcaster, registerSse } from './sse.js';
@@ -173,6 +174,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   registerNamingRoutes(app, services);
   registerOpenListRoutes(app, services);
   registerScheduleRoutes(app, services);
+  registerKeywordPlanRoutes(app, services);
   registerExportRoutes(app, services);
   registerResetRoutes(app, services, () => writes.size);
   registerSse(app, services, sse);
