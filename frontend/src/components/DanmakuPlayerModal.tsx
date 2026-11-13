@@ -16,10 +16,13 @@ import {
   createRecordingMarker,
   deleteRecordingMarker,
 } from "../api/recordings";
+import { saveRecordingScreenshot } from "../api/screenshots";
 import { useSegmentMarking } from "../hooks/useSegmentMarking";
 import { useSegmentExport } from "../hooks/useSegmentExport";
+import { useVideoScreenshot } from "../hooks/useVideoScreenshot";
 import { SegmentExportActions } from "./SegmentExportActions";
 import { SegmentMarkActions } from "./SegmentMarkActions";
+import { VideoScreenshotButton } from "./VideoScreenshotButton";
 import { fetchDanmakuWindow } from "../api/danmakuWindow";
 import { exportDanmaku } from "../api/danmaku";
 import { pickDirectory } from "../api/config";
@@ -125,7 +128,14 @@ export function DanmakuPlayerModal({
   const [seekTick, setSeekTick] = useState(0);
   const [markers, setMarkers] = useState<RecordingMarker[]>([]);
   const [videoGaps, setVideoGaps] = useState<RecordingGap[]>([]);
-  const [failed, setFailed] = useState(false);
+  const [playbackError, setPlaybackError] = useState<
+    "checking" | "missing" | "generic" | null
+  >(null);
+  const failed = playbackError !== null;
+  const reportPlaybackError = useCallback(() => {
+    setPlaybackError((error) => error ?? "checking");
+    setPlaying(false);
+  }, []);
   // 文件回看展示读取结果；采集器在录制结束后 unavailable 不代表文件不可用。
   const [danmakuStatusText, setDanmakuStatusText] = useState("弹幕加载中");
   const compatiblePlayback =
@@ -145,6 +155,25 @@ export function DanmakuPlayerModal({
     (compatiblePlayback
       ? `?second=${playbackStart}&generation=${playbackGeneration}`
       : "");
+
+  useEffect(() => {
+    if (playbackError !== "checking") return;
+    const controller = new AbortController();
+    const finish = (error: "missing" | "generic") => {
+      if (!controller.signal.aborted) {
+        setPlaybackError((current) => current === "checking" ? error : current);
+      }
+    };
+    // 原生 video 的错误事件没有 HTTP 状态码。用 HEAD 检查文件是否仍在。
+    void fetch(fileUrl, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((response) => finish(response.status === 404 ? "missing" : "generic"))
+      .catch(() => finish("generic"));
+    return () => controller.abort();
+  }, [fileUrl, playbackError]);
 
   const readPosition = useCallback(() => {
     const video = videoRef.current;
@@ -270,8 +299,7 @@ export function DanmakuPlayerModal({
     player.attachMediaElement(video);
     player.on(mpegts.Events.ERROR, () => {
       if (disposed || video !== videoRef.current) return;
-      setFailed(true);
-      setPlaying(false);
+      reportPlaybackError();
     });
     player.load();
     playerRef.current = player;
@@ -287,6 +315,7 @@ export function DanmakuPlayerModal({
     videoElement,
     compatiblePlayback,
     playbackGeneration,
+    reportPlaybackError,
   ]);
 
   const seek = useCallback(
@@ -336,6 +365,11 @@ export function DanmakuPlayerModal({
     return second;
   }, [failed, readPosition]);
   const positionUnavailable = compatiblePlayback && !playbackReady;
+  const screenshot = useVideoScreenshot(
+    videoElement,
+    !failed && !positionUnavailable,
+    (png) => saveRecordingScreenshot(recordingId, png),
+  );
   const marking = useSegmentMarking(
     recordingId,
     markers,
@@ -501,7 +535,14 @@ export function DanmakuPlayerModal({
       open
       width={960}
       className="lr-danmaku-player-modal"
-      title={<Typography.Text strong>{title}</Typography.Text>}
+      title={
+        <div className="lr-danmaku-player__title">
+          <Typography.Text className="lr-text-ellipsis" strong title={title}>
+            {title}
+          </Typography.Text>
+          <VideoScreenshotButton {...screenshot} />
+        </div>
+      }
       footer={
         <Button size="small" onClick={onClose}>
           关闭
@@ -510,21 +551,24 @@ export function DanmakuPlayerModal({
       onCancel={onClose}
     >
       <div className="lr-danmaku-player__video">
-        {failed ? (
+        {playbackError === "missing" || playbackError === "generic" ? (
           <div className="lr-danmaku-player__error" role="alert">
-            视频加载失败，请关闭后重试
+            {playbackError === "missing"
+              ? "录像文件已被删除"
+              : "视频加载失败，请关闭后重试"}
           </div>
         ) : null}
         <video
           key={compatiblePlayback ? fileUrl : recordingId}
           ref={attachVideo}
           playsInline
+          crossOrigin={isNative ? "anonymous" : undefined}
           src={isNative ? fileUrl : undefined}
           style={{ width: "100%", height: "100%", display: "block" }}
           onPlay={(event) => {
             if (!acceptsMediaEvent(event.currentTarget)) return;
             setPlaying(true);
-            setFailed(false);
+            setPlaybackError(null);
           }}
           onPause={(event) => {
             if (acceptsMediaEvent(event.currentTarget)) setPlaying(false);
@@ -594,8 +638,7 @@ export function DanmakuPlayerModal({
           }}
           onError={(event) => {
             if (!acceptsMediaEvent(event.currentTarget)) return;
-            setFailed(true);
-            setPlaying(false);
+            reportPlaybackError();
           }}
           onClick={togglePlay}
         />

@@ -22,6 +22,7 @@ export type TitleSource = 'adapter' | 'fallback' | 'manual' | 'placeholder';
 export interface Room {
   /** 生效策略（值+来源）：后端唯一出口解析后随房间回传，执行侧同源。 */
   effective?: EffectiveRoomPolicy;
+  enabledPlans?: { schedule: boolean; keyword: boolean };
   id: string;
   platform: Platform;
   url: string;

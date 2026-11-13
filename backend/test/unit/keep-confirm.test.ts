@@ -204,7 +204,7 @@ describe('#220 录制完成「询问是否保留」', () => {
   it('精彩时刻导出失败时清理半成品；已选择不保留则删除记录并推送删除事件', async () => {
     const services = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-failed-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/100', displayName: '精彩时刻' });
     services.rooms.setLiveStatus(room.id, 'live');
     let failExport!: (error: Error) => void;
@@ -219,9 +219,7 @@ describe('#220 录制完成「询问是否保留」', () => {
     const { recordingId } = await services.manager.exportHighlight(room.id, 10);
     expect(services.manager.deferHighlightConfirmation(recordingId, false)).toBe(true);
     failExport(new Error('disk failed'));
-    await sleep(20);
-
-    expect(services.recordings.get(recordingId)).toBeNull();
+    await vi.waitFor(() => expect(services.recordings.get(recordingId)).toBeNull());
     expect(deleted).toContain(recordingId);
   });
 
@@ -229,7 +227,7 @@ describe('#220 录制完成「询问是否保留」', () => {
     const services = newServices();
     const clock = services.clock as FakeClock;
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-complete-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: false });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: false });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/104', displayName: '完成' });
     const manager = services.manager as unknown as {
       highlightBuffers: Map<string, unknown>;
@@ -251,7 +249,7 @@ describe('#220 录制完成「询问是否保留」', () => {
     const services = newServices();
     const clock = services.clock as FakeClock;
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-timeout-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/101', displayName: '卡住' });
     services.rooms.setLiveStatus(room.id, 'live');
     const buffer = {
@@ -264,10 +262,9 @@ describe('#220 录制完成「询问是否保留」', () => {
     const { recordingId } = await services.manager.exportHighlight(room.id, 10);
     expect(services.manager.deferHighlightConfirmation(recordingId, true)).toBe(true);
     clock.advance(HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS + 1);
-    await sleep(20);
+    await vi.waitFor(() => expect(services.recordings.get(recordingId)?.state).toBe('failed'));
 
     const rec = services.recordings.get(recordingId)!;
-    expect(rec.state).toBe('failed');
     expect(rec.highlightExportPending).toBeUndefined();
   });
 
@@ -275,15 +272,17 @@ describe('#220 录制完成「询问是否保留」', () => {
     const services = newServices();
     const clock = services.clock as FakeClock;
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-progress-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/102', displayName: '慢盘' });
     services.rooms.setLiveStatus(room.id, 'live');
     let reportProgress!: (bytes: number) => void;
     let failExport!: (error: Error) => void;
+    let exportSignal: AbortSignal | undefined;
     const buffer = {
       availableSeconds: () => 30,
-      exportTo: async (_output: string, _seconds: number, _signal?: AbortSignal, onProgress?: (bytes: number) => void) =>
+      exportTo: async (_output: string, _seconds: number, signal?: AbortSignal, onProgress?: (bytes: number) => void) =>
         new Promise<never>((_resolve, reject) => {
+          exportSignal = signal;
           reportProgress = onProgress!;
           failExport = reject;
         }),
@@ -294,17 +293,17 @@ describe('#220 录制完成「询问是否保留」', () => {
     clock.advance(HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS - 1);
     reportProgress(64 * 1024);
     clock.advance(HIGHLIGHT_EXPORT_IDLE_TIMEOUT_MS - 1);
+    expect(exportSignal?.aborted).toBe(false);
     expect(services.recordings.get(recordingId)!.state).toBe('awaiting_confirmation');
 
     failExport(new Error('stop test'));
-    await sleep(20);
-    expect(services.recordings.get(recordingId)!.state).toBe('failed');
+    await vi.waitFor(() => expect(services.recordings.get(recordingId)?.state).toBe('failed'));
   });
 
   it('导出完成后的落库异常仍走失败收口，不会因已撤掉 watchdog 而永久挂起', async () => {
     const services = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-highlight-post-export-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/103', displayName: '落库异常' });
     services.rooms.setLiveStatus(room.id, 'live');
     let completeExport!: () => void;
@@ -351,7 +350,7 @@ describe('#220 录制完成「询问是否保留」', () => {
   it('精彩时刻改名遇同名文件：跳过文件名仅改标题，绝不覆盖另一条录像（双平台统一）', async () => {
     const services = newServices();
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-rename-clash-'));
-    services.settings.save({ recordingDirectory: dir, confirmAfterComplete: true });
+    services.settings.save({ ...DEFAULT_SETTINGS, recordingDirectory: dir, confirmAfterComplete: true });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/103', displayName: '撞名' });
     services.rooms.setLiveStatus(room.id, 'live');
     let finishExport!: () => void;

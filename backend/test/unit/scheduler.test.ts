@@ -160,7 +160,7 @@ describe('Scheduler', () => {
       notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
     });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true, liveEmailNotificationEnabled: true });
-    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live' }, { status: 'live' }]);
+    (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live', streamTitle: '今晚聊新游戏' }, { status: 'live', streamTitle: '更新后的标题' }]);
     const notices: Array<{ title: string; body: string }> = [];
     services.events.on((event) => {
       if (event.type === 'desktop:notification') notices.push(event.data);
@@ -170,10 +170,10 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
 
-    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '您订阅的 主播A 已开播' }]);
+    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '[直播录制助手] 开播提醒：主播A 已开播 — 今晚聊新游戏' }]);
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 您订阅的 主播A 已开播');
+    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 开播提醒：主播A 已开播 — 今晚聊新游戏');
     expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
   });
 
@@ -253,7 +253,7 @@ describe('Scheduler', () => {
     const notices: string[] = [];
     services.events.on(event => { if (event.type === 'desktop:notification') notices.push(event.data.body); });
     await services.scheduler.triggerImmediateCheck(room.id);
-    expect(notices).toEqual(['您订阅的 启动失败 已开播']);
+    expect(notices).toEqual(['[直播录制助手] 开播提醒：启动失败 已开播']);
     expect(services.rooms.get(room.id)!.lastError?.code).toBe('RECORDING_START_FAILED');
     services.db.close();
   });
@@ -913,6 +913,30 @@ describe('Scheduler', () => {
     await services.secretStore.delete('douyin.cookie');
     await services.scheduler.triggerImmediateCheck(room.id);
     expect(seenCookie).toBeUndefined();
+  });
+
+  it('ignores an expired response from the previous Douyin account during reauthorization', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/6', displayName: 'C' });
+    const adapter = new FakePlatformAdapter('douyin');
+    services.adapterFor = () => adapter;
+    const previous = Promise.withResolvers<Awaited<ReturnType<PlatformAdapter['checkLiveStatus']>>>();
+    const check = vi.spyOn(adapter, 'checkLiveStatus')
+      .mockImplementationOnce(() => previous.promise)
+      .mockResolvedValue({ status: 'offline' });
+    await services.douyinAuthorization.save('sessionid=a');
+    const oldCheck = services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => check.mock.calls.length === 1);
+    await services.douyinAuthorization.save('sessionid=b');
+    const recheck = services.scheduler.recheckDouyinRoomsAfterCookieUpdate();
+    previous.resolve({
+      status: 'restricted',
+      error: new AppError('DOUYIN_COOKIE_EXPIRED', 'expired', {}).toObject(),
+    });
+    await Promise.all([oldCheck, recheck]);
+    expect(check.mock.calls.map(([, cookie]) => cookie)).toEqual(['sessionid=a', 'sessionid=b']);
+    expect(services.rooms.get(room.id)).toMatchObject({ lastLiveStatus: 'offline', lastError: null });
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(0);
   });
 
   it('immediately exposes missing douyin authorization and clears the warning after authorization recovers', async () => {

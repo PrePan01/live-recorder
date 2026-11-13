@@ -1,29 +1,15 @@
-import { useEffect, useState } from "react";
-import {
-  App,
-  Button,
-  Form,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Switch,
-  Table,
-  TimePicker,
-  Typography,
-} from "antd";
+import { Form, Select, TimePicker, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import dayjs from "dayjs";
+import dayjs, { type Dayjs } from "dayjs";
 import {
   createSchedule,
   deleteSchedule,
   fetchSchedules,
   updateSchedule,
 } from "../../../api/schedule";
-import { describeError } from "../../../utils/error/errorMap";
-import { ApiError } from "../../../types/error";
 import { formatTime } from "../../../utils/format";
 import type { RecordingSchedule, ScheduleInput } from "../../../types/schedule";
+import PlanPanel from "./PlanPanel";
 
 const DAYS = [
   { value: 0, label: "周日" },
@@ -35,184 +21,90 @@ const DAYS = [
   { value: 6, label: "周六" },
 ];
 
-export default function SchedulePanel({ roomId }: { roomId: string }) {
-  const { message } = App.useApp();
-  const [items, setItems] = useState<RecordingSchedule[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<RecordingSchedule | null>(null);
-  const [form] = Form.useForm();
+interface Values {
+  daysOfWeek: ScheduleInput["daysOfWeek"];
+  startTime?: Dayjs;
+  endTime: Dayjs | null;
+  enabled: boolean;
+}
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setItems(await fetchSchedules(roomId));
-    } catch (e) {
-      message.error(
-        e instanceof ApiError
-          ? describeError(e.code, e.message)
-          : "计划加载失败",
-      );
-    } finally {
-      setLoading(false);
-    }
+const columns: ColumnsType<RecordingSchedule> = [
+  {
+    title: "周期",
+    dataIndex: "daysOfWeek",
+    width: 160,
+    render: (days: number[]) =>
+      days.map((d) => DAYS.find((x) => x.value === d)?.label).join("、"),
+  },
+  { title: "开始", dataIndex: "startTime", width: 80 },
+  {
+    title: "结束",
+    dataIndex: "endTime",
+    width: 80,
+    render: (value: string | null) => value ?? "无",
+  },
+  {
+    title: "下次执行",
+    dataIndex: "nextRunAt",
+    width: 150,
+    render: (value: string | null) => (value ? formatTime(value) : "-"),
+  },
+];
+
+function initialValues(plan: RecordingSchedule | null): Values {
+  return {
+    daysOfWeek: plan?.daysOfWeek ?? [1],
+    startTime: plan ? dayjs(`2000-01-01T${plan.startTime}`) : undefined,
+    endTime: plan?.endTime ? dayjs(`2000-01-01T${plan.endTime}`) : null,
+    enabled: plan?.enabled ?? true,
   };
+}
 
-  useEffect(() => {
-    void load();
-  }, [roomId]);
-
-  const openAdd = () => {
-    setEditing(null);
-    form.resetFields();
-    form.setFieldsValue({
-      daysOfWeek: [1],
-    });
-    setModalOpen(true);
+async function save(
+  roomId: string,
+  plan: RecordingSchedule | null,
+  values: Values,
+) {
+  if (!values.startTime) throw new Error("缺少开始时间");
+  const input: ScheduleInput = {
+    daysOfWeek: values.daysOfWeek,
+    startTime: values.startTime.format("HH:mm"),
+    endTime: values.endTime?.format("HH:mm") ?? null,
+    enabled: values.enabled,
   };
+  return plan
+    ? updateSchedule(roomId, plan.id, input)
+    : createSchedule(roomId, input);
+}
 
-  const openEdit = (s: RecordingSchedule) => {
-    setEditing(s);
-    form.setFieldsValue({
-      daysOfWeek: s.daysOfWeek,
-      startTime: dayjs(`2000-01-01T${s.startTime}`),
-      endTime: s.endTime ? dayjs(`2000-01-01T${s.endTime}`) : null,
-      enabled: s.enabled,
-    });
-    setModalOpen(true);
-  };
-
-  const submit = async () => {
-    const values = await form.validateFields();
-    const input: ScheduleInput = {
-      daysOfWeek: values.daysOfWeek,
-      startTime: values.startTime.format("HH:mm"),
-      endTime: values.endTime ? values.endTime.format("HH:mm") : null,
-      enabled: values.enabled ?? true,
-    };
-    try {
-      if (editing) {
-        await updateSchedule(roomId, editing.id, input);
-        message.success("计划已更新");
-      } else {
-        await createSchedule(roomId, input);
-        message.success("计划已创建");
-      }
-      setModalOpen(false);
-      void load();
-    } catch (e) {
-      message.error(
-        e instanceof ApiError ? describeError(e.code, e.message) : "保存失败",
-      );
-    }
-  };
-
-  const toggle = async (s: RecordingSchedule, enabled: boolean) => {
-    try {
-      await updateSchedule(roomId, s.id, {
-        daysOfWeek: s.daysOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        enabled,
-      });
-      void load();
-    } catch (e) {
-      message.error(
-        e instanceof ApiError ? describeError(e.code, e.message) : "操作失败",
-      );
-    }
-  };
-
-  const columns: ColumnsType<RecordingSchedule> = [
-    {
-      title: "周期",
-      dataIndex: "daysOfWeek",
-      width: 160,
-      render: (days: number[]) =>
-        days.map((d) => DAYS.find((x) => x.value === d)?.label).join("、"),
-    },
-    { title: "开始", dataIndex: "startTime", width: 80 },
-    {
-      title: "结束",
-      dataIndex: "endTime",
-      width: 80,
-      render: (v: string | null) => v ?? "无",
-    },
-    {
-      title: "下次执行",
-      dataIndex: "nextRunAt",
-      width: 150,
-      render: (v: string | null) => (v ? formatTime(v) : "-"),
-    },
-    {
-      title: "启用",
-      dataIndex: "enabled",
-      width: 70,
-      render: (v: boolean, s) => (
-        <Switch
-          aria-label="启用该排程"
-          checked={v}
-          onChange={(c) => void toggle(s, c)}
-        />
-      ),
-    },
-    {
-      title: "操作",
-      width: 120,
-      render: (_, s) => (
-        <Space size={0}>
-          <Button size="small" type="link" onClick={() => openEdit(s)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该计划？"
-            onConfirm={() =>
-              void deleteSchedule(roomId, s.id)
-                .then(() => void load())
-                .catch((e) => message.error(describeError(e.code, e.message)))
-            }
-          >
-            <Button size="small" type="link" danger>
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
+export default function SchedulePanel({
+  roomId,
+  onCountChange,
+}: {
+  roomId: string;
+  onCountChange: (count: number) => void;
+}) {
   return (
-    <div>
-      <Space
-        style={{
-          marginBottom: 12,
-          width: "100%",
-          justifyContent: "space-between",
-        }}
-      >
-        <Button size="small" onClick={openAdd}>
-          新增计划
-        </Button>
-      </Space>
-      <Table
-        rowKey="id"
-        size="small"
-        columns={columns}
-        dataSource={items}
-        loading={loading}
-        sticky={{ offsetScroll: 8 }}
-        scroll={{ x: 670 }}
-        pagination={false}
-        locale={{ emptyText: "暂无定时计划" }}
-      />
-      <Modal
-        title={editing ? "编辑计划" : "新增计划"}
-        open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={() => void submit()}
-        destroyOnHidden
-      >
-        <Form form={form} layout="vertical">
+    <PlanPanel
+      roomId={roomId}
+      label="定时计划"
+      columns={columns}
+      scrollWidth={670}
+      load={fetchSchedules}
+      onCountChange={onCountChange}
+      remove={deleteSchedule}
+      save={save}
+      initialValues={initialValues}
+      toggle={(id, plan, enabled) =>
+        updateSchedule(id, plan.id, {
+          daysOfWeek: plan.daysOfWeek,
+          startTime: plan.startTime,
+          endTime: plan.endTime,
+          enabled,
+        })
+      }
+      fields={
+        <>
           <Form.Item
             label="每周重复"
             name="daysOfWeek"
@@ -250,11 +142,8 @@ export default function SchedulePanel({ roomId }: { roomId: string }) {
           <Typography.Paragraph type="secondary">
             按本机时间执行；结束早于开始视为跨天
           </Typography.Paragraph>
-          <Form.Item label="启用" name="enabled" valuePropName="checked">
-            <Switch aria-label="启用" />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+        </>
+      }
+    />
   );
 }

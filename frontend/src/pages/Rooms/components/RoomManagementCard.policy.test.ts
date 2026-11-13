@@ -52,7 +52,7 @@ function render(room: Room) {
   hooks.cursor = 0;
   hooks.effects = [];
   const component = RoomManagementCard as unknown as (props: Record<string, unknown>) => ReactNode;
-  const tree = elements(component({ room, selected: false, onSelect: vi.fn(), onEdit: vi.fn(), onSchedule: vi.fn(), onDelete: vi.fn() }));
+  const tree = elements(component({ room, selected: false, onSelect: vi.fn(), onEdit: vi.fn(), onPlans: vi.fn(), onDelete: vi.fn() }));
   hooks.effects.forEach(effect => effect());
   return {
     busy: tree[0].props["aria-busy"],

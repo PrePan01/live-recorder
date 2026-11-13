@@ -2,7 +2,9 @@ import { statSync } from "node:fs";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import type { InjectOptions } from "fastify";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../../src/config/defaults.js";
 import { FakeClock } from "../../src/core/clock.js";
 import type { PreviewSink } from "../../src/core/recorder-manager.js";
 import { buildServices, type Services } from "../../src/core/services.js";
@@ -22,6 +24,7 @@ import type { AppSettings } from "../../src/types/index.js";
 
 function baseSettings(dir: string): AppSettings {
   return {
+    ...DEFAULT_SETTINGS,
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: "original",
@@ -75,7 +78,7 @@ async function waitForWithClock(
 
 class FakePreview implements PreviewSink {
   frames = new Map<string, number>();
-  closed: { roomId: string; code: number; reason?: "ended" | "stream_lost" }[] =
+  closed: { roomId: string; code: number; reason: "ended" | "stream_lost" | undefined }[] =
     [];
   resets: string[] = [];
   /** 可控 bootstrap：首开竞态用例先返回 null，模拟预览房尚未捕获 FLV 头。 */
@@ -1904,7 +1907,9 @@ describe("shared preview watchdog lifecycle", () => {
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
     await send(55000);
     expect(services.manager.recordingPreviewOffsetSeconds(room.id, rec.id)).toBe(-45);
-    expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(10);
+    await vi.waitFor(() => {
+      expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(10);
+    });
     expect(services.manager.recordingPreviewOffsetSeconds(room.id, "other-recording")).toBeNull();
     await services.manager.stopRecording(room.id);
     await services.manager.stopPreviewStream(room.id);
@@ -1928,7 +1933,7 @@ describe("shared preview watchdog lifecycle", () => {
     expect(services.manager.recordingMediaTailSeconds(room.id, rec.id)).toBe(7);
     const { buildApp } = await import("../../src/api/server.js");
     const { app } = buildApp(services);
-    const inject = (options: Parameters<typeof app.inject>[0]) => app.inject(options);
+    const inject = (options: InjectOptions) => app.inject(options);
     const position = await inject({ method: "GET", url: `/api/v1/recordings/${rec.id}/marker-position`, headers: { host: "127.0.0.1:43120" } });
     expect(position.json()).toMatchObject({ durationSeconds: 7, previewOffsetSeconds: -45 });
     // Raw preview 50.125s means file 5.125s, not four seconds since recording

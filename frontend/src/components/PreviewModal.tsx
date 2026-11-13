@@ -3,7 +3,6 @@ import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
 import { playbackClock } from "../utils/player/playbackClock";
 import {
-  CameraOutlined,
   CloseOutlined,
   CommentOutlined,
   CompressOutlined,
@@ -20,6 +19,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { disableHighlightBuffer } from "../api/rooms";
+import { savePreviewScreenshot } from "../api/screenshots";
+import { useVideoScreenshot } from "../hooks/useVideoScreenshot";
 import { danmakuStateText } from "../stores/danmakuStore";
 import type { Room } from "../types/room";
 import { DanmakuLayer } from "./DanmakuLayer";
@@ -34,8 +35,8 @@ import { usePreviewHighlights } from "./preview/usePreviewHighlights";
 import { usePreviewLayout } from "./preview/usePreviewLayout";
 import { usePreviewMarkers } from "./preview/usePreviewMarkers";
 import { usePreviewRecording } from "./preview/usePreviewRecording";
-import { usePreviewScreenshot } from "./preview/usePreviewScreenshot";
 import { usePreviewSeek } from "./preview/usePreviewSeek";
+import { VideoScreenshotButton } from "./VideoScreenshotButton";
 /**
  * 直播观看弹窗
  */
@@ -153,12 +154,15 @@ export default function PreviewModal({
     previewVideo,
     previewFrameGenerationRef,
   );
-  const screenshot = usePreviewScreenshot(
-    room.id,
+  const screenshot = useVideoScreenshot(
     previewVideo,
-    screenshotFrameReady,
-    Boolean(displayPreview.loading),
-    seekPlayback?.recordingId ?? activeRecordingId ?? displayedTrack?.id,
+    screenshotFrameReady && !displayPreview.loading,
+    (png) =>
+      savePreviewScreenshot(
+        room.id,
+        png,
+        seekPlayback?.recordingId ?? activeRecordingId ?? displayedTrack?.id,
+      ),
   );
   const media = useRecordingMediaPosition(
     activeRecordingId,
@@ -253,17 +257,7 @@ export default function PreviewModal({
           <div className="lr-preview-modal__header">
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
-              <Tooltip title="截图">
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label="截图"
-                  icon={<CameraOutlined />}
-                  disabled={!screenshot.enabled}
-                  loading={screenshot.saving}
-                  onClick={() => void screenshot.takeScreenshot()}
-                />
-              </Tooltip>
+              <VideoScreenshotButton {...screenshot} />
               <Popover
                 trigger="click"
                 placement="bottomRight"

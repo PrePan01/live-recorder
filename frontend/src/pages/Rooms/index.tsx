@@ -11,6 +11,7 @@ import {
   Spin,
   Select,
   Space,
+  Tabs,
   Typography,
 } from "antd";
 import {
@@ -26,6 +27,7 @@ import "./rooms.css";
 import { useRoomStore } from "../../stores/roomStore";
 import { useTagStore } from "../../stores/tagStore";
 import SchedulePanel from "./components/SchedulePanel";
+import KeywordPlanPanel from "./components/KeywordPlanPanel";
 import TagFilterSelect from "../../components/TagFilterSelect";
 import type { Room } from "../../types/room";
 import { ApiError } from "../../types/error";
@@ -52,7 +54,7 @@ export default function Rooms() {
   const [editing, setEditing] = useState<Room | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [scheduleRoom, setScheduleRoom] = useState<Room | null>(null);
+  const [planRoom, setPlanRoom] = useState<Room | null>(null);
   useEffect(() => {
     void fetchRooms().catch(() => message.error("直播间列表加载失败"));
   }, [fetchRooms, message]);
@@ -316,7 +318,7 @@ export default function Rooms() {
                 selected={selectedIds.has(room.id)}
                 onSelect={selectRoom}
                 onEdit={openEdit}
-                onSchedule={setScheduleRoom}
+                onPlans={setPlanRoom}
                 onDelete={confirmDeleteRooms}
               />
             ))}
@@ -364,13 +366,48 @@ export default function Rooms() {
       />
       <BatchAddRoomsModal open={batchOpen} onClose={() => setBatchOpen(false)} />
       <Drawer
-        title={`定时计划：${scheduleRoom?.displayName ?? ""}`}
-        open={scheduleRoom !== null}
+        title={`计划：${planRoom?.displayName ?? ""}`}
+        open={planRoom !== null}
         size={720}
-        onClose={() => setScheduleRoom(null)}
+        onClose={() => setPlanRoom(null)}
       >
-        {scheduleRoom ? <SchedulePanel roomId={scheduleRoom.id} /> : null}
+        {planRoom && <RoomPlanTabs key={planRoom.id} roomId={planRoom.id} />}
       </Drawer>
     </div>
+  );
+}
+
+function RoomPlanTabs({ roomId }: { roomId: string }) {
+  const [scheduleCount, setScheduleCount] = useState<number | null>(null);
+  const [keywordCount, setKeywordCount] = useState<number | null>(null);
+  return (
+    <Tabs
+      className="lr-room-plan-tabs"
+      classNames={{
+        header: "lr-room-plan-tabs-header",
+        item: "lr-room-plan-tab",
+        indicator: "lr-room-plan-tab-indicator",
+      }}
+      defaultActiveKey="schedule"
+      tabBarGutter={0}
+      items={[
+        {
+          key: "schedule",
+          label: scheduleCount === null ? "定时计划" : `定时计划(${scheduleCount})`,
+          forceRender: true,
+          children: (
+            <SchedulePanel roomId={roomId} onCountChange={setScheduleCount} />
+          ),
+        },
+        {
+          key: "keyword",
+          label: keywordCount === null ? "关键词计划" : `关键词计划(${keywordCount})`,
+          forceRender: true,
+          children: (
+            <KeywordPlanPanel roomId={roomId} onCountChange={setKeywordCount} />
+          ),
+        },
+      ]}
+    />
   );
 }

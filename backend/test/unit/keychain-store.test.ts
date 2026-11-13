@@ -3,6 +3,31 @@ import { KeytarSecretStore, type Keytar } from '../../src/security/keychain-stor
 import { KEYCHAIN_SERVICE, keychainService } from '../../src/security/keys.js';
 
 describe('KeytarSecretStore', () => {
+  it('preserves a legacy chunked credential if a replacement is interrupted', async () => {
+    const credentials = new Map([
+      ['douyin.cookie.lr-chunk-count', '2'],
+      ['douyin.cookie.lr-chunk-0', 'sessionid=old'],
+      ['douyin.cookie.lr-chunk-1', '; ttwid=visitor'],
+    ]);
+    let fail = true;
+    const store = new KeytarSecretStore({
+      async getPassword(_service, account) { return credentials.get(account) ?? null; },
+      async setPassword(_service, account, password) {
+        if (fail && account.endsWith('-1')) throw new Error('write interrupted');
+        credentials.set(account, password);
+      },
+      async deletePassword(_service, account) { return credentials.delete(account); },
+    });
+    const replacement = 'sessionid=' + 'x'.repeat(850);
+    await expect(store.set('douyin.cookie', replacement)).rejects.toThrow('write interrupted');
+    expect(await store.get('douyin.cookie')).toBe('sessionid=old; ttwid=visitor');
+    expect(credentials.size).toBe(3);
+    fail = false;
+    await store.set('douyin.cookie', replacement);
+    expect(await store.get('douyin.cookie')).toBe(replacement);
+    expect(credentials.has('douyin.cookie.lr-chunk-0')).toBe(false);
+  });
+
   it('splits oversized values and supports overwrite and cleanup', async () => {
     const credentials = new Map<string, string>();
     const fake: Keytar = {

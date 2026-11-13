@@ -394,6 +394,10 @@ export class RecorderManager {
       activeRecording: this.activeRecordingFor(room.id),
       // 生效值+来源随房间出口回传：与执行侧同一函数同一规则（resolveRoomPolicy）。
       effective: resolveRoomPolicy(room, settings),
+      enabledPlans: {
+        schedule: this.services.schedules.hasEnabledForRoom(room.id),
+        keyword: this.services.keywordPlans.hasEnabledForRoom(room.id),
+      },
     };
   }
 
@@ -401,6 +405,11 @@ export class RecorderManager {
   enrichRooms(rooms: Room[]): Room[] {
     const settings = this.services.settings.load();
     return rooms.map((room) => this.enrichRoom(room, settings));
+  }
+
+  emitRoomUpdate(roomId: string): void {
+    const room = this.services.rooms.get(roomId);
+    if (room) this.services.events.emit({ type: "room:updated", data: this.enrichRoom(room) });
   }
 
   /** 补发 service:status SSE，供前端顶部导航实时显示录制中数量。 */
@@ -681,6 +690,7 @@ export class RecorderManager {
       manual?: boolean;
       scheduled?: boolean;
       liveStartedAt?: string | null;
+      douyinAuthorizationRevision?: number;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
   ): Promise<boolean> {
@@ -747,6 +757,7 @@ export class RecorderManager {
       manual?: boolean;
       scheduled?: boolean;
       liveStartedAt?: string | null;
+      douyinAuthorizationRevision?: number;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
     startupTrace: PerformanceTrace,
@@ -831,9 +842,12 @@ export class RecorderManager {
     } else {
       const cookie = await this.services.platformCookie(room.platform);
       startupTrace.mark("platform_cookie_ready");
-      stream = await this.services
-        .adapterFor(room.platform)
-        .getStreamUrl(room.url, settings.quality, cookie);
+      const adapter = this.services.adapterFor(room.platform);
+      const detectedStream = room.platform === "douyin" &&
+        opts.douyinAuthorizationRevision === this.services.douyinAuthorization.revision
+        ? adapter.getStreamUrlFromStatus?.(room.url, settings.quality, cookie, status)
+        : undefined;
+      stream = detectedStream ?? await adapter.getStreamUrl(room.url, settings.quality, cookie);
     }
     sessionId = stream.streamSessionId ?? sessionId;
     startupTrace.mark("stream_url_ready");

@@ -108,4 +108,14 @@ describe("captureVideoFrame", () => {
     expect(() => captureVideoFrame(video)).toThrow("截图失败");
     expect([canvas.width, canvas.height]).toEqual([0, 0]);
   });
+  it("reports cross-origin canvas access separately from PNG encoding failures", async () => {
+    const { canvas, video } = setup();
+    canvas.toBlob.mockImplementation(() => {
+      throw new DOMException("The canvas is not origin-clean", "SecurityError");
+    });
+    await expect(captureVideoFrame(video)).rejects.toThrow(
+      "限制了对当前视频画面的读取",
+    );
+    expect([canvas.width, canvas.height]).toEqual([0, 0]);
+  });
 });

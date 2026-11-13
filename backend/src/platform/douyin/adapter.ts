@@ -42,6 +42,8 @@ const QUALITY_RESOLUTIONS: Record<Quality, string[]> = {
 interface DouyinEnterData {
   data?: Array<{
     id?: string;
+    id_str?: string;
+    room_id?: string;
     status?: number;
     title?: string;
     cover?: DouyinImage;
@@ -66,6 +68,43 @@ interface DouyinImage {
 interface DouyinEnterResponse {
   status_code?: number;
   data?: DouyinEnterData;
+  roomPageHtml?: string;
+}
+
+type DouyinRoom = NonNullable<DouyinEnterData["data"]>[number];
+
+function roomFromPage(html: string): DouyinRoom | undefined {
+  // Parse the room state delivered with the HTML as data, without running scripts.
+  const scripts = html.matchAll(/self\.__pace_f\.push\(\[\d+,("(?:[^"\\]|\\.)*")\]\)\s*;?\s*<\/script>/g);
+  let room: DouyinRoom | undefined;
+  for (const [, encoded] of scripts) {
+    if (!encoded?.includes("roomStore")) continue;
+    try {
+      const payload = (JSON.parse(encoded) as string).replace(/^\w+:/, "");
+      const records: unknown = JSON.parse(payload);
+      if (!Array.isArray(records)) continue;
+      for (const record of records) {
+        const candidate = record?.state?.roomStore?.roomInfo?.room;
+        if (typeof candidate?.id_str !== "string" || !/^\d+$/.test(candidate.id_str) ||
+            ![2, 4].includes(candidate.status) || typeof candidate.title !== "string") continue;
+        const flv = Object.fromEntries(Object.entries(candidate.stream_url?.flv_pull_url ?? {}).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string" && /^https?:\/\//.test(entry[1])
+        ));
+        if (candidate.status === 2 && Object.keys(flv).length === 0) continue;
+        room = {
+          id_str: candidate.id_str,
+          status: candidate.status,
+          title: candidate.title,
+          user: candidate.owner ?? candidate.user,
+          cover: candidate.cover,
+          stream_url: { flv_pull_url: flv },
+        };
+      }
+    } catch {
+      // Other page scripts may carry unrelated or incomplete payloads.
+    }
+  }
+  return room;
 }
 
 /** HTML 实体解码（主播昵称等字段）。 */
@@ -242,7 +281,10 @@ function isNetworkError(err: unknown): boolean {
 export class DouyinAdapter implements PlatformAdapter {
   readonly platform = "douyin" as const;
   private readonly enterLog = new DouyinEnterLog();
-
+  private readonly detectedStreams = new WeakMap<
+    Pick<LiveStatusResult, "streamSessionId" | "streamTitle">,
+    { roomId: string; cookie: string; entry: DouyinRoom }
+  >();
   private nickCache = new Map<
     string,
     { name: string; avatar: string | null; at: number }
@@ -256,10 +298,7 @@ export class DouyinAdapter implements PlatformAdapter {
    * 因此分两条车道，interactive 永远优先于 background，且同一时刻仍只跑一个请求。
    */
   private enterBusy = false;
-  private enterLanes: Record<EnterLane, Array<() => void>> = {
-    interactive: [],
-    background: [],
-  };
+  private readonly enterLanes: Record<EnterLane, Array<() => void>> = { interactive: [], background: [] };
 
   constructor(
     private fetcher: typeof fetch = fetch,
@@ -279,6 +318,7 @@ export class DouyinAdapter implements PlatformAdapter {
     roomId: string,
     cookie?: string,
     nicknameHint?: string,
+    roomPageHtml?: string,
   ): Promise<{ name: string | null; avatar: string | null }> {
     const hint = nicknameHint?.trim() || "";
     const cached = this.nickCache.get(roomId);
@@ -286,16 +326,19 @@ export class DouyinAdapter implements PlatformAdapter {
       return { name: cached.name, avatar: cached.avatar };
     if (hint) return { name: hint, avatar: null };
     try {
-      const res = await this.fetcher(`https://live.douyin.com/${roomId}`, {
-        signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
-        headers: {
-          "User-Agent": UA,
-          Referer: "https://live.douyin.com/",
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-      });
-      if (!res.ok) return { name: null, avatar: null };
-      const html = await res.text();
+      let html = roomPageHtml;
+      if (html === undefined) {
+        const res = await this.fetcher(`https://live.douyin.com/${roomId}`, {
+          signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
+          headers: {
+            "User-Agent": UA,
+            Referer: "https://live.douyin.com/",
+            ...(cookie ? { Cookie: cookie } : {}),
+          },
+        });
+        if (!res.ok) return { name: null, avatar: null };
+        html = await res.text();
+      }
       const asHttpUrl = (raw: string): string =>
         /^https?:\/\//.test(raw) ? raw : "";
       const profileJson = html.replace(/\\"/g, '"').replace(/\\\//g, "/");
@@ -472,24 +515,44 @@ export class DouyinAdapter implements PlatformAdapter {
       );
     }
     const text = await res.text();
-    if (!text.trim()) {
-      throw new AppError(
-        "PLATFORM_ACCESS_RESTRICTED",
-        "平台访问受限，请检查抖音授权",
-        { retryable: false },
-      );
-    }
-    let json: DouyinEnterResponse;
+    const direct = this.parseEnterResponse(text);
+    if (direct) return direct;
+
+    throw new AppError("NETWORK_UNAVAILABLE", "暂时无法获取抖音直播信息，请重试", {
+      retryable: true,
+      details: {
+        reason: "douyin-enter-no-data",
+        httpStatus: res.status,
+        body: text.trim() ? "invalid" : "empty",
+      },
+    });
+  }
+
+  private parseEnterResponse(text: string): DouyinEnterResponse | undefined {
     try {
-      json = JSON.parse(text) as DouyinEnterResponse;
+      const body = JSON.parse(text) as DouyinEnterResponse | null;
+      return typeof body?.status_code === "number" ? body : undefined;
     } catch {
-      throw new AppError(
-        "PLATFORM_ACCESS_RESTRICTED",
-        "平台访问受限，请检查抖音授权",
-        { retryable: false },
-      );
+      return undefined;
     }
-    return json;
+  }
+
+  private async fetchRoomPage(roomId: string, cookie: string, lane: EnterLane): Promise<DouyinEnterResponse | undefined> {
+    try {
+      return await this.runEnterRequest(lane, async () => {
+        const response = await this.fetcher(`https://live.douyin.com/${roomId}`, {
+          redirect: "error",
+          signal: AbortSignal.timeout(PLATFORM_REQUEST_TIMEOUT_MS),
+          headers: { "User-Agent": UA, Accept: "text/html", Cookie: cookie },
+        });
+        if (!response.ok || !response.headers.get("content-type")?.includes("text/html")) return;
+        const html = await response.text();
+        const room = roomFromPage(html);
+        if (room) return { status_code: 0, data: { data: room.status === 2 ? [room] : [] }, roomPageHtml: html };
+      });
+    } catch {
+      return;
+    }
   }
 
   /**
@@ -500,14 +563,16 @@ export class DouyinAdapter implements PlatformAdapter {
     roomId: string,
     cookie?: string,
     lane: EnterLane = "background",
+    requireStream = true,
   ): Promise<DouyinEnterResponse> {
     let lastError: unknown;
+    let triedRoomPage = false;
     for (let attempt = 0; attempt < PLATFORM_REQUEST_ATTEMPTS; attempt += 1) {
       try {
         const data = await this.fetchRoomInfo(roomId, cookie, lane);
         // 开播状态先于 CDN 拉流地址发布是正常的短暂中间态。立即复查一次，
         // 避免把它误判为授权失效；若仍未就绪，交给下一轮常规检测继续重试。
-        if (!hasLiveEntryWithoutStreamUrl(data)) {
+        if (!requireStream || !hasLiveEntryWithoutStreamUrl(data)) {
           if (
             isNotLiveResponse(data) ||
             (data.status_code === 0 &&
@@ -531,6 +596,22 @@ export class DouyinAdapter implements PlatformAdapter {
         }
       } catch (err) {
         lastError = err;
+        if (err instanceof AppError && err.details?.reason === "douyin-enter-no-data") {
+          const lastAttempt = attempt + 1 === PLATFORM_REQUEST_ATTEMPTS;
+          // The same HTTP fallback applies to every account. Explicit auth and
+          // access errors from room-enter keep their existing handling.
+          if (cookie && !triedRoomPage && (err.details.body === "empty" || lastAttempt)) {
+            triedRoomPage = true;
+            const page = await this.fetchRoomPage(roomId, cookie, lane);
+            if (page) {
+              this.enterLog.recovered(roomId);
+              return page;
+            }
+          }
+          if (lastAttempt) {
+            this.enterLog.warn(roomId, `[douyin-enter] room=${roomId} httpStatus=${err.details.httpStatus} body=${err.details.body} outcome=NETWORK_UNAVAILABLE`);
+          }
+        }
         const retryable =
           (err instanceof AppError && err.retryable) || isNetworkError(err);
         if (!retryable || attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) throw err;
@@ -633,6 +714,7 @@ export class DouyinAdapter implements PlatformAdapter {
           roomId,
           cookie,
           entry.user?.nickname?.trim() || undefined,
+          data.roomPageHtml,
         );
     const nickname = profile.name || "";
     const streamTitle = entry.title;
@@ -664,15 +746,17 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
-    return {
+    const result: LiveStatusResult = {
       status: "live",
       ...(liveCoverUrl ? { liveCoverUrl } : {}),
       ...base,
-      streamSessionId: entry.id ?? roomId,
+      streamSessionId: entry.id_str ?? entry.id ?? roomId,
       availableQualities: Object.keys(flv)
         .map((k) => RESOLUTION_QUALITY[k])
         .filter((q): q is Quality => Boolean(q)),
     };
+    this.detectedStreams.set(result, { roomId, cookie, entry });
+    return result;
   }
 
   private async titleFallback(
@@ -720,6 +804,28 @@ export class DouyinAdapter implements PlatformAdapter {
       throw new AppError("PLATFORM_CHANGED", "平台接口有变动，请稍后重试", {});
     }
     return this.streamFromRoomInfo(data, roomId, quality, cookie);
+  }
+
+  getStreamUrlFromStatus(
+    roomUrl: string, quality: Quality, cookie: string | undefined,
+    status: Pick<LiveStatusResult, "streamSessionId" | "streamTitle">,
+  ): StreamUrlResult | undefined {
+    const detected = this.detectedStreams.get(status);
+    if (!detected || detected.cookie !== cookie || detected.roomId !== this.parseRoomId(roomUrl)) return;
+    return this.streamFromRoomInfo({ status_code: 0, data: { data: [detected.entry] } }, detected.roomId, quality, cookie);
+  }
+
+  async getDanmakuRoomId(roomUrl: string, cookie: string): Promise<string> {
+    const webRid = this.parseRoomId(roomUrl);
+    if (!webRid) throw new AppError("ROOM_LINK_INVALID", "无效的直播间链接", {});
+    const data = await this.fetchRoomInfoWithRetry(webRid, cookie, "interactive", false);
+    if (data.status_code !== 0) throw classifyStatusError(data, true);
+    const entry = data.data?.data?.[0];
+    const roomId = entry?.id_str ?? entry?.id ?? entry?.room_id;
+    if ((entry?.status !== undefined && entry.status !== 2) || typeof roomId !== "string" || !/^\d+$/.test(roomId)) {
+      throw new AppError("ROOM_CONTENT_UNAVAILABLE", "暂时无法获取抖音弹幕", { retryable: true });
+    }
+    return roomId;
   }
 
   async resolveRecordingSource(
@@ -790,7 +896,7 @@ export class DouyinAdapter implements PlatformAdapter {
     const arr = data.data?.data;
     if (data.status_code !== 0 || !arr || arr.length === 0) {
       // 同 checkLiveStatus：没有房间条目只说明"当前不在播"，不是接口变更。
-      if (isNotLiveResponse(data))
+    if (isNotLiveResponse(data))
         throw new AppError(
           "RECORDING_NOT_AVAILABLE",
           "直播间当前未开播，无法获取直播流",
@@ -817,6 +923,7 @@ export class DouyinAdapter implements PlatformAdapter {
       url: picked.url,
       format: "flv",
       actualQuality: picked.quality,
+      ...(entry.id_str || entry.id ? { streamSessionId: entry.id_str ?? entry.id } : {}),
       headers: {
         "User-Agent": UA,
         Referer: `https://live.douyin.com/${roomId}`,

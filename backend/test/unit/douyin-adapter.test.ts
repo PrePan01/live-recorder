@@ -346,16 +346,91 @@ describe("DouyinAdapter", () => {
     });
   });
 
-  it("maps empty responses (anti-crawl) to PLATFORM_ACCESS_RESTRICTED", async () => {
-    const a = new DouyinAdapter(
-      async () => new Response("", { status: 200 }) as unknown as Response,
+  it("preserves authorization when the direct request returns no data", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
+      String(url).includes("/webcast/")
+        ? new Response("")
+        : new Response("<html>请登录</html>", { headers: { "Content-Type": "text/html" } })
     );
+    const a = new DouyinAdapter(fetcher);
     const result = await a.checkLiveStatus(
       "https://live.douyin.com/123456",
       "sessionid=x",
     );
-    expect(result.status).toBe("restricted");
-    expect(result.error?.code).toBe("PLATFORM_ACCESS_RESTRICTED");
+    expect(result.status).toBe("error");
+    expect(result.error).toMatchObject({ code: "NETWORK_UNAVAILABLE", retryable: true });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries the API if the room page has no data after an empty response", async () => {
+    const room = "https://live.douyin.com/123456";
+    const a = "sessionid=a; ttwid=visitor-a";
+    const b = "sessionid=b; ttwid=visitor-b";
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(async () => Response.json(livePayload()))
+      .mockImplementationOnce(async () => new Response(""))
+      .mockImplementationOnce(async () => new Response("<html></html>", { headers: { "Content-Type": "text/html" } }))
+      .mockImplementationOnce(async () => Response.json(livePayload()));
+    const adapter = new DouyinAdapter(fetcher);
+
+    await expect(adapter.getStreamUrl(room, "original", a)).resolves.toMatchObject({ format: "flv" });
+    await expect(adapter.getStreamUrl(room, "original", b)).resolves.toMatchObject({ format: "flv" });
+    expect(fetcher.mock.calls.map(([input, init]) => [
+      String(input) === room ? "html" : "api", new Headers(init?.headers).get("Cookie"),
+    ])).toEqual([["api", a], ["api", b], ["html", b], ["api", b]]);
+  });
+
+  it("uses room data from HTML immediately after the first empty response", async () => {
+    const room = "https://live.douyin.com/123456";
+    const a = "sessionid=a; ttwid=visitor-a";
+    const b = "sessionid=b; ttwid=visitor-b";
+    const entry = {
+      id_str: "7707304016658909967", title: '直播 "标题"', status: 2,
+      stream_url: { flv_pull_url: { FULL_HD1: "https://pull.example.com/full.flv" } },
+    };
+    const state = [{ state: { roomStore: { roomInfo: { room: entry } } } }];
+    const html = `<div data-anchor-info="{&quot;nickname&quot;:&quot;抖音主播&quot;}"></div><script>self.__pace_f.push([1,${JSON.stringify(`0:${JSON.stringify(state)}`)}])</script>`;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const cookie = new Headers(init?.headers).get("Cookie");
+      if (String(input) === room) {
+        expect(cookie).toBe(b);
+        expect(init?.redirect).toBe("error");
+        return new Response(html, { headers: { "Content-Type": "text/html" } });
+      }
+      expect(String(input)).toContain("/webcast/room/web/enter/");
+      return cookie === a ? Response.json(livePayload()) : new Response("");
+    });
+    const adapter = new DouyinAdapter(fetcher);
+
+    await expect(adapter.getStreamUrl(room, "original", a)).resolves.toMatchObject({ format: "flv" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await expect(adapter.checkLiveStatus(room, b)).resolves.toMatchObject({
+      status: "live", streamSessionId: entry.id_str, streamTitle: entry.title, displayName: "抖音主播",
+    });
+    await expect(adapter.getStreamUrl(room, "original", b)).resolves.toMatchObject({
+      url: entry.stream_url.flv_pull_url.FULL_HD1, streamSessionId: entry.id_str,
+    });
+    await expect(adapter.resolveRecordingSource(room, "original", b)).resolves.toMatchObject({ status: "live" });
+    expect(fetcher.mock.calls.map(([input]) => String(input) === room ? "html" : "api"))
+      .toEqual(["api", "api", "html", "api", "html", "api", "html"]);
+  });
+
+  it("uses the official room response for detection, stream lookup and the full internal room ID", async () => {
+    const room = "https://live.douyin.com/123456";
+    const cookie = "sessionid=current; ttwid=visitor";
+    const id = "7707304016658909967";
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload({ id: undefined, id_str: id })));
+
+    await expect(adapter.checkLiveStatus(room, cookie)).resolves.toMatchObject({ status: "live", streamSessionId: id });
+    await expect(adapter.getStreamUrl(room, "original", cookie)).resolves.toMatchObject({ format: "flv", streamSessionId: id });
+    await expect(adapter.resolveRecordingSource(room, "original", cookie)).resolves.toMatchObject({ status: "live" });
+    await expect(adapter.getDanmakuRoomId(room, cookie)).resolves.toBe(id);
+  });
+
+  it("resolves the internal room ID for danmaku before FLV URLs are ready", async () => {
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload({ id_str: "7707304016658909967", stream_url: undefined })));
+    await expect(adapter.getDanmakuRoomId("https://live.douyin.com/123456", "sessionid=b"))
+      .resolves.toBe("7707304016658909967");
   });
 
   it("does not treat a transient 10011 as an expired cookie", async () => {
