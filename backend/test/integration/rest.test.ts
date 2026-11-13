@@ -1,3 +1,4 @@
+import { ok } from "node:assert/strict";
 import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from 'node:path';
@@ -5,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../../src/api/server.js";
 import { buildServices, type Services } from "../../src/core/services.js";
 import { FakeClock } from "../../src/core/clock.js";
+import { FakeMailer } from "../../src/mail/mailer.js";
 import { FakePlatformAdapter } from "../../src/platform/fake-adapter.js";
 import { DouyinAdapter } from "../../src/platform/douyin/index.js";
 import { DEFAULT_SETTINGS } from "../../src/config/defaults.js";
@@ -533,11 +535,9 @@ describe("REST contract v1.1 (fake stack)", () => {
       payload: { favorited: true },
     });
     expect(favDuring.json().room.favorited).toBe(true);
-    const emitted = sseRooms[sseRooms.length - 1];
-    expect(emitted.favorited).toBe(true);
-    expect(emitted.activeRecording).not.toBeNull();
-    expect(emitted.activeRecording).toMatchObject({
-      recordingId: active.recordingId,
+    expect(sseRooms.at(-1)).toMatchObject({
+      favorited: true,
+      activeRecording: { recordingId: active.recordingId },
     });
     unsub();
 
@@ -592,7 +592,7 @@ describe("REST contract v1.1 (fake stack)", () => {
     ).toBe(true);
     expect(
       body.failed.some(
-        (f: { url: string }) =>
+        (f: { url: string; reason: string }) =>
           f.url === "https://live.bilibili.com/778" &&
           f.reason.includes("已存在"),
       ),
@@ -754,7 +754,8 @@ describe("REST contract v1.1 (fake stack)", () => {
       headers: { host: "127.0.0.1:43120" },
     });
     expect(smtpOk.json().ok).toBe(true);
-    (services.mailer as { failNext: boolean }).failNext = true;
+    ok(services.mailer instanceof FakeMailer);
+    services.mailer.failNext = true;
     const smtpFail = await app.inject({
       method: "POST",
       url: "/api/v1/settings/test-smtp",
@@ -1338,9 +1339,11 @@ describe("REST contract v1.1 (fake stack)", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-hist-"));
     const services = newServices();
     services.settings.save({
+      ...DEFAULT_SETTINGS,
       recordingDirectory: dir,
       maxConcurrentRecordings: 2,
       quality: "original",
+      autoRecord: true,
       checkIntervalSec: { default: 60, bilibili: 60, douyin: 120 },
       retry: { maxAttempts: 3, delaysSeconds: [5, 15, 45] },
       diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
@@ -1739,6 +1742,7 @@ describe("REST contract v1.1 (fake stack)", () => {
       const dir = await mkdtemp(path.join(tmpdir(), "lr-auto-rec-"));
       const services = newServices();
       services.settings.save({
+        ...DEFAULT_SETTINGS,
         recordingDirectory: dir,
         maxConcurrentRecordings: 2,
         quality: "original",
@@ -1819,6 +1823,7 @@ describe("REST contract v1.1 (fake stack)", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-rec-"));
     const services = newServices();
     services.settings.save({
+      ...DEFAULT_SETTINGS,
       recordingDirectory: dir,
       maxConcurrentRecordings: 2,
       quality: "original",
