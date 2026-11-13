@@ -22,6 +22,14 @@
 
 /* 文件回放弹窗独立排版，避免改变录制中预览和共用弹幕设置。 */
 
+.lr-danmaku-player__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline-end: 36px;
+}
+
 .lr-danmaku-player__panel {
   padding-top: 12px;
 }

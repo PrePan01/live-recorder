@@ -46,8 +46,10 @@ describe('recording HTTP range playback', () => {
     const full = await app.inject(base);
     expect(full.statusCode).toBe(200);
     expect(full.headers['content-length']).toBe(String(data.length));
-    const partial = await app.inject({ ...base, headers: { ...base.headers, range: 'bytes=3-5' } });
+    const origin = 'tauri://localhost';
+    const partial = await app.inject({ ...base, headers: { ...base.headers, origin, range: 'bytes=3-5' } });
     expect(partial.statusCode).toBe(206);
+    expect(partial.headers['access-control-allow-origin']).toBe(origin);
     expect(partial.headers['content-range']).toBe(`bytes 3-5/${data.length}`);
     expect(partial.rawPayload.toString()).toBe('012');
     const suffix = await app.inject({ ...base, headers: { ...base.headers, range: 'bytes=-2' } });

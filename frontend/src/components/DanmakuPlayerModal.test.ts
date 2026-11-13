@@ -45,6 +45,11 @@ vi.mock('../api/recordings', () => ({
 }));
 vi.mock('../api/danmakuWindow', () => ({ fetchDanmakuWindow: async () => ({ messages: [], gaps: [] }) }));
 vi.mock('../api/danmaku', () => ({ exportDanmaku: vi.fn() }));
+vi.mock('../api/screenshots', () => ({ saveRecordingScreenshot: vi.fn() }));
+vi.mock('../utils/player/captureVideoFrame', async original => ({
+  ...await original<typeof import('../utils/player/captureVideoFrame')>(),
+  captureVideoFrame: vi.fn(),
+}));
 vi.mock('../api/config', () => ({ pickDirectory: vi.fn() }));
 vi.mock('../utils/timeline/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
 vi.mock('../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null }) }));
@@ -56,20 +61,27 @@ vi.mock('./DanmakuLayer', () => ({ DanmakuLayer: 'danmaku' }));
 vi.mock('./RecordingTrack', () => ({ default: 'track' }));
 vi.mock('./MarkerNavPanel', () => ({ MarkerNavPanel: 'markers' }));
 vi.mock('./DanmakuSettings', () => ({ default: 'settings' }));
+vi.mock('./VideoScreenshotButton', () => ({ VideoScreenshotButton: 'screenshot' }));
 import { DanmakuPlayerModal } from './DanmakuPlayerModal';
 import { fetchRecordingPosition } from '../api/recordings';
+import { saveRecordingScreenshot } from '../api/screenshots';
+import { captureVideoFrame } from '../utils/player/captureVideoFrame';
 
 function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   return Children.toArray(node).flatMap(child => isValidElement<Record<string, unknown>>(child)
     ? [child, ...elements(child.props.children as ReactNode)] : []);
 }
 const props = { recordingId: 'rec', platform: 'youtube', filePath: 'original.mkv', title: 'Live', durationSeconds: 999, onClose: vi.fn() };
-function render() {
+function render(overrides: Partial<typeof props> = {}) {
   h.cursor = 0; h.effects = [];
-  const tree = elements(DanmakuPlayerModal(props));
+  const tree = elements(DanmakuPlayerModal({ ...props, ...overrides }));
+  const header = elements(tree[0].props.title as ReactNode);
   h.effects.splice(0).forEach(effect => effect());
   return {
     video: tree.find(el => el.type === 'video')!,
+    screenshot: header.find(el => el.type === 'screenshot')!.props as unknown as {
+      enabled: boolean; takeScreenshot: () => Promise<void>;
+    },
     track: tree.find(el => el.type === 'track')!.props as unknown as {
       elapsedSeconds: number; previewSecond: number; previewLoading: boolean; quickAddDisabled: boolean;
       onSeekCommit: (second: number) => void; getMarkerPosition: () => Promise<number>;
@@ -79,7 +91,9 @@ function render() {
     failed: tree.some(el => el.props.role === 'alert'),
   };
 }
-const video = () => ({ readyState: 2, seeking: false, currentTime: 1, paused: true, ended: false, duration: 20,
+const video = () => Object.assign(new EventTarget(), {
+  readyState: 2, videoWidth: 640, videoHeight: 360,
+  seeking: false, currentTime: 1, paused: true, ended: false, duration: 20,
   buffered: { length: 1, start: () => 1 }, volume: 1, muted: false, playbackRate: 1,
   play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(),
 }) as unknown as HTMLVideoElement;
@@ -98,6 +112,40 @@ beforeEach(() => {
 afterEach(() => {
   for (const slot of h.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
   vi.useRealTimers(); vi.unstubAllGlobals();
+});
+
+describe('history playback screenshots', () => {
+  it('loads native MP4 with CORS so its frames can be exported from canvas', () => {
+    const tree = render({ platform: 'bilibili', filePath: 'recording.mp4' });
+    expect(tree.video.props.crossOrigin).toBe('anonymous');
+    expect(tree.video.props.src).toBe('/file');
+  });
+
+  it('captures the displayed frame from the new source and saves it to the current recording', async () => {
+    const png = new Blob(['png'], { type: 'image/png' });
+    vi.mocked(captureVideoFrame).mockResolvedValue(png);
+    vi.mocked(saveRecordingScreenshot).mockResolvedValue({ filePath: '/recordings/截图/frame.png' });
+    const oldVideo = video();
+    let tree = mount(render(), oldVideo);
+    expect(tree.screenshot.enabled).toBe(false);
+    event(tree, 'onCanPlay', oldVideo);
+    tree = render();
+    expect(tree.screenshot.enabled).toBe(true);
+    tree.track.onSeekCommit(120);
+    tree = render();
+    expect(tree.screenshot.enabled).toBe(false);
+    await tree.screenshot.takeScreenshot();
+    expect(captureVideoFrame).not.toHaveBeenCalled();
+
+    const newVideo = video();
+    tree = mount(tree, newVideo);
+    event(tree, 'onCanPlay', newVideo);
+    tree = render();
+    expect(tree.screenshot.enabled).toBe(true);
+    await tree.screenshot.takeScreenshot();
+    expect(captureVideoFrame).toHaveBeenCalledExactlyOnceWith(newVideo);
+    expect(saveRecordingScreenshot).toHaveBeenCalledExactlyOnceWith(props.recordingId, png);
+  });
 });
 
 describe('YouTube history playback source transitions', () => {

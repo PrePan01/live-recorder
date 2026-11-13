@@ -40,9 +40,15 @@ export function captureVideoFrame(
             reject(new Error("截图过大，不能超过 32 MiB"));
           else resolve(blob);
         }, "image/png");
-      } catch {
+      } catch (error) {
         release();
-        reject(new Error("截图编码失败，请重试"));
+        reject(
+          new Error(
+            error instanceof DOMException && error.name === "SecurityError"
+              ? "截图失败：浏览器限制了对当前视频画面的读取"
+              : "截图编码失败，请重试",
+          ),
+        );
       }
     });
   } catch (error) {
