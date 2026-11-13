@@ -89,6 +89,7 @@ function render(overrides: Partial<typeof props> = {}) {
     danmaku: tree.find(el => el.type === 'danmaku')!.props as unknown as { getTimeMs: () => number },
     markers: tree.find(el => el.type === 'markers')!.props as unknown as { onPreview: (marker: { positionSeconds: number; endPositionSeconds: number }) => void },
     failed: tree.some(el => el.props.role === 'alert'),
+    errorText: tree.find(el => el.props.role === 'alert')?.props.children,
   };
 }
 const video = () => Object.assign(new EventTarget(), {
@@ -112,6 +113,29 @@ beforeEach(() => {
 afterEach(() => {
   for (const slot of h.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
   vi.useRealTimers(); vi.unstubAllGlobals();
+});
+
+describe('history playback errors', () => {
+  it.each([
+    ['recording.mp4', 404, '录像文件已被删除'],
+    ['recording.flv', 404, '录像文件已被删除'],
+    ['recording.mp4', 200, '视频加载失败，请关闭后重试'],
+    ['recording.mp4', 500, '视频加载失败，请关闭后重试'],
+  ])('shows the appropriate playback error for %s after HEAD returns %s', async (filePath, status, errorText) => {
+    const fetchFile = vi.fn().mockResolvedValue({ status });
+    vi.stubGlobal('fetch', fetchFile);
+    const overrides = { platform: 'bilibili', filePath };
+    const element = video();
+    const tree = render(overrides);
+    (tree.video.props.ref as (element: HTMLVideoElement) => void)(element);
+    const attached = render(overrides);
+    if (filePath.endsWith('.mp4')) event(attached, 'onError', element);
+    else h.players[0].error?.();
+    render(overrides);
+    await Promise.resolve();
+    expect(render(overrides).errorText).toBe(errorText);
+    expect(fetchFile).toHaveBeenCalledExactlyOnceWith('/file', expect.objectContaining({ method: 'HEAD' }));
+  });
 });
 
 describe('history playback screenshots', () => {
