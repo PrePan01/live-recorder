@@ -1,17 +1,14 @@
 import { App } from "antd";
 import { useEffect, useRef, useState } from "react";
-import { savePreviewScreenshot } from "../../api/screenshots";
 import {
   canCaptureVideoFrame,
   captureVideoFrame,
-} from "../../utils/player/captureVideoFrame";
+} from "../utils/player/captureVideoFrame";
 
-export function usePreviewScreenshot(
-  roomId: string,
+export function useVideoScreenshot(
   video: HTMLVideoElement | null,
   frameReady: boolean,
-  switching: boolean,
-  recordingId?: string,
+  saveScreenshot: (png: Blob) => Promise<unknown>,
 ) {
   const { message } = App.useApp();
   const [saving, setSaving] = useState(false);
@@ -35,15 +32,15 @@ export function usePreviewScreenshot(
     return () =>
       events.forEach((event) => video?.removeEventListener(event, update));
   }, [video, frameReady]);
-  const enabled = frameReady && !switching && hasFrame;
+  const enabled = frameReady && hasFrame;
   const takeScreenshot = async () => {
     if (busyRef.current || !enabled) return;
     busyRef.current = true;
     setSaving(true);
     try {
       const png = await captureVideoFrame(video);
-      await savePreviewScreenshot(roomId, png, recordingId);
-      message.success(`截图已保存`);
+      await saveScreenshot(png);
+      message.success("截图已保存");
     } catch (error) {
       message.error(
         error instanceof Error ? error.message : "截图保存失败，请重试",

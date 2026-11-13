@@ -199,6 +199,7 @@ export class YoutubeAdapter implements PlatformAdapter {
         ...this.profiles.get(raw),
         streamSessionId: info.id,
         streamTitle: info.title ?? "YouTube 直播",
+        ...(info.title == null ? { streamTitleIsPlaceholder: true } : {}),
         displayName: info.channel ?? info.uploader ?? "YouTube",
         ...(info.thumbnail ? { liveCoverUrl: info.thumbnail } : {}),
         ...(info.release_timestamp

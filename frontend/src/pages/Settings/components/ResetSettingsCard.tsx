@@ -119,7 +119,7 @@ export default function ResetSettingsCard({
           <Alert
             type="warning"
             showIcon
-            title="将清空所有房间、录制历史、标签、定时计划、任务记录、告警、设置与凭证，并恢复界面偏好。"
+            title="将清空所有房间、录制历史、标签、计划、任务记录、告警、设置与凭证，并恢复界面偏好。"
           />
           <Space wrap>
             <Typography.Text>是否备份配置数据</Typography.Text>

@@ -281,6 +281,16 @@ export const RoomCard = memo(function RoomCard({
               自动录制
             </Tag>
           ) : null}
+          {room.enabledPlans?.schedule && (
+            <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+              定时计划
+            </Tag>
+          )}
+          {room.enabledPlans?.keyword && (
+            <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
+              关键词计划
+            </Tag>
+          )}
           {onAir ? (
             <LiveStatusTag
               status="live"

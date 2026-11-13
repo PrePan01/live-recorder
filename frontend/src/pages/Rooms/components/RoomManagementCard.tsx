@@ -36,14 +36,14 @@ export default memo(function RoomManagementCard({
   selected,
   onSelect,
   onEdit,
-  onSchedule,
+  onPlans,
   onDelete,
 }: {
   room: Room;
   selected: boolean;
   onSelect: (id: string, selected: boolean) => void;
   onEdit: (room: Room) => void;
-  onSchedule: (room: Room) => void;
+  onPlans: (room: Room) => void;
   onDelete: (rooms: Room[]) => void;
 }) {
   const settings = useSettingsStore((s) => s.settings);
@@ -350,12 +350,12 @@ export default memo(function RoomManagementCard({
             onClick={() => onEdit(room)}
           />
         </Tooltip>
-        <Tooltip title="定时计划" placement="left">
+        <Tooltip title="计划" placement="left">
           <Button
             type="text"
             icon={<ScheduleOutlined />}
-            aria-label={`定时计划 ${room.displayName}`}
-            onClick={() => onSchedule(room)}
+            aria-label={`计划 ${room.displayName}`}
+            onClick={() => onPlans(room)}
           />
         </Tooltip>
         <Tooltip title="删除" placement="left">

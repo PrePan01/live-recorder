@@ -366,11 +366,14 @@ export class Scheduler {
    * 同时会等待携带旧 Cookie 的在途检测收口后再发起新请求。
    */
   async recheckDouyinRoomsAfterCookieUpdate(): Promise<void> {
+    const revision = this.services.douyinAuthorization.revision;
     const rooms = this.services.rooms
       .list()
       .filter((room) => room.platform === "douyin");
     await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    if (revision !== this.services.douyinAuthorization.revision) return;
     this.resetDouyinCookieFailure();
+    this.throttleBackoff.delete("douyin");
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
   }
 
@@ -469,12 +472,7 @@ export class Scheduler {
   }
 
   private emitRoom(roomId: string): void {
-    const room = this.services.rooms.get(roomId);
-    if (!room) return;
-    this.services.events.emit({
-      type: "room:updated",
-      data: this.manager.enrichRoom(room),
-    });
+    this.manager.emitRoomUpdate(roomId);
   }
 
   /** 在大于等于三分钟的检测时报出三次相同的错误，就发送告警通知 */
@@ -591,11 +589,12 @@ export class Scheduler {
     opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
   ): Promise<void> {
     const backoffAtStart = this.isThrottled(room.platform) ? undefined : this.throttleBackoff.get(room.platform);
+    const douyinRevision = this.services.douyinAuthorization.revision;
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
-    // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
-    // 不让这个已在途请求的结果覆盖全局失效标记。
-    if (room.platform === "douyin" && this.douyinCookieExpired) return;
+    // 账号切换或其他房间确认授权失效后，丢弃旧授权的在途检测结果。
+    if (room.platform === "douyin" &&
+      (this.douyinCookieExpired || douyinRevision !== this.services.douyinAuthorization.revision)) return;
     // 适配器已从平台响应提取主播昵称/头像；检测成功后持久化并通过 SSE 推送，
     // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名与头像。
     const detectedName = status.displayName?.trim();
@@ -712,7 +711,16 @@ export class Scheduler {
         checkedRoom.autoRecordStoppedSession,
       );
       // 定时计划是独立的开录指令，不受持续自动录制开关及本场手动停止标记限制。
-      if (!opts.scheduled && (!effectiveAuto || autoStoppedThisSession)) {
+      const startFromExistingTriggers = opts.scheduled || (effectiveAuto && !autoStoppedThisSession);
+      const keywordMatch =
+        !startFromExistingTriggers &&
+        !autoStoppedThisSession &&
+        checkedRoom.enabled &&
+        !status.streamTitleIsPlaceholder &&
+        this.services.keywordPlans.matches(room.id, status.streamTitle);
+      // 检测在途时房间可能已被停用或删除。命中后复用开录路径本就需要的最新房间。
+      const keywordRoom = keywordMatch ? this.services.rooms.get(room.id) : null;
+      if (!startFromExistingTriggers && (!keywordRoom?.enabled || keywordRoom.autoRecordStoppedSession)) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
           lastError: null,
@@ -721,17 +729,18 @@ export class Scheduler {
         if (shouldNotifyLiveStarted()) {
           await this.services.notifier.notify("live_started", room.id, {
             title: checkedRoom.displayName,
+            streamTitle: status.streamTitle ?? null,
           });
         }
         return;
       }
       let autoRecordingStarted = false;
       try {
-        const refreshedRoom = this.services.rooms.get(room.id) ?? checkedRoom;
+        const refreshedRoom = keywordRoom ?? this.services.rooms.get(room.id) ?? checkedRoom;
         autoRecordingStarted = await this.manager.maybeStartRecording(
           { ...refreshedRoom, monitorState: "checking" },
           status,
-          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
+          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt, douyinAuthorizationRevision: douyinRevision },
         );
       } catch (err) {
         const appErr =
@@ -758,6 +767,7 @@ export class Scheduler {
       if (shouldNotifyLiveStarted()) {
         await this.services.notifier.notify("live_started", room.id, {
           title: this.services.rooms.get(room.id)?.displayName ?? checkedRoom.displayName,
+          streamTitle: status.streamTitle ?? null,
           autoRecordingStarted,
         });
       }

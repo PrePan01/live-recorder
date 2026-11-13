@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   effects: [] as (() => void)[],
   success: vi.fn(),
   error: vi.fn(),
+  save: vi.fn(),
 }));
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: { success: h.success, error: h.error } }) },
@@ -33,28 +34,20 @@ vi.mock("react", () => ({
       });
   },
 }));
-vi.mock("../../api/screenshots", () => ({ savePreviewScreenshot: vi.fn() }));
-vi.mock("../../utils/player/captureVideoFrame", () => ({
+vi.mock("../utils/player/captureVideoFrame", () => ({
   canCaptureVideoFrame: (video: HTMLVideoElement | null) =>
     Boolean(video && !video.seeking),
   captureVideoFrame: vi.fn(),
 }));
-import { savePreviewScreenshot } from "../../api/screenshots";
-import { captureVideoFrame } from "../../utils/player/captureVideoFrame";
-import { usePreviewScreenshot } from "./usePreviewScreenshot";
+import { captureVideoFrame } from "../utils/player/captureVideoFrame";
+import { useVideoScreenshot } from "./useVideoScreenshot";
 const video = Object.assign(new EventTarget(), {
   seeking: false,
 }) as unknown as HTMLVideoElement;
-function render(ready = true, switching = false, recordingId?: string) {
+function render(ready = true) {
   h.cursor = 0;
   // oxlint-disable-next-line react-hooks/rules-of-hooks
-  const value = usePreviewScreenshot(
-    "room",
-    video,
-    ready,
-    switching,
-    recordingId,
-  );
+  const value = useVideoScreenshot(video, ready, h.save);
   h.effects.splice(0).forEach((fn) => fn());
   return value;
 }
@@ -66,7 +59,7 @@ beforeEach(() => {
   vi.mocked(captureVideoFrame)
     .mockReset()
     .mockResolvedValue(new Blob(["png"], { type: "image/png" }));
-  vi.mocked(savePreviewScreenshot)
+  h.save
     .mockReset()
     .mockResolvedValue({ filePath: "/recordings/截图/image.png" });
   Object.assign(video, { seeking: false });
@@ -75,25 +68,21 @@ afterEach(() => {
   for (const slot of h.slots)
     (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
 });
-describe("usePreviewScreenshot", () => {
+describe("useVideoScreenshot", () => {
   it("saves once during rapid repeated clicks, shows loading and toasts only after saving", async () => {
     let finish = (_value: { filePath: string }) => {};
-    vi.mocked(savePreviewScreenshot).mockReturnValue(
+    h.save.mockReturnValue(
       new Promise((resolve) => {
         finish = resolve;
       }),
     );
     render();
-    const ui = render(true, false, "recording");
+    const ui = render();
     const pending = ui.takeScreenshot();
     await ui.takeScreenshot();
     await Promise.resolve();
     expect(captureVideoFrame).toHaveBeenCalledTimes(1);
-    expect(savePreviewScreenshot).toHaveBeenCalledWith(
-      "room",
-      expect.any(Blob),
-      "recording",
-    );
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(expect.any(Blob));
     expect(render().saving).toBe(true);
     expect(h.success).not.toHaveBeenCalled();
     finish({ filePath: "/recordings/截图/image.png" });
@@ -101,15 +90,15 @@ describe("usePreviewScreenshot", () => {
     expect(h.success).toHaveBeenCalledExactlyOnceWith("截图已保存");
     expect(render().saving).toBe(false);
   });
-  it("supports preview without recording and prevents capture during source switches or native seeking", async () => {
+  it("prevents capture while buffering, changing sources or seeking", async () => {
     render();
     expect(render().enabled).toBe(true);
     video.dispatchEvent(new Event("waiting"));
     expect(render().enabled).toBe(false);
+    await render().takeScreenshot();
     video.dispatchEvent(new Event("canplay"));
     expect(render().enabled).toBe(true);
     await render(false).takeScreenshot();
-    await render(true, true).takeScreenshot();
     Object.assign(video, { seeking: true });
     video.dispatchEvent(new Event("seeking"));
     expect(render().enabled).toBe(false);
@@ -117,11 +106,7 @@ describe("usePreviewScreenshot", () => {
     Object.assign(video, { seeking: false });
     video.dispatchEvent(new Event("seeked"));
     await render().takeScreenshot();
-    expect(savePreviewScreenshot).toHaveBeenCalledWith(
-      "room",
-      expect.any(Blob),
-      undefined,
-    );
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(expect.any(Blob));
   });
   it.each(["capture", "save"])(
     "shows specific %s errors and allows retry",
@@ -131,7 +116,7 @@ describe("usePreviewScreenshot", () => {
           throw new Error("编码失败");
         });
       else
-        vi.mocked(savePreviewScreenshot).mockRejectedValueOnce(
+        h.save.mockRejectedValueOnce(
           new Error("磁盘空间不足"),
         );
       render();

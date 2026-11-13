@@ -654,7 +654,9 @@ export function registerRecordingRoutes(
     let size: number;
     try {
       size = (await stat(rec.filePath)).size;
-    } catch {
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
       throw new AppError("RESOURCE_NOT_FOUND", "录制文件缺失", {
         recordingId: id,
         details: { resource: "recording" },
@@ -669,6 +671,9 @@ export function registerRecordingRoutes(
     if (rec.platform === "youtube" && !rec.filePath.endsWith(".flv")) {
       const second = Number((req.query as { second?: string }).second ?? 0);
       if (!Number.isFinite(second) || second < 0) throw new AppError('CONFIG_INVALID', '播放位置无效');
+      if (req.method === "HEAD") {
+        return reply.header("Content-Type", "video/x-flv").header("Cache-Control", "no-store").send();
+      }
       const controller = new AbortController();
       youtubePlays.add(controller);
       reply.raw.once('close', () => { controller.abort(); youtubePlays.delete(controller); });

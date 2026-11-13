@@ -14,7 +14,7 @@ import type { AppSettings, MailConfig, PipelineConfig } from '../../types/index.
 import { validatePipelineConfig } from '../../config/pipeline.js';
 export { validatePipelineConfig } from '../../config/pipeline.js';
 import { validateSettings } from '../../config/schema.js';
-import { DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
+import { BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, MAIL_PASSWORD_KEY } from '../../security/keys.js';
 import { settingsView } from './settings-view.js';
 import { settingsDefaults } from '../../config/settings-defaults.js';
 
@@ -84,15 +84,9 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
       void services.scheduler.recheckYoutubeRoomsAfterCookieUpdate().catch(() => undefined);
     }
     if (douyinCookie !== null) {
-      if (douyinCookie.length > 0) {
-        validateDouyinCookie(douyinCookie);
-        await services.secretStore.set(DOUYIN_COOKIE_KEY, douyinCookie);
-        // 平台请求最久可超过前端 10 秒 HTTP 超时；后台复检既不阻塞保存，
-        // 也会等待旧 Cookie 的在途请求结束后再用新 Cookie 发起全量检测。
-        void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
-      } else {
-        await services.secretStore.delete(DOUYIN_COOKIE_KEY);
-      }
+      await services.douyinAuthorization.save(douyinCookie);
+      // 复检等旧授权的在途检测收口，设置保存不等平台请求。
+      void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
     }
     if (xiaohongshuCookie !== null) {
       if (xiaohongshuCookie) await services.secretStore.set(XIAOHONGSHU_COOKIE_KEY, xiaohongshuCookie);
@@ -123,9 +117,10 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     }
     const cookie = normalizeDouyinCookie(body.cookie);
     validateDouyinCookie(cookie);
-    await services.secretStore.set(DOUYIN_COOKIE_KEY, cookie);
-    void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
     const view = await settingsView(services);
+    await services.douyinAuthorization.save(cookie);
+    void services.scheduler.recheckDouyinRoomsAfterCookieUpdate().catch(() => undefined);
+    view.douyinCookie.hasCookie = true;
     services.events.emit({ type: 'settings:updated', data: view });
     return reply.send({ settings: view });
   });
@@ -133,7 +128,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   // Settings loads this separately from the normal settings view so a slow or
   // temporarily unreachable Douyin endpoint never delays the entire page.
   app.get('/api/v1/settings/douyin-cookie-status', async (_req, reply) => {
-    const cookie = await services.secretStore.get(DOUYIN_COOKIE_KEY);
+    const cookie = await services.platformCookie('douyin');
     if (!cookie) return reply.send({ status: 'missing' });
     return reply.send({ status: await checkDouyinCookieStatus(cookie) });
   });

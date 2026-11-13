@@ -6,6 +6,26 @@ import { buildApp } from '../../src/api/server.js';
 import { buildServices } from '../../src/core/services.js';
 
 describe('recording HTTP range playback', () => {
+  it('checks the YouTube playback source with HEAD without opening a compatibility stream', async () => {
+    const services = buildServices({ dbPath: ':memory:' });
+    const room = services.rooms.create({ platform: 'youtube', url: 'https://www.youtube.com/@test', displayName: 'YouTube' });
+    const file = path.join(await mkdtemp(path.join(tmpdir(), 'lr-youtube-head-')), 'recording.mkv');
+    await writeFile(file, 'fixture');
+    const recording = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: null, streamTitle: '' });
+    services.recordings.update(recording.id, { state: 'completed', filePath: file });
+    const { app } = buildApp(services);
+    const request = { method: 'HEAD' as const, url: `/api/v1/recordings/${recording.id}/file?second=10`, headers: { host: '127.0.0.1:43120' } };
+    try {
+      const available = await app.inject(request);
+      expect(available.statusCode).toBe(200);
+      expect(available.rawPayload.length).toBe(0);
+      await unlink(file);
+      expect((await app.inject(request)).statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('opens only the completed recording file through the existing open endpoint, retaining default directory behavior', async () => {
     const services = buildServices({ dbPath: ':memory:' });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/123', displayName: 'external playback' });
@@ -46,8 +66,10 @@ describe('recording HTTP range playback', () => {
     const full = await app.inject(base);
     expect(full.statusCode).toBe(200);
     expect(full.headers['content-length']).toBe(String(data.length));
-    const partial = await app.inject({ ...base, headers: { ...base.headers, range: 'bytes=3-5' } });
+    const origin = 'tauri://localhost';
+    const partial = await app.inject({ ...base, headers: { ...base.headers, origin, range: 'bytes=3-5' } });
     expect(partial.statusCode).toBe(206);
+    expect(partial.headers['access-control-allow-origin']).toBe(origin);
     expect(partial.headers['content-range']).toBe(`bytes 3-5/${data.length}`);
     expect(partial.rawPayload.toString()).toBe('012');
     const suffix = await app.inject({ ...base, headers: { ...base.headers, range: 'bytes=-2' } });

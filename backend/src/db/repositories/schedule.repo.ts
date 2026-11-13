@@ -40,7 +40,26 @@ function rowToSchedule(row: ScheduleRow): RecordingSchedule {
 }
 
 export class ScheduleRepository {
-  constructor(private db: DB) {}
+  private readonly enabledRooms = new Set<string>();
+
+  constructor(private db: DB) {
+    const rows = db.prepare('SELECT DISTINCT room_id FROM recording_schedules WHERE enabled = 1').all() as { room_id: string }[];
+    for (const row of rows) this.enabledRooms.add(row.room_id);
+  }
+
+  hasEnabledForRoom(roomId: string): boolean {
+    return this.enabledRooms.has(roomId);
+  }
+
+  clearIndex(): void {
+    this.enabledRooms.clear();
+  }
+
+  private refreshEnabledRoom(roomId: string): void {
+    const enabled = this.db.prepare('SELECT 1 FROM recording_schedules WHERE room_id = ? AND enabled = 1 LIMIT 1').get(roomId);
+    if (enabled) this.enabledRooms.add(roomId);
+    else this.enabledRooms.delete(roomId);
+  }
 
   create(input: { roomId: string; daysOfWeek: ScheduleDay[]; startTime: string; endTime?: string | null; timezone: string; enabled?: boolean }): RecordingSchedule {
     const id = newId('sch');
@@ -51,6 +70,7 @@ export class ScheduleRepository {
          VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       )
       .run(id, input.roomId, JSON.stringify(input.daysOfWeek), input.startTime, input.endTime ?? null, input.timezone, input.enabled === false ? 0 : 1, now, now);
+    if (input.enabled !== false) this.enabledRooms.add(input.roomId);
     return this.get(id)!;
   }
 
@@ -101,10 +121,16 @@ export class ScheduleRepository {
       params.push(nowIso());
       this.db.prepare(`UPDATE recording_schedules SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
     }
-    return this.get(id)!;
+    const schedule = this.get(id)!;
+    if (patch.enabled !== undefined && schedule) {
+      if (schedule.enabled) this.enabledRooms.add(schedule.roomId);
+      else this.refreshEnabledRoom(schedule.roomId);
+    }
+    return schedule;
   }
 
   remove(id: string): void {
-    this.db.prepare('DELETE FROM recording_schedules WHERE id = ?').run(id);
+    const deleted = this.db.prepare('DELETE FROM recording_schedules WHERE id = ? RETURNING room_id, enabled').get(id) as Pick<ScheduleRow, 'room_id' | 'enabled'> | undefined;
+    if (deleted?.enabled === 1) this.refreshEnabledRoom(deleted.room_id);
   }
 }

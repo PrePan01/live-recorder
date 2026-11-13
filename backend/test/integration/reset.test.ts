@@ -21,6 +21,7 @@ async function fixture() {
   cleanup.push(() => app.close());
   services.settings.save({ ...structuredClone(DEFAULT_SETTINGS), recordingDirectory: dir });
   const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/123', displayName: 'Test' });
+  services.keywordPlans.create(room.id, { enabled: true, includeKeywords: ['test'], excludeKeywords: [] });
   const recording = services.recordings.create({ roomId: room.id, roomName: 'Test', platform: 'bilibili', streamSessionId: 'test', streamTitle: 'Test' });
   const video = path.join(dir, 'video.flv');
   const unrelated = path.join(dir, 'personal.txt');
@@ -51,21 +52,22 @@ async function fixture() {
     headers: { host: '127.0.0.1:43120' },
     payload: { confirm: 'RESET', keepRecordings },
   });
-  return { app, services, dir, video, unrelated, reset };
+  return { app, services, room, dir, video, unrelated, reset };
 }
 
 it('clears application data and credentials while preserving recordings and schema', async () => {
-  const { services, video, reset, app } = await fixture();
+  const { services, room, video, reset, app } = await fixture();
   const response = await reset(true);
   expect(response.statusCode).toBe(200);
   expect(await readFile(video, 'utf8')).toBe('video');
   expect(services.settings.load()).toBeNull();
   expect(services.rooms.list()).toHaveLength(0);
+  expect(services.keywordPlans.matches(room.id, 'test')).toBe(false);
   expect(services.recordings.list().items).toHaveLength(0);
   for (const key of [MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, OPENLIST_TOKEN_KEY]) expect(await services.secretStore.get(key)).toBeNull();
   const tables = services.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'schema_version'").all() as { name: string }[];
   for (const { name } of tables) expect(services.db.prepare(`SELECT COUNT(*) AS count FROM "${name}"`).get()).toEqual({ count: 0 });
-  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 56 });
+  expect(services.db.prepare('SELECT COUNT(*) AS count FROM schema_version').get()).toEqual({ count: 57 });
   expect((await app.inject({ url: '/api/v1/health', headers: { host: '127.0.0.1:43120' } })).json().serviceStatus.setupCompleted).toBe(false);
 });
 

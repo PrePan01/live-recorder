@@ -7,6 +7,8 @@ export interface LiveStatusResult {
   streamSessionId?: string;
   platformStartedAt?: string;
   streamTitle?: string;
+  /** The displayed stream title was synthesized because the platform supplied none. */
+  streamTitleIsPlaceholder?: boolean;
   displayName?: string;
   avatarUrl?: string;
   liveCoverUrl?: string;
@@ -56,6 +58,12 @@ export interface PlatformAdapter {
     quality: Quality,
     cookie?: string,
   ): Promise<StreamUrlResult>;
+  getStreamUrlFromStatus?(
+    roomUrl: string,
+    quality: Quality,
+    cookie: string | undefined,
+    status: Pick<LiveStatusResult, "streamSessionId" | "streamTitle">,
+  ): StreamUrlResult | undefined;
   normalizeUrl(rawUrl: string): string;
   validateUrl(rawUrl: string): boolean;
 }

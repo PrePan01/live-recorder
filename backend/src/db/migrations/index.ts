@@ -1061,6 +1061,18 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     db.exec('CREATE TABLE youtube_sources (input_url TEXT PRIMARY KEY, channel_url TEXT NOT NULL)');
     if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key validation failed after YouTube upgrade');
   } },
+  { version: 57, sql: `
+    CREATE TABLE recording_keyword_plans (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+      include_keywords TEXT NOT NULL,
+      exclude_keywords TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_keyword_plans_room ON recording_keyword_plans(room_id);
+  ` },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

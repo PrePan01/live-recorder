@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import type { SecretStore } from './secret-store.js';
 import { keychainService } from './keys.js';
 
@@ -15,6 +16,7 @@ export type Keytar = {
 const CHUNK_MARKER_SUFFIX = '.lr-chunk-count';
 const CHUNK_SUFFIX = '.lr-chunk-';
 const MAX_CHUNK_BYTES = 400;
+type ChunkMarker = { raw: string; count: number; version: string | undefined };
 
 // 凭据能力按需加载，缺少/不可用的系统钥匙串不会阻止本地工作台启动。
 let cached: Keytar | undefined;
@@ -31,8 +33,8 @@ export class KeytarSecretStore implements SecretStore {
     return `${key}${CHUNK_MARKER_SUFFIX}`;
   }
 
-  private chunkKey(key: string, index: number): string {
-    return `${key}${CHUNK_SUFFIX}${index}`;
+  private chunkKey(key: string, index: number, version?: string): string {
+    return `${key}${CHUNK_SUFFIX}${version ? version + '-' : ''}${index}`;
   }
 
   private split(value: string): string[] {
@@ -53,50 +55,63 @@ export class KeytarSecretStore implements SecretStore {
     return chunks;
   }
 
-  private async chunkCount(key: string): Promise<number> {
+  private async chunkMarker(key: string): Promise<ChunkMarker | undefined> {
     const raw = await this.store.getPassword(this.service, this.marker(key));
-    const count = raw === null ? 0 : Number(raw);
-    return Number.isSafeInteger(count) && count > 0 ? count : 0;
+    if (!raw) return;
+    const [length, version] = raw.split(':');
+    const count = Number(length);
+    if (Number.isSafeInteger(count) && count > 0) return { raw, count, version };
+  }
+
+  private async deleteChunks(key: string, marker?: ChunkMarker): Promise<void> {
+    if (!marker) return;
+    for (let index = 0; index < marker.count; index += 1) {
+      await this.store.deletePassword(this.service, this.chunkKey(key, index, marker.version));
+    }
   }
 
   async get(key: string): Promise<string | null> {
-    const count = await this.chunkCount(key);
-    if (count > 0) {
+    let marker = await this.chunkMarker(key);
+    while (marker) {
+      const { count, version, raw } = marker;
       const chunks = await Promise.all(
-        Array.from({ length: count }, (_, index) => this.store.getPassword(this.service, this.chunkKey(key, index))),
+        Array.from({ length: count }, (_, index) => this.store.getPassword(this.service, this.chunkKey(key, index, version))),
       );
-      return chunks.every((chunk): chunk is string => chunk !== null) ? chunks.join('') : null;
+      if (chunks.every(chunk => chunk !== null)) return chunks.join('');
+      marker = await this.chunkMarker(key);
+      if (marker?.raw === raw) return null;
     }
     return this.store.getPassword(this.service, key);
   }
   async set(key: string, value: string): Promise<void> {
     const chunks = this.split(value);
-    const previousCount = await this.chunkCount(key);
+    const previous = await this.chunkMarker(key);
     if (chunks.length <= 1) {
       await this.store.setPassword(this.service, key, value);
       await this.store.deletePassword(this.service, this.marker(key));
-      for (let index = 0; index < previousCount; index += 1) {
-        await this.store.deletePassword(this.service, this.chunkKey(key, index));
+    } else {
+      const version = randomUUID();
+      const marker = { raw: `${chunks.length}:${version}`, count: chunks.length, version };
+      try {
+        for (const [index, chunk] of chunks.entries()) {
+          await this.store.setPassword(this.service, this.chunkKey(key, index, version), chunk);
+        }
+        // Publish only after every chunk is present. Readers of the previous
+        // marker can still read the old value until the switch is committed.
+        await this.store.setPassword(this.service, this.marker(key), marker.raw);
+      } catch (error) {
+        await this.deleteChunks(key, marker).catch(() => undefined);
+        throw error;
       }
-      return;
+      await this.store.deletePassword(this.service, key).catch(() => undefined);
     }
-    for (let index = 0; index < chunks.length; index += 1) {
-      await this.store.setPassword(this.service, this.chunkKey(key, index), chunks[index]!);
-    }
-    // Publish the marker last so readers never use an incomplete new value.
-    await this.store.setPassword(this.service, this.marker(key), String(chunks.length));
-    await this.store.deletePassword(this.service, key);
-    for (let index = chunks.length; index < previousCount; index += 1) {
-      await this.store.deletePassword(this.service, this.chunkKey(key, index));
-    }
+    await this.deleteChunks(key, previous).catch(() => undefined);
   }
   async delete(key: string): Promise<void> {
-    const count = await this.chunkCount(key);
+    const marker = await this.chunkMarker(key);
     await this.store.deletePassword(this.service, key);
     await this.store.deletePassword(this.service, this.marker(key));
-    for (let index = 0; index < count; index += 1) {
-      await this.store.deletePassword(this.service, this.chunkKey(key, index));
-    }
+    await this.deleteChunks(key, marker).catch(() => undefined);
   }
   async has(key: string): Promise<boolean> {
     return (await this.get(key)) !== null;

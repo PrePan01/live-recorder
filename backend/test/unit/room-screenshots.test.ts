@@ -239,3 +239,25 @@ describe("preview screenshots", () => {
     ).rejects.toMatchObject({ code: "DIRECTORY_NOT_WRITABLE" });
   });
 });
+
+describe("recording screenshots", () => {
+  it("saves to the recording directory after the room is removed", async () => {
+    const { directory, services, room, app } = await setup();
+    const id = recording(
+      services,
+      room.id,
+      path.join(directory, "original", "recording.flv"),
+    );
+    services.rooms.remove(room.id);
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/recordings/${id}/screenshots`,
+      headers: { host: "127.0.0.1:43120", "content-type": "image/png" },
+      payload: png,
+    });
+    expect(response.statusCode).toBe(200);
+    const { filePath } = response.json();
+    expect(path.dirname(filePath)).toBe(path.join(directory, "original", "截图"));
+    expect(await readFile(filePath)).toEqual(png);
+  });
+});

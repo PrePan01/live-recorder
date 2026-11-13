@@ -84,7 +84,7 @@ export function registerRoomScreenshotRoutes(
   app: FastifyInstance,
   services: Services,
 ): void {
-  // Keep the binary parser and larger upload limit local to this endpoint.
+  // Keep the binary parser and larger upload limit local to screenshot routes.
   void app.register(async (scope) => {
     scope.addContentTypeParser(
       "image/png",
@@ -103,6 +103,30 @@ export function registerRoomScreenshotRoutes(
           });
       throw error;
     });
+    const validatePng = (body: unknown): Buffer => {
+      if (
+        !Buffer.isBuffer(body) ||
+        body.length > MAX_SCREENSHOT_BYTES ||
+        !isScreenshotPng(body)
+      )
+        throw new AppError("CONFIG_INVALID", "截图内容无效，请重新截图");
+      return body;
+    };
+    const recordingDirectory = (filePath: string | null) => {
+      if (!filePath)
+        throw new AppError(
+          "RECORDING_DIRECTORY_INVALID",
+          "关联录像暂无保存路径，请稍后重试",
+        );
+      return path.dirname(filePath);
+    };
+    const save = async (directory: string, png: Buffer) => ({
+      filePath: await writeScreenshot(
+        path.join(directory, "截图"),
+        png,
+        services.clock.iso(),
+      ),
+    });
     scope.post<{
       Params: { id: string };
       Querystring: { recordingId?: string };
@@ -112,13 +136,7 @@ export function registerRoomScreenshotRoutes(
       async (req, reply) => {
         const room = services.rooms.get(req.params.id);
         if (!room) throw new AppError("RESOURCE_NOT_FOUND", "直播间不存在");
-        if (
-          !Buffer.isBuffer(req.body) ||
-          req.body.length > MAX_SCREENSHOT_BYTES ||
-          !isScreenshotPng(req.body)
-        ) {
-          throw new AppError("CONFIG_INVALID", "截图内容无效，请重新截图");
-        }
+        const png = validatePng(req.body);
         const recordingId =
           req.query.recordingId ??
           services.manager.activeRecordingFor(room.id)?.recordingId;
@@ -132,12 +150,7 @@ export function registerRoomScreenshotRoutes(
               "RESOURCE_NOT_FOUND",
               "关联录像不存在或不属于当前直播间",
             );
-          if (!recording.filePath)
-            throw new AppError(
-              "RECORDING_DIRECTORY_INVALID",
-              "关联录像暂无保存路径，请稍后重试",
-            );
-          directory = path.dirname(recording.filePath);
+          directory = recordingDirectory(recording.filePath);
         } else {
           const settings = services.settings.load();
           if (!settings?.recordingDirectory?.trim())
@@ -154,12 +167,19 @@ export function registerRoomScreenshotRoutes(
             ),
           );
         }
-        const filePath = await writeScreenshot(
-          path.join(directory, "截图"),
-          req.body,
-          services.clock.iso(),
+        return reply.send(await save(directory, png));
+      },
+    );
+    scope.post<{ Params: { id: string } }>(
+      "/api/v1/recordings/:id/screenshots",
+      { bodyLimit: MAX_SCREENSHOT_BYTES },
+      async (req, reply) => {
+        const recording = services.recordings.get(req.params.id);
+        if (!recording) throw new AppError("RESOURCE_NOT_FOUND", "录像不存在");
+        const png = validatePng(req.body);
+        return reply.send(
+          await save(recordingDirectory(recording.filePath), png),
         );
-        return reply.send({ filePath });
       },
     );
   });
