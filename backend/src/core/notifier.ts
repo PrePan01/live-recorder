@@ -62,7 +62,7 @@ export class Notifier {
     if (this.stopping) return;
     const title = context.title ?? '直播';
     const streamTitle = context.streamTitle?.trim();
-    const streamTitleSuffix = streamTitle ? `：${streamTitle}` : '';
+    const streamTitleSuffix = streamTitle ? ` — ${streamTitle}` : '';
     const recordingSuffix = context.autoRecordingStarted ? '，自动录制已开始' : '';
     const subject = event === 'live_started'
       ? `[直播录制助手] 开播提醒：${title} 已开播${streamTitleSuffix}${recordingSuffix}`

@@ -46,7 +46,7 @@ describe("QQ notification delivery", () => {
     if (event === "live_started") {
       expect(send).toHaveBeenCalledWith(
         "key",
-        "[直播录制助手] 开播提醒：主播 已开播：今晚的直播",
+        "[直播录制助手] 开播提醒：主播 已开播 — 今晚的直播",
         expect.any(AbortSignal),
       );
     }

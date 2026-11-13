@@ -170,10 +170,10 @@ describe('Scheduler', () => {
     await services.scheduler.triggerImmediateCheck(room.id);
     await services.scheduler.triggerImmediateCheck(room.id);
 
-    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '[直播录制助手] 开播提醒：主播A 已开播：今晚聊新游戏' }]);
+    expect(notices).toEqual([{ title: 'Live Recorder提醒', body: '[直播录制助手] 开播提醒：主播A 已开播 — 今晚聊新游戏' }]);
     const mailer = services.mailer as FakeMailer;
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 开播提醒：主播A 已开播：今晚聊新游戏');
+    expect(mailer.sent[0]!.subject).toBe('[直播录制助手] 开播提醒：主播A 已开播 — 今晚聊新游戏');
     expect(services.liveEvents.list(room.id, '2000-01-01T00:00:00.000Z')).toHaveLength(1);
   });
 
