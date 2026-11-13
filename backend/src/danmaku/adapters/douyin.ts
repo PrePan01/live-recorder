@@ -47,10 +47,26 @@ async function resolveRoom(roomUrl: string, cookie: string | null, signal: Abort
 }
 
 /** Server-supported incremental pull; a shared adapter owns one loop per room. */
+export function createDouyinDanmakuAdapter(
+  getRoomId: (roomUrl: string, cookie: string) => Promise<string>,
+): DanmakuAdapter {
+  return { ...douyinDanmakuAdapter, collect: (roomUrl, cookie, signal, onConnected) =>
+    collect(roomUrl, cookie, signal, onConnected, getRoomId) };
+}
+
 export const douyinDanmakuAdapter: DanmakuAdapter = {
   platform: 'douyin',
-  async *collect(roomUrl, cookie, signal, onConnected): AsyncIterable<DanmakuMessage> {
-    const { roomId, headers } = await resolveRoom(roomUrl, cookie, signal);
+  collect,
+};
+
+async function* collect(
+  roomUrl: string, cookie: string | null, signal: AbortSignal, onConnected?: () => void,
+  getRoomId?: (roomUrl: string, cookie: string) => Promise<string>,
+): AsyncIterable<DanmakuMessage> {
+    const { roomId, headers } = cookie && getRoomId
+      ? { roomId: await getRoomId(roomUrl, cookie), headers: { referer: roomUrl, 'user-agent': UA, cookie } }
+      : await resolveRoom(roomUrl, cookie, signal);
+    signal.throwIfAborted();
     const userUniqueId = String(7300000000000000000n + randomBytes(8).readBigUInt64BE() % 700000000000000000n);
     const params = new URLSearchParams({ aid: '6383', app_name: 'douyin_web', live_id: '1', device_platform: 'web', room_id: roomId, resp_content_type: 'protobuf', version_code: '180800', webcast_sdk_version: '1.0.14-beta.0', update_version_code: '1.0.14-beta.0', identity: 'audience', user_unique_id: userUniqueId, did_rule: '3', endpoint: 'live_pc', support_wrds: '1' });
     const seen = new Set<string>();
@@ -74,5 +90,4 @@ export const douyinDanmakuAdapter: DanmakuAdapter = {
       // Sequential, cancellable polling with platform pacing; no overlap or orphan timers.
       await delay(Math.max(0, page.intervalMs - (Date.now() - startedAt)), undefined, { signal, ref: false });
     }
-  },
-};
+}

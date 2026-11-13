@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Services } from '../../core/services.js';
 import { AppError } from '../../types/error.js';
-import { MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
+import { MAIL_PASSWORD_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY } from '../../security/keys.js';
 
 import { QMSG_KEY } from '../../security/keys.js';
 
-const SECRET_KEYS = [QMSG_KEY, MAIL_PASSWORD_KEY, DOUYIN_COOKIE_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY];
+const SECRET_KEYS = [QMSG_KEY, MAIL_PASSWORD_KEY, BILIBILI_COOKIE_KEY, XIAOHONGSHU_COOKIE_KEY, YOUTUBE_COOKIE_KEY, OPENLIST_TOKEN_KEY];
 
 export function registerResetRoutes(app: FastifyInstance, services: Services, otherWrites: () => number): void {
   app.post('/api/v1/settings/reset', async (req, reply) => {
@@ -59,6 +59,7 @@ export function registerResetRoutes(app: FastifyInstance, services: Services, ot
         }
       }
       for (const key of SECRET_KEYS) await services.secretStore.delete(key);
+      await services.douyinAuthorization.save();
       services.db.transaction(() => {
         services.db.exec(`
           DELETE FROM diagnostic_actions;

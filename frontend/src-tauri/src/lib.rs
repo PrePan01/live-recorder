@@ -20,6 +20,7 @@ use contract::{BootEvent, BootState, DiagnosticItem};
 struct ShellState {
     backend: BackendManager,
     boot: Mutex<BootState>,
+    douyin_authorization: Mutex<()>,
     floating_recorder: Mutex<FloatingRecorderState>,
 }
 
@@ -44,6 +45,8 @@ const DOUYIN_AUTH_WINDOW: &str = "douyin-auth";
 const DOUYIN_CONTROLS_WEBVIEW: &str = "douyin-auth-controls";
 const DOUYIN_LOGIN_WEBVIEW: &str = "douyin-auth-login-page";
 const DOUYIN_LOGIN_URL: &str = "https://www.douyin.com/";
+const DOUYIN_ENTER_HOST: &str = "live.douyin.com";
+const DOUYIN_ENTER_PATH: &str = "/webcast/room/web/enter/";
 const XIAOHONGSHU_AUTHORIZED_EVENT: &str = "xiaohongshu:authorized";
 const XIAOHONGSHU_AUTH_WINDOW: &str = "xiaohongshu-auth";
 const XIAOHONGSHU_CONTROLS_WEBVIEW: &str = "xiaohongshu-auth-controls";
@@ -310,9 +313,12 @@ fn show_douyin_auth_windows(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // The local confirmation page is the primary webview.  The real Douyin
-    // page is a child webview above it, leaving a fixed confirmation bar at
-    // the bottom of the *same* native window.
+    let login_url = DOUYIN_LOGIN_URL
+        .parse()
+        .map_err(|e| format!("抖音登录地址无效: {e}"))?;
+    // Each authorization starts in its own empty browser profile.
+    let login = WebviewBuilder::new(DOUYIN_LOGIN_WEBVIEW, WebviewUrl::External(login_url))
+        .incognito(true);
     let auth_window = WindowBuilder::new(app, DOUYIN_AUTH_WINDOW)
         .title("抖音授权")
         .inner_size(980.0, 720.0)
@@ -320,26 +326,28 @@ fn show_douyin_auth_windows(app: &AppHandle) -> Result<(), String> {
         .resizable(true)
         .build()
         .map_err(|e| format!("无法打开抖音授权窗口: {e}"))?;
-    let login_url = DOUYIN_LOGIN_URL
-        .parse()
-        .map_err(|e| format!("抖音登录地址无效: {e}"))?;
-    auth_window
+    let webviews = auth_window
         .add_child(
-            WebviewBuilder::new(DOUYIN_LOGIN_WEBVIEW, WebviewUrl::External(login_url)),
+            login,
             LogicalPosition::new(0.0, 0.0),
             // Keep this slightly shorter than the window so the local
             // confirmation page remains visible along the bottom.
             LogicalSize::new(980.0, 720.0 - AUTH_CONTROLS_HEIGHT),
         )
-        .map_err(|e| format!("无法加载抖音登录页面: {e}"))?;
-    auth_window
-        .add_child(
-            WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("src/window-entries/platform-auth/douyin-auth.html".into())),
-            LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
-            LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
-        )
-        .map_err(|e| format!("无法加载抖音授权确认栏: {e}"))?;
-    Ok(())
+        .map_err(|e| format!("无法加载抖音登录页面: {e}"))
+        .and_then(|_| {
+            auth_window
+                .add_child(
+                    WebviewBuilder::new(DOUYIN_CONTROLS_WEBVIEW, WebviewUrl::App("src/window-entries/platform-auth/douyin-auth.html".into())),
+                    LogicalPosition::new(0.0, 720.0 - AUTH_CONTROLS_HEIGHT),
+                    LogicalSize::new(980.0, AUTH_CONTROLS_HEIGHT),
+                )
+                .map_err(|e| format!("无法加载抖音授权确认栏: {e}"))
+        });
+    if webviews.is_err() {
+        let _ = auth_window.destroy();
+    }
+    webviews.map(|_| ())
 }
 
 /// B站授权窗口：与抖音授权同构（远程登录页 + 底部本地确认栏），
@@ -435,7 +443,7 @@ fn layout_auth_window(
 
 fn close_douyin_auth_windows(app: &AppHandle) {
     if let Some(window) = app.get_window(DOUYIN_AUTH_WINDOW) {
-        let _ = window.close();
+        let _ = window.destroy();
     }
 }
 
@@ -498,9 +506,16 @@ async fn start_douyin_authorization(app: AppHandle) -> Result<(), String> {
     // WebView2 can deadlock when a child webview is created synchronously from
     // an invoke handler. Use a worker thread on both desktop runtimes; Tauri
     // dispatches the native window work to the appropriate UI thread.
-    tauri::async_runtime::spawn_blocking(move || show_douyin_auth_windows(&app))
-        .await
-        .map_err(|e| format!("创建抖音授权窗口任务异常: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ShellState>();
+        let _authorization = state
+            .douyin_authorization
+            .try_lock()
+            .map_err(|_| "抖音授权正在处理，请稍候重试".to_string())?;
+        show_douyin_auth_windows(&app)
+    })
+    .await
+    .map_err(|e| format!("创建抖音授权窗口任务异常: {e}"))?
 }
 
 #[tauri::command]
@@ -517,33 +532,69 @@ async fn start_xiaohongshu_authorization(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("创建小红书授权窗口任务异常: {e}"))?
 }
 
-fn douyin_cookie_header(app: &AppHandle) -> Result<String, String> {
-    let window = app
-        .get_webview(DOUYIN_LOGIN_WEBVIEW)
-        .ok_or_else(|| "授权窗口已关闭，请重新打开后完成登录".to_string())?;
-    // Read the entire native store rather than only www.douyin.com: the login
-    // flow may finish on live.douyin.com, whose host-only login cookie is not
-    // returned for the www URL. This API includes HttpOnly cookies.
-    let mut pairs: Vec<String> = window
+fn douyin_login_webview(app: &AppHandle) -> Option<tauri::Webview> {
+    app.get_webview(DOUYIN_LOGIN_WEBVIEW)
+}
+
+fn douyin_cookie_header(window: &tauri::Webview) -> Result<String, String> {
+    // WKWebView's cookies_for_url misses parent-domain cookies. Match the live
+    // endpoint against its native snapshot, which includes HttpOnly cookies.
+    #[cfg(target_os = "macos")]
+    let cookies = window
         .cookies()
-        .map_err(|e| format!("无法读取抖音登录凭证: {e}"))?
-        .into_iter()
-        .filter(|cookie| {
-            cookie
-                .domain()
-                .is_none_or(|domain| domain.trim_start_matches('.').ends_with("douyin.com"))
-        })
-        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
-        .collect();
-    pairs.sort();
-    pairs.dedup();
-    if !pairs.iter().any(|pair| pair.starts_with("sessionid=") || pair.starts_with("sessionid_ss=")) {
-        return Err("尚未检测到抖音登录态。请先在上方窗口登录抖音，再点击“完成登录并授权”。".to_string());
+        .map_err(|e| format!("无法读取抖音登录凭证: {e}"))?;
+    #[cfg(not(target_os = "macos"))]
+    let cookies = {
+        let url = format!("https://{DOUYIN_ENTER_HOST}{DOUYIN_ENTER_PATH}")
+            .parse()
+            .map_err(|e| format!("抖音直播接口地址无效: {e}"))?;
+        window
+            .cookies_for_url(url)
+            .map_err(|e| format!("无法读取抖音登录凭证: {e}"))?
+    };
+    douyin_enter_cookie_header(cookies)
+}
+
+fn douyin_enter_cookie_header(
+    mut cookies: Vec<tauri::webview::Cookie<'static>>,
+) -> Result<String, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
+    cookies.retain(|cookie| {
+        let matches_domain = cookie.domain().is_some_and(|domain| {
+            domain.eq_ignore_ascii_case(DOUYIN_ENTER_HOST)
+                || domain.eq_ignore_ascii_case("douyin.com")
+        });
+        let path = cookie.path().unwrap_or("/");
+        let matches_path = DOUYIN_ENTER_PATH == path
+            || DOUYIN_ENTER_PATH.strip_prefix(path).is_some_and(|rest| {
+                path.ends_with('/') || rest.starts_with('/')
+            });
+        matches_domain
+            && matches_path
+            && cookie
+                .expires_datetime()
+                .is_none_or(|expires| expires.unix_timestamp() > now)
+    });
+    // Send more specific paths first and preserve the native order for equal paths.
+    cookies.sort_by_key(|cookie| std::cmp::Reverse(cookie.path().unwrap_or("/").len()));
+    let has = |name| {
+        cookies
+            .iter()
+            .any(|cookie| cookie.name() == name && !cookie.value().is_empty())
+    };
+    if !has("sessionid") && !has("sessionid_ss") {
+        return Err("尚未检测到抖音登录。请先在上方窗口登录抖音，再点击“完成登录并授权”。".to_string());
     }
-    if !pairs.iter().any(|pair| pair.starts_with("ttwid=")) {
+    if !has("ttwid") {
         return Err("登录凭证尚未完整写入。请等待几秒后刷新抖音页面，再点击“完成登录并授权”。".to_string());
     }
-    Ok(pairs.join("; "))
+    Ok(cookies
+        .iter()
+        .map(|cookie| cookie.stripped().to_string())
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 fn verify_douyin_login(cookie: &str) -> Result<(), String> {
@@ -575,10 +626,15 @@ fn verify_douyin_login(cookie: &str) -> Result<(), String> {
     }
 }
 
-fn save_douyin_cookie(cookie: String) -> Result<(), String> {
-    verify_douyin_login(&cookie)?;
+fn save_douyin_cookie(cookie: &str) -> Result<(), String> {
     let instance = backend::fetch_ready().ok_or_else(|| "本地服务尚未就绪，请稍候重试".to_string())?;
-    let response = reqwest::blocking::Client::new()
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("无法连接本地服务: {e}"))?;
+    let response = client
         .post(format!("{}/api/v1/settings/douyin-cookie", instance.base_url))
         .json(&serde_json::json!({ "cookie": cookie }))
         .send()
@@ -599,16 +655,25 @@ fn save_douyin_cookie(cookie: String) -> Result<(), String> {
 async fn complete_douyin_authorization(app: AppHandle) -> Result<(), String> {
     // WebView2 can deadlock when cookies are read synchronously on its event
     // thread. Run both native cookie access and the local HTTP write off-thread.
-    let handle = app.clone();
-    let cookie = tauri::async_runtime::spawn_blocking(move || douyin_cookie_header(&handle))
-        .await
-        .map_err(|e| format!("读取抖音授权任务异常: {e}"))??;
-    tauri::async_runtime::spawn_blocking(move || save_douyin_cookie(cookie))
-        .await
-        .map_err(|e| format!("保存抖音授权任务异常: {e}"))??;
-    close_douyin_auth_windows(&app);
-    let _ = app.emit(DOUYIN_AUTHORIZED_EVENT, ());
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ShellState>();
+        // Prevent a new window from opening while this window's save is in flight.
+        let authorization = state
+            .douyin_authorization
+            .try_lock()
+            .map_err(|_| "抖音授权正在处理，请稍候重试".to_string())?;
+        let view = douyin_login_webview(&app)
+            .ok_or_else(|| "授权窗口已关闭，请重新打开后完成登录".to_string())?;
+        let cookie = douyin_cookie_header(&view)?;
+        verify_douyin_login(&cookie)?;
+        save_douyin_cookie(&cookie)?;
+        close_douyin_auth_windows(&app);
+        drop(authorization);
+        let _ = app.emit(DOUYIN_AUTHORIZED_EVENT, ());
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("保存抖音授权任务异常: {e}"))?
 }
 
 fn bilibili_cookie_header(app: &AppHandle) -> Result<String, String> {
@@ -1244,6 +1309,7 @@ pub fn run() {
         .manage(ShellState {
             backend: BackendManager::new(),
             boot: Mutex::new(BootState::Booting),
+            douyin_authorization: Mutex::new(()),
             floating_recorder: Mutex::new(FloatingRecorderState { target_room_id: None, button_size: DEFAULT_FLOATING_RECORDER_SIZE }),
         })
         .on_window_event(|window, event| {
@@ -1259,6 +1325,14 @@ pub fn run() {
                 if window.label() == FLOATING_RECORDER_WINDOW {
                     api.prevent_close();
                     let _ = window.hide();
+                }
+                if window.label() == DOUYIN_AUTH_WINDOW {
+                    api.prevent_close();
+                    let app = window.app_handle();
+                    let state = app.state::<ShellState>();
+                    if let Ok(_authorization) = state.douyin_authorization.try_lock() {
+                        let _ = window.destroy();
+                    };
                 }
             }
             if let tauri::WindowEvent::Moved(position) = event {
@@ -1366,6 +1440,44 @@ pub fn run() {
             show_main_window(&app_handle);
         }
     });
+}
+
+#[cfg(test)]
+mod douyin_auth_tests {
+    use super::douyin_enter_cookie_header;
+    use tauri::webview::Cookie;
+
+    #[test]
+    fn enter_header_keeps_live_and_shared_cookies_in_path_order() {
+        let cookies = [
+            "sessionid=current; Domain=.douyin.com; Path=/; HttpOnly",
+            "sessionid=old; Domain=www.douyin.com; Path=/; HttpOnly",
+            "sessionid=creator; Domain=creator.douyin.com; Path=/",
+            "ttwid=visitor; Domain=live.douyin.com; Path=/; Secure; HttpOnly",
+            "room=general; Domain=.douyin.com; Path=/",
+            "room=specific; Domain=live.douyin.com; Path=/webcast/room",
+            "prefix=wrong; Domain=live.douyin.com; Path=/webcast/roo",
+            "expired=old; Domain=.douyin.com; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        ]
+        .into_iter()
+        .map(|cookie| Cookie::parse(cookie).unwrap())
+        .collect();
+        assert_eq!(
+            douyin_enter_cookie_header(cookies).unwrap(),
+            "room=specific; sessionid=current; ttwid=visitor; room=general"
+        );
+    }
+
+    #[test]
+    fn enter_header_requires_nonempty_live_login_and_visitor_cookies() {
+        let visitor = Cookie::parse("ttwid=visitor; Domain=.douyin.com; Path=/").unwrap();
+        let www_login = Cookie::parse("sessionid=old; Domain=www.douyin.com; Path=/").unwrap();
+        assert!(douyin_enter_cookie_header(vec![visitor, www_login]).is_err());
+
+        let login = Cookie::parse("sessionid_ss=current; Domain=live.douyin.com; Path=/").unwrap();
+        let empty_visitor = Cookie::parse("ttwid=; Domain=.douyin.com; Path=/").unwrap();
+        assert!(douyin_enter_cookie_header(vec![login, empty_visitor]).is_err());
+    }
 }
 
 #[cfg(test)]

@@ -915,6 +915,30 @@ describe('Scheduler', () => {
     expect(seenCookie).toBeUndefined();
   });
 
+  it('ignores an expired response from the previous Douyin account during reauthorization', async () => {
+    const { services } = newServices();
+    const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/6', displayName: 'C' });
+    const adapter = new FakePlatformAdapter('douyin');
+    services.adapterFor = () => adapter;
+    const previous = Promise.withResolvers<Awaited<ReturnType<PlatformAdapter['checkLiveStatus']>>>();
+    const check = vi.spyOn(adapter, 'checkLiveStatus')
+      .mockImplementationOnce(() => previous.promise)
+      .mockResolvedValue({ status: 'offline' });
+    await services.douyinAuthorization.save('sessionid=a');
+    const oldCheck = services.scheduler.triggerImmediateCheck(room.id);
+    await waitFor(() => check.mock.calls.length === 1);
+    await services.douyinAuthorization.save('sessionid=b');
+    const recheck = services.scheduler.recheckDouyinRoomsAfterCookieUpdate();
+    previous.resolve({
+      status: 'restricted',
+      error: new AppError('DOUYIN_COOKIE_EXPIRED', 'expired', {}).toObject(),
+    });
+    await Promise.all([oldCheck, recheck]);
+    expect(check.mock.calls.map(([, cookie]) => cookie)).toEqual(['sessionid=a', 'sessionid=b']);
+    expect(services.rooms.get(room.id)).toMatchObject({ lastLiveStatus: 'offline', lastError: null });
+    expect(services.alerts.list({ unresolvedOnly: true })).toHaveLength(0);
+  });
+
   it('immediately exposes missing douyin authorization and clears the warning after authorization recovers', async () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/70', displayName: 'login required' });

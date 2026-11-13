@@ -10,7 +10,8 @@ import { resolveDanmakuEnabled } from "../config/room-policy.js";
 import type { Room } from "../types/room.js";
 import type { Services } from "../core/services.js";
 import { bilibiliDanmakuAdapter } from "./adapters/bilibili.js";
-import { douyinDanmakuAdapter } from "./adapters/douyin.js";
+import { createDouyinDanmakuAdapter, douyinDanmakuAdapter } from "./adapters/douyin.js";
+import { DouyinAdapter } from "../platform/douyin/index.js";
 import { DanmakuCollector, unsupportedDanmakuAdapter } from "./collector.js";
 import { DanmakuStore, type DanmakuReadOptions } from "./store.js";
 import type { DanmakuAdapter, DanmakuGap, DanmakuStatus } from "./types.js";
@@ -18,7 +19,12 @@ import type { DanmakuAdapter, DanmakuGap, DanmakuStatus } from "./types.js";
 function adapterFor(platform: string, services?: Services): DanmakuAdapter {
   if (platform === "youtube" && services?.adapterFor("youtube") instanceof YoutubeAdapter) return createYoutubeDanmakuAdapter(services.adapterFor("youtube") as YoutubeAdapter);
   if (platform === "bilibili") return bilibiliDanmakuAdapter;
-  if (platform === "douyin") return douyinDanmakuAdapter;
+  if (platform === "douyin") {
+    const adapter = services?.adapterFor("douyin");
+    return adapter instanceof DouyinAdapter
+      ? createDouyinDanmakuAdapter(adapter.getDanmakuRoomId.bind(adapter))
+      : douyinDanmakuAdapter;
+  }
   if (platform === "xiaohongshu" && services?.adapterFor("xiaohongshu") instanceof XiaohongshuAdapter) return createXiaohongshuDanmakuAdapter(services.adapterFor("xiaohongshu") as XiaohongshuAdapter);
   return unsupportedDanmakuAdapter(platform);
 }

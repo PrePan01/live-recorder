@@ -6,6 +6,8 @@ import { buildApp } from "../../src/api/server.js";
 import { buildServices, type Services } from "../../src/core/services.js";
 import { FakeClock } from "../../src/core/clock.js";
 import { FakePlatformAdapter } from "../../src/platform/fake-adapter.js";
+import { DouyinAdapter } from "../../src/platform/douyin/index.js";
+import { DEFAULT_SETTINGS } from "../../src/config/defaults.js";
 import { AppError } from "../../src/types/error.js";
 
 function newServices(): Services {
@@ -873,8 +875,10 @@ describe("REST contract v1.1 (fake stack)", () => {
     await app.close();
   });
 
-  it("settings: desktop authorization endpoint saves only a complete Douyin cookie", async () => {
+  it("settings: desktop authorization replaces a Douyin cookie only with a complete one", async () => {
     const services = newServices();
+    const previous = "ttwid=old-visitor; sessionid=old-login; odin_tt=old-extra";
+    await services.secretStore.set("douyin.cookie", previous);
     const { app } = buildApp(services);
     const request = (cookie: unknown) =>
       app.inject({
@@ -887,11 +891,14 @@ describe("REST contract v1.1 (fake stack)", () => {
     const missingLogin = await request("ttwid=xyz");
     expect(missingLogin.statusCode).toBe(422);
     expect(missingLogin.json().error.message).toContain("sessionid");
+    expect(await services.platformCookie("douyin")).toBe(previous);
 
-    const saved = await request("ttwid=xyz; sessionid=abc123; odin_tt=extra");
+    const replacement = "ttwid=xyz; sessionid=abc123";
+    const saved = await request(replacement);
     expect(saved.statusCode).toBe(200);
     expect(saved.json().settings.douyinCookie.hasCookie).toBe(true);
     expect(JSON.stringify(saved.json())).not.toContain("abc123");
+    expect(await services.platformCookie("douyin")).toBe(replacement);
     await app.close();
   });
 
@@ -1874,6 +1881,48 @@ describe("REST contract v1.1 (fake stack)", () => {
     expect(badRoom.statusCode).toBe(404);
     await app.close();
     check.mockRestore();
+  });
+
+  it.each([false, true])("reuses a Douyin manual check only for the same authorization (switch=%s)", async (switchAccount) => {
+    const services = newServices();
+    const a = "sessionid=a; ttwid=visitor-a";
+    const b = "sessionid=b; ttwid=visitor-b";
+    await services.douyinAuthorization.save(a);
+    services.settings.save({
+      ...structuredClone(DEFAULT_SETTINGS),
+      recordingDirectory: await mkdtemp(path.join(tmpdir(), "lr-douyin-rec-")),
+      diskGuard: { minFreeBytes: 0, minFreePercent: 0 },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({
+      status_code: 0,
+      data: { data: [{ id_str: "123456789", status: 2, title: "测试", user: { nickname: "主播" },
+        stream_url: { flv_pull_url: { FULL_HD1: "https://pull.example.com/live.flv" } } }] },
+    }));
+    const adapter = new DouyinAdapter(fetcher);
+    const originalAdapterFor = services.adapterFor;
+    services.adapterFor = platform => platform === "douyin" ? adapter : originalAdapterFor(platform);
+    if (switchAccount) {
+      const check = adapter.checkLiveStatus.bind(adapter);
+      vi.spyOn(adapter, "checkLiveStatus").mockImplementationOnce(async (url, cookie) => {
+        const result = await check(url, cookie);
+        await services.douyinAuthorization.save(b);
+        return result;
+      });
+    }
+    const room = services.rooms.create({ platform: "douyin", url: "https://live.douyin.com/123456", displayName: "主播" });
+    const { app } = buildApp(services);
+    try {
+      const response = await app.inject({
+        method: "POST", url: `/api/v1/rooms/${room.id}/start-recording`,
+        headers: { host: "127.0.0.1:43120" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(fetcher.mock.calls.map(([, init]) => new Headers(init?.headers).get("Cookie")))
+        .toEqual(switchAccount ? [a, b] : [a]);
+    } finally {
+      if (services.manager.isRoomActive(room.id)) await services.manager.stopRecording(room.id);
+      await app.close();
+    }
   });
 
   it("starts from a healthy preview without an extra platform liveness request", async () => {

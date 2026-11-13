@@ -8,6 +8,7 @@ import { XiaohongshuSourceRepository } from '../db/repositories/xiaohongshu-sour
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
 import { XiaohongshuNativeBroker } from "../platform/xiaohongshu/native.js";
+import { DouyinAuthorizationStore } from "../security/douyin-authorization.js";
 import { XiaohongshuAdapter } from "../platform/xiaohongshu/index.js";
 import { DanmakuManager } from "../danmaku/manager.js";
 import { QualityHealthService } from "./quality-health.js";
@@ -24,7 +25,6 @@ import { MemorySecretStore } from "../security/memory-store.js";
 import { KeytarSecretStore } from "../security/keychain-store.js";
 import {
   MAIL_PASSWORD_KEY,
-  DOUYIN_COOKIE_KEY,
   BILIBILI_COOKIE_KEY,
   XIAOHONGSHU_COOKIE_KEY,
 } from "../security/keys.js";
@@ -70,6 +70,7 @@ export interface Services {
   qmsg: QmsgQueue;
   resetting?: boolean;
   xhsNative: XiaohongshuNativeBroker;
+  douyinAuthorization: DouyinAuthorizationStore;
   mode: AdapterMode;
   startedAt: number;
   events: AppEventBus;
@@ -182,7 +183,12 @@ export function buildServices(opts: BuildOptions = {}): Services {
   const clock = opts.clock ?? new SystemClock();
   const fakeEngine = new FakeRecordingEngine(clock);
 
+  const useKeychain = mode === "real";
+  const secretStore: SecretStore = useKeychain
+    ? new KeytarSecretStore()
+    : new MemorySecretStore();
   const xhsNative = new XiaohongshuNativeBroker();
+  const douyinAuthorization = new DouyinAuthorizationStore(secretStore);
   const xhsSources = new XiaohongshuSourceRepository(db);
   const adapters =
     mode === "real"
@@ -211,17 +217,13 @@ export function buildServices(opts: BuildOptions = {}): Services {
           xiaohongshu: new FakePlatformAdapter("xiaohongshu") as PlatformAdapter,
         };
 
-  const useKeychain = mode === "real";
-  const secretStore: SecretStore = useKeychain
-    ? new KeytarSecretStore()
-    : new MemorySecretStore();
-
   const tags = new TagRepository(db);
 
   const services: Services = {
     mode,
     qmsg: undefined as unknown as QmsgQueue,
     xhsNative,
+    douyinAuthorization,
     startedAt: clock.now(),
     events: new AppEventBus(),
     clock,
@@ -274,7 +276,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     platformCookie: async (platform) => {
       if (platform === "youtube") return (await secretStore.get(YOUTUBE_COOKIE_KEY)) ?? undefined;
       if (platform === "douyin")
-        return (await secretStore.get(DOUYIN_COOKIE_KEY)) ?? undefined;
+        return await douyinAuthorization.cookie();
       // B站未登录时服务端只提供 720p 及以下档位，登录 Cookie（SESSDATA）是获取蓝光/原画的唯一途径。
       if (platform === "bilibili")
         return (await secretStore.get(BILIBILI_COOKIE_KEY)) ?? undefined;

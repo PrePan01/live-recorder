@@ -58,6 +58,12 @@ export interface PlatformAdapter {
     quality: Quality,
     cookie?: string,
   ): Promise<StreamUrlResult>;
+  getStreamUrlFromStatus?(
+    roomUrl: string,
+    quality: Quality,
+    cookie: string | undefined,
+    status: Pick<LiveStatusResult, "streamSessionId" | "streamTitle">,
+  ): StreamUrlResult | undefined;
   normalizeUrl(rawUrl: string): string;
   validateUrl(rawUrl: string): boolean;
 }

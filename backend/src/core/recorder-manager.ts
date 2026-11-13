@@ -690,6 +690,7 @@ export class RecorderManager {
       manual?: boolean;
       scheduled?: boolean;
       liveStartedAt?: string | null;
+      douyinAuthorizationRevision?: number;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
   ): Promise<boolean> {
@@ -756,6 +757,7 @@ export class RecorderManager {
       manual?: boolean;
       scheduled?: boolean;
       liveStartedAt?: string | null;
+      douyinAuthorizationRevision?: number;
       origin?: import("../types/index.js").RecordingOrigin;
     } = {},
     startupTrace: PerformanceTrace,
@@ -840,9 +842,12 @@ export class RecorderManager {
     } else {
       const cookie = await this.services.platformCookie(room.platform);
       startupTrace.mark("platform_cookie_ready");
-      stream = await this.services
-        .adapterFor(room.platform)
-        .getStreamUrl(room.url, settings.quality, cookie);
+      const adapter = this.services.adapterFor(room.platform);
+      const detectedStream = room.platform === "douyin" &&
+        opts.douyinAuthorizationRevision === this.services.douyinAuthorization.revision
+        ? adapter.getStreamUrlFromStatus?.(room.url, settings.quality, cookie, status)
+        : undefined;
+      stream = detectedStream ?? await adapter.getStreamUrl(room.url, settings.quality, cookie);
     }
     sessionId = stream.streamSessionId ?? sessionId;
     startupTrace.mark("stream_url_ready");

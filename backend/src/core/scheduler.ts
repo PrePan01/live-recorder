@@ -366,11 +366,14 @@ export class Scheduler {
    * 同时会等待携带旧 Cookie 的在途检测收口后再发起新请求。
    */
   async recheckDouyinRoomsAfterCookieUpdate(): Promise<void> {
+    const revision = this.services.douyinAuthorization.revision;
     const rooms = this.services.rooms
       .list()
       .filter((room) => room.platform === "douyin");
     await Promise.all(rooms.map((room) => this.waitForRoomCheck(room.id)));
+    if (revision !== this.services.douyinAuthorization.revision) return;
     this.resetDouyinCookieFailure();
+    this.throttleBackoff.delete("douyin");
     await Promise.all(rooms.map((room) => this.triggerImmediateCheck(room.id)));
   }
 
@@ -586,11 +589,12 @@ export class Scheduler {
     opts: { manual?: boolean; scheduled?: boolean; nameOnly?: boolean } = {},
   ): Promise<void> {
     const backoffAtStart = this.isThrottled(room.platform) ? undefined : this.throttleBackoff.get(room.platform);
+    const douyinRevision = this.services.douyinAuthorization.revision;
     const cookie = await this.services.platformCookie(room.platform);
     const status = await adapter.checkLiveStatus(room.url, cookie);
-    // 同一轮最多有两个并发检测；若另一个房间已确认 Cookie 失效，
-    // 不让这个已在途请求的结果覆盖全局失效标记。
-    if (room.platform === "douyin" && this.douyinCookieExpired) return;
+    // 账号切换或其他房间确认授权失效后，丢弃旧授权的在途检测结果。
+    if (room.platform === "douyin" &&
+      (this.douyinCookieExpired || douyinRevision !== this.services.douyinAuthorization.revision)) return;
     // 适配器已从平台响应提取主播昵称/头像；检测成功后持久化并通过 SSE 推送，
     // 让首次只填写链接的房间在刷新后也能保留自动识别的显示名与头像。
     const detectedName = status.displayName?.trim();
@@ -736,7 +740,7 @@ export class Scheduler {
         autoRecordingStarted = await this.manager.maybeStartRecording(
           { ...refreshedRoom, monitorState: "checking" },
           status,
-          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt },
+          { ...opts, liveStartedAt: refreshedRoom.liveStartedAt, douyinAuthorizationRevision: douyinRevision },
         );
       } catch (err) {
         const appErr =

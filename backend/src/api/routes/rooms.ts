@@ -659,6 +659,7 @@ export function registerRoomRoutes(
     // A data-bearing preview is fresher evidence of a live room than a cached
     // platform poll, and its upstream stream can be handed straight to recording.
     const previewReady = services.manager.isPreviewReadyForRecording(id);
+    const douyinAuthorizationRevision = services.douyinAuthorization.revision;
     // 没有健康预览时，lastLiveStatus 为准（未检测过则触发一次实时检测）。
     let live = previewReady || room.lastLiveStatus === "live";
     let status:
@@ -713,7 +714,7 @@ export function registerRoomRoutes(
         (room.currentStreamTitle
           ? { streamTitle: room.currentStreamTitle }
           : {}),
-      { manual: true, origin },
+      { manual: true, origin, douyinAuthorizationRevision },
     );
     if (!started) {
       if (services.manager.isRoomActive(id)) {
