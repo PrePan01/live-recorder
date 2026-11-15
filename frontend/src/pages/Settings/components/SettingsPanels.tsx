@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Button, Input, Select, Slider, Space } from "antd";
+import { MONITORING_INTERVAL_COLUMNS } from "../model/catalog";
 import { useSettingsModelContext } from "../model/SettingsContext";
-import { OrdinaryRow, SettingControl, SettingsRow } from "./SettingsPrimitives";
+import {
+  OrdinaryRow,
+  SaveStatus,
+  SettingControl,
+  SettingsRow,
+} from "./SettingsPrimitives";
 import MemphisRadioGroup from "../../../components/MemphisRadioGroup";
 import DirectoryPicker from "../../../components/DirectoryPicker";
 import DetectionLoadHint from "../../../components/DetectionLoadHint";
+import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import type { ThemePreference } from "../../../types/settings";
 import { useAppTheme } from "../../../theme";
 import {
@@ -81,10 +89,53 @@ export function RecordingPanel() {
 export function MonitoringPanel() {
   return (
     <>
-      <p>按平台设置检查开播状态的间隔（秒），数值越小响应越快。</p>
-      {["default", "bilibili", "douyin", "xiaohongshu", "youtube"].map((p) => (
-        <OrdinaryRow key={p} id={`interval-${p}`} />
-      ))}
+      <p className="lr-settings-row__help">
+        按平台设置检查开播状态的默认间隔（秒），数值越小响应越快，也可以在直播间设置内手动设置不同直播间的间隔
+      </p>
+      <div
+        className="lr-monitoring-table-scroll"
+        role="region"
+        aria-label="检测间隔设置"
+        tabIndex={0}
+      >
+        <table
+          className="lr-monitoring-table"
+          style={
+            {
+              "--lr-monitoring-column-count":
+                MONITORING_INTERVAL_COLUMNS.length,
+            } as CSSProperties
+          }
+        >
+          <caption className="lr-settings-sr-only">开播检测间隔</caption>
+          <thead>
+            <tr>
+              {MONITORING_INTERVAL_COLUMNS.map(({ id, key, heading }) => (
+                <th key={id} scope="col">
+                  <label id={`${id}-label`} htmlFor={`${id}-control`}>
+                    {key !== "default" && (
+                      <span aria-hidden="true">
+                        <PlatformLogoTag platform={key} />
+                      </span>
+                    )}
+                    {heading}
+                  </label>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {MONITORING_INTERVAL_COLUMNS.map(({ id }) => (
+                <td key={id} id={id}>
+                  <SettingControl id={id} />
+                  <SaveStatus id={id} />
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <DetectionLoadHint />
     </>
   );

@@ -1,3 +1,5 @@
+import type { PlatformIntervals } from "../../../types/settings";
+import { PLATFORM_LABEL } from "../../../utils/room/roomPlatform";
 import type { Patch } from "./saveQueue";
 export type Domain =
   | "settings"
@@ -56,6 +58,19 @@ const field = (
   restorable: true,
   ...extra,
 });
+const MONITORING_INTERVAL_KEYS = [
+  "default",
+  "bilibili",
+  "douyin",
+  "xiaohongshu",
+  "youtube",
+] as const satisfies readonly (keyof PlatformIntervals)[];
+export const MONITORING_INTERVAL_COLUMNS = MONITORING_INTERVAL_KEYS.map((key) => ({
+  id: `interval-${key}`,
+  key,
+  heading: key === "default" ? "全局" : PLATFORM_LABEL[key],
+}));
+
 export const DEFINITIONS: SettingDefinition[] = [
   field(
     "theme",
@@ -147,14 +162,14 @@ export const DEFINITIONS: SettingDefinition[] = [
     "录制完成后询问是否保留",
     "等待保留确认时，后处理和上传将暂缓执行。",
   ),
-  ...(["default", "bilibili", "douyin", "xiaohongshu", "youtube"] as const).map(
-    (platform, index) =>
+  ...MONITORING_INTERVAL_COLUMNS.map(
+    ({ id, key, heading }) =>
       field(
-        `interval-${platform}`,
+        id,
         "monitoring",
         "settings",
-        `checkIntervalSec.${platform}`,
-        `${["全局默认", "B站", "抖音", "小红书", "YouTube"][index]}检测间隔`,
+        `checkIntervalSec.${key}`,
+        `${key === "default" ? "全局默认" : heading}检测间隔`,
         "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
         {
           min: 1,
