@@ -25,6 +25,7 @@ import RoomEditorModal from "./components/RoomEditorModal";
 import BatchAddRoomsModal from "./components/BatchAddRoomsModal";
 import "./rooms.css";
 import { useRoomStore } from "../../stores/roomStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useTagStore } from "../../stores/tagStore";
 import SchedulePanel from "./components/SchedulePanel";
 import KeywordPlanPanel from "./components/KeywordPlanPanel";
@@ -378,6 +379,11 @@ export default function Rooms() {
 }
 
 function RoomPlanTabs({ roomId }: { roomId: string }) {
+  const room = useRoomStore((s) => s.rooms.find((item) => item.id === roomId));
+  const globalAutoRecord = useSettingsStore((s) => s.settings?.autoRecord);
+  const autoRecord =
+    room?.effective?.autoRecord.value ?? room?.autoRecord ?? globalAutoRecord;
+  const [activeTab, setActiveTab] = useState("schedule");
   const [scheduleCount, setScheduleCount] = useState<number | null>(null);
   const [keywordCount, setKeywordCount] = useState<number | null>(null);
   return (
@@ -388,8 +394,19 @@ function RoomPlanTabs({ roomId }: { roomId: string }) {
         item: "lr-room-plan-tab",
         indicator: "lr-room-plan-tab-indicator",
       }}
-      defaultActiveKey="schedule"
+      activeKey={activeTab}
+      onChange={setActiveTab}
       tabBarGutter={0}
+      renderTabBar={(props, TabBar) => (
+        <div className="lr-room-plan-tab-row">
+          <TabBar {...props} />
+          {activeTab === "keyword" && autoRecord && (
+            <Typography.Text type="danger" role="status">
+              已开启自动录制，关键词计划将不会生效
+            </Typography.Text>
+          )}
+        </div>
+      )}
       items={[
         {
           key: "schedule",
@@ -401,10 +418,15 @@ function RoomPlanTabs({ roomId }: { roomId: string }) {
         },
         {
           key: "keyword",
-          label: keywordCount === null ? "关键词计划" : `关键词计划(${keywordCount})`,
+          label: keywordCount === null
+            ? "关键词计划"
+            : `关键词计划(${keywordCount})`,
           forceRender: true,
           children: (
-            <KeywordPlanPanel roomId={roomId} onCountChange={setKeywordCount} />
+            <KeywordPlanPanel
+              roomId={roomId}
+              onCountChange={setKeywordCount}
+            />
           ),
         },
       ]}

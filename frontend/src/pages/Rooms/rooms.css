@@ -7,10 +7,19 @@
   color: var(--lr-muted);
 }
 
-.lr-room-plan-tabs > .lr-room-plan-tabs-header {
+.lr-room-plan-tab-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   margin-bottom: 20px;
 }
-.lr-room-plan-tabs > .lr-room-plan-tabs-header::before,
+.lr-room-plan-tabs .lr-room-plan-tab-row > .lr-room-plan-tabs-header {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+.lr-room-plan-tabs-header::before,
 .lr-room-plan-tabs .lr-room-plan-tab-indicator {
   display: none;
 }
