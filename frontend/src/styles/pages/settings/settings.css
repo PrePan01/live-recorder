@@ -278,6 +278,17 @@
   gap: 8px;
   align-items: center;
 }
+.lr-settings-vars .lr-settings-vars__button {
+  flex-direction: column;
+  gap: 2px;
+  height: auto;
+  padding-block: 4px;
+  line-height: 1.2;
+}
+.lr-settings-vars__button > small {
+  color: color-mix(in srgb, var(--lr-muted) 88%, var(--lr-surface));
+  font-size: 10px;
+}
 .lr-settings-example {
   overflow-wrap: anywhere;
   background: var(--lr-surface-alt);
@@ -630,12 +641,23 @@
   color: var(--lr-error);
   font-size: 12px;
 }
+#naming-rule {
+  grid-auto-rows: max-content;
+}
 .lr-settings-naming-editor {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+.lr-settings-naming-presets {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+}
+.lr-settings-naming-presets .ant-select-item-option-content {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 719px) {
   .lr-settings-naming-editor {

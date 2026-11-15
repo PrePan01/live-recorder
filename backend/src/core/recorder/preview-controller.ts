@@ -12,6 +12,7 @@ import {
 import { recordingFilePath } from "../../storage/file-organizer.js";
 import { SeekIndexWriter, endSeekWriter } from "../../storage/seek-index.js";
 import { AppError } from "../../types/error.js";
+import { ROOM_TITLE_VARIABLE } from "../../types/index.js";
 import type { AppSettings, ErrorObject, Room } from "../../types/index.js";
 import type { Notifier } from "../notifier.js";
 import { type PerformanceTrace } from "../performance-diagnostics.js";
@@ -60,7 +61,7 @@ interface PreviewControllerHost {
     endTimestampMs: number,
   ): Promise<void>;
   settleRecordingGap(session: ActiveSession, now: number): void;
-  createRecordingFile(filePath: string, roomId: string): Promise<void>;
+  createRecordingFile(filePath: string, roomId: string, unique?: boolean): Promise<string>;
   newSession(
     recordingId: string,
     roomId: string,
@@ -565,7 +566,7 @@ export class PreviewController {
     if (previewSession.streamSessionId)
       status = { ...status, streamSessionId: previewSession.streamSessionId };
 
-    const filePath = recordingFilePath(
+    const preferredPath = recordingFilePath(
       settings.recordingDirectory,
       room.platform,
       room.displayName || room.id,
@@ -574,8 +575,13 @@ export class PreviewController {
       settings.namingRule,
       actualQuality,
       room.id,
+      status.streamTitle?.trim() || room.currentStreamTitle,
     );
-    await this.host.createRecordingFile(filePath, room.id);
+    const filePath = await this.host.createRecordingFile(
+      preferredPath,
+      room.id,
+      settings.namingRule?.includes(ROOM_TITLE_VARIABLE),
+    );
     startupTrace?.mark("recording_file_ready");
     const recording = this.services.recordings.create({
       roomId: room.id,

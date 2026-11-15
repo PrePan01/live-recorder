@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { InjectOptions } from "fastify";
@@ -118,25 +118,30 @@ describe("RecorderManager", () => {
     const services = buildServices({ dbPath: ":memory:", clock });
     services.settings.save({
       ...baseSettings(dir),
-      namingRule: "{platform}_{roomId}_{quality}",
+      namingRule: "{roomTitle}",
     });
     const room = services.rooms.create({
       platform: "bilibili",
       url: "https://live.bilibili.com/101",
       displayName: "不应作为历史标题的房间名",
     });
+    const roomDir = path.join(dir, room.platform, room.displayName);
+    await mkdir(roomDir, { recursive: true });
+    const existing = path.join(roomDir, "今晚_一起看直播.flv");
+    await writeFile(existing, "previous recording");
 
     await services.manager.maybeStartRecording(
       room,
-      { streamSessionId: "floating-title", streamTitle: room.displayName },
+      { streamSessionId: "floating-title", streamTitle: "今晚/一起看直播" },
       { manual: true, origin: "floating" },
     );
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
     const saved = services.recordings.get(rec.id)!;
 
+    expect(path.basename(saved.filePath!)).toBe("今晚_一起看直播 (1).flv");
     expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
-    expect(saved.streamTitle).not.toBe(room.displayName);
+    expect(await readFile(existing, "utf8")).toBe("previous recording");
     await services.manager.stopRecording(room.id);
   });
 
@@ -148,8 +153,10 @@ describe("RecorderManager", () => {
     const services = buildServices({ dbPath: ":memory:", clock });
     services.settings.save({
       ...baseSettings(dir),
-      namingRule: "{roomId}_{platform}",
+      namingRule: "{roomTitle}",
     });
+    const { buildApp } = await import("../../src/api/server.js");
+    const { app } = buildApp(services);
     services.manager.preview = new FakePreview();
     const room = services.rooms.create({
       platform: "bilibili",
@@ -159,19 +166,25 @@ describe("RecorderManager", () => {
     services.rooms.setLiveStatus(room.id, "live");
     await services.manager.ensurePreviewStream(room.id);
     await waitFor(() => services.manager.isPreviewReadyForRecording(room.id));
-
-    await services.manager.maybeStartRecording(
-      room,
-      { streamSessionId: "floating-preview", streamTitle: room.displayName },
-      { manual: true, origin: "floating" },
-    );
+    const adapter = services.adapterFor(room.platform) as FakePlatformAdapter;
+    adapter.setScript([{ status: "live", streamTitle: "观看中开录" }]);
+    const getStreamUrl = vi.spyOn(adapter, "getStreamUrl");
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+      payload: { origin: "floating" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(getStreamUrl).not.toHaveBeenCalled();
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
     const saved = services.recordings.get(rec.id)!;
 
+    expect(path.basename(saved.filePath!)).toBe("观看中开录.flv");
     expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
-    expect(saved.streamTitle).not.toBe(room.displayName);
     await services.manager.stopRecording(room.id);
+    await app.close();
   });
 
   it("records a live stream to completion, forwards preview frames and closes with 1000", async () => {

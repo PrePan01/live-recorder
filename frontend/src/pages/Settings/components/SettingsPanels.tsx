@@ -226,6 +226,8 @@ export function NamingPanel() {
         <Select
           aria-label="命名规则预设"
           placeholder="选择预设模板"
+          popupMatchSelectWidth={false}
+          classNames={{ popup: { root: "lr-settings-naming-presets" } }}
           value={model.loaded("naming-rule") ? rule : undefined}
           labelRender={() =>
             NAMING_PRESETS.find((p) => p.value === rule)?.label ?? "自定义"
@@ -236,13 +238,18 @@ export function NamingPanel() {
         <SettingControl id="naming-rule" />
       </div>
       <div className="lr-settings-vars">
-        <span>插入变量：</span>
-        {NAMING_VARS.map((v) => (
+        {NAMING_VARS.map(({ value, label }) => (
           <Button
-            key={v}
+            key={value}
+            className="lr-settings-vars__button"
             size="small"
-            onClick={() => model.change("naming-rule", `${rule}{${v}}`, 500)}
-          >{`{${v}}`}</Button>
+            onClick={() =>
+              model.change("naming-rule", `${rule}{${value}}`, 500)
+            }
+          >
+            <span>{`{${value}}`}</span>
+            <small>{label}</small>
+          </Button>
         ))}
       </div>
       <p className="lr-settings-example">
