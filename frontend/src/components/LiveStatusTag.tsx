@@ -11,14 +11,18 @@ export default function LiveStatusTag({
   status,
   streamTitle,
   titleOnly = false,
+  onTitleClick,
 }: {
   status: LiveStatus | null;
   streamTitle?: string | null;
   titleOnly?: boolean;
+  onTitleClick?: (title: string) => void;
 }) {
-  const titleRef = useRef<HTMLSpanElement>(null);
+  const titleRef = useRef<HTMLElement>(null);
   const [marquee, setMarquee] = useState(false);
   const title = status === "live" ? streamTitle?.trim() : undefined;
+  const Title = onTitleClick ? "button" : "span";
+  const titleLabel = onTitleClick ? "复制直播标题" : "当前直播标题";
 
   useLayoutEffect(() => {
     const element = titleRef.current;
@@ -46,7 +50,7 @@ export default function LiveStatusTag({
     if (viewport) observer.observe(viewport);
     update();
     return () => observer.disconnect();
-  }, [title]);
+  }, [title, Title]);
 
   if (!status) {
     if (titleOnly) return null;
@@ -73,11 +77,15 @@ export default function LiveStatusTag({
         </>
       ) : null}
       {title ? (
-        <span
-          ref={titleRef}
+        <Title
+          ref={(element: HTMLElement | null) => {
+            titleRef.current = element;
+          }}
           className="lr-live-status-title"
-          title={`当前直播标题：${title}`}
-          aria-label={`当前直播标题：${title}`}
+          title={`${titleLabel}：${title}`}
+          aria-label={`${titleLabel}：${title}`}
+          type={onTitleClick ? "button" : undefined}
+          onClick={onTitleClick ? () => onTitleClick(title) : undefined}
         >
           <span className="lr-live-status-title__viewport">
             {marquee ? (
@@ -89,7 +97,7 @@ export default function LiveStatusTag({
               <span className="lr-live-status-title__content">{title}</span>
             )}
           </span>
-        </span>
+        </Title>
       ) : null}
     </span>
   );

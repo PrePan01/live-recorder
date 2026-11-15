@@ -12,6 +12,7 @@
     "core:window:allow-close",
     "notification:default",
     "dialog:default",
+    "clipboard-manager:allow-write-text",
     "shell:allow-open",
     "shell:allow-spawn",
     "process:default"

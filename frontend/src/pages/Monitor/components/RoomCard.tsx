@@ -1,6 +1,9 @@
 import { roomLivePageUrl } from "../../../utils/room/roomPlatform";
 import { memo } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  App,
   Button,
   Card,
   Popover,
@@ -113,10 +116,24 @@ export const RoomCard = memo(function RoomCard({
   floatingEnabled: boolean;
   floatingReady: boolean;
 }) {
+  const { message } = App.useApp();
   const showLiveRoomCover = useAppearanceStore((s) => s.showLiveRoomCover);
+  const copyStreamTitle = async (title: string) => {
+    try {
+      if (isTauri()) {
+        await writeText(title);
+      } else {
+        await navigator.clipboard.writeText(title);
+      }
+      message.success("已复制直播标题");
+    } catch {
+      message.error("复制直播标题失败");
+    }
+  };
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
+  const streamTitle = room.currentStreamTitle?.trim();
   const bestAvailable = bestQuality(room.availableQualities);
   const qualityShortfall =
     room.platform === "bilibili" &&
@@ -294,9 +311,8 @@ export const RoomCard = memo(function RoomCard({
           {onAir ? (
             <LiveStatusTag
               status="live"
-              streamTitle={
-                room.currentStreamTitle?.trim() || "直播标题暂未获取"
-              }
+              streamTitle={streamTitle || "直播标题暂未获取"}
+              onTitleClick={streamTitle ? copyStreamTitle : undefined}
               titleOnly
             />
           ) : (
