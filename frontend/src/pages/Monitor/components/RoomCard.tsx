@@ -75,6 +75,8 @@ function bestQuality(qualities: string[]): string | null {
 
 export const RoomCard = memo(function RoomCard({
   room,
+  selectedTagIds,
+  onToggleTagFilter,
   onManageRoom,
   onWatch,
   onCheck,
@@ -96,6 +98,8 @@ export const RoomCard = memo(function RoomCard({
   floatingReady,
 }: {
   room: Room;
+  selectedTagIds: string[];
+  onToggleTagFilter: (tagId: string) => void;
   onManageRoom: (r: Room) => void;
   onWatch: (r: Room) => void;
   onCheck: (r: Room) => void;
@@ -318,11 +322,29 @@ export const RoomCard = memo(function RoomCard({
           ) : (
             <LivePredictionBadge insight={insight} hidden={recording} />
           )}
-          {room.tags.map((t) => (
-            <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-              {t.name}
-            </Tag>
-          ))}
+          {room.tags.map((tag) => {
+            const selected = selectedTagIds.includes(tag.id);
+            const label = `按标签筛选：${tag.name}`;
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className="lr-room-card__tag-filter"
+                aria-label={label}
+                aria-pressed={selected}
+                title={label}
+                onClick={() => onToggleTagFilter(tag.id)}
+              >
+                <Tag
+                  color={tag.color}
+                  variant={selected ? "outlined" : undefined}
+                  style={{ marginInlineEnd: 0 }}
+                >
+                  {tag.name}
+                </Tag>
+              </button>
+            );
+          })}
         </Space>
         <div
           className="lr-room-card__stats"

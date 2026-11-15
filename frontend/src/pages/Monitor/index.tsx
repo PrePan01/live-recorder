@@ -119,6 +119,13 @@ export default function Monitor() {
   const [tagIds, setTagIds] = useState<string[]>(
     () => readSavedMonitorFilters().tagIds ?? [],
   );
+  const toggleTagFilter = useCallback((tagId: string) => {
+    setTagIds((current) =>
+      current.includes(tagId)
+        ? current.filter((id) => id !== tagId)
+        : [...current, tagId],
+    );
+  }, []);
   const [keyword, setKeyword] = useState("");
   const [sort, setSort] = useState<MonitorSort>(
     () => readSavedMonitorFilters().sort ?? "manual",
@@ -570,6 +577,8 @@ export default function Monitor() {
               <SortableRoomCardItem key={room.id} roomId={room.id}>
                 <RoomCard
                   room={room}
+                  selectedTagIds={tagIds}
+                  onToggleTagFilter={toggleTagFilter}
                   onManageRoom={onManageRoom}
                   acting={actingRoomId === room.id}
                   actingAction={

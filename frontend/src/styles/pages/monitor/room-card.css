@@ -244,6 +244,15 @@
   line-height: 1;
 }
 
+.lr-room-card__tag-filter {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
 /* The warning strip precedes the header visually, without consuming the title row. */
 
 .lr-room-card {

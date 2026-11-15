@@ -24,6 +24,7 @@ const noop = () => undefined;
 const render = (currentRoom = room, layout: 'card' | 'list' = 'card', autoRecordEnabled = false) => renderToStaticMarkup(
   createElement(RoomCard, {
     room: currentRoom, layout, onManageRoom: noop, onWatch: noop, onCheck: noop,
+    selectedTagIds: [], onToggleTagFilter: noop,
     onStop: noop, onRecord: noop, onFavorite: noop, onEnableFloating: noop,
     autoRecordEnabled, qualityPreference: null, bilibiliAuthorized: true,
     floatingEnabled: false, floatingReady: true,
