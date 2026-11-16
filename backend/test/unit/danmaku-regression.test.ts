@@ -116,6 +116,39 @@ it('closes a disconnected tail at the final media position even after the live c
   expect(await store.readGaps()).toEqual([{ fromMs: 100, toMs: 2000, reason: 'collector_stopped' }]);
 });
 
+it('stays unavailable throughout a retry and returns to collecting when it succeeds', async () => {
+  const store = await DanmakuStore.open(await recording());
+  let attempts = 0;
+  let finishRetry!: () => void;
+  const retry = new Promise<void>(resolve => { finishRetry = resolve; });
+  vi.useFakeTimers();
+  const collector = DanmakuCollector.start({
+    recordingId: 'preview:retry', store, roomUrl: '', cookie: null, sink: { status: () => undefined }, mediaNow: () => null,
+    adapter: {
+      platform: 'xiaohongshu',
+      async *collect(_url, _cookie, signal, ready) {
+        if (++attempts <= 8) throw new Error('官网请求未完成');
+        await retry;
+        if (signal.aborted) return;
+        ready?.();
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+    },
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(attempts).toBe(9);
+    expect(collector.status.state).toBe('unavailable');
+    finishRetry();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(collector.status.state).toBe('collecting');
+  } finally {
+    finishRetry();
+    vi.useRealTimers();
+    await collector.stop();
+  }
+});
+
 it('keeps a sidecar migration failure within the danmaku subsystem', async () => {
   const emit = vi.fn(), manager = new DanmakuManager({ events: { emit } } as unknown as Services);
   vi.spyOn(DanmakuStore, 'move').mockRejectedValueOnce(new Error('disk unavailable'));

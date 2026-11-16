@@ -79,7 +79,7 @@ export class DanmakuCollector {
       collector.abort?.abort();
       collector.wakeSleep?.();
     });
-    // 首帧必发：初始态与首次 setState 同值，同态守卫会吞掉它——直接推快照。
+    // 订阅端需要先收到初始连接状态。
     collector.sink.status(collector.status);
     collector.loop = collector.run().catch(() => undefined);
     return collector;
@@ -139,7 +139,6 @@ export class DanmakuCollector {
     while (!this.stopped && !this.store.error) {
       this.abort = new AbortController();
       try {
-        this.setState(this.attempts === 0 ? "connecting" : "reconnecting");
         console.log(`[danmaku ${new Date().toISOString()}] connect platform=${this.adapter.platform} attempt=${this.attempts}`);
         for await (const message of this.adapter.collect(
           this.roomUrl,

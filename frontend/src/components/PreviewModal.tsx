@@ -1,3 +1,6 @@
+/**
+ * 直播观看弹窗
+ */
 import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
 import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
@@ -37,9 +40,7 @@ import { usePreviewMarkers } from "./preview/usePreviewMarkers";
 import { usePreviewRecording } from "./preview/usePreviewRecording";
 import { usePreviewSeek } from "./preview/usePreviewSeek";
 import { VideoScreenshotButton } from "./VideoScreenshotButton";
-/**
- * 直播观看弹窗
- */
+
 export default function PreviewModal({
   room,
   onClose,

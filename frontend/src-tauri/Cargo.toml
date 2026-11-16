@@ -38,3 +38,9 @@ minisign-verify = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSHTTPCookie", "NSString"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKHTTPCookieStore", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore"] }

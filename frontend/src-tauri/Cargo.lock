@@ -69,9 +69,13 @@ name = "app"
 version = "1.6.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "libc",
  "log",
  "minisign-verify",
+ "objc2",
+ "objc2-foundation",
+ "objc2-web-kit",
  "reqwest 0.12.28",
  "semver",
  "serde",
