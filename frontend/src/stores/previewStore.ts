@@ -5,7 +5,6 @@ const MAX_PREVIEWS = 4;
 
 export interface PreviewModalConfig {
   roomId: string;
-  titlePrefix?: string;
   defaultWidth?: number;
   enableHighlights?: boolean;
 }

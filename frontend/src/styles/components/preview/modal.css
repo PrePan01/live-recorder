@@ -34,15 +34,30 @@
   min-width: 0;
 }
 
-.lr-preview-modal__name {
-  min-width: 0;
-}
-
 .lr-preview-modal__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  column-gap: 8px;
   padding-right: 8px;
+}
+
+.lr-preview-modal__heading {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lr-preview-modal__heading > .ant-typography {
+  line-height: inherit;
+}
+
+.lr-preview-modal__name.ant-typography {
+  color: #8c8c8c !important;
+}
+
+.lr-preview-modal__header-actions {
+  flex-shrink: 0;
 }
 
 .lr-preview-modal__body {

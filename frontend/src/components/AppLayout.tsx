@@ -199,7 +199,6 @@ export default function AppLayout() {
       {activeModal && activeModalRoom ? (
         <PreviewModal
           room={activeModalRoom}
-          titlePrefix={activeModal.titlePrefix}
           defaultWidth={activeModal.defaultWidth}
           enableHighlights={activeModal.enableHighlights}
           onClose={closeModal}

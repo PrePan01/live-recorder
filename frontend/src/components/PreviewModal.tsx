@@ -12,7 +12,15 @@ import {
   CompressOutlined,
   VideoCameraAddOutlined,
 } from "@ant-design/icons";
-import { Button, Modal, Popconfirm, Popover, Space, Tooltip } from "antd";
+import {
+  Button,
+  Modal,
+  Popconfirm,
+  Popover,
+  Space,
+  Tooltip,
+  Typography,
+} from "antd";
 import {
   useCallback,
   useEffect,
@@ -54,13 +62,11 @@ import { VideoScreenshotButton } from "./VideoScreenshotButton";
 export default function PreviewModal({
   room,
   onClose,
-  titlePrefix = "观看",
   defaultWidth,
   enableHighlights = true,
 }: {
   room: Room;
   onClose: () => void;
-  titlePrefix?: string;
   defaultWidth?: number;
   enableHighlights?: boolean;
 }) {
@@ -83,6 +89,7 @@ export default function PreviewModal({
     handleStart,
     handleStop,
   } = usePreviewRecording(room);
+  const streamTitle = live.currentStreamTitle?.trim();
   const recordingDanmakuStatus = useDanmakuStore((state) =>
     selectDanmakuStatus(state, activeRecordingId),
   );
@@ -308,8 +315,20 @@ export default function PreviewModal({
         aria-owns={playerPortalId}
         title={
           <div className="lr-preview-modal__header">
-            <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
-            <Space size={4}>
+            <div className="lr-preview-modal__heading">
+              {streamTitle && (
+                <Typography.Text ellipsis={{ tooltip: streamTitle }}>
+                  {streamTitle}
+                </Typography.Text>
+              )}
+              <Typography.Text
+                className="lr-preview-modal__name"
+                ellipsis={{ tooltip: live.displayName }}
+              >
+                {live.displayName}
+              </Typography.Text>
+            </div>
+            <Space className="lr-preview-modal__header-actions" size={4}>
               <VideoScreenshotButton {...screenshot} />
               {danmakuList.toggle}
               <Popover
