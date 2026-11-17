@@ -296,7 +296,8 @@ jobs:
            (needs.prepare.outputs.reuse_release == 'true' && needs.build.result == 'skipped')) &&
           needs.prepare.outputs.should_release == 'true' &&
           (github.event_name == 'push' || inputs.publish) }}
-    runs-on: ubuntu-latest
+    # Keep the image used for the last successful large uploads to Qiniu.
+    runs-on: ubuntu-24.04
     # Uploads have a 45-minute total bound and a 5-minute no-progress watchdog.
     # Leave time for checkpoint recovery, verification and version-index sync.
     timeout-minutes: 60

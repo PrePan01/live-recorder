@@ -478,11 +478,22 @@ test('public CDN checks compare three bounded ranges with local bytes', async ()
   }
 });
 
-test('server GitHub digests are checked again before publication', async () => {
-  const remote = new ReleaseRemote('unused', state.version);
-  remote.release = () => ({ draft: true, assets: [{ name: 'app.dmg', digest: 'sha256:wrong' }] });
-  try { await assert.rejects(remote.verifyStaged(state), /GitHub asset verification failed/); }
-  finally { remote.close(); }
+test('recovery reuses an asset missing from the draft snapshot and verifies its server digest', async () => {
+  const remote = new ReleaseRemote('unused', state.version, async () => {
+    assert.fail('An existing GitHub asset should not be uploaded again');
+  });
+  remote.release = () => ({ id: 123, draft: true, assets: [] });
+  const asset = { name: 'app.dmg', digest: `sha256:${state.files['app.dmg']}` };
+  remote.api = path => {
+    assert.equal(path, 'releases/123/assets?per_page=100&page=1');
+    return [asset];
+  };
+  try {
+    await remote.ensureAsset(asset.name, state.files[asset.name]);
+    asset.digest = 'sha256:wrong';
+    await assert.rejects(remote.ensureAsset(asset.name, state.files[asset.name]), /Refusing to overwrite/);
+    await assert.rejects(remote.verifyStaged(state), /GitHub asset verification failed: app.dmg/);
+  } finally { remote.close(); }
 });
 
 
