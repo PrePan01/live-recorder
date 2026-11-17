@@ -131,10 +131,28 @@ describe("live startup watchdog", () => {
     expect(result.state).toBe('loading');
   });
 
+  it('immediately joins a prepared stream once and backs off if it switches again before a frame', async () => {
+    vi.useFakeTimers();
+    render({ roomId: 'switch', platform: 'bilibili' }, liveVideo());
+    const replace = () => vi.mocked(livePreviewConfig).mock.calls.at(-1)![4]!;
+    const first = replace();
+    first();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.players).toHaveLength(2);
+    first();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.players).toHaveLength(2);
+    replace()();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(h.players).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.players).toHaveLength(3);
+  });
+
   it.each([false, true])("keeps YouTube startup connected beyond 12 seconds (thumbnail=%s), then bounds it", async (thumbnail) => {
     vi.useFakeTimers();
     render({ roomId: "youtube-room", platform: "youtube", thumbnail }, liveVideo());
-    expect(livePreviewConfig).toHaveBeenLastCalledWith(thumbnail, thumbnail ? undefined : expect.any(Function), 'youtube', thumbnail ? undefined : expect.any(Function));
+    expect(livePreviewConfig).toHaveBeenLastCalledWith(thumbnail, thumbnail ? undefined : expect.any(Function), 'youtube', thumbnail ? undefined : expect.any(Function), expect.any(Function));
     const first = h.players[0];
     await vi.advanceTimersByTimeAsync(28_000);
     expect(first.destroy).not.toHaveBeenCalled();

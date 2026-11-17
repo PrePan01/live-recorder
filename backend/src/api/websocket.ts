@@ -18,14 +18,14 @@ export const WS_CLOSE = {
 const RECORDING_STATES: MonitorState[] = ['recording', 'reconnecting'];
 
 interface PreviewRoom {
-  dir: string;
-  sockets: Set<WebSocket>;
+  sockets: Map<WebSocket, 'waiting' | 'streaming' | 'switching'>;
   /** FLV 初始化段（头 + onMetaData + AVC/AAC sequence headers），供中途加入客户端初始化解复用器。 */
   header: Buffer | null;
   extractor: FlvInitExtractor;
   /** 初始化段之后的近期媒体帧（完整 FLV 标签，滚动窗口，接近直播实时位置），与实时帧时间戳连续。 */
   tail: Buffer[];
   tailBytes: number;
+  tailHasAudio: boolean;
   pendingTags: Buffer;
   progressStage?: string;
 }
@@ -44,6 +44,7 @@ const PREVIEW_HEADER_MAX = 64 * 1024;
 // 1 MB 连常见高清直播的一个 GOP 都放不下，晚加入会反复等下一个关键帧。
 export const PREVIEW_TAIL_MAX = 16 * 1024 * 1024;
 const PREVIEW_SOCKET_MAX_PENDING_BYTES = PREVIEW_TAIL_MAX + 4 * 1024 * 1024;
+const PREVIEW_REPLACEMENT_READY = JSON.stringify({ type: 'preview_replacement_ready' });
 /**
  * 关闭/重开弹窗、播放器自愈重连时，旧 WebSocket 会短暂先于新连接关闭。
  * 保留上游流一小段时间，避免“停止旧流”和“启动新流”交错后新客户端无帧可收。
@@ -54,7 +55,11 @@ export const PREVIEW_IDLE_GRACE_MS = 2_000;
 const isKeyframeTag = isFlvVideoKeyframe;
 
 /** 比较编码器配置时忽略标签时间戳；重复序列头不应导致播放器重连。 */
-const isSequenceTag = isFlvSequenceHeader;
+function isSequenceTag(tag: Buffer): boolean {
+  // Enhanced FLV audio stores SequenceStart and a FourCC in the audio payload.
+  return isFlvSequenceHeader(tag) ||
+    (tag[0] === 8 && tag.length > 20 && tag[11] === 0x90);
+}
 
 /**
  * FLV 初始化段提取器：只缓存流头 + onMetaData + AVC/AAC sequence headers，
@@ -64,15 +69,11 @@ class FlvInitExtractor {
   private pending: Buffer = Buffer.alloc(0);
   private captured: Buffer = Buffer.alloc(0);
   private done = false;
-  private seenMeta = false;
-  private seenVideoSeq = false;
-  private seenAudioSeq = false;
-  private firstMediaSeen = false;
+  hasVideoConfig = false;
+  hasAudioConfig = false;
+  isFlv: boolean | undefined;
+  rawStart: Buffer | null = null;
   private initialMedia = Buffer.alloc(0);
-
-  get complete(): boolean {
-    return this.done;
-  }
 
   /** 初始化尚未判定完成时，供晚加入客户端取得目前已收到的连续 FLV 前缀。 */
   snapshot(): Buffer | null {
@@ -97,13 +98,21 @@ class FlvInitExtractor {
     this.pending = this.pending.length === 0 ? chunk : Buffer.concat([this.pending, chunk]);
 
     let cursor = 0;
+    let firstMediaSeen = false;
     if (this.captured.length === 0) {
-      if (this.pending.length < 13) return null;
-      if (this.pending.subarray(0, 3).toString() !== 'FLV') {
-        // 不把无文件头的续录标签伪装成有效初始化段。
-        this.pending = Buffer.alloc(0);
-        return null;
+      if (this.isFlv === undefined) {
+        const signature = this.pending.toString('latin1', 0, 3);
+        if (!'FLV'.startsWith(signature)) {
+          this.isFlv = false;
+          this.rawStart = this.pending;
+          this.pending = Buffer.alloc(0);
+          this.done = true;
+          return null;
+        }
+        if (signature.length < 3) return null;
+        this.isFlv = true;
       }
+      if (this.pending.length < 13) return null;
       this.captured = Buffer.from(this.pending.subarray(0, 13));
       cursor = 13;
     }
@@ -115,21 +124,20 @@ class FlvInitExtractor {
       const type = tag[0];
       const sequence = isSequenceTag(tag);
       const mediaTag = (type === 8 || type === 9) && !sequence;
-      if (type === 18) this.seenMeta = true;
-      if (sequence && type === 9) this.seenVideoSeq = true;
-      if (sequence && type === 8) this.seenAudioSeq = true;
-      if (mediaTag && this.seenVideoSeq) {
-        this.firstMediaSeen = true;
+      if (sequence && type === 9) this.hasVideoConfig = true;
+      if (sequence && type === 8) this.hasAudioConfig = true;
+      if (mediaTag && this.hasVideoConfig) {
+        firstMediaSeen = true;
         break;
       }
       // 某些上游先发音频媒体再发视频配置；init 只包含元数据和配置，
       // 否则晚加入会重放旧音频并同步生成整段录制长度的静音补帧。
       if (!mediaTag) this.captured = Buffer.concat([this.captured, tag]);
       cursor += tagTotal;
-      if (this.seenVideoSeq && this.seenAudioSeq) break;
+      if (this.hasVideoConfig && this.hasAudioConfig) break;
     }
     this.pending = this.pending.subarray(cursor);
-    if (this.seenVideoSeq && (this.seenAudioSeq || this.firstMediaSeen)) {
+    if (this.hasVideoConfig && (this.hasAudioConfig || firstMediaSeen)) {
       this.done = true;
       this.initialMedia = Buffer.from(this.pending);
       this.pending = Buffer.alloc(0);
@@ -143,17 +151,6 @@ class FlvInitExtractor {
     }
     return null;
   }
-
-  reset(): void {
-    this.pending = Buffer.alloc(0);
-    this.captured = Buffer.alloc(0);
-    this.done = false;
-    this.seenMeta = false;
-    this.seenVideoSeq = false;
-    this.seenAudioSeq = false;
-    this.firstMediaSeen = false;
-    this.initialMedia = Buffer.alloc(0);
-  }
 }
 
 /** 预览会话上限：最多 4 个活跃预览会话（按房间计数）。 */
@@ -161,6 +158,7 @@ export const PREVIEW_MAX_SESSIONS = 4;
 
 export class PreviewManager {
   private progressClients = new WeakSet<WebSocket>();
+  private replacementClients = new WeakSet<WebSocket>();
   private rooms = new Map<string, PreviewRoom>();
   private emptyRoomTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 某房间最后一个预览客户端断开时回调（用于停止 preview-only 拉流）。 */
@@ -178,37 +176,34 @@ export class PreviewManager {
     return (this.rooms.get(roomId)?.sockets.size ?? 0) > 0;
   }
 
-  addClient(roomId: string, ws: WebSocket, progress = false): void {
-    this.clearEmptyRoomTimer(roomId);
+  private roomFor(roomId: string): PreviewRoom {
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0, pendingTags: Buffer.alloc(0) };
+      room = {
+        sockets: new Map(), header: null, extractor: new FlvInitExtractor(),
+        tail: [], tailBytes: 0, tailHasAudio: false, pendingTags: Buffer.alloc(0),
+      };
       this.rooms.set(roomId, room);
     }
-    room.sockets.add(ws);
+    return room;
+  }
+
+  addClient(roomId: string, ws: WebSocket, progress = false, replacement = false): void {
+    this.clearEmptyRoomTimer(roomId);
+    const room = this.roomFor(roomId);
+    room.sockets.set(ws, 'waiting');
+    ws.on('close', () => {
+      room.sockets.delete(ws);
+      if (this.rooms.get(roomId) === room && room.sockets.size === 0) this.deferRoomEmpty(roomId);
+    });
     if (progress) {
       this.progressClients.add(ws);
       room.progressStage ??= 'requested';
       this.sendProgress(ws, room.progressStage);
     }
-    // 中途加入：先补发 FLV 初始化段 + 近期尾部（接近实时位置），mpegts.js 才能初始化并从实时附近起播。
-    const bootstrap = room.header ?? room.extractor.snapshot();
-    if (bootstrap && ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(bootstrap);
-        if (room.header && room.tail.length > 0) ws.send(Buffer.concat(room.tail));
-        // 后续网络块可能从标签中间开始；补齐已收到的前缀，保持 FLV 字节连续。
-        if (room.header && room.pendingTags.length > 0) ws.send(room.pendingTags);
-      } catch {
-        // 写失败由 close 事件回收
-      }
-    }
-    ws.on('close', () => {
-      room!.sockets.delete(ws);
-      // 保留房间与流头缓冲：录制/预览流活动期间客户端重开仍能初始化（#193 重开预览卡连接视频流）。
-      // 房间的移除由流生命周期负责：closeRoom（流结束）/resetRoom（新段）清理。
-      if (this.rooms.get(roomId) === room && room!.sockets.size === 0) this.deferRoomEmpty(roomId);
-    });
+    if (replacement) this.replacementClients.add(ws);
+    if (ws.readyState === WebSocket.OPEN && this.hasPlayableStart(room))
+      this.startClient(room, ws, () => Buffer.concat(room.tail, room.tailBytes));
   }
 
   private sendProgress(ws: WebSocket, stage: string): void {
@@ -221,7 +216,7 @@ export class PreviewManager {
     const room = this.rooms.get(roomId);
     if (!room || room.progressStage === stage) return;
     room.progressStage = stage;
-    for (const ws of room.sockets) this.sendProgress(ws, stage);
+    for (const ws of room.sockets.keys()) this.sendProgress(ws, stage);
   }
 
   private clearEmptyRoomTimer(roomId: string): void {
@@ -245,11 +240,7 @@ export class PreviewManager {
 
   broadcastFrame(roomId: string, chunk: Buffer): void {
     // 无论是否有预览客户端，都先记录 FLV 初始化段与近期尾部，保证中途加入的客户端能初始化 FLV 并从实时附近起播。
-    let room = this.rooms.get(roomId);
-    if (!room) {
-      room = { dir: roomId, sockets: new Set(), header: null, extractor: new FlvInitExtractor(), tail: [], tailBytes: 0, pendingTags: Buffer.alloc(0) };
-      this.rooms.set(roomId, room);
-    }
+    const room = this.roomFor(roomId);
     if (room.header === null) {
       const header = room.extractor.push(chunk);
       if (header) {
@@ -262,20 +253,75 @@ export class PreviewManager {
     } else {
       this.cacheTags(roomId, room, chunk);
     }
-    for (const ws of room.sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        try {
-          // ws buffers writes in user memory. Close slow clients so they can
-          // reconnect from init + keyframe instead of growing without bound.
-          if (ws.bufferedAmount + chunk.length > PREVIEW_SOCKET_MAX_PENDING_BYTES) {
-            ws.close(WS_CLOSE.INTERNAL, 'preview backlog exceeded');
-            continue;
-          }
-          ws.send(chunk);
-        } catch {
-          // 写失败由 close 事件回收
-        }
+    const raw = room.extractor.isFlv === false;
+    const liveChunk = room.extractor.rawStart ?? chunk;
+    room.extractor.rawStart = null;
+    const ready = this.hasPlayableStart(room);
+    let tail: Buffer | undefined;
+    for (const [ws, state] of room.sockets) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      if (state === 'switching') {
+        if (ready) this.closeForReplacement(ws);
+        else if (raw) ws.close(1012, 'preview source changed');
+      } else if (state === 'streaming') {
+        this.sendMedia(ws, liveChunk);
+      } else if (raw) {
+        if (this.sendMedia(ws, liveChunk)) room.sockets.set(ws, 'streaming');
+      } else if (ready) {
+        // This batch is already represented by the bootstrap and partial tag.
+        this.startClient(room, ws, () => tail ??= Buffer.concat(room.tail, room.tailBytes));
       }
+    }
+  }
+
+  private closeForReplacement(ws: WebSocket): void {
+    // Some WebViews omit the close code and reason. Opted-in clients receive
+    // the notice before closing, while binary-only clients receive just EOF.
+    if (this.replacementClients.has(ws)) {
+      try { ws.send(PREVIEW_REPLACEMENT_READY); } catch { /* disconnect */ }
+    }
+    ws.close(1012, 'preview replacement ready');
+  }
+
+  private hasPlayableStart(room: PreviewRoom): boolean {
+    if (!room.header || !room.extractor.hasVideoConfig || room.tail.length === 0) return false;
+    if (room.header.length + room.tailBytes + room.pendingTags.length > PREVIEW_SOCKET_MAX_PENDING_BYTES) return false;
+    const expectsAudio = Boolean(room.header[4]! & 4);
+    return !expectsAudio || room.extractor.hasAudioConfig || room.tailHasAudio;
+  }
+
+  private startClient(room: PreviewRoom, ws: WebSocket, tail: () => Buffer): void {
+    // The partial tag is the prefix of the next raw broadcast, not part of the GOP.
+    if (this.sendMedia(ws, room.header!, tail(), room.pendingTags))
+      room.sockets.set(ws, 'streaming');
+  }
+
+  private sendMedia(ws: WebSocket, bytes: Buffer, tail?: Buffer, pending?: Buffer): boolean {
+    try {
+      const size = bytes.length + (tail?.length ?? 0) + (pending?.length ?? 0);
+      if (ws.bufferedAmount + size > PREVIEW_SOCKET_MAX_PENDING_BYTES) {
+        ws.close(WS_CLOSE.INTERNAL, 'preview backlog exceeded');
+        return false;
+      }
+      ws.send(bytes);
+      if (tail?.length) ws.send(tail);
+      if (pending?.length) ws.send(pending);
+      return true;
+    } catch {
+      // The socket's close event handles cleanup.
+      return false;
+    }
+  }
+
+  private clearTail(room: PreviewRoom): void {
+    room.tail = [];
+    room.tailBytes = 0;
+    room.tailHasAudio = false;
+  }
+
+  private switchStreamingClients(room: PreviewRoom): void {
+    for (const [ws, state] of room.sockets) {
+      if (state === 'streaming') room.sockets.set(ws, 'switching');
     }
   }
 
@@ -290,6 +336,7 @@ export class PreviewManager {
       // 异常/过大标签不应让每次广播重复拼接、无限保留网络数据。
       if (![8, 9, 18].includes(room.pendingTags[offset]!) || length > PREVIEW_SOCKET_MAX_PENDING_BYTES) {
         room.pendingTags = Buffer.alloc(0);
+        this.clearTail(room);
         return;
       }
       if (offset + length > room.pendingTags.length) break;
@@ -299,15 +346,19 @@ export class PreviewManager {
         this.refreshHeader(roomId, room, tag);
         continue;
       }
-      if (isKeyframeTag(tag)) {
-        room.tail = [];
-        room.tailBytes = 0;
-      }
+      const keyframe = isKeyframeTag(tag);
+      if (keyframe) this.clearTail(room);
       // 无关键帧时等待下一个 GOP，不能把 P 帧当作晚加入的解码起点。
-      if (room.tail.length === 0 && !isKeyframeTag(tag)) continue;
+      if (room.tail.length === 0 && !keyframe) continue;
+      if (tag[0] === 8 && !room.extractor.hasAudioConfig) {
+        const codec = tag[11]! >> 4;
+        // MP3 and PCM have no sequence header. Never replay AAC/extended audio
+        // received before its configuration as part of a viewer bootstrap.
+        if (length <= 16 || (codec !== 2 && codec !== 3)) continue;
+        room.tailHasAudio = true;
+      }
       if (room.tailBytes + length > PREVIEW_TAIL_MAX) {
-        room.tail = [];
-        room.tailBytes = 0;
+        this.clearTail(room);
         continue;
       }
       // 独立副本避免一个很小的标签长期引用整块网络缓冲。
@@ -335,12 +386,15 @@ export class PreviewManager {
     parts.push(Buffer.from(tag));
     room.header = Buffer.concat(parts);
     if (isSequenceTag(tag)) {
-      room.tail = [];
-      room.tailBytes = 0;
-      // WebKit 的 MSE 解码器不能继续用旧 SPS/AAC 配置处理新帧。
-      // 保留房间和新配置，让当前观看端重连后从新关键帧开始。
-      for (const ws of room.sockets) ws.close(1012, 'preview configuration changed');
-      console.log(`[preview] configuration-changed room=…${roomId.slice(-6)} type=${tag[0]}`);
+      if (tag[0] === 8) room.extractor.hasAudioConfig = true;
+      else room.extractor.hasVideoConfig = true;
+      // A late first AAC header completes the original video GOP. Only an
+      // actual replacement requires new random-access media and a decoder reset.
+      if (previous) {
+        this.clearTail(room);
+        this.switchStreamingClients(room);
+        console.log(`[preview] configuration-changed room=…${roomId.slice(-6)} type=${tag[0]}`);
+      }
     }
   }
 
@@ -349,7 +403,7 @@ export class PreviewManager {
     this.clearEmptyRoomTimer(roomId);
     const room = this.rooms.get(roomId);
     if (!room) return;
-    for (const ws of room.sockets) {
+    for (const ws of room.sockets.keys()) {
       try {
         if (reason) {
           ws.send(JSON.stringify({ type: 'stream_end', reason }));
@@ -366,11 +420,10 @@ export class PreviewManager {
   resetRoom(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
-    for (const ws of room.sockets) ws.close(1012, 'preview source changed');
+    this.switchStreamingClients(room);
     room.header = null;
     room.extractor = new FlvInitExtractor();
-    room.tail = [];
-    room.tailBytes = 0;
+    this.clearTail(room);
     room.pendingTags = Buffer.alloc(0);
     room.progressStage = 'requested';
     console.log(`[preview] source-reset room=…${roomId.slice(-6)}`);
@@ -402,7 +455,7 @@ export class PreviewManager {
       this.clearEmptyRoomTimer(roomId);
       const room = this.rooms.get(roomId);
       if (!room) continue;
-      for (const ws of room.sockets) {
+      for (const ws of room.sockets.keys()) {
         try {
           ws.close(code);
           ws.terminate();
@@ -467,7 +520,11 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      preview.addClient(roomId, ws, url.searchParams.get('progress') === '1');
+      preview.addClient(
+        roomId, ws,
+        url.searchParams.get('progress') === '1',
+        url.searchParams.get('replacement') === '1',
+      );
       // Register the watcher first. This also reactivates an on-demand preview
       // encoder when joining an existing recording or reconnecting after handoff.
       void services.manager.ensurePreviewStream(room.id).then(() => {

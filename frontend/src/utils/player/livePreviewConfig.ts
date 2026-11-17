@@ -3,10 +3,18 @@ import { PreviewWebSocketLoader } from "./previewWebSocketLoader";
 import type { Platform } from "../../types/room";
 
 /** 平滑观看优先：保留网络抖动余量，通过轻微加速追赶，不反复 seek 到缓冲尾部。 */
-export function livePreviewConfig(thumbnail: boolean, onOrigin?: (milliseconds: number) => void, _platform?: Platform, onProgress?: (stage: string) => void): mpegts.Config {
+export function livePreviewConfig(
+  thumbnail: boolean,
+  onOrigin?: (milliseconds: number) => void,
+  _platform?: Platform,
+  onProgress?: (stage: string) => void,
+  onReplacementReady?: () => void,
+): mpegts.Config {
   return {
-    customLoader: onOrigin || onProgress
-      ? class extends PreviewWebSocketLoader { constructor() { super(undefined, undefined, onOrigin, onProgress); } }
+    customLoader: onOrigin || onProgress || onReplacementReady
+      ? class extends PreviewWebSocketLoader {
+        constructor() { super(undefined, undefined, onOrigin, onProgress, onReplacementReady); }
+      }
       : PreviewWebSocketLoader,
     // Every platform can deliver a small bootstrap followed by a quiet period.
     // A byte-count stash can withhold the first decodable frame indefinitely.

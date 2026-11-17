@@ -392,7 +392,7 @@ describe('WebSocket preview', () => {
     // 录制开始、尚无预览客户端时也需累积流头缓冲（中途加入可初始化 FLV）。
     const header = buildFlvInit();
     server.preview.broadcastFrame(room.id, header);
-    server.preview.broadcastFrame(room.id, Buffer.alloc(128));
+    server.preview.broadcastFrame(room.id, buildVideoTag(1, 64));
 
     // 中途加入的新客户端应首先收到已缓冲的流头数据。
     const c2 = connect(server.url, room.id);
@@ -416,6 +416,7 @@ describe('WebSocket preview', () => {
 
     const init = buildFlvInit();
     server.preview.broadcastFrame(room.id, init);
+    server.preview.broadcastFrame(room.id, buildVideoTag(1, 48));
 
     const c1 = connect(server.url, room.id);
     const first1 = await new Promise<Buffer>((resolve) => c1.ws.once('message', (d) => resolve(Buffer.from(d))));
@@ -455,7 +456,7 @@ it('init extractor completes at first media when audio seq missing (#193 QA 边�
     const h = Buffer.alloc(13);
     h.write('FLV', 0);
     h[3] = 1;
-    h[4] = 0x05;
+    h[4] = 0x01;
     h.writeUInt32BE(9, 5);
     h.writeUInt32BE(0, 9);
     const meta = flvTag(18, Buffer.alloc(4));

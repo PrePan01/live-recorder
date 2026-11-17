@@ -52,11 +52,11 @@ describe('FakePlatformAdapter', () => {
 });
 
 describe('minimal FLV', () => {
-  it('starts with FLV header and video+audio flags', () => {
+  it('starts with an FLV header declaring only video', () => {
     const flv = buildMinimalFlv();
     expect(flv.subarray(0, 3).toString('latin1')).toBe('FLV');
     expect(flv[3]).toBe(1);
-    expect(flv[4]! & 0x05).toBe(0x05);
+    expect(flv[4]! & 0x05).toBe(0x01);
     expect(flv.readUInt32BE(5)).toBe(9);
   });
 });
