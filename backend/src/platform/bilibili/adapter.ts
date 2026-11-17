@@ -25,6 +25,10 @@ function qnToQuality(qn: number): Quality {
   return "360p";
 }
 
+function isOfflineStatus(status: unknown): boolean {
+  return status === 0 || status === 2;
+}
+
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
@@ -388,6 +392,15 @@ export class BilibiliAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
+    const liveStatus = data.data.live_status;
+    if (liveStatus !== 1 && !isOfflineStatus(liveStatus)) {
+      return {
+        status: "error",
+        error: new AppError("NETWORK_UNAVAILABLE", "B站暂未返回直播状态", {
+          retryable: true,
+        }).toObject(),
+      };
+    }
     // getRoomPlayInfo 已不再返回 room_info/anchor_info，名称信息改由 get_anchor_in_room/get_info 补充。
     const meta = await this.fetchRoomMeta(roomId);
     const title = data.data.room_info?.title ?? meta.title ?? "";
@@ -395,7 +408,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     // 头像取自已在调的 get_anchor_in_room（0 额外请求）；缺失降级不置空。
     const face = meta.face?.trim() || undefined;
     const avatarUrl = face && /^https?:\/\//.test(face) ? face : undefined;
-    if (data.data.live_status !== 1) {
+    if (isOfflineStatus(liveStatus)) {
       return {
         status: "offline",
         ...(uname ? { displayName: uname } : {}),
@@ -488,12 +501,7 @@ export class BilibiliAdapter implements PlatformAdapter {
         BILI_QN[quality],
         "interactive",
       );
-      if (
-        data.code === 0 &&
-        data.data &&
-        data.data.live_status !== undefined &&
-        data.data.live_status !== 1
-      )
+      if (data.code === 0 && isOfflineStatus(data.data?.live_status))
         return { status: "offline" };
       return {
         status: "live",

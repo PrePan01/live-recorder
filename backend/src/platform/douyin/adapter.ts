@@ -757,6 +757,14 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
+    if (entry.status !== 2 && entry.status !== 4) {
+      return {
+        status: "error",
+        error: new AppError("NETWORK_UNAVAILABLE", "抖音暂未返回直播状态", {
+          retryable: true,
+        }).toObject(),
+      };
+    }
     const liveCoverUrl = preferredAvatarUrl(entry.cover);
     const entryAvatar = preferredAvatarUrl(
       entry.user?.avatar_larger,
@@ -919,9 +927,7 @@ export class DouyinAdapter implements PlatformAdapter {
       );
       if (
         isNotLiveResponse(data) ||
-        (data.status_code === 0 &&
-          data.data?.data?.[0]?.status !== undefined &&
-          data.data.data[0].status !== 2)
+        (data.status_code === 0 && data.data?.data?.[0]?.status === 4)
       )
         return { status: "offline" };
       return {

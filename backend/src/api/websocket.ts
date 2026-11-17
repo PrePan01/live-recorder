@@ -4,6 +4,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocketServer as WSS } from 'ws';
 import { URL } from 'node:url';
 import type { Services } from '../core/services.js';
+import type { PreviewEndReason } from '../core/recorder/types.js';
 import type { MonitorState } from '../types/index.js';
 import { isFlvSequenceHeader, isFlvVideoKeyframe } from '../recorder/flv-tags.js';
 
@@ -16,6 +17,13 @@ export const WS_CLOSE = {
 } as const;
 
 const RECORDING_STATES: MonitorState[] = ['recording', 'reconnecting'];
+
+function closePreviewSocket(ws: WebSocket, code: number, reason?: PreviewEndReason): void {
+  try {
+    if (reason) ws.send(JSON.stringify({ type: 'stream_end', reason }));
+    ws.close(code);
+  } catch { /* Socket already disconnected. */ }
+}
 
 interface PreviewRoom {
   sockets: Map<WebSocket, 'waiting' | 'streaming' | 'switching'>;
@@ -399,20 +407,11 @@ export class PreviewManager {
   }
 
   /** 录制正常结束或断流：先下发 stream_end，再按对应关闭码收口。 */
-  closeRoom(roomId: string, code: number, reason?: 'ended' | 'stream_lost'): void {
+  closeRoom(roomId: string, code: number, reason?: PreviewEndReason): void {
     this.clearEmptyRoomTimer(roomId);
     const room = this.rooms.get(roomId);
     if (!room) return;
-    for (const ws of room.sockets.keys()) {
-      try {
-        if (reason) {
-          ws.send(JSON.stringify({ type: 'stream_end', reason }));
-        }
-        ws.close(code);
-      } catch {
-        // 忽略已断开连接
-      }
-    }
+    for (const ws of room.sockets.keys()) closePreviewSocket(ws, code, reason);
     this.rooms.delete(roomId);
   }
 
@@ -512,7 +511,9 @@ export function attachWebSocketUpgrade(services: Services, preview: PreviewManag
     const isLive = room.lastLiveStatus === 'live';
     if (!isRecording && !isLive) {
       // 非录制也非开播（offline/restricted/idle）→ 拒绝。
-      wss.handleUpgrade(req, socket, head, (ws) => ws.close(WS_CLOSE.NOT_RECORDING));
+      wss.handleUpgrade(req, socket, head, (ws) => closePreviewSocket(
+        ws, WS_CLOSE.NOT_RECORDING, room.lastLiveStatus === 'offline' ? 'live_ended' : undefined,
+      ));
       return;
     }
     if (!preview.canAccept(roomId)) {

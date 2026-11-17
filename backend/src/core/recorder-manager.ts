@@ -517,6 +517,9 @@ export class RecorderManager {
   ensurePreviewStream(roomId: string): Promise<void> {
     return this.previewController.ensurePreviewStream(roomId);
   }
+  recheckPreviewOffline(roomId: string): Promise<boolean> {
+    return this.previewController.recheckPreviewOffline(roomId);
+  }
   stopPreviewStream(
     roomId: string,
     transitioningToRecording = false,

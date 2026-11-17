@@ -70,6 +70,13 @@ export async function checkRoomNow(id: string): Promise<void> {
   await http.post(`/rooms/${id}/check`, undefined, { timeout: 90_000 });
 }
 
+export async function checkPreviewEnded(id: string, signal: AbortSignal): Promise<boolean> {
+  const { data } = await http.post<{ ended: boolean }>(
+    `/rooms/${encodeURIComponent(id)}/preview-status`, undefined, { signal, timeout: 6_000 },
+  );
+  return data.ended === true;
+}
+
 /** 提交全部启用直播间的开播检测；相同的在途批次会被后端合并。 */
 export async function checkEnabledRooms(): Promise<{
   queued: number;

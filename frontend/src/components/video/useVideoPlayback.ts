@@ -2,6 +2,7 @@ import { resetPreviewMediaClock, setLiveMediaOrigin, readPreviewElapsed } from "
 import mpegts from "mpegts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { previewWsUrl } from "../../api/client";
+import { checkPreviewEnded } from "../../api/rooms";
 import { reportError } from "../../utils/error/errorDiagnostics";
 import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
 import { liveBufferGapTarget } from "../../utils/player/liveBufferGap";
@@ -158,6 +159,8 @@ export function useVideoPlayback({
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let checking: AbortController | null = null;
+    let checkedSinceFrame = false;
     let lastMediaTime = -1;
     let lastProgressAt = Date.now();
     let hasPlayed = false;
@@ -240,6 +243,34 @@ export function useVideoPlayback({
       }, delay);
     };
 
+    const endLivePlayback = () => {
+      checking?.abort();
+      checking = null;
+      if (timer) clearTimeout(timer);
+      if (watchdogTimer) clearInterval(watchdogTimer);
+      timer = watchdogTimer = null;
+      destroyPlayer(true);
+      releaseFrame();
+      setState("ended");
+      if (thumbnail) previewErrorRef.current?.();
+    };
+
+    const handleLiveFailure = () => {
+      if (disposed || timer) return;
+      if (!thumbnail && !checkedSinceFrame) {
+        const check = new AbortController();
+        checking = check;
+        checkedSinceFrame = true;
+        void checkPreviewEnded(roomId, check.signal).catch(() => false).then(ended => {
+          if (disposed || checking !== check) return;
+          checking = null;
+          if (ended) endLivePlayback();
+        });
+      }
+      // The normal retry backoff runs while the room status is being checked.
+      scheduleReconnect();
+    };
+
     function create() {
       if (disposed || !videoRef.current) return;
       destroyPlayer();
@@ -272,6 +303,9 @@ export function useVideoPlayback({
           () => {
             if (player === instance && !disposed) scheduleReconnect(true);
           },
+          () => {
+            if (player === instance && !disposed) endLivePlayback();
+          },
         ),
       );
       player = instance;
@@ -286,7 +320,10 @@ export function useVideoPlayback({
               if (disposed || player !== instance) return;
               hasPresentedFrame = true;
               lastProgressAt = Date.now();
+              checking?.abort();
+              checking = null;
               retry = 0;
+              checkedSinceFrame = false;
               switchedBeforeFrame = false;
               hasEverPlayedRef.current = true;
               reportProgress('presented');
@@ -313,11 +350,11 @@ export function useVideoPlayback({
           "live-preview",
           new Error(`播放器错误 type=${String(_t)} detail=${String(_detail)}`),
         );
-        scheduleReconnect();
+        handleLiveFailure();
       });
       instance.on(EVENTS.LOADING_COMPLETE, () => {
         if (player !== instance || disposed) return;
-        scheduleReconnect();
+        handleLiveFailure();
       });
       startMutedForAutoplay();
       instance.load();
@@ -362,7 +399,7 @@ export function useVideoPlayback({
             "live-preview-stall",
             new Error(`无帧超时 platform=${platform ?? "unknown"} played=${hasPlayed} presented=${hasPresentedFrame} readyState=${video.readyState} paused=${video.paused} currentTime=${video.currentTime} retry=${retry}`),
           );
-          scheduleReconnect();
+          handleLiveFailure();
         }
       }, 2_000);
     }
@@ -370,6 +407,7 @@ export function useVideoPlayback({
     create();
     return () => {
       disposed = true;
+      checking?.abort();
       if (timer) clearTimeout(timer);
       if (watchdogTimer) clearInterval(watchdogTimer);
       destroyPlayer();

@@ -611,6 +611,11 @@ export function registerRoomRoutes(
     return reply.status(204).send();
   });
 
+  app.post("/api/v1/rooms/:id/preview-status", async (req) => {
+    const { id } = req.params as { id: string };
+    return { ended: await services.manager.recheckPreviewOffline(id) };
+  });
+
   app.post("/api/v1/rooms/:id/check", async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);

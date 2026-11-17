@@ -44,6 +44,7 @@ vi.mock("mpegts.js", () => ({ default: {
   }),
 } }));
 vi.mock("../../api/client", () => ({ previewWsUrl: vi.fn() }));
+vi.mock("../../api/rooms", () => ({ checkPreviewEnded: vi.fn().mockResolvedValue(false) }));
 vi.mock("../../utils/error/errorDiagnostics", () => ({ reportError: vi.fn() }));
 vi.mock("../../utils/player/livePreviewConfig", () => ({ livePreviewConfig: vi.fn() }));
 vi.mock("../../utils/player/previewMediaClock", () => ({ resetPreviewMediaClock: vi.fn(), setLiveMediaOrigin: vi.fn(), readPreviewElapsed: () => 1.25 }));
@@ -58,6 +59,7 @@ vi.mock("../../utils/player/videoFrameTransition", () => ({ holdVideoFrame: vi.f
 } }));
 import { useVideoPlayback } from "./useVideoPlayback";
 import { livePreviewConfig } from "../../utils/player/livePreviewConfig";
+import { checkPreviewEnded } from "../../api/rooms";
 
 function render(props: VideoPlayerProps, video: HTMLVideoElement) {
   h.cursor = 0;
@@ -73,6 +75,7 @@ beforeEach(() => {
   h.effects = [];
   h.players = [];
   h.ready = h.frame = null;
+  vi.mocked(checkPreviewEnded).mockReset().mockResolvedValue(false);
   vi.stubGlobal("requestAnimationFrame", (fn: () => void) => { fn(); return 1; });
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
 });
@@ -120,6 +123,7 @@ describe("live startup watchdog", () => {
     progress('receiving_media');
     const error = h.players[0].on.mock.calls.find(args => args[0] === 'error')![1] as () => void;
     error();
+    await vi.advanceTimersByTimeAsync(0);
     progress('decoded');
     let result = render({ roomId: 'retry-progress', platform: 'youtube' }, video);
     expect(result.loadProgress.percent).toBe(5);
@@ -129,6 +133,49 @@ describe("live startup watchdog", () => {
     result = render({ roomId: 'retry-progress', platform: 'youtube' }, video);
     expect(result.loadProgress.percent).toBe(5);
     expect(result.state).toBe('loading');
+  });
+
+  it("ends without a status request or a retry after a definitive stream message", async () => {
+    vi.useFakeTimers();
+    const video = liveVideo();
+    const props = { roomId: "offline-room", platform: "douyin" as const };
+    render(props, video);
+    vi.mocked(livePreviewConfig).mock.calls.at(-1)![5]!();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(render(props, video).state).toBe("ended");
+    expect(h.players).toHaveLength(1);
+    expect(checkPreviewEnded).not.toHaveBeenCalled();
+  });
+
+  it("rechecks once when playback times out and skips retries if the room has ended", async () => {
+    vi.useFakeTimers();
+    vi.mocked(checkPreviewEnded).mockResolvedValue(true);
+    const video = liveVideo();
+    const props = { roomId: "stale-live", platform: "bilibili" as const };
+    render(props, video);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(checkPreviewEnded).toHaveBeenCalledOnce();
+    expect(render(props, video).state).toBe("ended");
+    expect(h.players).toHaveLength(1);
+  });
+
+  it.each([false, true])("keeps the retry responsive during a slow check (recovered=%s)", async (recovered) => {
+    vi.useFakeTimers();
+    let confirm!: (ended: boolean) => void;
+    vi.mocked(checkPreviewEnded).mockReturnValue(new Promise(resolve => { confirm = resolve; }));
+    const video = liveVideo();
+    const props = { roomId: "slow-check", platform: "bilibili" as const };
+    render(props, video);
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(h.players).toHaveLength(2);
+    if (recovered) {
+      video.dispatchEvent(new Event("loadeddata"));
+      h.frame?.();
+    }
+    confirm(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(render(props, video).state).toBe(recovered ? "playing" : "ended");
+    expect(checkPreviewEnded).toHaveBeenCalledOnce();
   });
 
   it('immediately joins a prepared stream once and backs off if it switches again before a frame', async () => {
@@ -152,7 +199,7 @@ describe("live startup watchdog", () => {
   it.each([false, true])("keeps YouTube startup connected beyond 12 seconds (thumbnail=%s), then bounds it", async (thumbnail) => {
     vi.useFakeTimers();
     render({ roomId: "youtube-room", platform: "youtube", thumbnail }, liveVideo());
-    expect(livePreviewConfig).toHaveBeenLastCalledWith(thumbnail, thumbnail ? undefined : expect.any(Function), 'youtube', thumbnail ? undefined : expect.any(Function), expect.any(Function));
+    expect(livePreviewConfig).toHaveBeenLastCalledWith(thumbnail, thumbnail ? undefined : expect.any(Function), 'youtube', thumbnail ? undefined : expect.any(Function), expect.any(Function), expect.any(Function));
     const first = h.players[0];
     await vi.advanceTimersByTimeAsync(28_000);
     expect(first.destroy).not.toHaveBeenCalled();
@@ -196,6 +243,7 @@ describe("live startup watchdog", () => {
       await vi.advanceTimersByTimeAsync(60_000);
       clearInterval(clock);
       expect(h.players).toHaveLength(4);
+      expect(checkPreviewEnded).toHaveBeenCalledOnce();
       expect(h.players.every(player => player.destroy.mock.calls.length === 1)).toBe(true);
       expect(render(props, video).state).toBe('error');
     },

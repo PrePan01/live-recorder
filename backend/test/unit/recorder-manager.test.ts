@@ -2205,6 +2205,7 @@ describe("preview startup resilience", () => {
       displayName: name,
     });
     services.rooms.setLiveStatus(room.id, "live");
+    vi.spyOn(services.adapterFor("youtube"), "checkLiveStatus").mockResolvedValue({ status: "live" });
     vi.spyOn(services.adapterFor("youtube"), "getStreamUrl").mockResolvedValue({
       url: "https://www.youtube.com/watch?v=abcdefghijk",
       format: "youtube",
@@ -2212,6 +2213,90 @@ describe("preview startup resilience", () => {
     } as never);
     return room;
   };
+
+  it("uses a definitive lookup result without an extra check and corrects stale room metadata", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "stale live badge");
+    services.rooms.setCurrentStreamTitle(room.id, "old title");
+    services.rooms.setAvailableQualities(room.id, ["720p"]);
+    const adapter = services.adapterFor("youtube");
+    adapter.resolveRecordingSource = vi.fn().mockResolvedValue({ status: "offline" });
+    const emit = vi.spyOn(services.events, "emit");
+    await services.manager.ensurePreviewStream(room.id);
+    expect(adapter.resolveRecordingSource).toHaveBeenCalledOnce();
+    expect(adapter.getStreamUrl).not.toHaveBeenCalled();
+    expect(adapter.checkLiveStatus).not.toHaveBeenCalled();
+    expect(preview.closed).toEqual([{ roomId: room.id, code: 1000, reason: "live_ended" }]);
+    expect(services.rooms.get(room.id)).toMatchObject({
+      lastLiveStatus: "offline", currentStreamTitle: null, availableQualities: [],
+    });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
+      type: "room:updated", data: expect.objectContaining({ id: room.id, lastLiveStatus: "offline" }),
+    }));
+    services.db.close();
+  });
+
+  it("shares a pending status probe and leaves a newer live observation intact", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "new broadcast");
+    let finish!: (status: { status: "offline" }) => void;
+    const check = vi.mocked(services.adapterFor("youtube").checkLiveStatus)
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const first = services.manager.recheckPreviewOffline(room.id);
+    const second = services.manager.recheckPreviewOffline(room.id);
+    await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
+    services.rooms.setLiveStatus(room.id, "offline");
+    clock.advance(1000);
+    services.rooms.setLiveStatus(room.id, "live", clock.iso());
+    finish({ status: "offline" });
+    expect(await Promise.all([first, second])).toEqual([false, false]);
+    expect(services.rooms.get(room.id)?.lastLiveStatus).toBe("live");
+    expect(preview.closed).toEqual([]);
+    services.db.close();
+  });
+
+  it("does not discard a live source when a stale offline badge arrives during lookup", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "live source");
+    const adapter = services.adapterFor("youtube");
+    vi.mocked(adapter.getStreamUrl).mockImplementationOnce(async () => {
+      services.rooms.setLiveStatus(room.id, "offline");
+      return { url: room.url, format: "youtube", actualQuality: "720p" };
+    });
+    const engineFor = vi.spyOn(services, "engineFor");
+    await services.manager.ensurePreviewStream(room.id);
+    expect(engineFor).toHaveBeenCalledOnce();
+    expect(preview.closed).toEqual([]);
+    await services.manager.stopPreviewStream(room.id);
+    services.db.close();
+  });
+
+  it("bounds the wait for a status probe and still publishes a late definitive end", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "slow offline confirmation");
+    let finish!: (status: { status: "offline" }) => void;
+    const check = vi.mocked(services.adapterFor("youtube").checkLiveStatus)
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = services.manager.recheckPreviewOffline(room.id);
+    expect(await pending).toBe(false);
+    expect(await services.manager.recheckPreviewOffline(room.id)).toBe(false);
+    expect(check).toHaveBeenCalledOnce();
+    finish({ status: "offline" });
+    await vi.waitFor(() => expect(preview.closed).toEqual([
+      { roomId: room.id, code: 1000, reason: "live_ended" },
+    ]));
+    expect(services.rooms.get(room.id)?.lastLiveStatus).toBe("offline");
+    services.db.close();
+  });
 
   it("extends the startup budget as stages arrive instead of one flat deadline", async () => {
     const clock = new FakeClock();

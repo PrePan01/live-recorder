@@ -244,10 +244,10 @@ describe('Xiaohongshu startup and recovery isolation', () => {
     const native = vi.fn(async () => { throw new Error('must not be on startup critical path'); });
     const adapter = new XiaohongshuAdapter(fetcher as typeof fetch, { load: () => roomUrl, save: () => {} }, native);
     const [preview, recording] = await Promise.all([
-      adapter.getStreamUrl(profile, '720p', 'web_session=local'),
+      adapter.resolvePreviewSource(profile, '720p', 'web_session=local'),
       adapter.getStreamUrl(profile, '720p', 'web_session=local'),
     ]);
-    expect(preview).toEqual(recording);
+    expect(preview).toEqual({ status: 'live', stream: recording });
     expect(recording.streamSessionId).toBe('123');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0]?.[0]).toBe(roomUrl);

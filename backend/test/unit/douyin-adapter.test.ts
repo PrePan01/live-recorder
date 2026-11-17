@@ -180,13 +180,20 @@ describe("DouyinAdapter", () => {
     expect(pageCookie).toBe("sessionid=x");
   });
 
-  it("reports offline when status is not 2", async () => {
+  it("reports offline for an explicit offline status", async () => {
     const a = new DouyinAdapter(mockFetcher(() => livePayload({ status: 4 })));
     const result = await a.checkLiveStatus(
       "https://live.douyin.com/123456",
       "sessionid=x",
     );
     expect(result.status).toBe("offline");
+  });
+
+  it("does not report offline for a room entry without a status", async () => {
+    const adapter = new DouyinAdapter(mockFetcher(() => livePayload({ status: undefined })));
+    const room = "https://live.douyin.com/123456";
+    expect(await adapter.checkLiveStatus(room, "sessionid=x")).toMatchObject({ status: "error" });
+    expect(await adapter.resolveRecordingSource(room, "original", "sessionid=x")).not.toMatchObject({ status: "offline" });
   });
 
   it("treats a newly-live room without a stream url as a retryable platform delay, not an authorization failure", async () => {

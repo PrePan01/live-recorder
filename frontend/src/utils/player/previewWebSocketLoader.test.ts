@@ -138,6 +138,20 @@ describe("preview WebSocket lifecycle", () => {
     expect(replacement).toHaveBeenCalledOnce();
   });
 
+  it("treats confirmed down-stream status as terminal and ignores the following close", () => {
+    const ended = vi.fn();
+    const loader = new PreviewWebSocketLoader(undefined, undefined, undefined, undefined, undefined, ended);
+    loader.open({ url: "ws://localhost/preview", duration: 0 });
+    const socket = Socket.latest;
+    const complete = loader.onComplete = vi.fn();
+    socket.onmessage!({ data: '{"type":"stream_end","reason":"ended"}' });
+    expect(ended).not.toHaveBeenCalled();
+    socket.onmessage!({ data: '{"type":"stream_end","reason":"live_ended"}' });
+    socket.onclose!();
+    expect(ended).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("ignores asynchronous Blob delivery after destroy", async () => {
     const { loader, socket } = open();
     const onData = (loader.onDataArrival = vi.fn());

@@ -245,6 +245,34 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
+  it('sends a terminal control message when a stale live badge opens an offline preview', async () => {
+    const server = await listen();
+    try {
+      const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4011', displayName: 'offline' });
+      server.services.rooms.setLiveStatus(room.id, 'live');
+      const adapter = server.services.adapterFor('bilibili');
+      adapter.resolveRecordingSource = vi.fn().mockResolvedValue({ status: 'offline' });
+      const check = vi.spyOn(adapter, 'checkLiveStatus');
+      const { ws, closed } = connect(server.url, room.id);
+      const messages: string[] = [];
+      ws.on('message', (data, binary) => { if (!binary) messages.push(String(data)); });
+      expect(await closed).toBe(1000);
+      expect(messages.map(message => JSON.parse(message))).toContainEqual({
+        type: 'stream_end', reason: 'live_ended',
+      });
+      expect(server.services.rooms.get(room.id)?.lastLiveStatus).toBe('offline');
+      expect(check).not.toHaveBeenCalled();
+      const status = await server.app.inject({
+        method: 'POST', url: `/api/v1/rooms/${room.id}/preview-status`,
+        headers: { host: '127.0.0.1:43120' },
+      });
+      expect(status.json()).toEqual({ ended: true });
+      expect(check).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('accepts preview for a live-but-idle room and starts preview-only stream without recording (#163 预览不落盘)', async () => {
     const server = await listen();
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/150', displayName: 'livePreview' });

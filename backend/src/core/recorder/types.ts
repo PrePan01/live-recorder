@@ -9,6 +9,8 @@ import type { SeekIndexWriter } from "../../storage/seek-index.js";
 import type { ErrorObject, RecordingEndReason } from "../../types/index.js";
 import type { DownloadSpeed } from "../download-speed.js";
 import type { PerformanceTrace } from "../performance-diagnostics.js";
+export type PreviewEndReason = "ended" | "stream_lost" | "live_ended";
+
 export interface PreviewSink {
   canAccept(): boolean;
   /** 是否仍有客户端观看；共享录制结束后据此决定是否保留预览拉流。 */
@@ -18,7 +20,7 @@ export interface PreviewSink {
   closeRoom(
     roomId: string,
     code: number,
-    reason?: "ended" | "stream_lost",
+    reason?: PreviewEndReason,
   ): void;
   /** 新录制/新分段开始时清空该房间预览头缓冲，确保下一段流的 FLV 头被重新捕获。 */
   resetRoom(roomId: string): void;

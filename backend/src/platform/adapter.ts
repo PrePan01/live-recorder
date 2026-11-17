@@ -46,6 +46,7 @@ export interface PlatformAdapter {
   resolveRoomUrl?(rawUrl: string, cookie?: string): Promise<string>;
   getRoomPageUrl?(rawUrl: string): string | undefined;
   checkLiveStatusForStartup?(roomUrl: string, cookie?: string): Promise<LiveStatusResult>;
+  resolvePreviewSource?(roomUrl: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult>;
   resolveRecordingSource?(
     roomUrl: string,
     quality: Quality,

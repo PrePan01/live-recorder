@@ -130,10 +130,17 @@ describe('BilibiliAdapter', () => {
     expect(result.platformStartedAt).toBeUndefined();
   });
 
-  it('reports offline when live_status is not 1', async () => {
+  it('reports offline for an explicit offline status', async () => {
     const a = new BilibiliAdapter(mockFetcher(() => livePayload({ live_status: 0 })));
     const result = await a.checkLiveStatus('https://live.bilibili.com/123456');
     expect(result.status).toBe('offline');
+  });
+
+  it('does not report offline when the platform omits live status', async () => {
+    const adapter = new BilibiliAdapter(mockFetcher(() => ({ code: 0, data: {} })));
+    const room = 'https://live.bilibili.com/123456';
+    expect(await adapter.checkLiveStatus(room)).toMatchObject({ status: 'error' });
+    expect(await adapter.resolveRecordingSource(room, 'original')).not.toMatchObject({ status: 'offline' });
   });
 
   it('fills displayName and title from meta endpoints when getRoomPlayInfo omits them (#91)', async () => {

@@ -9,11 +9,12 @@ export function livePreviewConfig(
   _platform?: Platform,
   onProgress?: (stage: string) => void,
   onReplacementReady?: () => void,
+  onLiveEnded?: () => void,
 ): mpegts.Config {
   return {
-    customLoader: onOrigin || onProgress || onReplacementReady
+    customLoader: onOrigin || onProgress || onReplacementReady || onLiveEnded
       ? class extends PreviewWebSocketLoader {
-        constructor() { super(undefined, undefined, onOrigin, onProgress, onReplacementReady); }
+        constructor() { super(undefined, undefined, onOrigin, onProgress, onReplacementReady, onLiveEnded); }
       }
       : PreviewWebSocketLoader,
     // Every platform can deliver a small bootstrap followed by a quiet period.
