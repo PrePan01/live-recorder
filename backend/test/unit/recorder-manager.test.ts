@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { InjectOptions } from "fastify";
@@ -118,25 +118,30 @@ describe("RecorderManager", () => {
     const services = buildServices({ dbPath: ":memory:", clock });
     services.settings.save({
       ...baseSettings(dir),
-      namingRule: "{platform}_{roomId}_{quality}",
+      namingRule: "{roomTitle}",
     });
     const room = services.rooms.create({
       platform: "bilibili",
       url: "https://live.bilibili.com/101",
       displayName: "不应作为历史标题的房间名",
     });
+    const roomDir = path.join(dir, room.platform, room.displayName);
+    await mkdir(roomDir, { recursive: true });
+    const existing = path.join(roomDir, "今晚_一起看直播.flv");
+    await writeFile(existing, "previous recording");
 
     await services.manager.maybeStartRecording(
       room,
-      { streamSessionId: "floating-title", streamTitle: room.displayName },
+      { streamSessionId: "floating-title", streamTitle: "今晚/一起看直播" },
       { manual: true, origin: "floating" },
     );
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
     const saved = services.recordings.get(rec.id)!;
 
+    expect(path.basename(saved.filePath!)).toBe("今晚_一起看直播 (1).flv");
     expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
-    expect(saved.streamTitle).not.toBe(room.displayName);
+    expect(await readFile(existing, "utf8")).toBe("previous recording");
     await services.manager.stopRecording(room.id);
   });
 
@@ -148,8 +153,10 @@ describe("RecorderManager", () => {
     const services = buildServices({ dbPath: ":memory:", clock });
     services.settings.save({
       ...baseSettings(dir),
-      namingRule: "{roomId}_{platform}",
+      namingRule: "{roomTitle}",
     });
+    const { buildApp } = await import("../../src/api/server.js");
+    const { app } = buildApp(services);
     services.manager.preview = new FakePreview();
     const room = services.rooms.create({
       platform: "bilibili",
@@ -159,19 +166,25 @@ describe("RecorderManager", () => {
     services.rooms.setLiveStatus(room.id, "live");
     await services.manager.ensurePreviewStream(room.id);
     await waitFor(() => services.manager.isPreviewReadyForRecording(room.id));
-
-    await services.manager.maybeStartRecording(
-      room,
-      { streamSessionId: "floating-preview", streamTitle: room.displayName },
-      { manual: true, origin: "floating" },
-    );
+    const adapter = services.adapterFor(room.platform) as FakePlatformAdapter;
+    adapter.setScript([{ status: "live", streamTitle: "观看中开录" }]);
+    const getStreamUrl = vi.spyOn(adapter, "getStreamUrl");
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/rooms/${room.id}/start-recording`,
+      headers: { host: "127.0.0.1:43120" },
+      payload: { origin: "floating" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(getStreamUrl).not.toHaveBeenCalled();
     const rec = services.recordings.list({ roomId: room.id }).items[0]!;
     await waitFor(() => services.recordings.get(rec.id)!.filePath !== null);
     const saved = services.recordings.get(rec.id)!;
 
+    expect(path.basename(saved.filePath!)).toBe("观看中开录.flv");
     expect(saved.streamTitle).toBe(path.parse(saved.filePath!).name);
-    expect(saved.streamTitle).not.toBe(room.displayName);
     await services.manager.stopRecording(room.id);
+    await app.close();
   });
 
   it("records a live stream to completion, forwards preview frames and closes with 1000", async () => {
@@ -2192,6 +2205,7 @@ describe("preview startup resilience", () => {
       displayName: name,
     });
     services.rooms.setLiveStatus(room.id, "live");
+    vi.spyOn(services.adapterFor("youtube"), "checkLiveStatus").mockResolvedValue({ status: "live" });
     vi.spyOn(services.adapterFor("youtube"), "getStreamUrl").mockResolvedValue({
       url: "https://www.youtube.com/watch?v=abcdefghijk",
       format: "youtube",
@@ -2199,6 +2213,90 @@ describe("preview startup resilience", () => {
     } as never);
     return room;
   };
+
+  it("uses a definitive lookup result without an extra check and corrects stale room metadata", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "stale live badge");
+    services.rooms.setCurrentStreamTitle(room.id, "old title");
+    services.rooms.setAvailableQualities(room.id, ["720p"]);
+    const adapter = services.adapterFor("youtube");
+    adapter.resolveRecordingSource = vi.fn().mockResolvedValue({ status: "offline" });
+    const emit = vi.spyOn(services.events, "emit");
+    await services.manager.ensurePreviewStream(room.id);
+    expect(adapter.resolveRecordingSource).toHaveBeenCalledOnce();
+    expect(adapter.getStreamUrl).not.toHaveBeenCalled();
+    expect(adapter.checkLiveStatus).not.toHaveBeenCalled();
+    expect(preview.closed).toEqual([{ roomId: room.id, code: 1000, reason: "live_ended" }]);
+    expect(services.rooms.get(room.id)).toMatchObject({
+      lastLiveStatus: "offline", currentStreamTitle: null, availableQualities: [],
+    });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
+      type: "room:updated", data: expect.objectContaining({ id: room.id, lastLiveStatus: "offline" }),
+    }));
+    services.db.close();
+  });
+
+  it("shares a pending status probe and leaves a newer live observation intact", async () => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "new broadcast");
+    let finish!: (status: { status: "offline" }) => void;
+    const check = vi.mocked(services.adapterFor("youtube").checkLiveStatus)
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const first = services.manager.recheckPreviewOffline(room.id);
+    const second = services.manager.recheckPreviewOffline(room.id);
+    await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
+    services.rooms.setLiveStatus(room.id, "offline");
+    clock.advance(1000);
+    services.rooms.setLiveStatus(room.id, "live", clock.iso());
+    finish({ status: "offline" });
+    expect(await Promise.all([first, second])).toEqual([false, false]);
+    expect(services.rooms.get(room.id)?.lastLiveStatus).toBe("live");
+    expect(preview.closed).toEqual([]);
+    services.db.close();
+  });
+
+  it("does not discard a live source when a stale offline badge arrives during lookup", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "live source");
+    const adapter = services.adapterFor("youtube");
+    vi.mocked(adapter.getStreamUrl).mockImplementationOnce(async () => {
+      services.rooms.setLiveStatus(room.id, "offline");
+      return { url: room.url, format: "youtube", actualQuality: "720p" };
+    });
+    const engineFor = vi.spyOn(services, "engineFor");
+    await services.manager.ensurePreviewStream(room.id);
+    expect(engineFor).toHaveBeenCalledOnce();
+    expect(preview.closed).toEqual([]);
+    await services.manager.stopPreviewStream(room.id);
+    services.db.close();
+  });
+
+  it("bounds the wait for a status probe and still publishes a late definitive end", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = youtubeRoom(services, "slow offline confirmation");
+    let finish!: (status: { status: "offline" }) => void;
+    const check = vi.mocked(services.adapterFor("youtube").checkLiveStatus)
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = services.manager.recheckPreviewOffline(room.id);
+    expect(await pending).toBe(false);
+    expect(await services.manager.recheckPreviewOffline(room.id)).toBe(false);
+    expect(check).toHaveBeenCalledOnce();
+    finish({ status: "offline" });
+    await vi.waitFor(() => expect(preview.closed).toEqual([
+      { roomId: room.id, code: 1000, reason: "live_ended" },
+    ]));
+    expect(services.rooms.get(room.id)?.lastLiveStatus).toBe("offline");
+    services.db.close();
+  });
 
   it("extends the startup budget as stages arrive instead of one flat deadline", async () => {
     const clock = new FakeClock();

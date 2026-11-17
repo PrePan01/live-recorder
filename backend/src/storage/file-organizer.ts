@@ -1,6 +1,14 @@
 import path from 'node:path';
 import { stat, open, mkdir } from 'node:fs/promises';
 import type { Platform, RecordingFormat } from '../types/index.js';
+import { NAMING_VARS } from '../types/index.js';
+
+type NamingVariable = (typeof NAMING_VARS)[number];
+const namingVariablePattern = new RegExp(`\\{(${NAMING_VARS.join('|')})\\}`, 'g');
+
+export function replaceNamingVariables(template: string, values: Record<NamingVariable, string>): string {
+  return template.replace(namingVariablePattern, (_, variable: NamingVariable) => values[variable]);
+}
 
 /** 按 UTF-8 字节截断（不切断多字节字符）：文件名单段上限 255B，扣除模板后缀余量后取 160B。 */
 function truncateBytes(input: string, maxBytes: number): string {
@@ -67,25 +75,27 @@ export async function uniqueTargetPath(
 }
 
 /** 录制文件路径：source_flv 直写用 .flv；mp4_after 录制阶段仍落 .flv，完成后转 MP4。template 为 V5 命名规则。 */
-export function recordingFilePath(recordingDirectory: string, platform: Platform, displayName: string, startedAtIso: string, format?: RecordingFormat, template?: string | null, quality?: string, roomId?: string): string {
+export function recordingFilePath(recordingDirectory: string, platform: Platform, displayName: string, startedAtIso: string, format?: RecordingFormat, template?: string | null, quality?: string, roomId?: string, roomTitle?: string | null): string {
   const ext = platform === 'youtube' ? '.mkv' : '.flv';
-  const base = resolveBaseName(displayName, startedAtIso, platform, quality, roomId, template);
+  const base = resolveBaseName(displayName, startedAtIso, platform, quality, roomId, template, roomTitle);
   return path.join(recordingDirectory, platform, sanitize(displayName), `${base}${ext}`);
 }
 
 /** 解析文件基名：template 为空用时间戳；否则按变量替换+过滤。 */
-export function resolveBaseName(displayName: string, startedAtIso: string, platform: Platform, quality?: string, roomId?: string, template?: string | null): string {
+export function resolveBaseName(displayName: string, startedAtIso: string, platform: Platform, quality?: string, roomId?: string, template?: string | null, roomTitle?: string | null): string {
   if (!template) return timestampSlug(startedAtIso);
-  const { date, time, slug } = localParts(startedAtIso);
-  let name = template
-    .replaceAll('{room}', sanitize(displayName) || 'unknown')
-    .replaceAll('{platform}', platform)
-    .replaceAll('{date}', date)
-    .replaceAll('{time}', time)
-    .replaceAll('{quality}', quality ?? '')
-    .replaceAll('{roomId}', roomId ?? '');
-  name = sanitize(name);
-  return name || slug;
+  const { date, time } = localParts(startedAtIso);
+  const room = sanitize(displayName);
+  const name = replaceNamingVariables(template, {
+    room,
+    platform,
+    date,
+    time,
+    quality: quality ?? '',
+    roomId: roomId ?? '',
+    roomTitle: roomTitle?.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() || room,
+  });
+  return sanitize(name);
 }
 
 /** Reserve atomically when channel and video monitors happen to choose the same name. */

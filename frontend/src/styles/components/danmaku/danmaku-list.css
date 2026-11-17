@@ -1,0 +1,327 @@
+.lr-danmaku-list-layout {
+  --lr-player-header-height: 40px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--lr-danmaku-list-gap);
+}
+
+.lr-danmaku-list-layout__player {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(100%, var(--lr-danmaku-player-width));
+  min-width: 0;
+}
+
+.lr-danmaku-list-layout[data-danmaku-centered] {
+  position: relative;
+}
+
+.lr-danmaku-list-layout[data-danmaku-centered] > .lr-danmaku-list {
+  position: absolute;
+  top: 0;
+  inset-inline-start: calc(100% + var(--lr-danmaku-list-gap));
+}
+
+.lr-danmaku-list-toggle {
+  display: inline-flex;
+}
+
+.lr-danmaku-list-toggle .ant-btn[aria-expanded="true"] {
+  background: var(--lr-primary);
+  color: #000;
+}
+
+.lr-danmaku-list {
+  --lr-danmaku-list-default-height: min(560px, 60dvh);
+  --lr-danmaku-list-max-height: 100dvh;
+  box-sizing: border-box;
+  container-type: inline-size;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: var(--lr-danmaku-list-width);
+  height: var(--lr-danmaku-list-default-height);
+  min-height: min(var(--lr-danmaku-list-default-height), var(--lr-danmaku-list-max-height));
+  max-height: var(--lr-danmaku-list-max-height);
+  pointer-events: auto;
+  border: 2px solid var(--lr-ink);
+  border-bottom-width: 4px;
+  touch-action: none;
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  overflow: hidden;
+  text-align: start;
+}
+
+.lr-danmaku-list[data-resize-edge] {
+  cursor: ns-resize;
+}
+
+.lr-danmaku-list[data-motion="enter"] {
+  animation: lr-danmaku-list-enter var(--lr-motion) ease-out both;
+}
+
+.lr-danmaku-list[data-motion="exit"] {
+  pointer-events: none;
+  animation: lr-danmaku-list-exit var(--lr-motion) ease-in both;
+}
+
+@keyframes lr-danmaku-list-enter {
+  from {
+    opacity: 0;
+    transform: translate(-48px, 10px);
+    clip-path: inset(0 0 0 48px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+    clip-path: inset(0);
+  }
+}
+
+@keyframes lr-danmaku-list-exit {
+  from {
+    opacity: 1;
+    transform: translate(0, 0);
+    clip-path: inset(0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-48px, 10px);
+    clip-path: inset(0 0 0 48px);
+  }
+}
+
+.lr-danmaku-list__title {
+  display: flex;
+  flex: 0 0 var(--lr-player-header-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0;
+  padding: 0 12px;
+  border-bottom: 3px solid var(--lr-ink);
+  background: var(--lr-yellow);
+  color: #000;
+  font-family: var(--lr-display);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.lr-danmaku-list__title h2 {
+  margin: 0;
+  font: inherit;
+}
+
+.lr-danmaku-list__collapse.ant-btn {
+  --lr-text: #000;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.lr-danmaku-list__collapse.ant-btn:is(:hover, :focus-visible):not(:disabled) {
+  background: rgb(0 0 0 / 8%) !important;
+}
+
+.lr-danmaku-list__viewport {
+  overflow-anchor: none;
+  --lr-danmaku-row-height: 36px;
+  --lr-danmaku-scrollbar-width: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-inline-end: var(--lr-danmaku-scrollbar-width);
+}
+
+.lr-danmaku-list__viewport[data-empty] {
+  position: relative;
+  padding-inline-end: 0;
+}
+
+.lr-danmaku-list__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  color: color-mix(in srgb, var(--lr-muted) 90%, var(--lr-surface));
+  font-size: 12px;
+  text-align: center;
+}
+
+.lr-danmaku-list__viewport::-webkit-scrollbar {
+  display: none;
+  width: var(--lr-danmaku-scrollbar-width);
+}
+
+.lr-danmaku-list[data-scrollbar-visible]:hover .lr-danmaku-list__viewport {
+  padding-inline-end: 0;
+  scrollbar-gutter: stable;
+}
+
+.lr-danmaku-list[data-scrollbar-visible]:hover .lr-danmaku-list__viewport::-webkit-scrollbar {
+  display: block;
+}
+
+.lr-danmaku-list__viewport::-webkit-scrollbar-track {
+  background-color: var(--lr-surface-alt);
+}
+
+.lr-danmaku-list__viewport::-webkit-scrollbar-thumb {
+  background-color: var(--lr-muted);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .lr-danmaku-list__viewport {
+    scrollbar-width: none;
+  }
+
+  .lr-danmaku-list[data-scrollbar-visible]:hover .lr-danmaku-list__viewport {
+    scrollbar-width: thin;
+    scrollbar-color: var(--lr-muted) var(--lr-surface-alt);
+  }
+}
+
+.lr-danmaku-list__rows {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lr-danmaku-list__row {
+  position: absolute;
+  inset-inline: 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--lr-border) 32%, transparent);
+}
+
+.lr-danmaku-list__divider {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-inline: 6px;
+  color: color-mix(in srgb, var(--lr-muted) 90%, var(--lr-surface));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lr-danmaku-list__divider::before,
+.lr-danmaku-list__divider::after {
+  flex: 1 1 auto;
+  min-width: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--lr-border) 22%, transparent);
+  content: "";
+}
+
+.lr-danmaku-list__item {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding-inline: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+button.lr-danmaku-list__item:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+.lr-danmaku-list__item:hover,
+.lr-danmaku-list__item:focus-visible {
+  background: var(--lr-hover-bg);
+  outline-offset: -2px;
+}
+
+.lr-danmaku-list__time {
+  flex: 0 0 auto;
+  min-width: 56px;
+  padding: 2px 3px;
+  border: 1px solid var(--lr-border);
+  background: var(--lr-surface-alt);
+  color: var(--lr-text);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.lr-danmaku-list__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.lr-danmaku-list__full-text {
+  max-height: min(240px, 45dvh);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lr-danmaku-list__notice {
+  padding: 6px 12px;
+}
+
+@container (max-width: 140px) {
+  .lr-danmaku-list__title,
+  .lr-danmaku-list__notice {
+    padding-inline: 3px;
+    font-size: 10px;
+  }
+
+  .lr-danmaku-list__notice .ant-btn {
+    padding-inline: 2px;
+    font-size: inherit;
+  }
+}
+
+@container (max-width: 190px) {
+  .lr-danmaku-list__viewport {
+    --lr-danmaku-row-height: 52px;
+  }
+
+  .lr-danmaku-list__item {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 3px;
+    padding-inline: 6px;
+    font-size: 12px;
+    line-height: 14px;
+  }
+
+  .lr-danmaku-list__time {
+    align-self: flex-start;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0 3px;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lr-danmaku-list__text {
+    display: -webkit-box;
+    max-height: 28px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}

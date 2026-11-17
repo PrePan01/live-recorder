@@ -13,6 +13,7 @@ import {
   reserveRecordingPath,
 } from "../storage/file-organizer.js";
 import { AppError } from "../types/error.js";
+import { ROOM_TITLE_VARIABLE } from "../types/index.js";
 import type {
   AppSettings,
   ErrorObject,
@@ -516,6 +517,9 @@ export class RecorderManager {
   ensurePreviewStream(roomId: string): Promise<void> {
     return this.previewController.ensurePreviewStream(roomId);
   }
+  recheckPreviewOffline(roomId: string): Promise<boolean> {
+    return this.previewController.recheckPreviewOffline(roomId);
+  }
   stopPreviewStream(
     roomId: string,
     transitioningToRecording = false,
@@ -569,11 +573,14 @@ export class RecorderManager {
   private async createRecordingFile(
     filePath: string,
     roomId: string,
-  ): Promise<void> {
+    unique = false,
+  ): Promise<string> {
     try {
+      if (unique) return await reserveRecordingPath(filePath);
       await mkdir(path.dirname(filePath), { recursive: true });
       const file = await open(filePath, "w");
       await file.close();
+      return filePath;
     } catch (error) {
       throw fileCreateError(error, roomId);
     }
@@ -882,7 +889,7 @@ export class RecorderManager {
         startupTrace.finish("skipped");
         return false;
       }
-      let filePath = recordingFilePath(
+      const preferredPath = recordingFilePath(
         settings.recordingDirectory,
         room.platform,
         room.displayName || room.id,
@@ -891,10 +898,13 @@ export class RecorderManager {
         settings.namingRule,
         stream.actualQuality,
         room.id,
+        status.streamTitle?.trim() || room.currentStreamTitle,
       );
-      if (room.platform === "youtube")
-        filePath = await reserveRecordingPath(filePath);
-      await this.createRecordingFile(filePath, room.id);
+      const filePath = await this.createRecordingFile(
+        preferredPath,
+        room.id,
+        room.platform === "youtube" || settings.namingRule?.includes(ROOM_TITLE_VARIABLE),
+      );
       startupTrace.mark("recording_file_ready");
       // 悬浮录制的历史标题使用最终文件基名，确保它和设置里的命名规则完全一致。
       const streamTitle =

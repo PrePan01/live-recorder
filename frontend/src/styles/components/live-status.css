@@ -99,6 +99,12 @@
   color: #102d24;
 }
 
+button.lr-live-status-title {
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .lr-live-status-title__viewport {
   flex: 1 1 auto;
   min-width: 0;

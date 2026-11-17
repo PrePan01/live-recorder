@@ -5,11 +5,19 @@ import type { DanmakuMessage, DanmakuStatus } from '../types/danmaku';
 import { mergeLiveDanmakuWindow } from '../utils/danmaku/liveDanmakuWindow';
 
 /** One incremental subscription for the modal, independent of whether recording starts/stops. */
-export function useLiveDanmaku(roomId: string, enabled: boolean, video: HTMLVideoElement | null) {
+export function useLiveDanmaku(
+  roomId: string,
+  visible: boolean,
+  video: HTMLVideoElement | null,
+  cacheEnabled: boolean,
+) {
+  const enabled = visible || cacheEnabled;
   const [messages, setMessages] = useState<DanmakuMessage[]>([]);
   const [status, setStatus] = useState<DanmakuStatus | null>(null);
+  const [lease, setLease] = useState<{ roomId: string; token: string; generation: string } | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const videoRef = useRef(video);
+  const visibleRef = useRef(visible);
   useEffect(() => { videoRef.current = video; }, [video]);
   const anchorRef = useRef<number | null>(null);
   const lastVideoTime = useRef(0);
@@ -25,7 +33,13 @@ export function useLiveDanmaku(roomId: string, enabled: boolean, video: HTMLVide
   }, []);
 
   useEffect(() => {
-    setMessages([]); setStatus(null); resetTime();
+    visibleRef.current = visible;
+    if (!visible) setMessages([]);
+    resetTime();
+  }, [visible, resetTime]);
+
+  useEffect(() => {
+    setMessages([]); setStatus(null); setLease(null); resetTime();
     if (!enabled) return;
     let generation = '';
     const apply = (data: LiveDanmakuSnapshot) => {
@@ -37,6 +51,7 @@ export function useLiveDanmaku(roomId: string, enabled: boolean, video: HTMLVide
         && previous.since === data.status.since
         && previous.reason === data.status.reason
         && previous.recordingId === data.status.recordingId ? previous : data.status);
+      if (!visibleRef.current) return;
       const element = videoRef.current;
       if (element?.buffered.length) {
         if (element.currentTime < lastVideoTime.current - 0.5) resetTime();
@@ -47,9 +62,17 @@ export function useLiveDanmaku(roomId: string, enabled: boolean, video: HTMLVide
       }
       setMessages(previous => mergeLiveDanmakuWindow(previous, data.messages, data.mediaNowMs));
     };
-    return createLiveDanmakuSession(roomId, apply, () => {
-      setStatus(previous => ({ recordingId: previous?.recordingId ?? 'preview', state: 'reconnecting', since: Date.now() }));
-    });
+    return createLiveDanmakuSession(
+      roomId,
+      apply,
+      () => setStatus(previous => ({ recordingId: previous?.recordingId ?? 'preview', state: 'reconnecting', since: Date.now() })),
+      () => visibleRef.current,
+      (token, nextGeneration) => setLease(previous =>
+        previous?.token === token && previous.generation === nextGeneration
+          ? previous
+          : { roomId, token, generation: nextGeneration },
+      ),
+    );
   }, [roomId, enabled, resetTime]);
-  return { messages, status, resetKey, getTimeMs, resetTime };
+  return { messages, status, lease: lease?.roomId === roomId ? lease : null, resetKey, getTimeMs, resetTime };
 }

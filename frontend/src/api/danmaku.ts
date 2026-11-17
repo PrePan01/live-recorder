@@ -1,6 +1,24 @@
 import { http } from './client';
 import type { DanmakuGap, DanmakuMessage, DanmakuStatus } from '../types/danmaku';
 
+export interface DanmakuListPage {
+  messages: DanmakuMessage[];
+  next: string | null;
+  resumeCursor: string;
+  previous?: string | null;
+  rowCursors?: string[];
+  cacheTruncated?: boolean;
+  cacheSkipped?: boolean;
+}
+
+export async function fetchDanmakuListPage(recordingId: string, cursor: string, signal: AbortSignal): Promise<DanmakuListPage> {
+  const { data } = await http.get<DanmakuListPage>(
+    `/recordings/${encodeURIComponent(recordingId)}/danmaku`,
+    { params: { mode: 'list', cursor }, signal },
+  );
+  return data;
+}
+
 /** 拉取某录制在媒体时间区间内的弹幕（时间轴查询默认不含 unmappable）。 */
 export async function fetchDanmaku(
   recordingId: string,
@@ -39,12 +57,22 @@ export interface LiveDanmakuSnapshot {
   status: DanmakuStatus;
 }
 const previewPath = (roomId: string, token: string) => `/rooms/${encodeURIComponent(roomId)}/danmaku-preview/${encodeURIComponent(token)}`;
-export async function subscribeLiveDanmaku(roomId: string, token: string, signal: AbortSignal): Promise<LiveDanmakuSnapshot> {
-  const { data } = await http.post<LiveDanmakuSnapshot>(previewPath(roomId, token), undefined, { signal });
+export async function fetchPreviewDanmakuListPage(roomId: string, token: string, cursor: string, signal: AbortSignal): Promise<DanmakuListPage> {
+  const { data } = await http.get<DanmakuListPage>(`${previewPath(roomId, token)}/list`, {
+    params: { cursor }, signal,
+  });
   return data;
 }
-export async function readLiveDanmaku(roomId: string, token: string, cursor: number, signal: AbortSignal): Promise<LiveDanmakuSnapshot> {
-  const { data } = await http.get<LiveDanmakuSnapshot>(previewPath(roomId, token), { params: { cursor }, signal });
+export async function subscribeLiveDanmaku(roomId: string, token: string, signal: AbortSignal, includeMessages = true): Promise<LiveDanmakuSnapshot> {
+  const { data } = await http.post<LiveDanmakuSnapshot>(previewPath(roomId, token), undefined, {
+    signal, params: { messages: includeMessages ? undefined : 0 },
+  });
+  return data;
+}
+export async function readLiveDanmaku(roomId: string, token: string, cursor: number, signal: AbortSignal, includeMessages = true): Promise<LiveDanmakuSnapshot> {
+  const { data } = await http.get<LiveDanmakuSnapshot>(previewPath(roomId, token), {
+    params: { cursor, messages: includeMessages ? undefined : 0 }, signal,
+  });
   return data;
 }
 export async function unsubscribeLiveDanmaku(roomId: string, token: string): Promise<void> {

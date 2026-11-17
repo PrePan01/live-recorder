@@ -48,7 +48,35 @@ it('decodes a real fragmented AVC/AAC stream after recording and late preview bo
     preview.addClient('r', client as unknown as WebSocket);
     expect(sent.length).toBeGreaterThanOrEqual(2);
     await writeFile(late, Buffer.concat(sent));
-    for (const file of [recording, late]) {
+    const delayedAudio = path.join(directory, 'delayed-audio.flv');
+    const rearranged = new PreviewManager({} as Services);
+    const delayed: Buffer[] = [];
+    const waiting = Object.assign(new EventEmitter(), {
+      readyState: WebSocket.OPEN, bufferedAmount: 0,
+      send(chunk: Buffer) { delayed.push(chunk); },
+      close(code: number) { throw new Error(`Unexpected preview close: ${code}`); },
+    });
+    rearranged.addClient('r', waiting as unknown as WebSocket);
+    rearranged.broadcastFrame('r', bytes.subarray(0, 13));
+    let audioConfig: Buffer | undefined;
+    for (let offset = 13; offset < bytes.length;) {
+      const tag = bytes.subarray(offset, offset + bytes.readUIntBE(offset + 1, 3) + 15);
+      offset += tag.length;
+      if (tag[0] === 8 && tag[12] === 0 && !audioConfig) {
+        audioConfig = tag;
+        continue;
+      }
+      rearranged.broadcastFrame('r', tag);
+      if (audioConfig && tag[0] === 9 && tag[11] === 0x17 && tag[12] === 1) {
+        expect(delayed).toHaveLength(0);
+        rearranged.broadcastFrame('r', audioConfig);
+        expect(delayed).toHaveLength(2);
+        // Input only contains one AAC sequence header. Release it once.
+        audioConfig = undefined;
+      }
+    }
+    await writeFile(delayedAudio, Buffer.concat(delayed));
+    for (const [file, expectedFrames] of [[recording, 40], [late, 20], [delayedAudio, 40]] as const) {
       // Decode the packets, not only container metadata, to catch missing SPS,
       // lost fragment bytes and undecodable GOP starts.
       execFileSync(resolveBin('ffmpeg'), ['-v', 'error', '-xerror', '-i', file, '-f', 'null', '-'], { timeout: 10_000 });
@@ -58,7 +86,7 @@ it('decodes a real fragmented AVC/AAC stream after recording and late preview bo
       ], { encoding: 'utf8', timeout: 10_000 }));
       expect(info.streams[0].codec_name).toBe('h264');
       const frames = Number(info.streams[0].nb_read_frames);
-      expect(frames).toBe(file === recording ? 40 : 20);
+      expect(frames).toBe(expectedFrames);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

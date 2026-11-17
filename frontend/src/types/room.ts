@@ -4,6 +4,8 @@ import type { Tag } from "./tag";
 
 export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "youtube";
 
+export type MonitorStatusFilter = "全部" | "开播中" | "录制中" | "收藏";
+
 export type SettingSource = "room" | "tag" | "global";
 
 export interface EffectivePolicyValue<T> {

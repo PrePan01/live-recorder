@@ -1,6 +1,9 @@
 import { roomLivePageUrl } from "../../../utils/room/roomPlatform";
 import { memo } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  App,
   Button,
   Card,
   Popover,
@@ -72,6 +75,8 @@ function bestQuality(qualities: string[]): string | null {
 
 export const RoomCard = memo(function RoomCard({
   room,
+  selectedTagIds,
+  onToggleTagFilter,
   onManageRoom,
   onWatch,
   onCheck,
@@ -93,6 +98,8 @@ export const RoomCard = memo(function RoomCard({
   floatingReady,
 }: {
   room: Room;
+  selectedTagIds: string[];
+  onToggleTagFilter: (tagId: string) => void;
   onManageRoom: (r: Room) => void;
   onWatch: (r: Room) => void;
   onCheck: (r: Room) => void;
@@ -113,10 +120,24 @@ export const RoomCard = memo(function RoomCard({
   floatingEnabled: boolean;
   floatingReady: boolean;
 }) {
+  const { message } = App.useApp();
   const showLiveRoomCover = useAppearanceStore((s) => s.showLiveRoomCover);
+  const copyStreamTitle = async (title: string) => {
+    try {
+      if (isTauri()) {
+        await writeText(title);
+      } else {
+        await navigator.clipboard.writeText(title);
+      }
+      message.success("已复制直播标题");
+    } catch {
+      message.error("复制直播标题失败");
+    }
+  };
   const recording =
     room.monitorState === "recording" || room.monitorState === "reconnecting";
   const onAir = room.lastLiveStatus === "live";
+  const streamTitle = room.currentStreamTitle?.trim();
   const bestAvailable = bestQuality(room.availableQualities);
   const qualityShortfall =
     room.platform === "bilibili" &&
@@ -294,19 +315,36 @@ export const RoomCard = memo(function RoomCard({
           {onAir ? (
             <LiveStatusTag
               status="live"
-              streamTitle={
-                room.currentStreamTitle?.trim() || "直播标题暂未获取"
-              }
+              streamTitle={streamTitle || "直播标题暂未获取"}
+              onTitleClick={streamTitle ? copyStreamTitle : undefined}
               titleOnly
             />
           ) : (
             <LivePredictionBadge insight={insight} hidden={recording} />
           )}
-          {room.tags.map((t) => (
-            <Tag key={t.id} color={t.color} style={{ marginInlineEnd: 0 }}>
-              {t.name}
-            </Tag>
-          ))}
+          {room.tags.map((tag) => {
+            const selected = selectedTagIds.includes(tag.id);
+            const label = `按标签筛选：${tag.name}`;
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className="lr-room-card__tag-filter"
+                aria-label={label}
+                aria-pressed={selected}
+                title={label}
+                onClick={() => onToggleTagFilter(tag.id)}
+              >
+                <Tag
+                  color={tag.color}
+                  variant={selected ? "outlined" : undefined}
+                  style={{ marginInlineEnd: 0 }}
+                >
+                  {tag.name}
+                </Tag>
+              </button>
+            );
+          })}
         </Space>
         <div
           className="lr-room-card__stats"

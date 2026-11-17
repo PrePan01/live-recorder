@@ -85,7 +85,8 @@ export interface AppSettings {
 export const DEFAULT_NAMING_RULE = '{room}_{date}_{time}';
 
 /** 命名模板支持的变量。 */
-export const NAMING_VARS = ['room', 'platform', 'date', 'time', 'quality', 'roomId'] as const;
+export const NAMING_VARS = ['room', 'platform', 'date', 'time', 'quality', 'roomId', 'roomTitle'] as const;
+export const ROOM_TITLE_VARIABLE = '{roomTitle}';
 
 export interface NotificationEventPreference {
   /** 开播提醒：直播检测到开播时通知。 */

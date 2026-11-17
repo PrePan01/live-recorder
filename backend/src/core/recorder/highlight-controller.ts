@@ -303,6 +303,7 @@ export class HighlightController {
       settings.namingRule,
       bufferedQuality,
       room.id,
+      room.currentStreamTitle,
     );
     const parsed = path.parse(base);
     const filePath = path.join(

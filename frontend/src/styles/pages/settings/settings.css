@@ -172,7 +172,7 @@
 }
 .lr-settings-row__help {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--lr-muted);
 }
@@ -223,6 +223,45 @@
 }
 .lr-settings-number > span {
   white-space: nowrap;
+}
+.lr-monitoring-table-scroll {
+  margin: 12px 0;
+  overflow-x: auto;
+}
+.lr-monitoring-table {
+  width: 100%;
+  min-width: calc(var(--lr-monitoring-column-count) * 8rem);
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-block-start: 1px solid var(--lr-border);
+  border-inline-start: 1px solid var(--lr-border);
+}
+.lr-monitoring-table th,
+.lr-monitoring-table td {
+  border-block-end: 1px solid var(--lr-border);
+  border-inline-end: 1px solid var(--lr-border);
+  padding: 8px 12px;
+  text-align: start;
+  vertical-align: top;
+}
+.lr-monitoring-table th {
+  background: var(--lr-surface-alt);
+  vertical-align: middle;
+}
+.lr-monitoring-table th > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lr-monitoring-table th .lr-platform-logo-tag {
+  margin-inline-end: 0;
+}
+.lr-monitoring-table td {
+  scroll-margin-top: 28px;
+}
+.lr-monitoring-table .lr-settings-save {
+  margin-top: 8px;
 }
 .lr-settings-slider {
   display: flex;
@@ -277,6 +316,17 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+.lr-settings-vars .lr-settings-vars__button {
+  flex-direction: column;
+  gap: 2px;
+  height: auto;
+  padding-block: 4px;
+  line-height: 1.2;
+}
+.lr-settings-vars__button > small {
+  color: color-mix(in srgb, var(--lr-muted) 88%, var(--lr-surface));
+  font-size: 10px;
 }
 .lr-settings-example {
   overflow-wrap: anywhere;
@@ -399,7 +449,8 @@
     grid-column: 1 / -1;
   }
   .lr-settings-page .lr-settings-section,
-  .lr-settings-row {
+  .lr-settings-row,
+  .lr-monitoring-table td {
     scroll-margin-top: 96px;
   }
 }
@@ -630,12 +681,23 @@
   color: var(--lr-error);
   font-size: 12px;
 }
+#naming-rule {
+  grid-auto-rows: max-content;
+}
 .lr-settings-naming-editor {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+.lr-settings-naming-presets {
+  width: max-content;
+  max-width: calc(100vw - 24px);
+}
+.lr-settings-naming-presets .ant-select-item-option-content {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 719px) {
   .lr-settings-naming-editor {

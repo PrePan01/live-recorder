@@ -270,17 +270,19 @@ export class RoomRepository {
   setLiveStatus(id: string, status: LiveStatus, liveStartedAt?: string): void {
     this.db
       .prepare(`UPDATE rooms
-        SET last_live_status = ?,
-            live_cover_url = CASE WHEN ? = 'live' THEN live_cover_url ELSE NULL END,
+        SET last_live_status = @status,
+            live_cover_url = CASE WHEN @status = 'live' THEN live_cover_url ELSE NULL END,
+            current_stream_title = CASE WHEN @status = 'live' THEN current_stream_title ELSE NULL END,
+            available_qualities = CASE WHEN @status = 'live' THEN available_qualities ELSE NULL END,
             live_started_at = CASE
-              WHEN ? = 'offline' THEN NULL
-              WHEN ? = 'live' THEN COALESCE(live_started_at, ?)
+              WHEN @status = 'offline' THEN NULL
+              WHEN @status = 'live' THEN COALESCE(live_started_at, @liveStartedAt)
               ELSE live_started_at
             END,
-            auto_record_stopped_session = CASE WHEN ? = 'offline' THEN NULL ELSE auto_record_stopped_session END,
-            updated_at = ?
-        WHERE id = ?`)
-      .run(status, status, status, status, liveStartedAt ?? null, status, nowIso(), id);
+            auto_record_stopped_session = CASE WHEN @status = 'offline' THEN NULL ELSE auto_record_stopped_session END,
+            updated_at = @now
+        WHERE id = @id`)
+      .run({ status, liveStartedAt: liveStartedAt ?? null, now: nowIso(), id });
   }
 
   /** 记录「本开播周期内已被用户手动停止」：调度器自动录制在本场内跳过（下播由 setLiveStatus 清空）。 */
@@ -297,7 +299,7 @@ export class RoomRepository {
       .run(qualities.length > 0 ? JSON.stringify(qualities) : null, nowIso(), id);
   }
 
-  /** 保存本场直播的房间标题；离线/受限时清除，避免展示过期标题。 */
+  /** 保存本场直播的房间标题；离线/受限时由 setLiveStatus 清除。 */
   setCurrentStreamTitle(id: string, title: string | null): void {
     this.db
       .prepare(`UPDATE rooms SET current_stream_title = ?, updated_at = ? WHERE id = ?`)

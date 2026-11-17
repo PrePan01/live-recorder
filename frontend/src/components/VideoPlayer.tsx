@@ -80,9 +80,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           />
         </div>
       )}
-      {state === "ended" && (
-        <div className="lr-video-player__message">
-          <Alert type="info" showIcon message="本场录制已结束" />
+      {!thumbnail && state === "ended" && (
+        <div className="lr-video-player__loading">
+          <div className="lr-video-player__progress" role="status">
+            <div className="lr-video-player__progress-heading">直播已结束</div>
+          </div>
         </div>
       )}
       <video
@@ -96,7 +98,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           ...(fill
             ? { height: "100%", objectFit: "contain" as const }
             : { aspectRatio: aspectRatio ? String(aspectRatio) : "16 / 9" }),
-          display: state === "error" || state === "ended" ? "none" : "block",
+          display: state === "error" ? "none" : "block",
+          visibility: state === "ended" ? "hidden" : "visible",
         }}
       />
       {preserveFrameOnSwitch && (

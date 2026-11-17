@@ -7,7 +7,7 @@ import {
 import MemphisRadioGroup from "../../../components/MemphisRadioGroup";
 import { PlatformIcon } from "../../../components/PlatformLogo";
 import TagFilterSelect from "../../../components/TagFilterSelect";
-import type { Platform } from "../../../types/room";
+import type { MonitorStatusFilter, Platform } from "../../../types/room";
 import type { Tag } from "../../../types/tag";
 import {
   MONITOR_SORT_OPTIONS,
@@ -17,8 +17,8 @@ import {
 export interface MonitorToolbarProps {
   sort: MonitorSort;
   setSort: (value: MonitorSort) => void;
-  filter: "全部" | "开播中" | "录制中" | "收藏";
-  setFilter: (v: "全部" | "开播中" | "录制中" | "收藏") => void;
+  filter: MonitorStatusFilter;
+  setFilter: (v: MonitorStatusFilter) => void;
   platformFilter: "全部" | Platform;
   setPlatformFilter: (v: "全部" | Platform) => void;
   tagIds: string[];
@@ -157,9 +157,7 @@ export function MonitorToolbar({
               { label: "收藏", value: "收藏" },
             ]}
             value={filter}
-            onChange={(e) =>
-              setFilter(e.target.value as "全部" | "开播中" | "录制中" | "收藏")
-            }
+            onChange={(e) => setFilter(e.target.value as MonitorStatusFilter)}
           />
         </div>
         <div className="lr-monitor-header__tools">

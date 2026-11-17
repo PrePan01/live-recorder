@@ -765,6 +765,8 @@ describe('V5 Batch2 naming rule (#115)', () => {
     expect(resolveBaseName('主播A', iso, 'bilibili', '1080p', 'room_x', '{room}_{date}_{time}')).toBe(`主播A_${localDate}_${localTime}`);
     // 非法字符过滤
     expect(resolveBaseName('a/b:c', iso, 'douyin', undefined, undefined, '{room}')).toBe('a_b_c');
+    expect(resolveBaseName('主播A', iso, 'bilibili', undefined, undefined, '{roomTitle}', '直播/$&{date}\u0000标题')).toBe('直播_$&{date}_标题');
+    expect(resolveBaseName('主播A', iso, 'bilibili', undefined, undefined, '{roomTitle}')).toBe('主播A');
     // 空模板回退时间戳
     expect(resolveBaseName('', iso, 'bilibili', undefined, undefined, '')).toBe(localSlug);
   });
@@ -783,9 +785,9 @@ describe('V5 Batch2 naming rule (#115)', () => {
     const bad = await inj({ method: 'PUT', url: '/api/v1/settings/naming-rule', payload: { namingRule: '' } });
     expect(bad.statusCode).toBe(422);
 
-    const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{time}' } });
+    const preview = await inj({ method: 'POST', url: '/api/v1/settings/naming-rule/preview', payload: { namingRule: '{room}_{roomTitle}' } });
     expect(preview.statusCode).toBe(200);
-    expect(typeof preview.json().example).toBe('string');
+    expect(preview.json().example).toBe('主播名_房间名');
     await app.close();
   });
 });

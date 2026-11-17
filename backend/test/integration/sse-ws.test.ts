@@ -245,6 +245,34 @@ describe('WebSocket preview', () => {
     await server.close();
   });
 
+  it('sends a terminal control message when a stale live badge opens an offline preview', async () => {
+    const server = await listen();
+    try {
+      const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/4011', displayName: 'offline' });
+      server.services.rooms.setLiveStatus(room.id, 'live');
+      const adapter = server.services.adapterFor('bilibili');
+      adapter.resolveRecordingSource = vi.fn().mockResolvedValue({ status: 'offline' });
+      const check = vi.spyOn(adapter, 'checkLiveStatus');
+      const { ws, closed } = connect(server.url, room.id);
+      const messages: string[] = [];
+      ws.on('message', (data, binary) => { if (!binary) messages.push(String(data)); });
+      expect(await closed).toBe(1000);
+      expect(messages.map(message => JSON.parse(message))).toContainEqual({
+        type: 'stream_end', reason: 'live_ended',
+      });
+      expect(server.services.rooms.get(room.id)?.lastLiveStatus).toBe('offline');
+      expect(check).not.toHaveBeenCalled();
+      const status = await server.app.inject({
+        method: 'POST', url: `/api/v1/rooms/${room.id}/preview-status`,
+        headers: { host: '127.0.0.1:43120' },
+      });
+      expect(status.json()).toEqual({ ended: true });
+      expect(check).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('accepts preview for a live-but-idle room and starts preview-only stream without recording (#163 预览不落盘)', async () => {
     const server = await listen();
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/150', displayName: 'livePreview' });
@@ -392,7 +420,7 @@ describe('WebSocket preview', () => {
     // 录制开始、尚无预览客户端时也需累积流头缓冲（中途加入可初始化 FLV）。
     const header = buildFlvInit();
     server.preview.broadcastFrame(room.id, header);
-    server.preview.broadcastFrame(room.id, Buffer.alloc(128));
+    server.preview.broadcastFrame(room.id, buildVideoTag(1, 64));
 
     // 中途加入的新客户端应首先收到已缓冲的流头数据。
     const c2 = connect(server.url, room.id);
@@ -416,6 +444,7 @@ describe('WebSocket preview', () => {
 
     const init = buildFlvInit();
     server.preview.broadcastFrame(room.id, init);
+    server.preview.broadcastFrame(room.id, buildVideoTag(1, 48));
 
     const c1 = connect(server.url, room.id);
     const first1 = await new Promise<Buffer>((resolve) => c1.ws.once('message', (d) => resolve(Buffer.from(d))));
@@ -455,7 +484,7 @@ it('init extractor completes at first media when audio seq missing (#193 QA 边�
     const h = Buffer.alloc(13);
     h.write('FLV', 0);
     h[3] = 1;
-    h[4] = 0x05;
+    h[4] = 0x01;
     h.writeUInt32BE(9, 5);
     h.writeUInt32BE(0, 9);
     const meta = flvTag(18, Buffer.alloc(4));

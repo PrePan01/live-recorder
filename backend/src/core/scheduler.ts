@@ -638,14 +638,10 @@ export class Scheduler {
         status.status,
         isOpening ? checkedAt : undefined,
       );
-      this.services.rooms.setCurrentStreamTitle(
-        room.id,
-        status.status === "live" ? (status.streamTitle ?? null) : null,
-      );
-      this.services.rooms.setAvailableQualities(
-        room.id,
-        status.status === "live" ? (status.availableQualities ?? []) : [],
-      );
+      if (status.status === "live") {
+        this.services.rooms.setCurrentStreamTitle(room.id, status.streamTitle ?? null);
+        this.services.rooms.setAvailableQualities(room.id, status.availableQualities ?? []);
+      }
     }
     if (status.status === "live" || status.status === "offline") {
       // 恢复清理：成功检测=该房计数清零，告警列表该条由 resolveRoomAlerts 隐藏留档。

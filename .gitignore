@@ -9,6 +9,8 @@ douyin/
 !backend/src/platform/bilibili/**
 !backend/src/platform/douyin/
 !backend/src/platform/douyin/**
+!frontend/src-tauri/src/platform/douyin/
+!frontend/src-tauri/src/platform/douyin/**
 release/
 .idea/
 *.tsbuildinfo

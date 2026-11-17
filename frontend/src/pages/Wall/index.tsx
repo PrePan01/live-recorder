@@ -245,7 +245,6 @@ export default function Wall() {
     if (
       !openPreviewModal({
         roomId: room.id,
-        titlePrefix: "全屏",
         defaultWidth: 1080,
         enableHighlights: false,
       })

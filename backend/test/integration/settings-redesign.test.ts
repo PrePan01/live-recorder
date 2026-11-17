@@ -111,6 +111,38 @@ describe("settings redesign API", () => {
     expect(services.settings.load()!.theme).toBe("system");
     await app.close();
   });
+  it("loads historical intervals and preserves the Douyin override when editing Global and Bilibili", async () => {
+    const { services, app } = setup();
+    const legacyIntervals = { default: 45, bilibili: 75, douyin: 105 };
+    services.settings.setRaw("settings", JSON.stringify({
+      ...services.settings.load(),
+      checkIntervalSec: legacyIntervals,
+    }));
+    try {
+      const loaded = await app.inject({ method: "GET", url: "/api/v1/settings", headers });
+      expect(loaded.statusCode).toBe(200);
+      expect(loaded.json().settings.checkIntervalSec).toMatchObject(legacyIntervals);
+
+      for (const patch of [{ default: 50 }, { bilibili: 80 }]) {
+        const saved = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings",
+          headers,
+          payload: { checkIntervalSec: patch },
+        });
+        expect(saved.statusCode).toBe(200);
+      }
+      expect(services.settings.load()!.checkIntervalSec).toEqual({
+        ...DEFAULT_SETTINGS.checkIntervalSec,
+        ...legacyIntervals,
+        default: 50,
+        bilibili: 80,
+      });
+    } finally {
+      await app.close();
+      services.db.close();
+    }
+  });
   it("rejects invalid credentials before saving ordinary settings", async () => {
     const { services, app } = setup();
     for (const key of ["douyinCookie", "bilibiliCookie"]) {

@@ -4,8 +4,10 @@ import * as path from "node:path";
 import type { DanmakuGap, DanmakuMessage } from "./types.js";
 
 const BLOCK_BYTES = 64 * 1024;
+const BACKWARD_LIST_BYTES = 256 * 1024;
 const MAX_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_LINE_BYTES = 32 * 1024;
+const SAVE_NOTIFICATION_INTERVAL_MS = 250;
 interface Block { start: number; end: number; min: number; max: number; unmappable: boolean }
 interface Index { identity: string; offset: number; blocks: Block[]; pending?: Promise<void> }
 const indexes = new Map<string, Index>();
@@ -74,6 +76,21 @@ async function indexFor(filePath: string): Promise<Index> {
   return index;
 }
 export interface DanmakuReadOptions { limit?: number; includeUnmappable?: boolean; cursor?: string }
+export function isDanmakuListCursor(cursor: string): boolean {
+  if (cursor === "latest") return true;
+  const offset = cursor.startsWith("before:") ? cursor.slice("before:".length) : cursor;
+  return /^\d+$/.test(offset) && Number.isSafeInteger(Number(offset));
+}
+
+export interface DanmakuListPage {
+  messages: DanmakuMessage[];
+  next: string | null;
+  resumeCursor: string;
+  previous?: string | null;
+  rowCursors?: string[];
+  cacheTruncated?: boolean;
+  cacheSkipped?: boolean;
+}
 /** Append-only JSONL with bounded buffering and incremental sparse range indexes. */
 export class DanmakuStore {
   private writer: WriteStream | null = null;
@@ -83,9 +100,10 @@ export class DanmakuStore {
   private pumping: Promise<void> | null = null;
   private closing: Promise<void> | null = null;
   private failed: Error | null = null;
+  private savedTimer: ReturnType<typeof setTimeout> | undefined;
   private count = 0;
   private errorListeners = new Set<(error: Error) => void>();
-  private constructor(readonly filePath: string) {}
+  private constructor(readonly filePath: string, private readonly onSaved?: () => void) {}
   static sidecarPathFor(recordingFilePath: string): string {
     const ext = path.extname(recordingFilePath);
     return path.join(path.dirname(recordingFilePath), ".danmaku", `${path.basename(recordingFilePath, ext)}.danmaku.jsonl`);
@@ -121,7 +139,7 @@ export class DanmakuStore {
     migrations.set(target, migration);
     try { await migration; } finally { migrations.delete(target); }
   }
-  static async open(recordingFilePath: string): Promise<DanmakuStore> {
+  static async open(recordingFilePath: string, onSaved?: () => void): Promise<DanmakuStore> {
     await this.migrateLegacy(recordingFilePath);
     const filePath = this.sidecarPathFor(recordingFilePath);
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -135,7 +153,7 @@ export class DanmakuStore {
         if (last[0] !== 10) await existing.write(Buffer.from("\n"));
       }
     } finally { await existing.close(); }
-    const store = new DanmakuStore(filePath);
+    const store = new DanmakuStore(filePath, onSaved);
     store.writer = createWriteStream(filePath, { flags: "a" });
     store.writer.on("error", error => store.fail(error));
     return store;
@@ -174,12 +192,23 @@ export class DanmakuStore {
   private async pump(): Promise<void> {
     while (this.head < this.queue.length && this.writer && !this.failed) {
       const line = this.queue[this.head++]!; this.queuedBytes -= line.length;
-      const ok = this.writer.write(line);
+      const ok = this.onSaved
+        ? this.writer.write(line, this.onWriteComplete)
+        : this.writer.write(line);
       if (this.head >= 1024) { this.queue = this.queue.slice(this.head); this.head = 0; }
       if (!ok) await this.waitForDrain(this.writer);
     }
     if (this.head === this.queue.length) { this.queue = []; this.head = 0; }
   }
+  private onWriteComplete = (error?: Error | null): void => {
+    if (error || this.closing || this.savedTimer) return;
+    // Emit after the write is readable, once per batch even during a burst.
+    this.savedTimer = setTimeout(() => {
+      this.savedTimer = undefined;
+      this.onSaved?.();
+    }, SAVE_NOTIFICATION_INTERVAL_MS);
+    this.savedTimer.unref?.();
+  };
   private waitForDrain(writer: WriteStream): Promise<void> {
     return new Promise(resolve => {
       const settle = () => { writer.off("drain", settle); writer.off("error", settle); writer.off("close", settle); resolve(); };
@@ -199,16 +228,87 @@ export class DanmakuStore {
           const settle = () => { writer.off("error", settle); writer.off("close", settle); resolve(); };
           writer.once("error", settle); writer.once("close", settle); writer.end(settle);
         });
-      } finally { clearTimeout(timer); this.writer = null; this.errorListeners.clear(); }
+      } finally {
+        clearTimeout(timer);
+        clearTimeout(this.savedTimer);
+        this.writer = null;
+        this.errorListeners.clear();
+      }
     })();
     return this.closing;
   }
+  async flush(): Promise<void> {
+    while (this.pumping) await this.pumping;
+    const writer = this.writer;
+    if (!writer || writer.destroyed || writer.writableEnded) return;
+    await new Promise<void>((resolve) => writer.write("", () => resolve()));
+  }
+
   /** Bounded sequential snapshot for bulk consumers, without building a range index. */
   async *readMessages(): AsyncGenerator<DanmakuMessage> {
     const end = (await stat(this.filePath)).size;
     for await (const line of lines(this.filePath, 0, end)) {
       if (line.value) yield line.value;
     }
+  }
+  /** Read one bounded window ending at the supplied byte offset. */
+  private async readBackwardListPage(end: number, limit: number, includePreview: boolean, latest: boolean): Promise<DanmakuListPage> {
+    const windowStart = Math.max(0, end - BACKWARD_LIST_BYTES);
+    const file = await open(this.filePath, "r");
+    let bytes: Buffer;
+    try {
+      const from = Math.max(0, windowStart - 1);
+      const buffer = Buffer.allocUnsafe(end - from);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, from);
+      bytes = buffer.subarray(0, bytesRead);
+    } finally { await file.close(); }
+
+    const origin = Math.max(0, windowStart - 1);
+    const matches: { offset: number; message: DanmakuMessage }[] = [];
+    let start = windowStart === 0 ? 0 : bytes.indexOf(10) + 1;
+    if (windowStart > 0 && start === 0) {
+      // A malformed row can span a whole window. Keep moving backward without
+      // interpreting its fragment as a row or treating it as a complete tail.
+      return { messages: [], next: null, previous: String(windowStart), resumeCursor: latest ? "latest" : String(end) };
+    }
+    const alignedStart = origin + start;
+    for (let newline = bytes.indexOf(10, start); newline >= 0; newline = bytes.indexOf(10, start)) {
+      const message = newline - start <= MAX_LINE_BYTES ? parseMessage(bytes.subarray(start, newline)) : null;
+      if (message && (includePreview || !message.beforeRecording)) matches.push({ offset: origin + start, message });
+      start = newline + 1;
+    }
+    const page = matches.slice(-limit);
+    const earlier = matches.length > limit ? page[0]!.offset : windowStart > 0 ? Math.min(alignedStart, end - 1) : 0;
+    return {
+      messages: page.map(({ message }) => message),
+      rowCursors: page.map(({ offset }) => String(offset)),
+      next: null,
+      previous: earlier > 0 ? String(earlier) : null,
+      resumeCursor: String(origin + start),
+    };
+  }
+
+  async readListPage(cursor: string, limit: number, includePreview = false): Promise<DanmakuListPage> {
+    const size = (await stat(this.filePath)).size;
+    if (cursor === "latest") return this.readBackwardListPage(size, limit, includePreview, true);
+    if (cursor.startsWith("before:")) {
+      return this.readBackwardListPage(Math.min(size, Number(cursor.slice("before:".length))), limit, includePreview, false);
+    }
+    let offset = Number(cursor);
+    const messages: DanmakuMessage[] = [];
+    const rowCursors: string[] = [];
+    for await (const line of lines(this.filePath, offset, size)) {
+      if (line.value && (includePreview || !line.value.beforeRecording)) {
+        if (messages.length === limit || (messages.length > 0 && line.end - Number(rowCursors[0]) > BACKWARD_LIST_BYTES)) {
+          const next = String(line.start);
+          return { messages, rowCursors, next, resumeCursor: next };
+        }
+        messages.push(line.value);
+        rowCursors.push(String(line.start));
+      }
+      offset = line.end;
+    }
+    return { messages, ...(messages.length ? { rowCursors } : {}), next: null, resumeCursor: String(offset) };
   }
   async readRange(fromMs: number, toMs: number, opts: DanmakuReadOptions = {}): Promise<{ messages: DanmakuMessage[]; next: string | null }> {
     const limit = Number.isFinite(opts.limit) ? Math.min(Math.max(Math.floor(opts.limit!), 1), 20000) : 5000;
@@ -220,6 +320,7 @@ export class DanmakuStore {
       for await (const line of lines(this.filePath, block.start, block.end)) {
         if (line.start < cursor || !line.value) continue;
         const m = line.value;
+        if (m.beforeRecording) continue;
         if (m.unmappable ? !opts.includeUnmappable : m.tMs === null || m.tMs < fromMs || m.tMs > toMs) continue;
         if (messages.length >= limit) return { messages, next: String(line.start) };
         messages.push(m);

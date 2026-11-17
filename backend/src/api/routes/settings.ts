@@ -1,3 +1,4 @@
+import { checkDouyinCookieStatus } from '../../security/douyin-authorization.js';
 import { checkYoutubeCookieStatus } from "../../security/youtube-cookie.js";
 import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
 import { normalizeYoutubeCookies } from "../../platform/youtube/runtime.js";
@@ -299,31 +300,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   });
 }
 
-type DouyinCookieStatus = 'valid' | 'invalid' | 'unknown';
 type BilibiliCookieStatus = 'valid' | 'invalid' | 'unknown';
-
-/** Verify a stored login session without exposing the cookie or response body. */
-async function checkDouyinCookieStatus(cookie: string): Promise<DouyinCookieStatus> {
-  try {
-    const response = await fetch('https://creator.douyin.com/web/api/media/user/info', {
-      headers: {
-        Cookie: cookie,
-        Referer: 'https://creator.douyin.com/',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return 'unknown';
-    const body = await response.json() as { status_code?: unknown };
-    if (body.status_code === 0) return 'valid';
-    // Douyin returns 8 for an anonymous or expired web session.  Treat the
-    // explicit credential/risk signal as invalid as well.
-    if (body.status_code === 8 || body.status_code === 10011) return 'invalid';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
 
 /** 浏览器开发者工具有时会把 `Cookie:` 前缀或换行一并复制，规范化后再发给抖音。 */
 function normalizeDouyinCookie(value: string): string {

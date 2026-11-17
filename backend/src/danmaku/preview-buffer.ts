@@ -10,10 +10,13 @@ export class DanmakuPreviewBuffer {
   private bytes = 0;
   private seq = 0;
   private discardedBytes = 0;
+  constructor(private readonly onMessage?: (message: DanmakuMessage) => void) {}
+  get cursor(): number { return this.seq; }
   onError(): () => void { return () => {}; }
   async saveGaps(): Promise<void> {}
   async close(): Promise<void> { this.items = []; this.head = 0; this.bytes = 0; this.discardedBytes = 0; }
   append(message: DanmakuMessage): boolean {
+    this.onMessage?.(message);
     const bytes = Buffer.byteLength(message.text);
     if (bytes > 32000) return false;
     this.items.push({ seq: ++this.seq, message, bytes }); this.bytes += bytes;
