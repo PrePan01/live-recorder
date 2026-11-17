@@ -101,8 +101,16 @@ export class ReleaseRemote {
         throw new Error("Created release draft could not be confirmed");
     });
   }
-  readAsset(name) {
-    const release = this.release();
+  listReleaseAssets(release) {
+    const assets = [];
+    for (let page = 1; ; page++) {
+      const batch = this.api(`releases/${release.id}/assets?per_page=100&page=${page}`);
+      if (!Array.isArray(batch)) throw new Error(`Unable to list GitHub assets for ${this.tag}`);
+      assets.push(...batch);
+      if (batch.length < 100) return assets;
+    }
+  }
+  readAsset(name, release = this.release()) {
     if (!release?.assets.some((asset) => asset.name === name)) {
       if (name !== STATE && !["latest.json", "releases.json"].includes(name)) return null;
       if (name === STATE && release?.draft === false) {
@@ -251,10 +259,12 @@ export class ReleaseRemote {
     await retryTransfer(async () => {
       const release = this.release(refresh);
       refresh = true;
-      const asset = release.assets.find((a) => a.name === name);
+      // A draft in the release list can omit an asset that GitHub already has.
+      const assets = this.listReleaseAssets(release);
+      const asset = assets.find((a) => a.name === name);
       if (asset) {
         const actual =
-          asset.digest || `sha256:${hashBytes(this.readAsset(name))}`;
+          asset.digest || `sha256:${hashBytes(this.readAsset(name, { ...release, assets }))}`;
         if (actual !== `sha256:${digest}`)
           throw new Error(`Refusing to overwrite GitHub asset ${name}`);
         return;
@@ -273,9 +283,6 @@ export class ReleaseRemote {
         "--repo",
         this.repo,
       ], { label: `GitHub ${name}`, timeout: Math.min(300000, remaining) });
-      const current = this.release();
-      if (!current.assets.some((asset) => asset.name === name))
-        current.assets.push({ name, digest: `sha256:${digest}` });
     });
   }
   aws(args) {
@@ -464,14 +471,15 @@ export class ReleaseRemote {
     }
   }
   async verifyStaged(state) {
-    // 重新读取 GitHub 的真实摘要，不使用上传后本地填入的缓存值。
+    // 重新读取 GitHub 的真实摘要。
     const release = this.release(true);
     if (!release) throw new Error("Release missing during verification");
+    const assets = this.listReleaseAssets(release);
     for (const [name, digest] of Object.entries(state.files)) {
-      const asset = release.assets.find((asset) => asset.name === name);
+      const asset = assets.find((asset) => asset.name === name);
       if (
         !asset ||
-        (asset.digest || `sha256:${hashBytes(this.readAsset(name))}`) !==
+        (asset.digest || `sha256:${hashBytes(this.readAsset(name, { ...release, assets }))}`) !==
           `sha256:${digest}`
       )
         throw new Error(`GitHub asset verification failed: ${name}`);
