@@ -369,14 +369,20 @@ export class XiaohongshuAdapter implements PlatformAdapter {
       return { status: appError.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: appError.toObject() };
     }
   }
-  async resolveRecordingSource(raw: string, quality: Quality, cookie?: string, context?: { streamSessionId?: string | null }): Promise<RecordingSourceResult> {
+  private async resolveSource(raw: string, quality: Quality, cookie: string | undefined, fresh: boolean, sessionId?: string | null): Promise<RecordingSourceResult> {
     try {
-      const room = await this.resolveMediaRoom(raw, cookie, undefined, true, context?.streamSessionId);
+      const room = await this.resolveMediaRoom(raw, cookie, undefined, fresh, sessionId);
       return room.live ? { status: 'live', stream: this.select(room, quality) } : { status: 'offline' };
     } catch (error) {
       const appError = error instanceof AppError ? error : new AppError('NETWORK_UNAVAILABLE', '小红书取流失败', { retryable: true });
       return { status: appError.code === 'PLATFORM_ACCESS_RESTRICTED' ? 'restricted' : 'error', error: appError.toObject() };
     }
+  }
+  resolvePreviewSource(raw: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult> {
+    return this.resolveSource(raw, quality, cookie, false);
+  }
+  resolveRecordingSource(raw: string, quality: Quality, cookie?: string, context?: { streamSessionId?: string | null }): Promise<RecordingSourceResult> {
+    return this.resolveSource(raw, quality, cookie, true, context?.streamSessionId);
   }
   async getStreamUrl(raw: string, quality: Quality, cookie?: string): Promise<StreamUrlResult> {
     const room = await this.resolveMediaRoom(raw, cookie);

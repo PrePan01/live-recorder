@@ -23,6 +23,18 @@ describe("settings catalog", () => {
     expect(validateValue(BY_ID["interval-xiaohongshu"], 0)).toBeTruthy();
     expect(validateValue(BY_ID["interval-xiaohongshu"], 120)).toBeUndefined();
   });
+  it("indexes the visible monitoring columns with their existing settings paths", () => {
+    const intervals = searchSettings("检测间隔", false, () => false);
+    expect(
+      intervals.map(({ id, path }) => [id, path]),
+    ).toEqual([
+      ["interval-default", "checkIntervalSec.default"],
+      ["interval-bilibili", "checkIntervalSec.bilibili"],
+      ["interval-douyin", "checkIntervalSec.douyin"],
+      ["interval-xiaohongshu", "checkIntervalSec.xiaohongshu"],
+      ["interval-youtube", "checkIntervalSec.youtube"],
+    ]);
+  });
   it("finds authorization and connection synonyms without reading user input", () => {
     expect(
       searchSettings("cookie", false, () => false).map((d) => d.id),

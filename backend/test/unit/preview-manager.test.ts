@@ -26,14 +26,19 @@ function frame(key = true, size = 64): Buffer {
 const init = () => Buffer.concat([header, tag(18, Buffer.alloc(4)), videoConfig(42), audioConfig()]);
 function socket() {
   const sent: Buffer[] = [];
+  const controls: string[] = [];
   const closes: number[] = [];
+  const closeReasons: string[] = [];
   const ws = Object.assign(new EventEmitter(), {
     readyState: WebSocket.OPEN as number,
     bufferedAmount: 0,
-    send(value: Buffer) { sent.push(Buffer.from(value)); },
-    close(code: number) { closes.push(code); ws.readyState = WebSocket.CLOSING; },
+    send(value: Buffer | string) {
+      if (typeof value === 'string') controls.push(value);
+      sent.push(typeof value === 'string' ? Buffer.from(value) : value);
+    },
+    close(code: number, reason: string) { closes.push(code); closeReasons.push(reason); ws.readyState = WebSocket.CLOSING; },
   });
-  return { ws: ws as unknown as WebSocket, sent, closes };
+  return { ws: ws as unknown as WebSocket, sent, closes, closeReasons, controls };
 }
 function manager(max = 4) { return new PreviewManager({} as Services, max); }
 
@@ -48,20 +53,23 @@ describe('preview initialization across source changes', () => {
     const client = socket(); preview.addClient('r', client.ws);
     expect(client.sent).toEqual([Buffer.concat([header, seq(1), audioConfig()]), Buffer.concat([key, delta])]);
     preview.broadcastFrame('r', seq(2));
-    expect(client.closes).toEqual([1012]);
+    expect(client.closes).toEqual([]);
     // SequenceEnd has the keyframe flag but cannot bootstrap a decoder.
     preview.broadcastFrame('r', tag(9, Buffer.concat([Buffer.from([0x92]), Buffer.from(codec)])));
     const waiting = socket(); preview.addClient('r', waiting.ws);
-    expect(waiting.sent).toHaveLength(1);
+    expect(waiting.sent).toHaveLength(0);
+    preview.broadcastFrame('r', key);
+    expect(client.closes).toEqual([1012]);
+    expect(client.closeReasons).toEqual(['preview replacement ready']);
     expect(waiting.sent[0]!.includes(seq(2))).toBe(true);
     expect(waiting.sent[0]!.includes(seq(1))).toBe(false);
-    preview.broadcastFrame('r', key);
+    expect(waiting.sent[1]).toEqual(key);
     expect(preview.recordingBootstrap('r')!.includes(key)).toBe(true);
   });
 
   it('uses the current AVC configuration after it rolls out of the tail', () => {
     const preview = manager();
-    preview.broadcastFrame('r', init());
+    preview.broadcastFrame('r', Buffer.concat([init(), frame()]));
     const existing = socket(); preview.addClient('r', existing.ws);
     preview.broadcastFrame('r', videoConfig(50));
     for (let i = 0; i < 5; i++) preview.broadcastFrame('r', frame(true, 281_248));
@@ -90,14 +98,44 @@ describe('preview initialization across source changes', () => {
     preview.broadcastFrame('r', audioConfig(2));
     preview.broadcastFrame('r', frame(false));
     const late = socket(); preview.addClient('r', late.ws);
-    expect(client.closes).toEqual([1012]);
-    expect(late.sent).toHaveLength(1);
-    expect(late.sent[0]!.includes(audioConfig(2))).toBe(true);
-    expect(late.sent[0]!.includes(audioConfig(1))).toBe(false);
+    expect(client.closes).toEqual([]);
+    expect(late.sent).toHaveLength(0);
     expect(preview.recordingBootstrap('r')!.includes(audioConfig(2))).toBe(true);
     expect(preview.recordingBootstrap('r')!.includes(audioConfig(1))).toBe(false);
     preview.broadcastFrame('r', frame());
+    expect(client.closes).toEqual([1012]);
+    expect(late.sent[0]!.includes(audioConfig(2))).toBe(true);
+    expect(late.sent[0]!.includes(audioConfig(1))).toBe(false);
+    expect(late.sent[1]).toEqual(frame());
     expect(preview.recordingBootstrap('r')!.includes(frame())).toBe(true);
+  });
+
+  it('keeps the cached video keyframe when the first AAC configuration arrives late', () => {
+    const preview = manager();
+    const first = socket(); preview.addClient('r', first.ws);
+    const keyframe = frame();
+    const earlyAudio = tag(8, Buffer.from([0xaf, 1, 99]), 40);
+    preview.broadcastFrame('r', Buffer.concat([header, videoConfig(42), keyframe, earlyAudio]));
+    expect(first.sent).toHaveLength(0);
+    const late = socket(); preview.addClient('r', late.ws);
+    expect(late.sent).toHaveLength(0);
+    preview.broadcastFrame('r', audioConfig());
+    for (const client of [first, late]) {
+      expect(client.closes).toEqual([]);
+      expect(client.sent).toEqual([Buffer.concat([header, videoConfig(42), audioConfig()]), keyframe]);
+    }
+    expect(first.sent[1]).toBe(late.sent[1]);
+  });
+
+  it('starts a pure video stream as soon as its first keyframe arrives', () => {
+    const preview = manager();
+    const client = socket(); preview.addClient('r', client.ws);
+    const videoOnly = Buffer.from(header);
+    videoOnly[4] = 1;
+    preview.broadcastFrame('r', Buffer.concat([videoOnly, videoConfig(42), frame(false)]));
+    expect(client.sent).toHaveLength(0);
+    preview.broadcastFrame('r', frame());
+    expect(client.sent).toEqual([Buffer.concat([videoOnly, videoConfig(42)]), frame()]);
   });
 
   it('handles fragmented and combined tags and starts replay from a keyframe', () => {
@@ -142,22 +180,31 @@ describe('preview initialization across source changes', () => {
     const preview = manager();
     preview.broadcastFrame('r', Buffer.concat([init(), frame(), frame(false, PREVIEW_TAIL_MAX - 64)]));
     const late = socket(); preview.addClient('r', late.ws);
-    expect(late.sent).toHaveLength(1);
+    expect(late.sent).toHaveLength(0);
     preview.broadcastFrame('r', frame(false));
     const later = socket(); preview.addClient('r', later.ws);
-    expect(later.sent).toHaveLength(1);
+    expect(later.sent).toHaveLength(0);
     preview.broadcastFrame('r', frame());
     const ready = socket(); preview.addClient('r', ready.ws);
     expect(ready.sent[1]).toEqual(frame());
   });
 
   it('resets connected decoders and provides a complete fresh init after handoff', () => {
-    const preview = manager(); preview.broadcastFrame('r', init());
-    const existing = socket(); preview.addClient('r', existing.ws);
+    const preview = manager(); preview.broadcastFrame('r', Buffer.concat([init(), frame()]));
+    const existing = socket(); preview.addClient('r', existing.ws, false, true);
+    const legacy = socket(); preview.addClient('r', legacy.ws);
     preview.resetRoom('r');
-    preview.broadcastFrame('r', Buffer.concat([header, videoConfig(50), audioConfig(), frame()]));
+    expect(existing.closes).toEqual([]);
+    expect(existing.controls).toEqual([]);
+    expect(preview.recordingBootstrap('r')).toBeNull();
+    preview.broadcastFrame('r', Buffer.concat([header, videoConfig(50), audioConfig()]));
+    expect(existing.controls).toEqual([]);
+    preview.broadcastFrame('r', frame());
     const late = socket(); preview.addClient('r', late.ws);
     expect(existing.closes).toEqual([1012]);
+    expect(existing.controls).toEqual(['{"type":"preview_replacement_ready"}']);
+    expect(legacy.closes).toEqual([1012]);
+    expect(legacy.controls).toEqual([]);
     expect(late.sent[0]!.subarray(0, 3).toString()).toBe('FLV');
     expect(late.sent[0]!.includes(videoConfig(42))).toBe(false);
     expect(late.sent[0]!.includes(videoConfig(50))).toBe(true);

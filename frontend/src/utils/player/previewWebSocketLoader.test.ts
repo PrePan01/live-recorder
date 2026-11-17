@@ -114,6 +114,44 @@ describe("preview WebSocket lifecycle", () => {
     expect(loader.onComplete).toHaveBeenCalledWith(0, -1);
   });
 
+  it("reports a prepared replacement separately from ordinary socket closes", () => {
+    const replacement = vi.fn();
+    const loader = new PreviewWebSocketLoader(undefined, undefined, undefined, undefined, replacement);
+    loader.open({ url: "ws://localhost/preview", duration: 0 });
+    const complete = loader.onComplete = vi.fn();
+    expect(new URL(Socket.latest.url).searchParams.get('replacement')).toBe('1');
+    expect(new URL(Socket.latest.url).searchParams.has('progress')).toBe(false);
+    Socket.latest.onclose!();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(replacement).not.toHaveBeenCalled();
+
+    loader.open({ url: "ws://localhost/preview", duration: 0 });
+    const close = Socket.latest.onclose!;
+    const message = Socket.latest.onmessage!;
+    message({ data: '{"type":"preview_replacement_ready"}' });
+    message({ data: '{"type":"preview_replacement_ready"}' });
+    close();
+    expect(replacement).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    loader.destroy();
+    close();
+    expect(replacement).toHaveBeenCalledOnce();
+  });
+
+  it("treats confirmed down-stream status as terminal and ignores the following close", () => {
+    const ended = vi.fn();
+    const loader = new PreviewWebSocketLoader(undefined, undefined, undefined, undefined, undefined, ended);
+    loader.open({ url: "ws://localhost/preview", duration: 0 });
+    const socket = Socket.latest;
+    const complete = loader.onComplete = vi.fn();
+    socket.onmessage!({ data: '{"type":"stream_end","reason":"ended"}' });
+    expect(ended).not.toHaveBeenCalled();
+    socket.onmessage!({ data: '{"type":"stream_end","reason":"live_ended"}' });
+    socket.onclose!();
+    expect(ended).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it("ignores asynchronous Blob delivery after destroy", async () => {
     const { loader, socket } = open();
     const onData = (loader.onDataArrival = vi.fn());

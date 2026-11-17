@@ -58,6 +58,8 @@ function toServerEvent(type: ServerEvent['type'], payload: Record<string, unknow
       return { type, upload: payload as unknown as UploadJob };
     case 'danmaku:status':
       return { type, status: payload as unknown as DanmakuStatus };
+    case 'danmaku:saved':
+      return { type, recordingId: (payload as { recordingId: string }).recordingId };
     case 'stream-health':
       return { type, health: payload as unknown as StreamHealth };
     case 'clip-queue:updated':

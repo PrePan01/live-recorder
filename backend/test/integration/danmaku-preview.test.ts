@@ -33,6 +33,8 @@ it('serves incremental room preview independently of recording, validates reques
     });
     expect(data!.status.state).toBe('collecting');
     expect(calls).toBe(1);
+    const silent = await app.inject({ method: 'GET', url: `${url}?messages=0`, headers });
+    expect(silent.json()).toMatchObject({ messages: [], cursor: data!.cursor });
     const next = await app.inject({ method: 'GET', url: `${url}?cursor=${data!.cursor}`, headers });
     expect(next.json().messages).toEqual([]);
     const again = await app.inject({ method: 'POST', url, headers });
@@ -45,5 +47,18 @@ it('serves incremental room preview independently of recording, validates reques
     await vi.waitFor(() => expect(active).toBe(0));
     expect((await app.inject({ method: 'GET', url, headers })).statusCode).toBe(404);
     expect((await app.inject({ method: 'DELETE', url, headers })).statusCode).toBe(200);
+
+    services.rooms.update(room.id, { danmakuEnabled: true });
+    expect((await app.inject({ method: 'POST', url: `${url}?messages=0`, headers })).statusCode).toBe(200);
+    await vi.waitFor(async () => {
+      const list = await app.inject({ method: 'GET', url: `${url}/list?cursor=latest`, headers });
+      expect(list.statusCode).toBe(200);
+      expect(list.json().messages).toMatchObject([
+        { id: 'live', tMs: null, unmappable: true, text: '没有录制也能看弹幕' },
+      ]);
+    });
+    expect((await app.inject({ method: 'GET', url: `${url}/list?cursor=-1`, headers })).statusCode).toBe(422);
+    expect((await app.inject({ method: 'DELETE', url, headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: `${url}/list`, headers })).statusCode).toBe(404);
   } finally { await app.close(); }
 });

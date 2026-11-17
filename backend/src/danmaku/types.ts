@@ -10,6 +10,8 @@ export interface DanmakuMessage {
   attrs?: Record<string, string | number>;
   /** 无法可靠映射到媒体时间：照存但不进时间轴查询、不叠加到画面。 */
   unmappable?: boolean;
+  /** 预览缓存的弹幕。旧文件中可能包含曾经转存的同类记录。 */
+  beforeRecording?: true;
 }
 
 /** 弹幕缺失区间：采集自身断连时间线（与视频 gap 是两套账，独立计）。 */

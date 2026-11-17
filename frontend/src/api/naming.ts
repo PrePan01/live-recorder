@@ -24,12 +24,13 @@ export async function previewNamingRule(namingRule: string): Promise<string> {
 }
 
 export const NAMING_VARS = [
-  "room",
-  "platform",
-  "date",
-  "time",
-  "quality",
-  "roomId",
+  { value: "room", label: "直播间名称" },
+  { value: "roomTitle", label: "直播间标题" },
+  { value: "roomId", label: "直播间 ID" },
+  { value: "platform", label: "直播平台" },
+  { value: "date", label: "录制日期" },
+  { value: "time", label: "录制时间" },
+  { value: "quality", label: "录制清晰度" },
 ];
 
 export const NAMING_PRESETS = [

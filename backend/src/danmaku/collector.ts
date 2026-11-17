@@ -51,6 +51,7 @@ export class DanmakuCollector {
     private readonly sink: DanmakuSink,
     /** 当前媒体时间（毫秒）；由录制会话注入，弹幕按到达时刻打媒体时间戳。 */
     private readonly mediaNow: () => number | null,
+    private readonly skipMessageIds?: ReadonlySet<string>,
   ) {}
 
   static start(args: {
@@ -62,6 +63,7 @@ export class DanmakuCollector {
     sink: DanmakuSink;
     mediaNow: () => number | null;
     gaps?: DanmakuGap[];
+    skipMessageIds?: ReadonlySet<string>;
   }): DanmakuCollector {
     const collector = new DanmakuCollector(
       args.recordingId,
@@ -71,6 +73,7 @@ export class DanmakuCollector {
       args.store,
       args.sink,
       args.mediaNow,
+      args.skipMessageIds,
     );
     collector.gaps = args.gaps ?? [];
     collector.unsubscribeError = args.store.onError(() => {
@@ -79,7 +82,7 @@ export class DanmakuCollector {
       collector.abort?.abort();
       collector.wakeSleep?.();
     });
-    // 首帧必发：初始态与首次 setState 同值，同态守卫会吞掉它——直接推快照。
+    // 订阅端需要先收到初始连接状态。
     collector.sink.status(collector.status);
     collector.loop = collector.run().catch(() => undefined);
     return collector;
@@ -139,7 +142,6 @@ export class DanmakuCollector {
     while (!this.stopped && !this.store.error) {
       this.abort = new AbortController();
       try {
-        this.setState(this.attempts === 0 ? "connecting" : "reconnecting");
         console.log(`[danmaku ${new Date().toISOString()}] connect platform=${this.adapter.platform} attempt=${this.attempts}`);
         for await (const message of this.adapter.collect(
           this.roomUrl,
@@ -156,6 +158,7 @@ export class DanmakuCollector {
           this.attempts = 0;
           this.closeGap("stream_disconnect");
           this.setState("collecting");
+          if (this.skipMessageIds?.has(message.id)) continue;
           this.emit(message);
           if (this.store.persistent !== false && this.stored % 50 === 1) {
             console.log(`[danmaku ${new Date().toISOString()}] write recording=${this.recordingId} rows=${this.stored}`);

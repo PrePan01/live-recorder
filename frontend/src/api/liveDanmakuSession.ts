@@ -2,7 +2,13 @@ import { readLiveDanmaku, subscribeLiveDanmaku, unsubscribeLiveDanmaku, type Liv
 import { ApiError } from '../types/error';
 
 /** Own the lease, sequential incremental requests, recovery and cancellation in one place. */
-export function createLiveDanmakuSession(roomId: string, onSnapshot: (snapshot: LiveDanmakuSnapshot) => void, onFailure: () => void): () => void {
+export function createLiveDanmakuSession(
+  roomId: string,
+  onSnapshot: (snapshot: LiveDanmakuSnapshot) => void,
+  onFailure: () => void,
+  includeMessages: () => boolean = () => true,
+  onLease?: (token: string, generation: string) => void,
+): () => void {
   const token = crypto.randomUUID();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -10,10 +16,11 @@ export function createLiveDanmakuSession(roomId: string, onSnapshot: (snapshot: 
   const poll = async () => {
     try {
       const data = subscribed
-        ? await readLiveDanmaku(roomId, token, cursor, controller.signal)
-        : await subscribeLiveDanmaku(roomId, token, controller.signal);
+        ? await readLiveDanmaku(roomId, token, cursor, controller.signal, includeMessages())
+        : await subscribeLiveDanmaku(roomId, token, controller.signal, includeMessages());
       if (controller.signal.aborted) return;
       subscribed = true; failures = 0; cursor = data.cursor;
+      onLease?.(token, data.generation);
       onSnapshot(data);
     } catch (error) {
       if (controller.signal.aborted) return;

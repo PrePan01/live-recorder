@@ -20,7 +20,7 @@ import {
 import { credentialStatus } from "../../utils/credentialStatus";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/error/errorMap";
-import type { Platform, Room } from "../../types/room";
+import type { MonitorStatusFilter, Platform, Room } from "../../types/room";
 import RoomMasonry from "./components/RoomMasonry";
 import RoomGrid from "./components/RoomGrid";
 import {
@@ -40,40 +40,42 @@ let startupLiveCheck: Promise<void> | null = null;
 
 type SavedMonitorFilters = {
   sort?: MonitorSort;
-  filter?: "全部" | "开播中" | "录制中" | "收藏";
+  filter?: MonitorStatusFilter;
   platformFilter?: "全部" | Platform;
   tagIds?: string[];
 };
 
-/** 上次筛选的读取与形状校验；损坏或非法值一律回退默认。 */
 function readSavedMonitorFilters(): SavedMonitorFilters {
+  const STATUS_FILTERS: readonly MonitorStatusFilter[] = [
+    "全部",
+    "开播中",
+    "录制中",
+    "收藏",
+  ];
+  const PLATFORM_FILTERS: readonly ("全部" | Platform)[] = [
+    "全部",
+    "bilibili",
+    "douyin",
+    "xiaohongshu",
+    "youtube",
+  ];
   try {
     const raw = localStorage.getItem("lr-monitor-filters");
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: SavedMonitorFilters = {};
     if (isMonitorSort(parsed.sort)) out.sort = parsed.sort;
-    if (
-      parsed.filter === "全部" ||
-      parsed.filter === "开播中" ||
-      parsed.filter === "录制中" ||
-      parsed.filter === "收藏"
-    ) {
-      out.filter = parsed.filter;
-    }
-    if (
-      parsed.platformFilter === "全部" ||
-      parsed.platformFilter === "bilibili" ||
-      parsed.platformFilter === "douyin" ||
-      parsed.platformFilter === "xiaohongshu" || parsed.platformFilter === "youtube"
-    ) {
-      out.platformFilter = parsed.platformFilter;
-    }
+    const filter = STATUS_FILTERS.find((status) => status === parsed.filter);
+    if (filter !== undefined) out.filter = filter;
+    const platformFilter = PLATFORM_FILTERS.find(
+      (platform) => platform === parsed.platformFilter,
+    );
+    if (platformFilter !== undefined) out.platformFilter = platformFilter;
     if (
       Array.isArray(parsed.tagIds) &&
       parsed.tagIds.every((t) => typeof t === "string")
     ) {
-      out.tagIds = parsed.tagIds as string[];
+      out.tagIds = parsed.tagIds;
     }
     return out;
   } catch {
@@ -110,7 +112,7 @@ export default function Monitor() {
   const [view, setView] = useState<"卡片" | "列表">(() =>
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
-  const [filter, setFilter] = useState<"全部" | "开播中" | "录制中" | "收藏">(
+  const [filter, setFilter] = useState<MonitorStatusFilter>(
     () => readSavedMonitorFilters().filter ?? "全部",
   );
   const [platformFilter, setPlatformFilter] = useState<"全部" | Platform>(
@@ -119,6 +121,13 @@ export default function Monitor() {
   const [tagIds, setTagIds] = useState<string[]>(
     () => readSavedMonitorFilters().tagIds ?? [],
   );
+  const toggleTagFilter = useCallback((tagId: string) => {
+    setTagIds((current) =>
+      current.includes(tagId)
+        ? current.filter((id) => id !== tagId)
+        : [...current, tagId],
+    );
+  }, []);
   const [keyword, setKeyword] = useState("");
   const [sort, setSort] = useState<MonitorSort>(
     () => readSavedMonitorFilters().sort ?? "manual",
@@ -186,7 +195,6 @@ export default function Monitor() {
     (room: Room) => {
       setRecentStop((prev) => ({ ...prev, [room.id]: Date.now() }));
       void stopRoomRecording(room.id).catch(() => {
-        // 停止失败时撤回「刚停止」标记，不把失败窗口演成已停止。
         setRecentStop((prev) => {
           const next = { ...prev };
           delete next[room.id];
@@ -293,14 +301,15 @@ export default function Monitor() {
       settings?.bilibiliCookie.hasCookie ?? false,
     ) === "authorized";
 
-  const keywordMatches = (r: Room) => {
-    const kw = keyword.trim().toLowerCase();
-    return (
-      !kw ||
-      r.displayName.toLowerCase().includes(kw) ||
-      r.url.toLowerCase().includes(kw)
-    );
-  };
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const hasActiveFilters =
+    platformFilter !== "全部" ||
+    tagIds.length > 0 ||
+    normalizedKeyword.length > 0;
+  const keywordMatches = (r: Room) =>
+    !normalizedKeyword ||
+    r.displayName.toLowerCase().includes(normalizedKeyword) ||
+    r.url.toLowerCase().includes(normalizedKeyword);
   const tagsMatch = (r: Room) =>
     tagIds.length === 0 || r.tags.some((t) => tagIds.includes(t.id));
   const filteredRooms = rooms
@@ -331,9 +340,6 @@ export default function Monitor() {
     [message, reorderRooms, manualSort],
   );
 
-  // 渐进分片渲染：首屏同步出前 20 张卡，其余每片 6 张在帧间隙挂载——
-  // 把百卡一次成帧的长任务（实测 5.4s、滚动冻结 6.7s）拆为亚秒小片，卡片分批出现；
-  // 排序不受影响（DND 层按全量 ids 计算，见 RoomSortableProvider）。
   const [shown, setShown] = useState(20);
   useEffect(() => {
     if (view !== "卡片") return; // 列表视图不参与分片：否则 state 推进会连发整表重渲染
@@ -521,11 +527,10 @@ export default function Monitor() {
         />
       ) : null}
       {monitorRooms.length === 0 && !loading ? (
-        monitorRooms.length === 0 && rooms.some((r) => r.enabled) ? (
+        hasActiveFilters ? (
           <Empty description="当前筛选无匹配">
             <Button
               onClick={() => {
-                setFilter("全部");
                 setPlatformFilter("全部");
                 setTagIds([]);
                 setKeyword("");
@@ -535,7 +540,7 @@ export default function Monitor() {
             </Button>
           </Empty>
         ) : (
-          <Empty description="暂无启用的直播间，请先在「直播间」中添加" />
+          <Empty description="暂无内容" />
         )
       ) : view === "列表" ? (
         <RoomSortableProvider
@@ -570,6 +575,8 @@ export default function Monitor() {
               <SortableRoomCardItem key={room.id} roomId={room.id}>
                 <RoomCard
                   room={room}
+                  selectedTagIds={tagIds}
+                  onToggleTagFilter={toggleTagFilter}
                   onManageRoom={onManageRoom}
                   acting={actingRoomId === room.id}
                   actingAction={

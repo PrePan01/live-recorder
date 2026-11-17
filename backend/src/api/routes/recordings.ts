@@ -8,7 +8,7 @@ import { open, stat } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { rename, unlink } from "node:fs/promises";
 import { renameRecordingWithBuffer, removeRecordingBuffer } from "../../recorder/buffered-writer.js";
-import { DanmakuStore } from "../../danmaku/store.js";
+import { DanmakuStore, isDanmakuListCursor } from "../../danmaku/store.js";
 import { exportDanmakuFiles } from "../../danmaku/export.js";
 import { AppError } from "../../types/error.js";
 import { SeekRangeError } from "../../core/seek-service.js";
@@ -348,6 +348,14 @@ export function registerRecordingRoutes(
     const rec = services.recordings.get(id);
     if (!rec) throw new AppError("RECORDING_NOT_AVAILABLE", "录像不存在", { recordingId: id });
     const q = req.query as Record<string, string | undefined>;
+    if (q.cursor !== undefined && !(q.mode === "list" ? isDanmakuListCursor(q.cursor) : /^\d+$/.test(q.cursor) && Number.isSafeInteger(Number(q.cursor)))) throw new AppError("CONFIG_INVALID", "弹幕游标无效");
+    if (q.mode === "list") {
+      const limit = Number(q.limit ?? 500);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        throw new AppError("CONFIG_INVALID", "弹幕列表条数必须为 1-500");
+      }
+      return reply.send(await services.danmaku.readListPage(rec.filePath ?? "", q.cursor ?? "0", limit));
+    }
     const fromMs = Number(q.fromMs ?? 0);
     const endMs = q.toMs === undefined ? Number.MAX_SAFE_INTEGER : Number(q.toMs);
     if (!Number.isFinite(fromMs) || fromMs < 0 || !Number.isFinite(endMs) || endMs < fromMs) throw new AppError("CONFIG_INVALID", "弹幕时间区间无效");
@@ -355,7 +363,6 @@ export function registerRecordingRoutes(
     const toMs = endMs;
     const limit = q.limit ? Number(q.limit) : undefined;
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20000)) throw new AppError("CONFIG_INVALID", "弹幕条数必须为 1-20000");
-    if (q.cursor !== undefined && (!/^\d+$/.test(q.cursor) || !Number.isSafeInteger(Number(q.cursor)))) throw new AppError("CONFIG_INVALID", "弹幕游标无效");
     const includeUnmappable = q.includeUnmappable === "1";
     const result = await services.danmaku.readRange(
       id,

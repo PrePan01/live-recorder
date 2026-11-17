@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { AppError } from "../types/error.js";
 import { SharedDanmakuAdapter } from "./shared-adapter.js";
 import { DanmakuPreviewBuffer } from "./preview-buffer.js";
+import { cleanLegacyPreviewCaches, DanmakuPreviewCache } from "./preview-cache.js";
 import { resolveDanmakuEnabled } from "../config/room-policy.js";
 import type { Room } from "../types/room.js";
 import type { Services } from "../core/services.js";
@@ -39,10 +40,13 @@ export function danmakuEnabledFor(
 }
 
 interface PreviewSource {
+  room: Room;
   generation: string;
   startedAt: number;
   leases: Map<string, number>;
   buffer: DanmakuPreviewBuffer;
+  cache?: DanmakuPreviewCache;
+  cacheWritable: boolean;
   abort: AbortController;
   status: DanmakuStatus;
   collector?: DanmakuCollector;
@@ -71,9 +75,12 @@ export class DanmakuManager {
 
   private adapters = new Map<string, SharedDanmakuAdapter>();
   private previews = new Map<string, PreviewSource>();
+  private movingSidecars = new Set<string>();
   private previewSweep: ReturnType<typeof setInterval> | undefined;
 
-  constructor(private readonly services: Services, private readonly resolveAdapter = (platform: string) => adapterFor(platform, services)) {}
+  constructor(private readonly services: Services, private readonly resolveAdapter = (platform: string) => adapterFor(platform, services)) {
+    void cleanLegacyPreviewCaches();
+  }
 
   private sharedAdapter(platform: string): SharedDanmakuAdapter {
     let adapter = this.adapters.get(platform);
@@ -84,20 +91,24 @@ export class DanmakuManager {
     return adapter;
   }
 
-  /** Explicit preview visibility is independent of the recording persistence preference. */
-  subscribePreview(room: Room, token: string) {
+  /** The lease can keep the preview cache alive with the overlay hidden. */
+  subscribePreview(room: Room, token: string, includeMessages = true) {
     this.sweepPreviews();
     let source = this.previews.get(room.id);
     const leaseCount = [...this.previews.values()].reduce((n, item) => n + item.leases.size, 0);
     if (!source?.leases.has(token) && leaseCount >= 8) throw new AppError("PREVIEW_LIMIT_REACHED", "弹幕预览数量已达上限");
     if (!source) {
       const generation = randomUUID();
-      source = {
-        generation, startedAt: Date.now(), leases: new Map(), buffer: new DanmakuPreviewBuffer(),
+      const entry: PreviewSource = {
+        room, generation, startedAt: Date.now(), leases: new Map(),
+        buffer: new DanmakuPreviewBuffer((message) => {
+          if (entry.cacheWritable) entry.cache?.append(message);
+        }),
+        cacheWritable: false,
         abort: new AbortController(), status: { recordingId: `preview:${generation}`, state: "connecting", since: Date.now() },
         done: Promise.resolve(),
       };
-      const entry = source;
+      source = entry;
       this.previews.set(room.id, entry);
       entry.done = (async () => {
         const cookie = await loadCookie(this.services, room, entry.abort.signal);
@@ -110,25 +121,54 @@ export class DanmakuManager {
         });
       })().catch(() => { entry.status = { ...entry.status, state: "unavailable", reason: "弹幕启动失败" }; });
     }
+    source.room = room;
+    this.updatePreviewCache(source);
     source.leases.set(token, Date.now() + PREVIEW_LEASE_MS);
     if (!this.previewSweep) {
       this.previewSweep = setInterval(() => this.sweepPreviews(), 5000);
       this.previewSweep.unref?.();
     }
-    return this.previewSnapshot(source, 0);
+    return this.previewSnapshot(source, 0, includeMessages);
   }
 
-  readPreview(roomId: string, token: string, cursor: number) {
+  readPreview(roomId: string, token: string, cursor: number, includeMessages = true) {
+    const source = this.refreshPreviewLease(roomId, token);
+    return this.previewSnapshot(source, cursor, includeMessages);
+  }
+
+  async readPreviewList(roomId: string, token: string, cursor: string, limit: number) {
+    const source = this.refreshPreviewLease(roomId, token);
+    return source.cache
+      ? source.cache.readListPage(cursor, limit)
+      : { messages: [], next: null, resumeCursor: cursor === "latest" || cursor.startsWith("before:") ? "0" : cursor };
+  }
+
+  private refreshPreviewLease(roomId: string, token: string): PreviewSource {
     this.sweepPreviews();
     const source = this.previews.get(roomId);
     if (!source?.leases.has(token)) throw new AppError("RESOURCE_NOT_FOUND", "弹幕预览会话已过期");
     source.leases.set(token, Date.now() + PREVIEW_LEASE_MS);
-    return this.previewSnapshot(source, cursor);
+    source.room = this.services.rooms?.get(roomId) ?? source.room;
+    this.updatePreviewCache(source);
+    return source;
   }
 
-  private previewSnapshot(source: PreviewSource, cursor: number) {
+  private updatePreviewCache(source: PreviewSource): void {
+    const roomId = source.room.id;
+    const recording = source.room.monitorState === "recording" ||
+      source.room.monitorState === "reconnecting" ||
+      this.movingSidecars.has(roomId) ||
+      [...this.sources.values()].some(({ room }) => room.id === roomId);
+    source.cacheWritable = !recording && danmakuEnabledFor(source.room, this.services.settings.load() ?? {});
+    if (source.cacheWritable) source.cache ??= new DanmakuPreviewCache();
+  }
+
+  private previewSnapshot(source: PreviewSource, cursor: number, includeMessages: boolean) {
     const mediaNowMs = Math.max(0, Date.now() - source.startedAt);
-    return { ...source.buffer.read(cursor, mediaNowMs), generation: source.generation, mediaNowMs, status: source.status };
+    const snapshot = includeMessages
+      ? source.buffer.read(cursor, mediaNowMs)
+      : { messages: [], cursor: source.buffer.cursor };
+    return { ...snapshot, generation: source.generation, mediaNowMs, status: source.status };
   }
 
   async unsubscribePreview(roomId: string, token: string): Promise<void> {
@@ -142,6 +182,7 @@ export class DanmakuManager {
     await source.done;
     await source.collector?.stop();
     await source.buffer.close();
+    delete source.cache;
   }
 
   private sweepPreviews(): void {
@@ -164,18 +205,46 @@ export class DanmakuManager {
       if (!danmakuEnabledFor(room, this.services.settings.load() ?? {})) return;
       if (this.collectors.has(recordingId) || this.starts.has(recordingId) || this.stops.has(recordingId) || !filePath) return;
       this.sources.set(recordingId, { room, mediaNow });
+      const preview = this.previews.get(room.id);
+      const previewCursor = preview?.buffer.cursor ?? 0;
+      const cutoverWallMs = Date.now();
+      if (preview) preview.cacheWritable = false;
       const pending = { cancelled: false, abort: new AbortController(), done: Promise.resolve() };
       this.starts.set(recordingId, pending);
       pending.done = (async () => {
-        const store = await DanmakuStore.open(filePath);
+        const store = await DanmakuStore.open(filePath, () => {
+          this.services.events.emit({ type: "danmaku:saved", data: { recordingId } });
+        });
         try {
           const cookie = await loadCookie(this.services, room, pending.abort.signal);
+          const gaps = await store.readGaps();
           if (pending.cancelled) { await store.close(); return; }
+          const bridgedIds = new Set<string>();
+          const videoId = room.platform === "youtube"
+            ? this.services.recordings.get(recordingId)?.streamSessionId
+            : null;
+          // Only messages received after recording began can bridge collector startup.
+          if (preview?.cache) {
+            const now = Math.max(0, Date.now() - preview.startedAt);
+            let cursor = previewCursor;
+            while (cursor < preview.buffer.cursor) {
+              const page = preview.buffer.read(cursor, now);
+              for (const message of page.messages) {
+                if (message.wallMs >= cutoverWallMs && !bridgedIds.has(message.id) &&
+                    (!videoId || message.id.startsWith(`youtube:${videoId}:`)) &&
+                    store.append({ ...message, tMs: null, unmappable: true })) {
+                  bridgedIds.add(message.id);
+                }
+              }
+              if (page.cursor <= cursor) break;
+              cursor = page.cursor;
+            }
+          }
           const collector = DanmakuCollector.start({
-            recordingId, adapter: this.sharedAdapter(room.platform), roomUrl: room.platform === "youtube" && this.services.recordings.get(recordingId)?.streamSessionId ? `https://www.youtube.com/watch?v=${this.services.recordings.get(recordingId)!.streamSessionId}` : room.url,
+            recordingId, adapter: this.sharedAdapter(room.platform), roomUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : room.url,
             cookie: cookie ?? null, store,
             sink: { status: status => this.services.events.emit({ type: "danmaku:status", data: status }) },
-            mediaNow, gaps: await store.readGaps(),
+            mediaNow, gaps, skipMessageIds: bridgedIds,
           });
           this.collectors.set(recordingId, collector);
         } catch (error) { await store.close(); throw error; }
@@ -220,14 +289,17 @@ export class DanmakuManager {
   async moveSidecar(recordingId: string, from: string, to: string): Promise<void> {
     if (DanmakuStore.sidecarPathFor(from) === DanmakuStore.sidecarPathFor(to)) return;
     const source = this.sources.get(recordingId);
-    await this.stopForRecording(recordingId);
+    if (source) this.movingSidecars.add(source.room.id);
     try {
+      await this.stopForRecording(recordingId);
       await DanmakuStore.move(from, to);
       if (source) this.startForRecording(recordingId, to, source.room, source.mediaNow);
     }
     catch (error) {
       console.warn(`[danmaku] sidecar move failed recording=${recordingId}`, error);
       this.services.events.emit({ type: "danmaku:status", data: { recordingId, state: "unavailable", since: Date.now(), reason: "弹幕文件迁移失败" } });
+    } finally {
+      if (source) this.movingSidecars.delete(source.room.id);
     }
   }
 
@@ -238,6 +310,13 @@ export class DanmakuManager {
   /** 采集状态快照（观测兜底：SSE 断连/首帧丢失时仍可查）。 */
   statusFor(recordingId: string): DanmakuStatus | null {
     return this.collectors.get(recordingId)?.status ?? null;
+  }
+
+  async readListPage(recordingFilePath: string, cursor: string, limit: number) {
+    const store = recordingFilePath ? await DanmakuStore.openExisting(recordingFilePath) : null;
+    return store
+      ? store.readListPage(cursor, limit)
+      : { messages: [], next: null, resumeCursor: cursor === "latest" || cursor.startsWith("before:") ? "0" : cursor };
   }
 
   /** 读取区间消息（媒体时间轴）；gaps 取该录制采集器的独立缺失账。 */

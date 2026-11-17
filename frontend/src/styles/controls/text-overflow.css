@@ -5,8 +5,7 @@
 .lr-tag-filter__option > span,
 .lr-tag-filter__tag > span,
 .lr-room-tag > span,
-.lr-history-title-cell > .ant-typography,
-.lr-preview-modal__name {
+.lr-history-title-cell > .ant-typography {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

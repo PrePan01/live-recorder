@@ -18,9 +18,20 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
   private originReader?: FlvMediaOriginReader;
   private onOrigin?: (milliseconds: number) => void;
   private onProgress?: (stage: string) => void;
-  constructor(_seekHandler?: unknown, _config?: unknown, onOrigin?: (milliseconds: number) => void, onProgress?: (stage: string) => void) {
+  private onReplacementReady?: () => void;
+  private onLiveEnded?: () => void;
+  constructor(
+    _seekHandler?: unknown,
+    _config?: unknown,
+    onOrigin?: (milliseconds: number) => void,
+    onProgress?: (stage: string) => void,
+    onReplacementReady?: () => void,
+    onLiveEnded?: () => void,
+  ) {
     this.onOrigin = onOrigin;
     this.onProgress = onProgress;
+    this.onReplacementReady = onReplacementReady;
+    this.onLiveEnded = onLiveEnded;
   }
   get status() {
     return this._status;
@@ -40,10 +51,12 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
     try {
       const url = new URL(dataSource.url);
       if (this.onProgress) url.searchParams.set('progress', '1');
+      if (this.onReplacementReady) url.searchParams.set('replacement', '1');
       const socket = new WebSocket(url.href);
       this.socket = socket;
       socket.binaryType = "arraybuffer";
-      const active = () => this.socket === socket;
+      let retired = false;
+      const active = () => this.socket === socket && !retired;
       socket.onopen = () => {
         if (active()) {
           this._status = 2;
@@ -71,8 +84,16 @@ export class PreviewWebSocketLoader implements mpegts.BaseLoader {
             if (event.data.length > 4096) throw new Error('oversized control frame');
             const message = JSON.parse(event.data);
             if (message?.type === 'preview_progress' && isServerPreviewProgressStage(message.stage)) this.onProgress?.(message.stage);
-            // Control frames never belong to the media byte stream. stream_end
-            // is followed by the server close; retain the existing EOF handling.
+            if (message?.type === 'preview_replacement_ready' && this.onReplacementReady) {
+              retired = true;
+              this._status = 4;
+              this.onReplacementReady();
+            }
+            if (message?.type === 'stream_end' && message.reason === 'live_ended' && this.onLiveEnded) {
+              retired = true;
+              this._status = 4;
+              this.onLiveEnded();
+            }
           } catch { this.fail('预览连接收到无效的控制消息'); }
         } else {
           this.fail("预览连接收到不支持的数据格式");

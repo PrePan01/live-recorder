@@ -1,7 +1,16 @@
-import { defaultDanmakuEnabled, platformCheckInterval, resolveRoomPolicy, validateRoomPolicy, type RoomPolicyPatch, type RoomPolicySettings } from '../../config/room-policy.js';
+import { isDanmakuListCursor } from "../../danmaku/store.js";
+import {
+  defaultDanmakuEnabled,
+  platformCheckInterval,
+  resolveRoomPolicy,
+  validateRoomPolicy,
+  type RoomPolicyPatch,
+  type RoomPolicySettings,
+} from "../../config/room-policy.js";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../types/error.js";
 import type { Platform } from "../../types/index.js";
+import { ROOM_TITLE_VARIABLE } from "../../types/index.js";
 import type { Services } from "../../core/services.js";
 import {
   calculateLivePrediction,
@@ -41,20 +50,30 @@ export function registerRoomRoutes(
   registerRoomScreenshotRoutes(app, services);
   const danmakuPreview = (req: { params: unknown }) => {
     const { id, token } = req.params as { id: string; token: string };
-    if (!/^[a-zA-Z0-9-]{16,96}$/.test(token)) throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");
+    if (!/^[a-zA-Z0-9-]{16,96}$/.test(token))
+      throw new AppError("CONFIG_INVALID", "弹幕预览标识无效");
     return { id, token };
   };
   app.post("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
     const { id, token } = danmakuPreview(req);
     const room = services.rooms.get(id);
     if (!room) throw new AppError("RESOURCE_NOT_FOUND", "直播间不存在");
-    return reply.send(services.danmaku.subscribePreview(room, token));
+    const { messages } = req.query as { messages?: string };
+    return reply.send(services.danmaku.subscribePreview(room, token, messages !== "0"));
   });
   app.get("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
     const { id, token } = danmakuPreview(req);
+    const { cursor = "0", messages } = req.query as { cursor?: string; messages?: string };
+    if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))
+      throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
+    return reply.send(services.danmaku.readPreview(id, token, Number(cursor), messages !== "0"));
+  });
+  app.get("/api/v1/rooms/:id/danmaku-preview/:token/list", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
     const { cursor = "0" } = req.query as { cursor?: string };
-    if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
-    return reply.send(services.danmaku.readPreview(id, token, Number(cursor)));
+    if (!isDanmakuListCursor(cursor))
+      throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
+    return reply.send(await services.danmaku.readPreviewList(id, token, cursor, 500));
   });
   app.delete("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
     const { id, token } = danmakuPreview(req);
@@ -66,10 +85,13 @@ export function registerRoomRoutes(
   let insightCache:
     { key: string; expiresAt: number; body: unknown } | undefined;
   let policySettings: RoomPolicySettings | null = services.settings.load();
-  const policySignature = (settings: RoomPolicySettings | null) => JSON.stringify([
-    PLATFORMS.map(platform => platformCheckInterval(platform, settings)), settings?.quality ?? "original",
-    settings?.autoRecord ?? false, defaultDanmakuEnabled(settings),
-  ]);
+  const policySignature = (settings: RoomPolicySettings | null) =>
+    JSON.stringify([
+      PLATFORMS.map((platform) => platformCheckInterval(platform, settings)),
+      settings?.quality ?? "original",
+      settings?.autoRecord ?? false,
+      defaultDanmakuEnabled(settings),
+    ]);
   const unsubscribe = services.events.on((event) => {
     if (event.type === "settings:updated") {
       const previous = policySettings;
@@ -77,8 +99,15 @@ export function registerRoomRoutes(
       if (policySignature(previous) !== policySignature(policySettings)) {
         // 全局变化只刷新生效值真正改变的房间；显式覆盖值保持不动。
         for (const room of services.rooms.list()) {
-          if (JSON.stringify(resolveRoomPolicy(room, previous)) === JSON.stringify(resolveRoomPolicy(room, policySettings))) continue;
-          services.events.emit({ type: "room:updated", data: services.manager.enrichRoom(room, policySettings) });
+          if (
+            JSON.stringify(resolveRoomPolicy(room, previous)) ===
+            JSON.stringify(resolveRoomPolicy(room, policySettings))
+          )
+            continue;
+          services.events.emit({
+            type: "room:updated",
+            data: services.manager.enrichRoom(room, policySettings),
+          });
         }
       }
     }
@@ -89,7 +118,9 @@ export function registerRoomRoutes(
   app.addHook("onClose", async () => unsubscribe());
 
   app.get("/api/v1/rooms", async (_req, reply) => {
-    return reply.send({ rooms: services.manager.enrichRooms(services.rooms.list()) });
+    return reply.send({
+      rooms: services.manager.enrichRooms(services.rooms.list()),
+    });
   });
 
   app.put("/api/v1/rooms/order", async (req, reply) => {
@@ -100,7 +131,9 @@ export function registerRoomRoutes(
     ) {
       throw new AppError("CONFIG_INVALID", "roomIds 必须是直播间 ID 数组");
     }
-    const rooms = services.manager.enrichRooms(services.rooms.reorder(body.roomIds as string[]));
+    const rooms = services.manager.enrichRooms(
+      services.rooms.reorder(body.roomIds as string[]),
+    );
     return reply.send({ rooms });
   });
 
@@ -140,27 +173,43 @@ export function registerRoomRoutes(
       stream_session_id: string | null;
     }>;
     const liveEvents = services.liveEvents.listForRooms(roomIds, from60);
-    liveEvents.push(...services.liveEvents.latestForRooms(roomIds, new Date(now).toISOString())
-      .filter((event) => event.detectedAt < from60));
+    liveEvents.push(
+      ...services.liveEvents
+        .latestForRooms(roomIds, new Date(now).toISOString())
+        .filter((event) => event.detectedAt < from60),
+    );
     // 历史录制只补最后一个起点，预测仍然只使用 60 天内的样本。
-    const historicalRecordings = services.db.prepare(`
+    const historicalRecordings = services.db
+      .prepare(
+        `
       SELECT room_id AS roomId, MAX(started_at) AS startedAt FROM (
         SELECT room_id, started_at FROM recordings WHERE room_id IN (${placeholders}) AND started_at <= ?
         UNION ALL
         SELECT room_id, started_at FROM prediction_recording_sessions WHERE room_id IN (${placeholders}) AND started_at <= ?
       ) GROUP BY room_id
-    `).all(...roomIds, new Date(now).toISOString(), ...roomIds, new Date(now).toISOString()) as Array<{ roomId: string; startedAt: string }>;
-    const historicalRecordingByRoom = new Map(historicalRecordings
-      .filter((record) => record.startedAt < from60)
-      .map((record) => [record.roomId, record]));
+    `,
+      )
+      .all(
+        ...roomIds,
+        new Date(now).toISOString(),
+        ...roomIds,
+        new Date(now).toISOString(),
+      ) as Array<{ roomId: string; startedAt: string }>;
+    const historicalRecordingByRoom = new Map(
+      historicalRecordings
+        .filter((record) => record.startedAt < from60)
+        .map((record) => [record.roomId, record]),
+    );
     // Sorting uses all retained history, independently of seven-day card stats.
     const recordingTotals = services.db
-      .prepare(`SELECT room_id,
+      .prepare(
+        `SELECT room_id,
       MAX(started_at) AS lastRecordedAt, COUNT(*) AS totalRecordings,
       COALESCE(SUM(CASE WHEN ended_at IS NOT NULL THEN
         MAX(0, CAST(ROUND((julianday(ended_at) - julianday(started_at)) * 86400000.0) AS INTEGER))
         ELSE 0 END), 0) AS totalDurationMs
-      FROM recordings WHERE room_id IN (${placeholders}) GROUP BY room_id`)
+      FROM recordings WHERE room_id IN (${placeholders}) GROUP BY room_id`,
+      )
       .all(...roomIds) as Array<{
       room_id: string;
       lastRecordedAt: string;
@@ -171,7 +220,8 @@ export function registerRoomRoutes(
     // use that boundary when newer than the observations, so a matching event's
     // platform opening time is not replaced by the later local detection time.
     const liveTotals = services.db
-      .prepare(`SELECT rooms.id AS room_id,
+      .prepare(
+        `SELECT rooms.id AS room_id,
       CASE WHEN rooms.live_started_at IS NOT NULL AND
         (history.lastDetectedAt IS NULL OR julianday(rooms.live_started_at) > julianday(history.lastDetectedAt))
         THEN rooms.live_started_at ELSE history.lastLiveAt END AS lastLiveAt
@@ -180,9 +230,15 @@ export function registerRoomRoutes(
           MAX(COALESCE(platform_started_at, detected_at)) AS lastLiveAt
         FROM live_events WHERE room_id IN (${placeholders}) GROUP BY room_id
       ) AS history ON history.room_id = rooms.id
-      WHERE rooms.id IN (${placeholders})`)
-      .all(...roomIds, ...roomIds) as Array<{ room_id: string; lastLiveAt: string | null }>;
-    const totalsByRoom = new Map(recordingTotals.map((row) => [row.room_id, row]));
+      WHERE rooms.id IN (${placeholders})`,
+      )
+      .all(...roomIds, ...roomIds) as Array<{
+      room_id: string;
+      lastLiveAt: string | null;
+    }>;
+    const totalsByRoom = new Map(
+      recordingTotals.map((row) => [row.room_id, row]),
+    );
     const latestLiveByRoom = new Map(
       liveTotals.map((row) => [row.room_id, row.lastLiveAt]),
     );
@@ -238,7 +294,9 @@ export function registerRoomRoutes(
               streamSessionId: record.stream_session_id,
             })),
             ...(recordingSessions.get(id) ?? []),
-            ...(historicalRecordingByRoom.has(id) ? [historicalRecordingByRoom.get(id)!] : []),
+            ...(historicalRecordingByRoom.has(id)
+              ? [historicalRecordingByRoom.get(id)!]
+              : []),
           ]),
           now,
           generatedAt: services.clock.iso(),
@@ -268,7 +326,10 @@ export function registerRoomRoutes(
   });
 
   app.post("/api/v1/rooms/check-enabled", async (_req, reply) => {
-    return reply.send({ ok: true, ...services.scheduler.queueEnabledRoomChecks() });
+    return reply.send({
+      ok: true,
+      ...services.scheduler.queueEnabledRoomChecks(),
+    });
   });
 
   app.post("/api/v1/rooms/stop-recording-all", async (_req, reply) => {
@@ -277,8 +338,12 @@ export function registerRoomRoutes(
       roomIds.map((id) => services.manager.stopRecording(id)),
     );
     return reply.send({
-      stopped: roomIds.filter((_, index) => results[index]!.status === "fulfilled"),
-      failed: roomIds.filter((_, index) => results[index]!.status === "rejected"),
+      stopped: roomIds.filter(
+        (_, index) => results[index]!.status === "fulfilled",
+      ),
+      failed: roomIds.filter(
+        (_, index) => results[index]!.status === "rejected",
+      ),
     });
   });
 
@@ -314,7 +379,12 @@ export function registerRoomRoutes(
     const adapter = services.adapterFor(platform);
     const room = services.rooms.create({
       platform,
-      url: adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(platform)) : adapter.normalizeUrl(body.url),
+      url: adapter.resolveRoomUrl
+        ? await adapter.resolveRoomUrl(
+            body.url,
+            await services.platformCookie(platform),
+          )
+        : adapter.normalizeUrl(body.url),
       displayName: typeof body.displayName === "string" ? body.displayName : "",
       enabled: body.enabled ?? true,
       liveNotificationEnabled: body.liveNotificationEnabled ?? false,
@@ -365,10 +435,34 @@ export function registerRoomRoutes(
       }
       const adapter = services.adapterFor(platform);
       let normalized: string;
-      try { normalized = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(url, await services.platformCookie(platform)) : adapter.normalizeUrl(url); }
-      catch (error) { failed.push({ url, reason: error instanceof AppError ? error.message : "链接解析失败，请稍后重试" }); continue; }
+      try {
+        normalized = adapter.resolveRoomUrl
+          ? await adapter.resolveRoomUrl(
+              url,
+              await services.platformCookie(platform),
+            )
+          : adapter.normalizeUrl(url);
+      } catch (error) {
+        failed.push({
+          url,
+          reason:
+            error instanceof AppError
+              ? error.message
+              : "链接解析失败，请稍后重试",
+        });
+        continue;
+      }
       const key = `${platform}|${normalized}`;
-      if (existing.has(key) || seen.has(key) || (platform === "xiaohongshu" && services.rooms.list().some(room => room.platform === platform && room.url === normalized))) {
+      if (
+        existing.has(key) ||
+        seen.has(key) ||
+        (platform === "xiaohongshu" &&
+          services.rooms
+            .list()
+            .some(
+              (room) => room.platform === platform && room.url === normalized,
+            ))
+      ) {
         failed.push({ url, reason: "该直播间已存在" });
         continue;
       }
@@ -408,7 +502,8 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
+      uploadEnabled?: boolean | null;
+      danmakuEnabled?: boolean | null;
     } & RoomPolicyPatch;
     const policy = validateRoomPolicy(body);
     const patch: {
@@ -417,7 +512,8 @@ export function registerRoomRoutes(
       enabled?: boolean;
       autoRecord?: boolean | null;
       liveNotificationEnabled?: boolean;
-      uploadEnabled?: boolean | null; danmakuEnabled?: boolean | null;
+      uploadEnabled?: boolean | null;
+      danmakuEnabled?: boolean | null;
     } & RoomPolicyPatch = { ...policy };
     if (body.url !== undefined) {
       const existing = services.rooms.get(id);
@@ -427,7 +523,12 @@ export function registerRoomRoutes(
           roomId: id,
         });
       }
-      patch.url = adapter.resolveRoomUrl ? await adapter.resolveRoomUrl(body.url, await services.platformCookie(existing!.platform)) : adapter.normalizeUrl(body.url);
+      patch.url = adapter.resolveRoomUrl
+        ? await adapter.resolveRoomUrl(
+            body.url,
+            await services.platformCookie(existing!.platform),
+          )
+        : adapter.normalizeUrl(body.url);
     }
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.uploadEnabled !== undefined) {
@@ -510,6 +611,11 @@ export function registerRoomRoutes(
     return reply.status(204).send();
   });
 
+  app.post("/api/v1/rooms/:id/preview-status", async (req) => {
+    const { id } = req.params as { id: string };
+    return { ended: await services.manager.recheckPreviewOffline(id) };
+  });
+
   app.post("/api/v1/rooms/:id/check", async (req, reply) => {
     const { id } = req.params as { id: string };
     const room = services.rooms.get(id);
@@ -522,7 +628,10 @@ export function registerRoomRoutes(
     // 解析失败如实报错：永久链接失败已由检测写入状态与告警，这里同步到响应体，
     // 不让「建了房却什么都没发生」的假象留在接口层（瞬时故障仍按三票门静默、回 ok）。
     const after = services.rooms.get(id);
-    if (after?.monitorState === "failed" && after.lastError?.code === "ROOM_LINK_INVALID") {
+    if (
+      after?.monitorState === "failed" &&
+      after.lastError?.code === "ROOM_LINK_INVALID"
+    ) {
       throw new AppError(
         after.lastError.code,
         after.lastError.message ?? "未找到该频道或直播，请检查链接是否正确",
@@ -670,7 +779,8 @@ export function registerRoomRoutes(
     if (room.lastLiveStatus === null && !previewReady) {
       const cookie = await services.platformCookie(room.platform);
       const adapter = services.adapterFor(room.platform);
-      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ??
+        adapter.checkLiveStatus(room.url, cookie));
       if (
         status.status === "live" ||
         status.status === "offline" ||
@@ -699,7 +809,8 @@ export function registerRoomRoutes(
     if (!status && !previewReady && !liveFresh) {
       const cookie = await services.platformCookie(room.platform);
       const adapter = services.adapterFor(room.platform);
-      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ?? adapter.checkLiveStatus(room.url, cookie));
+      status = await (adapter.checkLiveStatusForStartup?.(room.url, cookie) ??
+        adapter.checkLiveStatus(room.url, cookie));
     }
     if (status && status.status !== "live") {
       throw new AppError(
@@ -708,12 +819,28 @@ export function registerRoomRoutes(
         { roomId: id, retryable: false },
       );
     }
+    let cachedTitle = room.currentStreamTitle ?? undefined;
+    if (
+      !status &&
+      (!liveFresh || !cachedTitle?.trim()) &&
+      services.settings.load()?.namingRule?.includes(ROOM_TITLE_VARIABLE)
+    ) {
+      const adapter = services.adapterFor(room.platform);
+      const titleStatus = await services
+        .platformCookie(room.platform)
+        .then(
+          (cookie) =>
+            adapter.checkLiveStatusForStartup?.(room.url, cookie) ??
+            adapter.checkLiveStatus(room.url, cookie),
+        )
+        .catch(() => undefined);
+      if (titleStatus?.status === "live" && titleStatus.streamTitle?.trim()) {
+        cachedTitle = titleStatus.streamTitle;
+      }
+    }
     const started = await services.manager.maybeStartRecording(
       { ...room, monitorState: "idle" },
-      status ??
-        (room.currentStreamTitle
-          ? { streamTitle: room.currentStreamTitle }
-          : {}),
+      status ?? (cachedTitle ? { streamTitle: cachedTitle } : {}),
       { manual: true, origin, douyinAuthorizationRevision },
     );
     if (!started) {

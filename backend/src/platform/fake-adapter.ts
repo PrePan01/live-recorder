@@ -51,14 +51,19 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 }
 
-/** FLV header + 一个 onMetaData + 两个最小 video tag，可被 flv.js 识别为合法流。 */
+/** 纯视频 FLV，配置和两个关键帧各自使用完整的标签。 */
 export function buildMinimalFlv(): Buffer {
-  const header = Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09]);
+  const header = Buffer.from([0x46, 0x4c, 0x56, 0x01, 0x01, 0x00, 0x00, 0x00, 0x09]);
   const prevSize0 = Buffer.alloc(4);
   const meta = flvTag(0x12, 0, amfMeta());
-  const v1 = flvTag(0x09, 40, keyframePayload());
-  const v2 = flvTag(0x09, 140, keyframePayload());
-  return Buffer.concat([header, prevSize0, meta, size(meta), v1, size(v1), v2, size(v2)]);
+  const sps = Buffer.from([0x67, 0x64, 0x00, 0x1e, 0xac, 0xd9, 0x4a]);
+  const pps = Buffer.from([0x68, 0xeb, 0x23, 0xcb, 0x22]);
+  const config = flvTag(0x09, 0, Buffer.concat([Buffer.from([0x17, 0, 0, 0, 0]), avcc([sps], [pps])]));
+  const nal = Buffer.from([0x65, 0x88, 0x84, 0x00, 0x33, 0xff, 0xff]);
+  const keyframe = Buffer.concat([Buffer.from([0x17, 1, 0, 0, 0]), uint32(nal.length), nal]);
+  const v1 = flvTag(0x09, 40, keyframe);
+  const v2 = flvTag(0x09, 140, keyframe);
+  return Buffer.concat([header, prevSize0, meta, size(meta), config, size(config), v1, size(v1), v2, size(v2)]);
 }
 
 function flvTag(type: number, ts: number, data: Buffer): Buffer {
@@ -82,34 +87,17 @@ function size(tag: Buffer): Buffer {
 function amfMeta(): Buffer {
   const name = Buffer.from([0x02, 0x00, 0x0a, ...Buffer.from('onMetaData')]);
   const ecma = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, 0x08]),
+    Buffer.from([0x08, 0x00, 0x00, 0x00, 0x06]),
     stringField('duration'), numField(0),
     stringField('width'), numField(1280),
     stringField('height'), numField(720),
     stringField('videodatarate'), numField(2000),
     stringField('framerate'), numField(30),
     stringField('cankeyframes'), boolField(true),
-    Buffer.from([0x09, 0x00, 0x00, 0x00]),
+    Buffer.from([0x00, 0x00, 0x09]),
   ]);
   const scriptTagData = Buffer.concat([name, ecma]);
   return scriptTagData;
-}
-
-/** 一个 H.264 keyframe tag body：AVC 序列头 + 一帧，够播放器初始化解码器。 */
-function keyframePayload(): Buffer {
-  const sps = Buffer.from([0x67, 0x64, 0x00, 0x1e, 0xac, 0xd9, 0x4a]);
-  const pps = Buffer.from([0x68, 0xeb, 0x23, 0xcb, 0x22]);
-  const seqHeader = Buffer.concat([
-    Buffer.from([0x17, 0x00, 0x00, 0x00, 0x00]), // keyframe + AVC sequence header + cts 0
-    avcc([sps], [pps]),
-  ]);
-  const nal = Buffer.from([0x65, 0x88, 0x84, 0x00, 0x33, 0xff, 0xff]);
-  const frame = Buffer.concat([
-    Buffer.from([0x17, 0x01, 0x00, 0x00, 0x00]), // keyframe + AVC NALU + cts 0
-    uint32(nal.length),
-    nal,
-  ]);
-  return Buffer.concat([seqHeader, frame]);
 }
 
 function avcc(sps: Buffer[], pps: Buffer[]): Buffer {

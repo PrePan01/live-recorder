@@ -1,9 +1,10 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SharedDanmakuAdapter } from '../../src/danmaku/shared-adapter.js';
 import { DanmakuPreviewBuffer } from '../../src/danmaku/preview-buffer.js';
+import { cleanLegacyPreviewCaches, DanmakuPreviewCache } from '../../src/danmaku/preview-cache.js';
 import { DanmakuManager } from '../../src/danmaku/manager.js';
 import { DanmakuStore } from '../../src/danmaku/store.js';
 import type { DanmakuAdapter, DanmakuMessage } from '../../src/danmaku/types.js';
@@ -41,12 +42,146 @@ const room = { id: 'room', platform: 'fake', url: 'https://fake/1', danmakuEnabl
 const token = '12345678-1234-1234';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(fn => fn())); vi.restoreAllMocks(); });
-function manager(fake: ReturnType<typeof transport>) {
-  const services = { settings: { load: () => ({ danmaku: { enabled: false } }) }, platformCookie: async () => '', events: { emit: vi.fn() } } as unknown as Services;
+function manager(fake: ReturnType<typeof transport>, emit = vi.fn()) {
+  const services = { settings: { load: () => ({ danmaku: { enabled: false } }) }, platformCookie: async () => '', events: { emit } } as unknown as Services;
   const instance = new DanmakuManager(services, () => fake.adapter);
   cleanup.push(() => instance.shutdown());
   return instance;
 }
+
+it('bounds preview cache bytes and rows and continues after an oversized serialized message', () => {
+  const cache = new DanmakuPreviewCache();
+  const append = (id: string, text: string) => cache.append({ id, tMs: 100, wallMs: 1, text });
+  append('oversized', '\n'.repeat(16000) + 'too long once encoded'.repeat(100));
+  append('normal', '正常弹幕');
+  expect(cache.readListPage('0', 500)).toMatchObject({
+    messages: [{ id: 'normal' }], resumeCursor: '1', cacheSkipped: true,
+  });
+  for (let index = 0; index < 100; index++) append(String(index), '你'.repeat(5000));
+  const page = cache.readListPage('1', 500);
+  expect(page.cacheTruncated).toBe(true);
+  expect(page.messages.length).toBeGreaterThan(0);
+  expect(page.messages.length).toBeLessThan(70);
+  expect(page.messages.at(-1)?.id).toBe('99');
+  const tail = cache.readListPage('latest', 1);
+  expect(tail).toMatchObject({ messages: [{ id: '99' }], previous: tail.rowCursors?.[0] });
+  expect(cache.readListPage(`before:${tail.previous}`, 1).messages).toMatchObject([{ id: '98' }]);
+  append('new', '新增');
+  expect(cache.readListPage(tail.resumeCursor, 1).messages).toMatchObject([{ id: 'new' }]);
+
+  const tiny = new DanmakuPreviewCache();
+  for (let index = 0; index <= 2000; index++) tiny.append({ id: String(index), text: '', tMs: null, wallMs: 1 });
+  expect(tiny.readListPage('0', 1)).toMatchObject({ cacheTruncated: true, messages: [{ id: '1' }] });
+});
+
+it('removes stale legacy cache directories and leaves recent or unrelated ones alone', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-cache-test-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const stale = 'live-recorder-danmaku-abcdef';
+  const recent = 'live-recorder-danmaku-123456';
+  const unrelated = 'unrelated-preview';
+  const ancient = new Date(0);
+  for (const name of [stale, recent, unrelated]) {
+    const root = path.join(dir, name);
+    const sub = path.join(root, '.danmaku');
+    const file = path.join(sub, 'preview.danmaku.jsonl');
+    await mkdir(sub, { recursive: true });
+    await writeFile(file, '');
+    if (name !== recent) for (const item of [root, sub, file]) await utimes(item, ancient, ancient);
+  }
+  await cleanLegacyPreviewCaches(dir);
+  expect((await readdir(dir)).sort()).toEqual([recent, unrelated]);
+});
+
+it('does not append the replay of a bridged YouTube message when recording connects by video ID', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-youtube-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rec.flv');
+  const youtubeRoom = { ...room, platform: 'youtube', url: 'https://www.youtube.com/@room' } as Room;
+  let releaseCookie!: (cookie: string) => void;
+  const cookie = new Promise<string>(resolve => { releaseCookie = resolve; });
+  let sendPreview!: () => void;
+  const preview = new Promise<void>(resolve => { sendPreview = resolve; });
+  const bridged = { id: 'youtube:video:replayed', tMs: null, text: '衔接时弹幕' };
+  const urls: string[] = [];
+  const adapter: DanmakuAdapter = {
+    platform: 'youtube',
+    async *collect(url, _cookie, signal, ready) {
+      urls.push(url);
+      ready?.();
+      if (url === youtubeRoom.url) await preview;
+      yield { ...bridged, wallMs: Date.now() };
+      if (url !== youtubeRoom.url) {
+        yield { id: 'youtube:video:new', tMs: null, text: '新弹幕', wallMs: Date.now() };
+      }
+      if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+    },
+  };
+  const instance = new DanmakuManager({
+    settings: { load: () => ({}) },
+    recordings: { get: () => ({ streamSessionId: 'video' }) },
+    platformCookie: vi.fn().mockResolvedValueOnce('').mockReturnValue(cookie),
+    events: { emit: vi.fn() },
+  } as unknown as Services, () => adapter);
+  cleanup.push(() => instance.shutdown());
+  // If an assertion fails before the gates open, allow the generators to close.
+  cleanup.push(async () => { sendPreview(); releaseCookie(''); });
+  instance.subscribePreview(youtubeRoom, token);
+  await vi.waitFor(() => expect(urls).toEqual([youtubeRoom.url]));
+  instance.startForRecording('rec', file, youtubeRoom, () => 1000);
+  sendPreview();
+  await vi.waitFor(() => expect(instance.readPreview(youtubeRoom.id, token, 0).messages).toHaveLength(1));
+  releaseCookie('');
+  await vi.waitFor(async () => {
+    expect((await instance.readListPage(file, '0', 500)).messages.map(({ id, tMs }) => ({ id, tMs }))).toEqual([
+      { id: bridged.id, tMs: null },
+      { id: 'youtube:video:new', tMs: 1000 },
+    ]);
+  });
+  expect(urls).toEqual([youtubeRoom.url, 'https://www.youtube.com/watch?v=video']);
+});
+
+it('keeps preview rows temporary across recording start and stop and only persists recorded rows', async () => {
+  const fake = transport(), instance = manager(fake);
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-preview-cache-recording-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rec.flv');
+  let now = 1000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  instance.subscribePreview(room, token, false);
+  await vi.waitFor(() => expect(fake.active()).toBe(1));
+  fake.publish('预览时收到');
+  await vi.waitFor(() => expect(instance.readPreview(room.id, token, 0, false)).toMatchObject({ cursor: 1, messages: [] }));
+  for (let index = 0; index < 4; index++) {
+    now += 10_000;
+    instance.readPreview(room.id, token, 0);
+  }
+  expect(instance.readPreview(room.id, token, 0).messages).toEqual([]);
+
+  instance.startForRecording('rec', file, room, () => 1000);
+  await vi.waitFor(() => expect(instance.statusFor('rec')?.state).toBe('collecting'));
+  fake.publish('录制时收到');
+  await vi.waitFor(async () => expect((await instance.readListPage(file, '0', 500)).messages).toMatchObject([
+    { text: '录制时收到', tMs: 1000 },
+  ]));
+  expect((await instance.readPreviewList(room.id, token, '0', 500)).messages).toMatchObject([
+    { text: '预览时收到', tMs: null, unmappable: true, beforeRecording: true, wallMs: 1000 },
+  ]);
+
+  await instance.stopForRecording('rec');
+  instance.readPreview(room.id, token, 0, false);
+  fake.publish('停录后收到');
+  await vi.waitFor(async () => expect((await instance.readPreviewList(room.id, token, '0', 500)).messages).toMatchObject([
+    { text: '预览时收到' },
+    { text: '停录后收到' },
+  ]));
+  await instance.unsubscribePreview(room.id, token);
+  await expect(instance.readPreviewList(room.id, token, '0', 500)).rejects.toThrow('过期');
+  const stored = (await DanmakuStore.openExisting(file))!;
+  const saved = [];
+  for await (const message of stored.readMessages()) saved.push(message);
+  expect(saved).toMatchObject([{ text: '录制时收到', tMs: 1000 }]);
+});
 
 it('shares one platform stream and releases it only after the final consumer closes', async () => {
   const fake = transport(), shared = new SharedDanmakuAdapter(fake.adapter);
@@ -132,7 +267,10 @@ it('expires abandoned leases and immediately cancels a stalled credential reques
   now += 16000;
   expect(() => instance.readPreview(room.id, token, 0)).toThrow('过期');
   await vi.waitFor(() => expect(fake.active()).toBe(0));
-  const stalled = new DanmakuManager({ platformCookie: () => new Promise<string>(() => {}) } as unknown as Services, () => fake.adapter);
+  const stalled = new DanmakuManager({
+    settings: { load: () => ({ danmaku: { enabled: false } }) },
+    platformCookie: () => new Promise<string>(() => {}),
+  } as unknown as Services, () => fake.adapter);
   stalled.subscribePreview(room, token);
   await stalled.unsubscribePreview(room.id, token);
   await stalled.shutdown();
@@ -208,6 +346,26 @@ it('room recording preference disables persistence even while preview displays m
   expect(instance.statusFor('rec')).toBeNull();
   await instance.unsubscribePreview(room.id, token);
   expect(await readdir(dir)).toEqual([]);
+});
+
+it('publishes one saved notification for a readable batch when the room overrides global off', async () => {
+  const fake = transport();
+  const emit = vi.fn();
+  const instance = manager(fake, emit);
+  const dir = await mkdtemp(path.join(tmpdir(), 'lr-danmaku-saved-'));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rec.flv');
+  instance.startForRecording('rec', file, room, () => 1000);
+  await vi.waitFor(() => expect(fake.active()).toBe(1));
+
+  fake.publish('第一条');
+  fake.publish('第二条');
+  const savedEvent = { type: 'danmaku:saved', data: { recordingId: 'rec' } };
+  await vi.waitFor(() => expect(emit).toHaveBeenCalledWith(savedEvent));
+  const page = await instance.readListPage(file, '0', 500);
+  expect(page.messages.map((message) => message.text)).toEqual(['第一条', '第二条']);
+  expect(emit.mock.calls.filter(([event]) => event.type === 'danmaku:saved')).toEqual([[savedEvent]]);
+  await instance.stopForRecording('rec');
 });
 
 it('rejects excess leases and can recover an expired subscription without retaining prior history', async () => {

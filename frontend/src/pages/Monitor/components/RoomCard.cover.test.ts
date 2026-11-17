@@ -24,6 +24,7 @@ const noop = () => undefined;
 const render = (currentRoom = room, layout: 'card' | 'list' = 'card', autoRecordEnabled = false) => renderToStaticMarkup(
   createElement(RoomCard, {
     room: currentRoom, layout, onManageRoom: noop, onWatch: noop, onCheck: noop,
+    selectedTagIds: [], onToggleTagFilter: noop,
     onStop: noop, onRecord: noop, onFavorite: noop, onEnableFloating: noop,
     autoRecordEnabled, qualityPreference: null, bilibiliAuthorized: true,
     floatingEnabled: false, floatingReady: true,
@@ -31,6 +32,15 @@ const render = (currentRoom = room, layout: 'card' | 'list' = 'card', autoRecord
 );
 
 beforeEach(() => { coverSrc.mockClear(); preferences.showLiveRoomCover = true; });
+
+it('offers copying the current stream title on live cards with a title', () => {
+  const currentRoom = { ...room, currentStreamTitle: '  今晚直播 🎙️  ' };
+  expect(render(currentRoom)).toMatch(/<button[^>]*aria-label="复制直播标题：今晚直播 🎙️"/);
+  expect(render({ ...currentRoom, lastLiveStatus: 'offline' })).not.toContain('复制直播标题');
+  const untitled = render({ ...currentRoom, currentStreamTitle: ' ' });
+  expect(untitled).toContain('直播标题暂未获取');
+  expect(untitled).not.toContain('复制直播标题');
+});
 
 it('renders a cover image request for live cards when enabled', () => {
   expect(render()).toContain('src="/test-live-cover"');

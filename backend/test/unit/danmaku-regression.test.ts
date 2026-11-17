@@ -43,6 +43,81 @@ it('rebuilds an appended tail incrementally, preserves non-monotonic legacy time
   expect((await reader.readRange(0, 1500)).messages.map(m => m.id)).toEqual(['new', 'partial']);
 });
 
+it('pages the saved list in file order and resumes from the last complete line', async () => {
+  const rec = await recording();
+  const file = DanmakuStore.sidecarPathFor(rec);
+  await mkdir(path.dirname(file), { recursive: true });
+  const saved = Array.from({ length: 501 }, (_, index) => ({
+    id: String(index),
+    tMs: index === 500 ? null : 1000,
+    text: '弹幕',
+  }));
+  const prefix = saved.map((row) => JSON.stringify(row) + '\n').join('');
+  const partial = JSON.stringify({ id: 'tail', tMs: 2500, text: '新弹幕' });
+  await writeFile(file, prefix + partial);
+  const reader = (await DanmakuStore.openExisting(rec))!;
+
+  const first = await reader.readListPage('0', 500);
+  expect(first.messages).toEqual(saved.slice(0, 500));
+  expect(first.next).toBe(first.resumeCursor);
+  const last = await reader.readListPage(first.resumeCursor, 500);
+  expect(last).toEqual({
+    messages: [saved[500]],
+    rowCursors: [first.resumeCursor],
+    next: null,
+    resumeCursor: String(Buffer.byteLength(prefix)),
+  });
+  expect(await reader.readListPage(last.resumeCursor, 500)).toEqual({
+    messages: [],
+    next: null,
+    resumeCursor: last.resumeCursor,
+  });
+  await appendFile(file, '\n');
+  const tail = await reader.readListPage(last.resumeCursor, 500);
+  expect(tail.messages).toEqual([JSON.parse(partial)]);
+  expect(tail.resumeCursor).toBe(String(Buffer.byteLength(prefix + partial + '\n')));
+});
+
+it('opens a long live list at the latest complete lines and then reads only new rows', async () => {
+  const rec = await recording();
+  const file = DanmakuStore.sidecarPathFor(rec);
+  await mkdir(path.dirname(file), { recursive: true });
+  const rows = Array.from({ length: 600 }, (_, index) => ({
+    id: String(index), tMs: 123, text: '弹幕'.repeat(512),
+  }));
+  const prefix = rows.map(row => JSON.stringify(row) + '\n').join('');
+  const tail = { id: 'partial', tMs: 123, text: '还未写完的弹幕' };
+  await writeFile(file, prefix + JSON.stringify(tail));
+  const reader = (await DanmakuStore.openExisting(rec))!;
+  const page = await reader.readListPage('latest', 10);
+  expect(page).toMatchObject({
+    messages: rows.slice(-10), next: null, resumeCursor: String(Buffer.byteLength(prefix)),
+    previous: page.rowCursors?.[0],
+  });
+  expect(page.previous).toBeTruthy();
+  const older = await reader.readListPage(`before:${page.previous}`, 10);
+  expect(older.messages).toEqual(rows.slice(-20, -10));
+  expect((await reader.readListPage(page.previous!, 10)).messages).toEqual(page.messages);
+  // Walk several byte windows with one oversized row among valid rows.
+  const broken = JSON.stringify({ ...rows[300], text: "x".repeat(300_000) });
+  await writeFile(file, prefix.replace(JSON.stringify(rows[300]), broken) + JSON.stringify(tail));
+  const newest = await reader.readListPage("latest", 500);
+  const collected = [...newest.messages];
+  let cursor = newest.previous;
+  while (cursor) {
+    const older = await reader.readListPage(`before:${cursor}`, 500);
+    expect(Number(older.previous)).toBeLessThan(Number(cursor));
+    collected.unshift(...older.messages);
+    cursor = older.previous;
+  }
+  expect(collected).toEqual(rows.filter(row => row.id !== "300"));
+  await writeFile(file, prefix + JSON.stringify(tail));
+  expect((await reader.readListPage(page.resumeCursor, 10)).messages).toEqual([]);
+  await appendFile(file, '\n');
+  expect((await reader.readListPage(page.resumeCursor, 10)).messages).toEqual([tail]);
+  expect((await reader.readListPage('0', 10)).messages).toEqual(rows.slice(0, 10));
+});
+
 it('moves and deletes messages and persisted gaps together', async () => {
   const rec = await recording(), store = await DanmakuStore.open(rec);
   store.append({ id: 'a', tMs: 100, wallMs: 1, text: 'A' });
@@ -56,6 +131,20 @@ it('moves and deletes messages and persisted gaps together', async () => {
   expect(await reader.readGaps()).toEqual(gaps);
   await DanmakuStore.remove(moved);
   await expect(readFile(reader.filePath + '.gaps.json')).rejects.toThrow();
+});
+
+it('skips legacy preview rows in recorded lists without changing byte cursor progress', async () => {
+  const rec = await recording(), store = await DanmakuStore.open(rec);
+  const legacy = { id: 'preview', tMs: null, wallMs: 1, text: '之前误转存的预览弹幕', beforeRecording: true } as const;
+  const saved = { id: 'saved', tMs: 100, wallMs: 2, text: '录像弹幕' };
+  store.append(legacy);
+  store.append(saved);
+  await store.close();
+  const page = await store.readListPage('0', 1);
+  expect(page.messages).toEqual([saved]);
+  expect(page.next).toBeNull();
+  expect((await store.readRange(0, 1000, { includeUnmappable: true })).messages).toEqual([saved]);
+  expect((await store.readListPage(page.resumeCursor, 1)).messages).toEqual([]);
 });
 
 it('cancels a start waiting for credentials before creating a collector', async () => {
@@ -114,6 +203,39 @@ it('closes a disconnected tail at the final media position even after the live c
   await vi.waitFor(() => expect(collector.status.state).toBe('reconnecting'));
   media = null; await collector.stop(2000);
   expect(await store.readGaps()).toEqual([{ fromMs: 100, toMs: 2000, reason: 'collector_stopped' }]);
+});
+
+it('stays unavailable throughout a retry and returns to collecting when it succeeds', async () => {
+  const store = await DanmakuStore.open(await recording());
+  let attempts = 0;
+  let finishRetry!: () => void;
+  const retry = new Promise<void>(resolve => { finishRetry = resolve; });
+  vi.useFakeTimers();
+  const collector = DanmakuCollector.start({
+    recordingId: 'preview:retry', store, roomUrl: '', cookie: null, sink: { status: () => undefined }, mediaNow: () => null,
+    adapter: {
+      platform: 'xiaohongshu',
+      async *collect(_url, _cookie, signal, ready) {
+        if (++attempts <= 8) throw new Error('官网请求未完成');
+        await retry;
+        if (signal.aborted) return;
+        ready?.();
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+    },
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(attempts).toBe(9);
+    expect(collector.status.state).toBe('unavailable');
+    finishRetry();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(collector.status.state).toBe('collecting');
+  } finally {
+    finishRetry();
+    vi.useRealTimers();
+    await collector.stop();
+  }
 });
 
 it('keeps a sidecar migration failure within the danmaku subsystem', async () => {

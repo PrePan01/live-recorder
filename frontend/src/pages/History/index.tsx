@@ -17,11 +17,13 @@ import {
 import { ExportOutlined, CopyOutlined } from "@ant-design/icons";
 import { buildRecordingColumns } from "../../utils/recording/recordingColumns";
 import PipelineDrawer from "./components/PipelineDrawer";
-import { DanmakuPlayerModal } from "../../components/DanmakuPlayerModal";
+import { DanmakuPlayerModal } from "../../components/danmuku/DanmakuPlayerModal";
 import ExportTasksDrawer from "./components/ExportTasksDrawer";
 import dayjs from "dayjs";
 import { useRecordingStore } from "../../stores/recordingStore";
 import { useRoomStore } from "../../stores/roomStore";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { roomSavesDanmaku } from "../../utils/room/roomDanmaku";
 import { useResizableColumns } from "../../hooks/useResizableColumns";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/error/errorMap";
@@ -49,6 +51,9 @@ export default function History() {
     exportCsv,
   } = useRecordingStore();
   const rooms = useRoomStore((s) => s.rooms);
+  const globalDanmakuEnabled = useSettingsStore(
+    (state) => state.settings?.danmaku?.enabled ?? false,
+  );
   const fetchRooms = useRoomStore((s) => s.fetchRooms);
   const upsertUpload = useUploadStore((s) => s.upsert);
   const requestTwoFactorPrompt = useUploadStore(
@@ -67,6 +72,7 @@ export default function History() {
   );
   const [renaming, setRenaming] = useState<Recording | null>(null);
   const [danmakuRec, setDanmakuRec] = useState<Recording | null>(null);
+  const danmakuRoom = danmakuRec ? rooms.find((room) => room.id === danmakuRec.roomId) : undefined;
   const [danmakuAt, setDanmakuAt] = useState(0);
   const [renameValue, setRenameValue] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
@@ -500,6 +506,7 @@ export default function History() {
           title={danmakuRec.streamTitle || danmakuRec.roomName}
           filePath={danmakuRec.filePath ?? undefined}
           hasDanmaku={danmakuRec.hasDanmaku ?? (danmakuRec.danmakuCount ?? 0) > 0}
+          savesDanmaku={roomSavesDanmaku(danmakuRoom, globalDanmakuEnabled)}
           initialSecond={danmakuAt}
           onClose={() => setDanmakuRec(null)}
         />

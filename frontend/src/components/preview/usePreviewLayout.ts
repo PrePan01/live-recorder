@@ -6,31 +6,50 @@ import {
   useRef,
   useState,
 } from "react";
-import { fitPreviewBox, fitPreviewContent } from "../../utils/player/previewLayout";
+import {
+  fitPreviewBox,
+  fitPreviewContent,
+} from "../../utils/player/previewLayout";
+import {
+  LIVE_DANMAKU_LIST_GAP,
+  danmakuListReservedWidth,
+} from "../../utils/danmaku/danmakuListLayout";
+import { readPref, writePref } from "../../utils/prefStorage";
 
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
 const MODAL_BODY_PADDING_X = 48;
+const PREVIEW_SIDE_SPACE = 2 * (24 + 10) + 32;
 const MODAL_VIEWPORT_GUTTER_X = 32;
 const MODAL_CHROME_HEIGHT = 108;
 const RECORDING_TRACK_MIN_WIDTH = 450;
 const MIN_VIDEO_HEIGHT = 240;
+const LANDSCAPE_WIDTH_KEY = "lr-preview-landscape-width";
+const PORTRAIT_HEIGHT_KEY = "lr-preview-portrait-height";
 type PlayerBounds = {
   left: number;
   top: number;
   width: number;
   height: number;
 };
-type PendingPreviewResize = { portrait: boolean; value: number };
+type PendingPreviewResize = { portrait: boolean; value: number | null };
+
+function readPreviewSize(key: string): number | null {
+  const value = readPref<unknown>(key, null);
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
+}
 
 export function usePreviewLayout(
   defaultWidth: number | undefined,
   displayedTrack: { id: string; startedAt: string } | null,
+  danmakuListVisible: boolean,
 ) {
   const startMouseDrag = useMouseDrag();
   // 普通观看默认占视口约 80%，同时为窄屏和超宽屏设置合理边界；直播墙全屏可传入显式宽度。
-  const [width, setWidth] = useState(
+  const [initialWidth] = useState(
     () =>
       defaultWidth ??
       Math.min(
@@ -38,11 +57,14 @@ export function usePreviewLayout(
         Math.max(MIN_WIDTH, Math.round(window.innerWidth * 0.8)),
       ),
   );
-  // 流的真实比例（宽/高）。元数据未就绪时播放器保持隐藏，避免先按 16:9 显示再缩成竖屏。
+  const [landscapeWidth, setLandscapeWidth] = useState(() =>
+    readPreviewSize(LANDSCAPE_WIDTH_KEY),
+  );
   const [streamRatio, setStreamRatio] = useState<number | null>(null);
   const [streamRatioReady, setStreamRatioReady] = useState(false);
-  // 竖屏画面高度（宽度按比例算出）；null = 用满可视高度上限，用户拖拽后才取值。
-  const [portraitHeight, setPortraitHeight] = useState<number | null>(null);
+  const [portraitHeight, setPortraitHeight] = useState(() =>
+    readPreviewSize(PORTRAIT_HEIGHT_KEY),
+  );
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [viewportHeight, setViewportHeight] = useState(
     () => window.innerHeight,
@@ -58,13 +80,6 @@ export function usePreviewLayout(
   const [previewPlayerVisible, setPreviewPlayerVisible] = useState(false);
   const [previewPlayerSlot, setPreviewPlayerSlot] =
     useState<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    startX: number;
-    startW: number;
-    startY: number;
-    startHeight: number;
-    portrait: boolean;
-  } | null>(null);
   const pictureDragRef = useRef<{
     startX: number;
     startY: number;
@@ -112,11 +127,8 @@ export function usePreviewLayout(
     const next = pendingResizeRef.current;
     pendingResizeRef.current = null;
     if (!next) return;
-    if (next.portrait)
-      setPortraitHeight((current) =>
-        current === next.value ? current : next.value,
-      );
-    else setWidth((current) => (current === next.value ? current : next.value));
+    if (next.portrait) setPortraitHeight(next.value);
+    else setLandscapeWidth(next.value);
   };
 
   const queuePreviewResize = (next: PendingPreviewResize) => {
@@ -128,13 +140,11 @@ export function usePreviewLayout(
     });
   };
 
-  useEffect(
-    () => () => {
-      if (resizeFrameRef.current !== null)
-        window.cancelAnimationFrame(resizeFrameRef.current);
-    },
-    [],
-  );
+  const cancelResizeFrame = () => {
+    if (resizeFrameRef.current === null) return;
+    window.cancelAnimationFrame(resizeFrameRef.current);
+    resizeFrameRef.current = null;
+  };
 
   useLayoutEffect(() => {
     const wrapper = trackNode;
@@ -158,33 +168,69 @@ export function usePreviewLayout(
     return () => observer.disconnect();
   }, [displayedTrack, trackCollapsed, trackNode]);
 
+  const layoutRatio = streamRatio ?? 16 / 9;
+  const portrait = layoutRatio < 1;
+  const preferredLandscapeWidth = portrait ? null : landscapeWidth;
+  const hasSidePanel = danmakuListVisible && !pictureInPicture;
+  const reservedWidth = hasSidePanel
+    ? danmakuListReservedWidth(portrait, LIVE_DANMAKU_LIST_GAP)
+    : MODAL_VIEWPORT_GUTTER_X;
   const maxModalWidth = Math.max(
     MODAL_BODY_PADDING_X + 1,
-    viewportWidth - MODAL_VIEWPORT_GUTTER_X,
+    viewportWidth - reservedWidth,
   );
   const maxVideoWidth = Math.max(1, maxModalWidth - MODAL_BODY_PADDING_X);
-  const modalWidth = Math.min(
+  const preferredModalWidth = Math.min(
     maxModalWidth,
     Math.max(
       MODAL_BODY_PADDING_X + Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
-      Math.min(width, maxModalWidth),
+      Math.min(preferredLandscapeWidth ?? initialWidth, maxModalWidth),
     ),
   );
-  const layoutRatio = streamRatio ?? 16 / 9;
-  const portrait = layoutRatio < 1;
+  const compact = hasSidePanel && preferredModalWidth === maxModalWidth;
+  const availableWidth = Math.max(
+    1,
+    preferredModalWidth - (compact ? PREVIEW_SIDE_SPACE : MODAL_BODY_PADDING_X),
+  );
   const maxModalHeight = Math.max(0, viewportHeight - 32);
   const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
   const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
   const occupiedTrackHeight = displayedTrack && trackNode ? trackOccupied : 0;
-  const { videoBox, contentHeight, trackWidth } = fitPreviewContent({
+  const {
+    videoBox,
+    contentHeight,
+    trackWidth: preferredTrackWidth,
+  } = fitPreviewContent({
     ratio: layoutRatio,
-    availableWidth: modalWidth - MODAL_BODY_PADDING_X,
+    availableWidth,
     availableHeight: baseVideoHeight,
     trackHeight: measuredTrackHeight,
     occupiedTrackHeight,
     preferredVideoHeight: portrait ? (portraitHeight ?? undefined) : undefined,
   });
-  const maxVideoHeight = Math.max(0, baseVideoHeight - occupiedTrackHeight);
+  // 默认弹窗跟随画面宽度收窄，竖屏仍给录制时间轴留出操作空间。
+  const minContentModalWidth = portrait
+    ? RECORDING_TRACK_MIN_WIDTH + PREVIEW_SIDE_SPACE
+    : MIN_WIDTH;
+  const modalWidth =
+    layoutRatio !== 1 &&
+    defaultWidth === undefined &&
+    preferredLandscapeWidth === null
+      ? Math.min(
+          preferredModalWidth,
+          Math.max(
+            minContentModalWidth,
+            Math.ceil(videoBox.width + PREVIEW_SIDE_SPACE),
+          ),
+        )
+      : preferredModalWidth;
+  // 竖屏弹窗可能继续随画面收窄，时间轴以最终弹窗宽度为上限。
+  const trackWidth = portrait
+    ? Math.min(
+        compact ? availableWidth : preferredTrackWidth,
+        Math.max(1, modalWidth - PREVIEW_SIDE_SPACE),
+      )
+    : preferredTrackWidth;
   const modalHeight = Math.min(
     maxModalHeight,
     Math.ceil(contentHeight + MODAL_CHROME_HEIGHT),
@@ -349,61 +395,48 @@ export function usePreviewLayout(
   const onHandleDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragRef.current = {
-      startX: e.clientX,
-      startW: width,
-      startY: e.clientY,
-      startHeight: videoBox.height,
-      portrait,
-    };
+    const startPosition = portrait ? e.clientY : e.clientX;
+    // 用轨道展开时的画面高度作为基准，避免把收起轨道腾出的空间记进偏好。
+    const startSize = portrait ? contentHeight - measuredTrackHeight : modalWidth;
+    const previousSize = portrait ? portraitHeight : landscapeWidth;
+    const maxSize = portrait
+      ? Math.min(
+          availableWidth / layoutRatio,
+          Math.max(0, baseVideoHeight - measuredTrackHeight),
+        )
+      : Math.min(MAX_WIDTH, maxModalWidth);
+    const minSize = Math.min(portrait ? MIN_VIDEO_HEIGHT : MIN_WIDTH, maxSize);
+    let latestSize = startSize;
+
     const onMove = (ev: MouseEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      if (drag.portrait) {
-        // 竖屏尺寸由高度决定，所以用纵向拖拽缩放；上限仍是可视高度，不会推出屏幕。
-        queuePreviewResize({
-          portrait: true,
-          value: Math.min(
-            maxVideoHeight,
-            Math.max(
-              MIN_VIDEO_HEIGHT,
-              drag.startHeight + (ev.clientY - drag.startY),
-            ),
-          ),
-        });
-        return;
-      }
+      const delta = (portrait ? ev.clientY : ev.clientX) - startPosition;
+      const size = delta === 0
+        ? startSize
+        : Math.min(maxSize, Math.max(minSize, startSize + delta));
+      if (size === latestSize) return;
+      latestSize = size;
       queuePreviewResize({
-        portrait: false,
-        value: Math.min(
-          MAX_WIDTH,
-          maxModalWidth,
-          Math.max(
-            Math.min(MIN_WIDTH, maxModalWidth),
-            drag.startW + (ev.clientX - drag.startX),
-          ),
-        ),
+        portrait,
+        value: size === startSize ? previousSize : size,
       });
     };
-    const onUp = () => {
-      dragRef.current = null;
-      if (resizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(resizeFrameRef.current);
-        resizeFrameRef.current = null;
-      }
+    const onUp = (ev: MouseEvent) => {
+      onMove(ev);
+      cancelResizeFrame();
       // 释放鼠标时立刻提交尚未等到下一帧的末尾位置。
       commitPendingResize();
+      if (latestSize !== startSize && latestSize > 0) {
+        writePref(portrait ? PORTRAIT_HEIGHT_KEY : LANDSCAPE_WIDTH_KEY, latestSize);
+      }
     };
     startMouseDrag({
       onMove,
       onEnd: onUp,
       onCancel: () => {
-        dragRef.current = null;
+        cancelResizeFrame();
         pendingResizeRef.current = null;
-        if (resizeFrameRef.current !== null) {
-          window.cancelAnimationFrame(resizeFrameRef.current);
-          resizeFrameRef.current = null;
-        }
+        if (portrait) setPortraitHeight(previousSize);
+        else setLandscapeWidth(previousSize);
       },
     });
   };

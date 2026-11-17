@@ -17,6 +17,7 @@ export type AppEvent =
   | { type: 'schedule:updated'; data: RecordingSchedule }
   | { type: 'export:updated'; data: ExportJob }
   | { type: 'danmaku:status'; data: DanmakuStatus }
+  | { type: 'danmaku:saved'; data: { recordingId: string } }
   | { type: 'stream-health'; data: import('./quality-health.js').StreamHealth }
   | { type: 'clip-queue:updated'; data: { recordingId: string } };
 

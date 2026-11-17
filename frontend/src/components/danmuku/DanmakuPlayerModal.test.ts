@@ -29,7 +29,7 @@ vi.mock('react', async original => ({
   },
 }));
 vi.mock('antd', () => ({ App: { useApp: () => ({ message: h.message }) }, Button: 'button', Modal: 'modal', Select: 'select', Typography: { Text: 'text' } }));
-vi.mock('@ant-design/icons', () => ({ PauseOutlined: 'pause', CaretRightOutlined: 'play', ExportOutlined: 'export', SoundOutlined: 'sound', MutedOutlined: 'mute' }));
+vi.mock('@ant-design/icons', () => ({ PauseOutlined: 'pause', CaretRightOutlined: 'play', CloseOutlined: 'close', ExportOutlined: 'export', SoundOutlined: 'sound', MutedOutlined: 'mute' }));
 vi.mock('mpegts.js', () => ({ default: {
   Events: { ERROR: 'error' },
   createPlayer: () => {
@@ -38,34 +38,38 @@ vi.mock('mpegts.js', () => ({ default: {
     h.players.push(player); return player;
   },
 } }));
-vi.mock('../api/recordings', () => ({
+vi.mock('../../api/recordings', () => ({
   recordingFileUrl: () => '/file', fetchRecordingPosition: vi.fn(),
   fetchRecordingMarkers: async () => [], fetchRecordingGaps: async () => [],
   createRecordingMarker: vi.fn(), deleteRecordingMarker: vi.fn(), updateRecordingMarker: vi.fn(),
 }));
-vi.mock('../api/danmakuWindow', () => ({ fetchDanmakuWindow: async () => ({ messages: [], gaps: [] }) }));
-vi.mock('../api/danmaku', () => ({ exportDanmaku: vi.fn() }));
-vi.mock('../api/screenshots', () => ({ saveRecordingScreenshot: vi.fn() }));
-vi.mock('../utils/player/captureVideoFrame', async original => ({
-  ...await original<typeof import('../utils/player/captureVideoFrame')>(),
+vi.mock('../../api/danmakuWindow', () => ({ fetchDanmakuWindow: async () => ({ messages: [], gaps: [] }) }));
+vi.mock('../../api/danmaku', () => ({ exportDanmaku: vi.fn() }));
+vi.mock('../../api/screenshots', () => ({ saveRecordingScreenshot: vi.fn() }));
+vi.mock('../../utils/player/captureVideoFrame', async original => ({
+  ...await original<typeof import('../../utils/player/captureVideoFrame')>(),
   captureVideoFrame: vi.fn(),
 }));
-vi.mock('../api/config', () => ({ pickDirectory: vi.fn() }));
-vi.mock('../utils/timeline/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
-vi.mock('../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null }) }));
-vi.mock('../hooks/useSegmentExport', () => ({ useSegmentExport: () => ({}) }));
-vi.mock('../stores/danmakuPrefsStore', () => ({ useDanmakuPrefsStore: () => ({ visible: true, opacity: 1, density: 100, fontScale: 1, speedMultiplier: 1 }) }));
-vi.mock('./SegmentExportActions', () => ({ SegmentExportActions: 'export-actions' }));
-vi.mock('./SegmentMarkActions', () => ({ SegmentMarkActions: 'mark-actions' }));
+vi.mock('../../api/config', () => ({ pickDirectory: vi.fn() }));
+vi.mock('../../utils/timeline/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
+vi.mock('../../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null }) }));
+vi.mock('../../hooks/useSegmentExport', () => ({ useSegmentExport: () => ({}) }));
+vi.mock('../../stores/danmakuPrefsStore', () => ({ useDanmakuPrefsStore: () => ({ visible: true, opacity: 1, density: 100, fontScale: 1, speedMultiplier: 1 }) }));
+vi.mock('../SegmentExportActions', () => ({ SegmentExportActions: 'export-actions' }));
+vi.mock('../SegmentMarkActions', () => ({ SegmentMarkActions: 'mark-actions' }));
 vi.mock('./DanmakuLayer', () => ({ DanmakuLayer: 'danmaku' }));
-vi.mock('./RecordingTrack', () => ({ default: 'track' }));
-vi.mock('./MarkerNavPanel', () => ({ MarkerNavPanel: 'markers' }));
+vi.mock('./DanmakuListModalLayout', () => ({
+  useDanmakuListVisibility: () => ({}),
+  useDanmakuListModal: ({ playerWidth }: { playerWidth: number }) => ({ width: playerWidth }),
+}));
+vi.mock('../RecordingTrack', () => ({ default: 'track' }));
+vi.mock('../MarkerNavPanel', () => ({ MarkerNavPanel: 'markers' }));
 vi.mock('./DanmakuSettings', () => ({ default: 'settings' }));
-vi.mock('./VideoScreenshotButton', () => ({ VideoScreenshotButton: 'screenshot' }));
+vi.mock('../VideoScreenshotButton', () => ({ VideoScreenshotButton: 'screenshot' }));
 import { DanmakuPlayerModal } from './DanmakuPlayerModal';
-import { fetchRecordingPosition } from '../api/recordings';
-import { saveRecordingScreenshot } from '../api/screenshots';
-import { captureVideoFrame } from '../utils/player/captureVideoFrame';
+import { fetchRecordingPosition } from '../../api/recordings';
+import { saveRecordingScreenshot } from '../../api/screenshots';
+import { captureVideoFrame } from '../../utils/player/captureVideoFrame';
 
 function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   return Children.toArray(node).flatMap(child => isValidElement<Record<string, unknown>>(child)

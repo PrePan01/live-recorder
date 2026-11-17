@@ -11,6 +11,18 @@ beforeEach(() => {
   vi.mocked(unsubscribeLiveDanmaku).mockResolvedValue();
 });
 afterEach(() => vi.useRealTimers());
+it('keeps the same preview lease when changing whether to fetch overlay messages', async () => {
+  let visible = false;
+  const stop = createLiveDanmakuSession('room', vi.fn(), vi.fn(), () => visible);
+  await vi.advanceTimersByTimeAsync(0);
+  const [, token, signal] = vi.mocked(subscribeLiveDanmaku).mock.calls[0]!;
+  expect(subscribeLiveDanmaku).toHaveBeenCalledWith('room', token, signal, false);
+  visible = true;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(readLiveDanmaku).toHaveBeenCalledWith('room', token, 123, signal, true);
+  expect(subscribeLiveDanmaku).toHaveBeenCalledTimes(1);
+  stop();
+});
 it('uses one lease with sequential cursor reads and closes its timer and subscription', async () => {
   const apply = vi.fn(), fail = vi.fn();
   const stop = createLiveDanmakuSession('room', apply, fail);
@@ -18,7 +30,7 @@ it('uses one lease with sequential cursor reads and closes its timer and subscri
   expect(apply).toHaveBeenCalledWith(snapshot);
   const [, token, signal] = vi.mocked(subscribeLiveDanmaku).mock.calls[0]!;
   await vi.advanceTimersByTimeAsync(1000);
-  expect(readLiveDanmaku).toHaveBeenCalledWith('room', token, 123, signal);
+  expect(readLiveDanmaku).toHaveBeenCalledWith('room', token, 123, signal, true);
   stop(); stop(); expect(signal.aborted).toBe(true);
   expect(unsubscribeLiveDanmaku).toHaveBeenCalledExactlyOnceWith('room', token);
   await vi.advanceTimersByTimeAsync(10000);
