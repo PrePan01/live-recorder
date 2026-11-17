@@ -1,4 +1,5 @@
 import type { ServerEvent } from "../types/events";
+import { notifyDanmakuSaved } from "../api/danmakuListSession";
 import { useRoomStore } from "./roomStore";
 import { useRecordingStore } from "./recordingStore";
 import { useAlertStore } from "./alertStore";
@@ -78,6 +79,9 @@ export function applyServerEvent(e: ServerEvent) {
       break;
     case "danmaku:status":
       useDanmakuStore.getState().applyStatus(e.status);
+      break;
+    case "danmaku:saved":
+      notifyDanmakuSaved(e.recordingId);
       break;
     case "stream-health":
       useStreamHealthStore.getState().applyHealth(e.health);

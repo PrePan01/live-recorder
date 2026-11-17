@@ -1,3 +1,4 @@
+import { isDanmakuListCursor } from "../../danmaku/store.js";
 import {
   defaultDanmakuEnabled,
   platformCheckInterval,
@@ -57,14 +58,22 @@ export function registerRoomRoutes(
     const { id, token } = danmakuPreview(req);
     const room = services.rooms.get(id);
     if (!room) throw new AppError("RESOURCE_NOT_FOUND", "直播间不存在");
-    return reply.send(services.danmaku.subscribePreview(room, token));
+    const { messages } = req.query as { messages?: string };
+    return reply.send(services.danmaku.subscribePreview(room, token, messages !== "0"));
   });
   app.get("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
     const { id, token } = danmakuPreview(req);
-    const { cursor = "0" } = req.query as { cursor?: string };
+    const { cursor = "0", messages } = req.query as { cursor?: string; messages?: string };
     if (!/^\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))
       throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
-    return reply.send(services.danmaku.readPreview(id, token, Number(cursor)));
+    return reply.send(services.danmaku.readPreview(id, token, Number(cursor), messages !== "0"));
+  });
+  app.get("/api/v1/rooms/:id/danmaku-preview/:token/list", async (req, reply) => {
+    const { id, token } = danmakuPreview(req);
+    const { cursor = "0" } = req.query as { cursor?: string };
+    if (!isDanmakuListCursor(cursor))
+      throw new AppError("CONFIG_INVALID", "弹幕预览游标无效");
+    return reply.send(await services.danmaku.readPreviewList(id, token, cursor, 500));
   });
   app.delete("/api/v1/rooms/:id/danmaku-preview/:token", async (req, reply) => {
     const { id, token } = danmakuPreview(req);

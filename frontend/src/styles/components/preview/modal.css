@@ -5,7 +5,7 @@
 .lr-preview-modal .ant-modal-header {
   display: flex;
   align-items: center;
-  height: 40px;
+  flex: 0 0 var(--lr-player-header-height);
   padding-block: 0 !important;
 }
 

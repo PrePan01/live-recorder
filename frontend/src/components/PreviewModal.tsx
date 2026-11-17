@@ -5,6 +5,7 @@ import { useRecordingMediaRange } from "../hooks/useRecordingMediaRange";
 import { useRecordingMediaPosition } from "../hooks/useRecordingMediaPosition";
 import type { RecordingMarker } from "../types/recording";
 import { playbackClock } from "../utils/player/playbackClock";
+import { roomSavesDanmaku } from "../utils/room/roomDanmaku";
 import {
   CloseOutlined,
   CommentOutlined,
@@ -16,18 +17,27 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
 import { disableHighlightBuffer } from "../api/rooms";
+import { fetchPreviewDanmakuListPage } from "../api/danmaku";
+import { createRecordingPreviewListReader } from "../api/danmakuListSession";
 import { savePreviewScreenshot } from "../api/screenshots";
 import { useVideoScreenshot } from "../hooks/useVideoScreenshot";
-import { danmakuStateText } from "../stores/danmakuStore";
+import {
+  danmakuStateText,
+  selectDanmakuStatus,
+  useDanmakuStore,
+} from "../stores/danmakuStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import type { Room } from "../types/room";
-import { DanmakuLayer } from "./DanmakuLayer";
-import DanmakuSettings from "./DanmakuSettings";
+import { DanmakuLayer } from "./danmuku/DanmakuLayer";
+import { useDanmakuListModal, useDanmakuListVisibility } from "./danmuku/DanmakuListModalLayout";
+import DanmakuSettings from "./danmuku/DanmakuSettings";
 import RecordingStopIcon from "./RecordingStopIcon";
 import VideoPlayer from "./VideoPlayer";
 
@@ -73,6 +83,25 @@ export default function PreviewModal({
     handleStart,
     handleStop,
   } = usePreviewRecording(room);
+  const recordingDanmakuStatus = useDanmakuStore((state) =>
+    selectDanmakuStatus(state, activeRecordingId),
+  );
+  const globalDanmakuEnabled = useSettingsStore(
+    (state) => state.settings?.danmaku?.enabled ?? false,
+  );
+  const savesDanmaku = roomSavesDanmaku(live, globalDanmakuEnabled);
+  const previewCacheEnabled = savesDanmaku && !recording;
+  const [cacheLeaseRoomId, setCacheLeaseRoomId] = useState<string | undefined>();
+  if (cacheLeaseRoomId !== room.id && (previewCacheEnabled || cacheLeaseRoomId !== undefined)) {
+    setCacheLeaseRoomId(previewCacheEnabled ? room.id : undefined);
+  }
+  const keepCacheLease = previewCacheEnabled || cacheLeaseRoomId === room.id;
+  const listId = previewCacheEnabled
+    ? `preview:${room.id}`
+    : recording && (savesDanmaku || recordingDanmakuStatus?.since)
+      ? activeRecordingId
+      : undefined;
+  const danmakuListVisibility = useDanmakuListVisibility(listId);
   const mediaClock = useRecordingMediaRange(
     activeRecordingId ?? displayedTrack?.id,
     previewVideo,
@@ -101,7 +130,7 @@ export default function PreviewModal({
     onPictureMouseDown,
     onPictureClick,
     onHandleDown,
-  } = usePreviewLayout(defaultWidth, displayedTrack);
+  } = usePreviewLayout(defaultWidth, displayedTrack, danmakuListVisibility.showPanel);
   const highlights = usePreviewHighlights(
     room,
     recording,
@@ -154,6 +183,8 @@ export default function PreviewModal({
     seekPlayback,
     previewVideo,
     previewFrameGenerationRef,
+    recordingDanmakuStatus,
+    keepCacheLease,
   );
   const screenshot = useVideoScreenshot(
     previewVideo,
@@ -191,6 +222,27 @@ export default function PreviewModal({
     segmentPreviewActive.current = false;
     handleSeekCommit(target, indicatorSecond);
   };
+  const previewDanmakuLease = liveDanmaku.lease;
+  const readPage = useMemo(() => {
+    if (!previewDanmakuLease) return previewCacheEnabled ? null : undefined;
+    const readCachePage = (cursor: string, signal: AbortSignal) =>
+      fetchPreviewDanmakuListPage(room.id, previewDanmakuLease.token, cursor, signal);
+    if (previewCacheEnabled) return readCachePage;
+    return listId && keepCacheLease
+      ? createRecordingPreviewListReader(listId, readCachePage)
+      : undefined;
+  }, [previewDanmakuLease, room.id, previewCacheEnabled, keepCacheLease, listId]);
+  const danmakuList = useDanmakuListModal({
+    visibility: danmakuListVisibility,
+    suspended: pictureInPicture,
+    playerWidth: modalWidth,
+    live: true,
+    onSeek: seekManually,
+    seekDisabled: previewCacheEnabled,
+    readPage,
+    previewOnly: previewCacheEnabled,
+    centerPlayer: portrait,
+  });
   const previewSegment = (marker: RecordingMarker) => {
     handleSeekCommit(marker.positionSeconds);
     segmentPreviewEnd.current = marker.endPositionSeconds ?? null;
@@ -259,6 +311,7 @@ export default function PreviewModal({
             <span className="lr-preview-modal__name">{`${titlePrefix}：${room.displayName}`}</span>
             <Space size={4}>
               <VideoScreenshotButton {...screenshot} />
+              {danmakuList.toggle}
               <Popover
                 trigger="click"
                 placement="bottomRight"
@@ -300,7 +353,10 @@ export default function PreviewModal({
                   size="small"
                   aria-label="画中画"
                   icon={<CompressOutlined />}
-                  onClick={enterPictureInPicture}
+                  onClick={() => {
+                    if (!danmakuListVisibility.open) danmakuListVisibility.finishExit();
+                    enterPictureInPicture();
+                  }}
                 />
               </Tooltip>
               <Tooltip title="关闭">
@@ -316,7 +372,8 @@ export default function PreviewModal({
           </div>
         }
         footer={null}
-        width={modalWidth}
+        width={danmakuList.width}
+        modalRender={danmakuList.render}
         style={
           { "--lr-preview-modal-height": `${modalHeight}px` } as CSSProperties
         }

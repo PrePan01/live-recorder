@@ -27,7 +27,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-inline-end: 36px;
+}
+
+.lr-danmaku-player__title > .lr-text-ellipsis {
+  min-width: 0;
+}
+
+.lr-danmaku-player__title-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
 }
 
 .lr-danmaku-player__panel {

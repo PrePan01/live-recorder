@@ -4,6 +4,8 @@ import { loadDanmakuPref, saveDanmakuPref, DANMUKU_DENSITY_OPTIONS, normalizeDan
 interface DanmakuPrefsState {
   visible: boolean;
   previewVisible: boolean;
+  listExpanded: boolean;
+  setListExpanded: (value: boolean) => void;
   opacity: number;
   density: number;
   fontScale: number;
@@ -29,6 +31,11 @@ const savedDensity = loadDanmakuPref<unknown>('density', 40);
 export const useDanmakuPrefsStore = create<DanmakuPrefsState>((set) => ({
   visible: typeof savedVisible === 'boolean' ? savedVisible : true,
   previewVisible: typeof savedPreviewVisible === 'boolean' ? savedPreviewVisible : true,
+  listExpanded: loadDanmakuPref<unknown>('listExpanded', false) === true,
+  setListExpanded(value) {
+    saveDanmakuPref('listExpanded', value);
+    set({ listExpanded: value });
+  },
   opacity: typeof savedOpacity === 'number' && Number.isFinite(savedOpacity)
     && savedOpacity >= 0.2 && savedOpacity <= 1 ? savedOpacity : 0.9,
   density: typeof savedDensity === 'number' && DANMUKU_DENSITY_OPTIONS.includes(savedDensity)

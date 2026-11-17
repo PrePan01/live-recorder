@@ -6,12 +6,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { fitPreviewBox, fitPreviewContent } from "../../utils/player/previewLayout";
+import {
+  fitPreviewBox,
+  fitPreviewContent,
+} from "../../utils/player/previewLayout";
+import {
+  LIVE_DANMAKU_LIST_GAP,
+  danmakuListReservedWidth,
+} from "../../utils/danmaku/danmakuListLayout";
 
 const MIN_WIDTH = 640;
 const MAX_WIDTH = 1440;
 const PICTURE_IN_PICTURE_WIDTH = 360;
 const MODAL_BODY_PADDING_X = 48;
+const PREVIEW_SIDE_SPACE = 2 * (24 + 10) + 32;
 const MODAL_VIEWPORT_GUTTER_X = 32;
 const MODAL_CHROME_HEIGHT = 108;
 const RECORDING_TRACK_MIN_WIDTH = 450;
@@ -27,10 +35,11 @@ type PendingPreviewResize = { portrait: boolean; value: number };
 export function usePreviewLayout(
   defaultWidth: number | undefined,
   displayedTrack: { id: string; startedAt: string } | null,
+  danmakuListVisible: boolean,
 ) {
   const startMouseDrag = useMouseDrag();
   // 普通观看默认占视口约 80%，同时为窄屏和超宽屏设置合理边界；直播墙全屏可传入显式宽度。
-  const [width, setWidth] = useState(
+  const [initialWidth] = useState(
     () =>
       defaultWidth ??
       Math.min(
@@ -38,10 +47,9 @@ export function usePreviewLayout(
         Math.max(MIN_WIDTH, Math.round(window.innerWidth * 0.8)),
       ),
   );
-  // 流的真实比例（宽/高）。元数据未就绪时播放器保持隐藏，避免先按 16:9 显示再缩成竖屏。
+  const [resizedWidth, setResizedWidth] = useState<number | null>(null);
   const [streamRatio, setStreamRatio] = useState<number | null>(null);
   const [streamRatioReady, setStreamRatioReady] = useState(false);
-  // 竖屏画面高度（宽度按比例算出）；null = 用满可视高度上限，用户拖拽后才取值。
   const [portraitHeight, setPortraitHeight] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [viewportHeight, setViewportHeight] = useState(
@@ -116,7 +124,7 @@ export function usePreviewLayout(
       setPortraitHeight((current) =>
         current === next.value ? current : next.value,
       );
-    else setWidth((current) => (current === next.value ? current : next.value));
+    else setResizedWidth(next.value);
   };
 
   const queuePreviewResize = (next: PendingPreviewResize) => {
@@ -158,32 +166,66 @@ export function usePreviewLayout(
     return () => observer.disconnect();
   }, [displayedTrack, trackCollapsed, trackNode]);
 
+  const layoutRatio = streamRatio ?? 16 / 9;
+  const portrait = layoutRatio < 1;
+  const hasSidePanel = danmakuListVisible && !pictureInPicture;
+  const reservedWidth = hasSidePanel
+    ? danmakuListReservedWidth(portrait, LIVE_DANMAKU_LIST_GAP)
+    : MODAL_VIEWPORT_GUTTER_X;
   const maxModalWidth = Math.max(
     MODAL_BODY_PADDING_X + 1,
-    viewportWidth - MODAL_VIEWPORT_GUTTER_X,
+    viewportWidth - reservedWidth,
   );
   const maxVideoWidth = Math.max(1, maxModalWidth - MODAL_BODY_PADDING_X);
-  const modalWidth = Math.min(
+  const preferredModalWidth = Math.min(
     maxModalWidth,
     Math.max(
       MODAL_BODY_PADDING_X + Math.min(RECORDING_TRACK_MIN_WIDTH, maxVideoWidth),
-      Math.min(width, maxModalWidth),
+      Math.min(resizedWidth ?? initialWidth, maxModalWidth),
     ),
   );
-  const layoutRatio = streamRatio ?? 16 / 9;
-  const portrait = layoutRatio < 1;
+  const compact = hasSidePanel && preferredModalWidth === maxModalWidth;
+  const availableWidth = Math.max(
+    1,
+    preferredModalWidth - (compact ? PREVIEW_SIDE_SPACE : MODAL_BODY_PADDING_X),
+  );
   const maxModalHeight = Math.max(0, viewportHeight - 32);
   const baseVideoHeight = Math.max(0, maxModalHeight - MODAL_CHROME_HEIGHT);
   const measuredTrackHeight = displayedTrack && trackNode ? trackHeight : 0;
   const occupiedTrackHeight = displayedTrack && trackNode ? trackOccupied : 0;
-  const { videoBox, contentHeight, trackWidth } = fitPreviewContent({
+  const {
+    videoBox,
+    contentHeight,
+    trackWidth: preferredTrackWidth,
+  } = fitPreviewContent({
     ratio: layoutRatio,
-    availableWidth: modalWidth - MODAL_BODY_PADDING_X,
+    availableWidth,
     availableHeight: baseVideoHeight,
     trackHeight: measuredTrackHeight,
     occupiedTrackHeight,
     preferredVideoHeight: portrait ? (portraitHeight ?? undefined) : undefined,
   });
+  // 默认弹窗跟随画面宽度收窄，竖屏仍给录制时间轴留出操作空间。
+  const minContentModalWidth = portrait
+    ? RECORDING_TRACK_MIN_WIDTH + PREVIEW_SIDE_SPACE
+    : MIN_WIDTH;
+  const modalWidth =
+    layoutRatio !== 1 && defaultWidth === undefined && resizedWidth === null
+      ? Math.min(
+          preferredModalWidth,
+          Math.max(
+            minContentModalWidth,
+            Math.ceil(videoBox.width + PREVIEW_SIDE_SPACE),
+          ),
+        )
+      : preferredModalWidth;
+  // 竖屏弹窗可能继续随画面收窄，时间轴以最终弹窗宽度为上限。
+  const trackWidth = portrait
+    ? Math.min(
+        compact ? availableWidth : preferredTrackWidth,
+        Math.max(1, modalWidth - PREVIEW_SIDE_SPACE),
+      )
+    : preferredTrackWidth;
   const maxVideoHeight = Math.max(0, baseVideoHeight - occupiedTrackHeight);
   const modalHeight = Math.min(
     maxModalHeight,
@@ -351,7 +393,7 @@ export function usePreviewLayout(
     e.stopPropagation();
     dragRef.current = {
       startX: e.clientX,
-      startW: width,
+      startW: modalWidth,
       startY: e.clientY,
       startHeight: videoBox.height,
       portrait,

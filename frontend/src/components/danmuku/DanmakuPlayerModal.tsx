@@ -1,45 +1,47 @@
-import { promptRangeExport } from "../utils/timeline/promptRangeExport";
+import { promptRangeExport } from "../../utils/timeline/promptRangeExport";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Modal, Select, Typography } from "antd";
 import {
   PauseOutlined,
   CaretRightOutlined,
+  CloseOutlined,
   ExportOutlined,
   SoundOutlined,
   MutedOutlined,
 } from "@ant-design/icons";
 import mpegts from "mpegts.js";
-import { recordingFileUrl } from "../api/recordings";
-import { fetchRecordingPosition } from "../api/recordings";
-import { FilePlaybackClock } from "../utils/player/filePlaybackClock";
+import { recordingFileUrl } from "../../api/recordings";
+import { fetchRecordingPosition } from "../../api/recordings";
+import { FilePlaybackClock } from "../../utils/player/filePlaybackClock";
 import {
   createRecordingMarker,
   deleteRecordingMarker,
-} from "../api/recordings";
-import { saveRecordingScreenshot } from "../api/screenshots";
-import { useSegmentMarking } from "../hooks/useSegmentMarking";
-import { useSegmentExport } from "../hooks/useSegmentExport";
-import { useVideoScreenshot } from "../hooks/useVideoScreenshot";
-import { SegmentExportActions } from "./SegmentExportActions";
-import { SegmentMarkActions } from "./SegmentMarkActions";
-import { VideoScreenshotButton } from "./VideoScreenshotButton";
-import { fetchDanmakuWindow } from "../api/danmakuWindow";
-import { exportDanmaku } from "../api/danmaku";
-import { pickDirectory } from "../api/config";
-import { ApiError } from "../types/error";
-import { describeError } from "../utils/error/errorMap";
+} from "../../api/recordings";
+import { saveRecordingScreenshot } from "../../api/screenshots";
+import { useSegmentMarking } from "../../hooks/useSegmentMarking";
+import { useSegmentExport } from "../../hooks/useSegmentExport";
+import { useVideoScreenshot } from "../../hooks/useVideoScreenshot";
+import { SegmentExportActions } from "../SegmentExportActions";
+import { SegmentMarkActions } from "../SegmentMarkActions";
+import { VideoScreenshotButton } from "../VideoScreenshotButton";
+import { fetchDanmakuWindow } from "../../api/danmakuWindow";
+import { exportDanmaku } from "../../api/danmaku";
+import { pickDirectory } from "../../api/config";
+import { ApiError } from "../../types/error";
+import { describeError } from "../../utils/error/errorMap";
 import { DanmakuLayer } from "./DanmakuLayer";
-import RecordingTrack from "./RecordingTrack";
-import { MarkerNavPanel } from "./MarkerNavPanel";
+import { useDanmakuListModal, useDanmakuListVisibility } from "./DanmakuListModalLayout";
+import RecordingTrack from "../RecordingTrack";
+import { MarkerNavPanel } from "../MarkerNavPanel";
 import DanmakuSettings from "./DanmakuSettings";
 import {
   fetchRecordingGaps,
   fetchRecordingMarkers,
   updateRecordingMarker,
-} from "../api/recordings";
-import type { RecordingGap, RecordingMarker } from "../types/recording";
-import { useDanmakuPrefsStore } from "../stores/danmakuPrefsStore";
-import type { DanmakuGap, DanmakuMessage } from "../types/danmaku";
+} from "../../api/recordings";
+import type { RecordingGap, RecordingMarker } from "../../types/recording";
+import { useDanmakuPrefsStore } from "../../stores/danmakuPrefsStore";
+import type { DanmakuGap, DanmakuMessage } from "../../types/danmaku";
 
 const PLAYBACK_RATES = Array.from({ length: 11 }, (_, index) => {
   const value = 0.5 + index * 0.25;
@@ -56,6 +58,7 @@ interface DanmakuPlayerModalProps {
   filePath?: string;
   /** 整条录像的弹幕状态，不受当前播放时段是否有弹幕影响。 */
   hasDanmaku?: boolean;
+  savesDanmaku?: boolean;
   /** 定位起播秒（缺口定位用）；就绪后跳到该点。 */
   initialSecond?: number;
   onClose: () => void;
@@ -74,6 +77,7 @@ export function DanmakuPlayerModal({
   title,
   filePath,
   hasDanmaku = false,
+  savesDanmaku = false,
   initialSecond = 0,
   onClose,
 }: DanmakuPlayerModalProps) {
@@ -499,6 +503,14 @@ export function DanmakuPlayerModal({
     } else video.pause();
   };
   const seekDisabled = failed || duration <= 0;
+  const danmakuListVisibility = useDanmakuListVisibility(hasDanmaku || savesDanmaku ? recordingId : undefined);
+  const danmakuList = useDanmakuListModal({
+    visibility: danmakuListVisibility,
+    playerWidth: 960,
+    live: false,
+    onSeek: seekManually,
+    seekDisabled,
+  });
   const handleExportDanmaku = async () => {
     const video = videoRef.current;
     if (exportBusyRef.current || !video || duration <= 0) return;
@@ -533,14 +545,26 @@ export function DanmakuPlayerModal({
   return (
     <Modal
       open
-      width={960}
+      width={danmakuList.width}
+      modalRender={danmakuList.render}
       className="lr-danmaku-player-modal"
+      closable={false}
       title={
         <div className="lr-danmaku-player__title">
           <Typography.Text className="lr-text-ellipsis" strong title={title}>
             {title}
           </Typography.Text>
-          <VideoScreenshotButton {...screenshot} />
+          <div className="lr-danmaku-player__title-actions">
+            <VideoScreenshotButton {...screenshot} />
+            {danmakuList.toggle}
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              aria-label="关闭录像回放"
+              onClick={onClose}
+            />
+          </div>
         </div>
       }
       footer={

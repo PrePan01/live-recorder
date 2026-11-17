@@ -5,11 +5,8 @@ import { fetchRecordingGaps } from "../../api/recordings";
 import { useLiveDanmaku } from "../../hooks/useLiveDanmaku";
 import { useStreamHealth } from "../../hooks/useStreamHealth";
 import { useDanmakuPrefsStore } from "../../stores/danmakuPrefsStore";
-import {
-  selectDanmakuStatus,
-  useDanmakuStore,
-} from "../../stores/danmakuStore";
-import type { DanmakuGap, DanmakuMessage } from "../../types/danmaku";
+import { useDanmakuStore } from "../../stores/danmakuStore";
+import type { DanmakuGap, DanmakuMessage, DanmakuStatus } from "../../types/danmaku";
 import type { RecordingGap } from "../../types/recording";
 
 import type { RefObject } from "react";
@@ -21,8 +18,9 @@ export function usePreviewDanmaku(
   seekPlayback: VideoPlayerProps["seek"],
   previewVideo: HTMLVideoElement | null,
   previewFrameGenerationRef: RefObject<number | null>,
+  danmakuStatus: DanmakuStatus | null,
+  cacheEnabled: boolean,
 ) {
-  // 预览显示开关独立于文件回放；隐藏时释放直播订阅，录制采集独立继续。
   const {
     previewVisible: danmakuVisible,
     opacity: danmakuOpacity,
@@ -39,6 +37,7 @@ export function usePreviewDanmaku(
     roomId,
     danmakuVisible && !seekPlayback,
     previewVideo,
+    cacheEnabled,
   );
   const [danmakuMessages, setDanmakuMessages] = useState<DanmakuMessage[]>([]);
   const [trackGaps, setTrackGaps] = useState<RecordingGap[]>([]);
@@ -62,9 +61,6 @@ export function usePreviewDanmaku(
     };
   }, [activeRecordingId]);
   const [danmakuGaps, setDanmakuGaps] = useState<DanmakuGap[]>([]);
-  const danmakuStatus = useDanmakuStore((s) =>
-    selectDanmakuStatus(s, activeRecordingId),
-  );
   const displayedDanmakuStatus = seekPlayback
     ? danmakuStatus
     : liveDanmaku.status;

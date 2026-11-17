@@ -23,6 +23,7 @@ export type ServerEvent =
   | { type: 'diagnostic:updated'; diagnostic: Diagnostic }
   | { type: 'upload:updated'; upload: UploadJob }
   | { type: 'danmaku:status'; status: DanmakuStatus }
+  | { type: 'danmaku:saved'; recordingId: string }
   | { type: 'stream-health'; health: StreamHealth }
   | { type: 'clip-queue:updated' };
 
@@ -40,6 +41,7 @@ export const SSE_EVENT_NAMES = [
   'diagnostic:updated',
   'upload:updated',
   'danmaku:status',
+  'danmaku:saved',
   'stream-health',
   'clip-queue:updated',
 ] as const satisfies ServerEvent['type'][];
