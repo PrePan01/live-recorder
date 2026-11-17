@@ -466,6 +466,41 @@ describe("DouyinAdapter", () => {
     expect(result.error?.code).toBe("DOUYIN_COOKIE_EXPIRED");
   });
 
+  it("recovers checks, previews, recording and danmaku through the authorized room page", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes("/webcast/")
+      ? new Response("")
+      : new Response("<script>location.reload()</script>", { headers: { "content-type": "text/html" } }));
+    const browserRoom = vi.fn(async () => ({
+      status: 200,
+      text: JSON.stringify(livePayload({ id_str: "8701" })),
+    }));
+    const adapter = new DouyinAdapter(fetcher, undefined, browserRoom);
+    const room = "https://live.douyin.com/123456";
+    const cookie = "sessionid=valid";
+    expect(await adapter.checkLiveStatus(room, cookie)).toMatchObject({ status: "live", streamSessionId: "8701" });
+    expect(browserRoom.mock.calls[0]).toEqual(["123456", cookie, false]);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await expect(adapter.getStreamUrl(room, "original", cookie)).resolves.toMatchObject({ format: "flv" });
+    await expect(adapter.resolveRecordingSource(room, "original", cookie)).resolves.toMatchObject({ status: "live" });
+    await expect(adapter.getDanmakuRoomId(room, cookie)).resolves.toBe("8701");
+    expect(browserRoom.mock.calls[1]).toEqual(["123456", cookie, true]);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(await adapter.checkLiveStatus(room)).toMatchObject({ status: "restricted" });
+    expect(browserRoom).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([403, 8, 40199])("keeps a valid account authorized after live-site response %s", async (code) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith("https://creator.douyin.com/")
+      ? Response.json({ status_code: 0 })
+      : code === 403
+        ? new Response("", { status: 403 })
+        : Response.json({ status_code: code, data: { message: "需要安全验证" } }));
+    const adapter = new DouyinAdapter(fetcher);
+    const result = await adapter.checkLiveStatus("https://live.douyin.com/123456", "sessionid=valid");
+    expect(result).toMatchObject({ status: "error", error: { code: "NETWORK_UNAVAILABLE", retryable: true } });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("maps unexpected structure without cookie signal to PLATFORM_CHANGED", async () => {
     // 结构异常但非凭证特征 → 仍判平台变动（真接口变更）。
     const a = new DouyinAdapter(
@@ -659,8 +694,8 @@ describe("DouyinAdapter", () => {
       status: errorCode === "DOUYIN_COOKIE_EXPIRED" ? "restricted" : "error",
       error: { code: errorCode, retryable },
     });
-    // Classification and log aggregation never add a probe or an immediate body-status retry.
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    // Each explicit live-site login rejection is checked against the account endpoint.
+    expect(fetcher).toHaveBeenCalledTimes(code === 8 ? 6 : 3);
   });
 
   it("coalesces repeated business logs across all callers and resets only after a valid response", async () => {

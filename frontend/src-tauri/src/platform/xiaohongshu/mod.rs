@@ -1,54 +1,20 @@
 use std::{
-    collections::HashSet,
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[cfg(target_os = "macos")]
-mod macos_cookies;
+use super::macos_cookies;
+use super::native_browser::{self, Task};
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const WINDOW: &str = "xiaohongshu-native-requests";
 const REQUEST_PAGE: &str = "https://www.xiaohongshu.com/explore";
 const PAGE_READY_TIMEOUT: Duration = Duration::from_secs(12);
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Job {
-    id: String,
-    url: String,
-    session_hash: Option<String>,
-    expires_at: u64,
-}
-
-#[derive(Clone)]
-struct Task {
-    id: String,
-    expires_at: u64,
-    active: Arc<Mutex<HashSet<String>>>,
-}
-impl Task {
-    fn check(&self) -> Result<(), String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        if now >= self.expires_at as u128
-            || !self
-                .active
-                .lock()
-                .map_err(|_| "小红书请求已取消")?
-                .contains(&self.id)
-        {
-            return Err("小红书请求已取消或超时".into());
-        }
-        Ok(())
-    }
-}
 
 struct PageLoad {
     deadline: Instant,
@@ -86,100 +52,10 @@ impl PageLoad {
     }
 }
 
-/// One bounded worker owns the remote WebView. Polling remains independent so
-/// cancellation is delivered even while the website is loading or responding.
 pub fn start(app: AppHandle) {
-    std::thread::spawn(move || {
-        let Ok(client) = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(3))
-            .build()
-        else {
-            return;
-        };
-        let active = Arc::new(Mutex::new(HashSet::new()));
-        let (sender, receiver) = mpsc::sync_channel::<(Job, String)>(8);
-        let worker_client = client.clone();
-        let worker_active = active.clone();
-        std::thread::spawn(move || {
-            let mut page_load = None;
-            while let Ok((job, endpoint)) = receiver.recv() {
-                let task = Task {
-                    id: job.id.clone(),
-                    expires_at: job.expires_at,
-                    active: worker_active.clone(),
-                };
-                if task.check().is_err() {
-                    continue;
-                }
-                let result = request(&app, job.url, job.session_hash, &task, &mut page_load)
-                    .unwrap_or_else(|error| {
-                        if task.check().is_ok() {
-                            log::warn!("小红书官网请求失败：{error}");
-                        }
-                        serde_json::json!({"status":0,"text":""})
-                    });
-                if task.check().is_ok() {
-                    let _ = worker_client
-                        .post(format!("{endpoint}/{}", job.id))
-                        .json(&result)
-                        .send();
-                }
-            }
-        });
-        loop {
-            std::thread::sleep(Duration::from_secs(1));
-            let Some(instance) = crate::backend::fetch_ready() else {
-                if let Ok(mut ids) = active.lock() {
-                    ids.clear();
-                }
-                continue;
-            };
-            let endpoint = format!(
-                "{}/api/v1/platform/xiaohongshu/native-requests",
-                instance.base_url
-            );
-            #[derive(serde::Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Jobs {
-                requests: Vec<Job>,
-                active_request_ids: Vec<String>,
-            }
-            let jobs = client
-                .get(&endpoint)
-                .send()
-                .ok()
-                .filter(|response| response.status().is_success())
-                .and_then(|response| response.json::<Jobs>().ok());
-            let Some(jobs) = jobs else {
-                if let Ok(mut ids) = active.lock() {
-                    ids.clear();
-                }
-                continue;
-            };
-            if let Ok(mut ids) = active.lock() {
-                *ids = jobs.active_request_ids.into_iter().collect();
-            }
-            for job in jobs.requests.into_iter().take(8) {
-                if job.id.len() != 36
-                    || !job
-                        .id
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-                {
-                    continue;
-                }
-                if let Err(mpsc::TrySendError::Full((job, endpoint))) =
-                    sender.try_send((job, endpoint.clone()))
-                {
-                    let _ = client
-                        .post(format!("{endpoint}/{}", job.id))
-                        .json(&serde_json::json!({"status":0,"text":""}))
-                        .send();
-                }
-            }
-        }
+    let mut page_load = None;
+    native_browser::start(app, "xiaohongshu", move |app, job, task| {
+        request(app, job.url, job.session_hash, task, &mut page_load)
     });
 }
 
@@ -270,7 +146,7 @@ fn authorized_pairs<'a>(saved: &'a str, expected: &str) -> Result<Vec<(&'a str, 
 
 fn read_cookies(view: &WebviewWindow) -> Result<Vec<tauri::webview::Cookie<'static>>, String> {
     #[cfg(target_os = "macos")]
-    return macos_cookies::read(view);
+    return macos_cookies::read(view, "xiaohongshu.com");
     #[cfg(not(target_os = "macos"))]
     view.cookies().map_err(|_| "无法读取小红书官网会话".into())
 }

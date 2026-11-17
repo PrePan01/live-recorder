@@ -5,6 +5,8 @@ import {
 import { DouyinEnterLog } from "./enter-log.js";
 import { normalizeDouyinUrl, parseDouyinRoomId } from "./url.js";
 import { AppError } from "../../types/error.js";
+import { checkDouyinCookieStatus } from "../../security/douyin-authorization.js";
+import type { NativeBrowserResponse } from "../native-browser.js";
 import type { Quality } from "../../types/index.js";
 import type {
   LiveStatusResult,
@@ -149,13 +151,6 @@ function classifyStatusError(
       { retryable: true },
     );
   }
-  if (code === 8 && hasCookie) {
-    return new AppError(
-      "DOUYIN_COOKIE_EXPIRED",
-      "抖音授权已失效，请到设置页重新授权",
-      { retryable: false },
-    );
-  }
   if (code === 10011) {
     const temporary =
       /服务繁忙|请稍后|busy|temporar|频繁|系统异常|try again/i.test(message);
@@ -206,13 +201,10 @@ function classifyStatusError(
     });
   }
   if (family) return family;
-  const credentialLike = /登录|风控|verify|RiskControl/i.test(message);
-  if (credentialLike || !hasCookie) {
+  if (!hasCookie) {
     return new AppError(
       "PLATFORM_ACCESS_RESTRICTED",
-      hasCookie
-        ? "平台访问受限，抖音授权可能已失效，请到设置页重新授权"
-        : "平台访问受限，请检查抖音授权",
+      "平台访问受限，请检查抖音授权",
       { retryable: false },
     );
   }
@@ -222,6 +214,15 @@ function classifyStatusError(
     hint: message.slice(0, 120),
     scope: "douyin-enter",
   });
+}
+
+function requiresLiveSiteVerification(data: DouyinEnterResponse): boolean {
+  if (data.status_code === 8) return true;
+  if (data.status_code === 0 || data.status_code === 4003034 || data.status_code === 4001038 ||
+      isNotLiveResponse(data)) return false;
+  const hint = enterHint(data);
+  return !/可见范围|不在主播设置/.test(hint) &&
+    /登录|风控|安全验证|verify|RiskControl|captcha|授权.*(失效|过期|无效)/i.test(hint);
 }
 
 /** enter 响应里平台侧的提示文案（message/prompts），用于区分限流/结束等语义。 */
@@ -299,10 +300,12 @@ export class DouyinAdapter implements PlatformAdapter {
    */
   private enterBusy = false;
   private readonly enterLanes: Record<EnterLane, Array<() => void>> = { interactive: [], background: [] };
+  private browserPreferred?: { cookie: string; until: number };
 
   constructor(
     private fetcher: typeof fetch = fetch,
     private apiBase = "https://live.douyin.com/webcast/room/web/enter",
+    private browserRoom?: (roomId: string, cookie: string, interactive: boolean) => Promise<NativeBrowserResponse>,
   ) {}
 
   /**
@@ -498,11 +501,9 @@ export class DouyinAdapter implements PlatformAdapter {
       }
       if (res.status === 401 || res.status === 403) {
         throw new AppError(
-          cookie ? "DOUYIN_COOKIE_EXPIRED" : "PLATFORM_ACCESS_RESTRICTED",
-          cookie
-            ? "抖音授权已失效，请到设置页重新授权"
-            : "平台访问受限，请检查抖音授权",
-          { retryable: false, details: { httpStatus: res.status } },
+          "NETWORK_UNAVAILABLE",
+          "抖音直播站点暂未接受当前请求，请稍后重试",
+          { retryable: true, details: { reason: "douyin-live-session-unconfirmed", httpStatus: res.status } },
         );
       }
       throw new AppError(
@@ -547,19 +548,76 @@ export class DouyinAdapter implements PlatformAdapter {
         });
         if (!response.ok || !response.headers.get("content-type")?.includes("text/html")) return;
         const html = await response.text();
-        const room = roomFromPage(html);
-        if (room) return { status_code: 0, data: { data: room.status === 2 ? [room] : [] }, roomPageHtml: html };
+        return this.parseRoomPage(html);
       });
     } catch {
       return;
     }
   }
 
+  private parseRoomPage(html: string): DouyinEnterResponse | undefined {
+    const room = roomFromPage(html);
+    return room && { status_code: 0, data: { data: room.status === 2 ? [room] : [] }, roomPageHtml: html };
+  }
+
+  private async fetchBrowserRoom(
+    roomId: string, cookie: string, lane: EnterLane, requireStream: boolean,
+  ): Promise<DouyinEnterResponse | undefined> {
+    try {
+      const response = await this.browserRoom?.(roomId, cookie, lane === "interactive");
+      if (response?.status !== 200) return;
+      const data = this.parseEnterResponse(response.text) ?? this.parseRoomPage(response.text);
+      if (!data || requiresLiveSiteVerification(data) ||
+          (requireStream && hasLiveEntryWithoutStreamUrl(data))) return;
+      return data;
+    } catch { /* preserve the verified HTTP error when the desktop is unavailable */ }
+  }
+
+  private async fetchRoomInfoWithRetry(
+    roomId: string,
+    cookie?: string,
+    lane: EnterLane = "background",
+    requireStream = true,
+  ): Promise<DouyinEnterResponse> {
+    const preferBrowser = cookie && this.browserPreferred?.cookie === cookie &&
+      this.browserPreferred.until > Date.now();
+    if (preferBrowser) {
+      const browser = await this.fetchBrowserRoom(roomId, cookie, lane, requireStream);
+      if (browser) return browser;
+    }
+    let failure: AppError;
+    try {
+      const data = await this.fetchRoomInfoHttp(roomId, cookie, lane, requireStream);
+      if (!cookie || !requiresLiveSiteVerification(data)) return data;
+      failure = new AppError("NETWORK_UNAVAILABLE", "抖音直播站点暂未接受当前请求，请稍后重试", {
+        retryable: true, details: { reason: "douyin-live-session-unconfirmed" },
+      });
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      failure = error;
+    }
+    const reason = failure.details?.reason;
+    const unsureAboutSession = reason === "douyin-live-session-unconfirmed";
+    if (cookie && (unsureAboutSession || reason === "douyin-enter-no-data" || reason === "douyin-live-without-stream")) {
+      const browser = preferBrowser ? undefined : await this.fetchBrowserRoom(roomId, cookie, lane, requireStream);
+      if (browser) {
+        if (browser.status_code === 0) this.browserPreferred = { cookie, until: Date.now() + 60_000 };
+        this.enterLog.recovered(roomId);
+        return browser;
+      }
+      // The live site's HTTP status alone cannot invalidate an account globally.
+      if (unsureAboutSession && await checkDouyinCookieStatus(cookie, this.fetcher) === "invalid") {
+        throw new AppError("DOUYIN_COOKIE_EXPIRED", "抖音授权已失效，请到设置页重新授权", { retryable: false });
+      }
+    }
+    throw failure;
+  }
+
   /**
    * 抖音 CDN/API 会偶发限流或短暂 5xx。单次即时重试可消除这类瞬态失败，
    * 但不会掩盖鉴权失败或真正的响应结构变更。
    */
-  private async fetchRoomInfoWithRetry(
+  private async fetchRoomInfoHttp(
     roomId: string,
     cookie?: string,
     lane: EnterLane = "background",
@@ -585,7 +643,7 @@ export class DouyinAdapter implements PlatformAdapter {
         lastError = new AppError(
           "NETWORK_UNAVAILABLE",
           "直播刚开播，正在等待平台生成流地址，请稍后重试",
-          { retryable: true },
+          { retryable: true, details: { reason: "douyin-live-without-stream" } },
         );
         if (attempt + 1 === PLATFORM_REQUEST_ATTEMPTS) {
           this.enterLog.warn(
@@ -596,6 +654,7 @@ export class DouyinAdapter implements PlatformAdapter {
         }
       } catch (err) {
         lastError = err;
+        if (err instanceof AppError && err.details?.reason === "douyin-live-session-unconfirmed") throw err;
         if (err instanceof AppError && err.details?.reason === "douyin-enter-no-data") {
           const lastAttempt = attempt + 1 === PLATFORM_REQUEST_ATTEMPTS;
           // The same HTTP fallback applies to every account. Explicit auth and

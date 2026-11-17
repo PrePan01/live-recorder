@@ -1,5 +1,6 @@
 import { registerQmsgRoutes } from './routes/qmsg.js';
 import { registerXhsNativeRoutes } from "../platform/xiaohongshu/native.js";
+import { registerNativeBrowserRoutes } from "../platform/native-browser.js";
 import Fastify, { type FastifyInstance } from 'fastify';
 import { defaultMessageFor, AppError, httpStatusFor } from '../types/error.js';
 import type { Services } from '../core/services.js';
@@ -155,6 +156,7 @@ export function buildApp(services: Services, opts: BuildAppOptions = {}): BuiltA
   });
 
   registerXhsNativeRoutes(app, services.xhsNative);
+  registerNativeBrowserRoutes(app, 'douyin', services.douyinNative);
   registerRoomRoutes(app, services);
   registerRecordingRoutes(app, services);
   registerClipQueueRoutes(app, services);

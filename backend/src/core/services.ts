@@ -8,6 +8,7 @@ import { XiaohongshuSourceRepository } from '../db/repositories/xiaohongshu-sour
 import type { PlatformAdapter, Quality } from "../platform/adapter.js";
 import { VerificationQueue } from "./verification-queue.js";
 import { XiaohongshuNativeBroker } from "../platform/xiaohongshu/native.js";
+import { DouyinNativeBroker } from "../platform/douyin/native.js";
 import { DouyinAuthorizationStore } from "../security/douyin-authorization.js";
 import { XiaohongshuAdapter } from "../platform/xiaohongshu/index.js";
 import { DanmakuManager } from "../danmaku/manager.js";
@@ -70,6 +71,7 @@ export interface Services {
   qmsg: QmsgQueue;
   resetting?: boolean;
   xhsNative: XiaohongshuNativeBroker;
+  douyinNative: DouyinNativeBroker;
   douyinAuthorization: DouyinAuthorizationStore;
   mode: AdapterMode;
   startedAt: number;
@@ -188,6 +190,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     ? new KeytarSecretStore()
     : new MemorySecretStore();
   const xhsNative = new XiaohongshuNativeBroker();
+  const douyinNative = new DouyinNativeBroker();
   const douyinAuthorization = new DouyinAuthorizationStore(secretStore);
   const xhsSources = new XiaohongshuSourceRepository(db);
   const adapters =
@@ -198,7 +201,13 @@ export function buildServices(opts: BuildOptions = {}): Services {
             save: (url, channel) => { db.prepare('INSERT INTO youtube_sources (input_url,channel_url) VALUES (?,?) ON CONFLICT(input_url) DO UPDATE SET channel_url=excluded.channel_url').run(url, channel); },
           }) as PlatformAdapter,
           bilibili: new BilibiliAdapter() as PlatformAdapter,
-          douyin: new DouyinAdapter() as PlatformAdapter,
+          douyin: new DouyinAdapter(undefined, undefined, async (roomId, cookie, interactive) => {
+            const revision = douyinAuthorization.revision;
+            const result = await douyinNative.room(roomId, cookie, interactive);
+            if (revision !== douyinAuthorization.revision)
+              throw new Error("抖音授权已更新");
+            return result;
+          }) as PlatformAdapter,
           xiaohongshu: new XiaohongshuAdapter(fetch, {
             load: profile => xhsSources.load(profile),
             save: (profile, url) => saveXiaohongshuSource(db, profile, url),
@@ -223,6 +232,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
     mode,
     qmsg: undefined as unknown as QmsgQueue,
     xhsNative,
+    douyinNative,
     douyinAuthorization,
     startedAt: clock.now(),
     events: new AppEventBus(),

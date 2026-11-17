@@ -2,7 +2,7 @@ mod backend;
 mod power;
 mod contract;
 mod updates;
-mod xiaohongshu;
+mod platform;
 
 use std::{fs, sync::Mutex};
 
@@ -1397,7 +1397,8 @@ pub fn run() {
         ])
         .setup(|app| {
             power::start(app.handle().clone());
-            xiaohongshu::start(app.handle().clone());
+            platform::xiaohongshu::start(app.handle().clone());
+            platform::douyin::start(app.handle().clone());
             // This runs before the event loop begins, so the saved dimensions
             // are applied as the native window is being brought up.
             #[cfg(any(target_os = "macos", target_os = "windows"))]

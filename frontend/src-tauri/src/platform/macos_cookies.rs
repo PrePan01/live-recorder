@@ -21,14 +21,17 @@ fn with_cookie_store<T: Send + 'static>(
         let store = unsafe { view.configuration().websiteDataStore().httpCookieStore() };
         operation(&store, sender);
     })
-    .map_err(|_| "无法访问小红书官网会话")?;
+    .map_err(|_| "无法访问官网会话")?;
     receiver
         .recv_timeout(Duration::from_secs(2))
-        .map_err(|_| "等待小红书官网会话超时")?
+        .map_err(|_| "等待官网会话超时")?
 }
 
-pub(super) fn read(view: &WebviewWindow) -> Result<Vec<Cookie<'static>>, String> {
-    with_cookie_store(view, |store, sender| unsafe {
+pub(crate) fn read(
+    view: &WebviewWindow,
+    site: &'static str,
+) -> Result<Vec<Cookie<'static>>, String> {
+    with_cookie_store(view, move |store, sender| unsafe {
         store.getAllCookies(&RcBlock::new(
             move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
                 let cookies = cookies
@@ -38,7 +41,11 @@ pub(super) fn read(view: &WebviewWindow) -> Result<Vec<Cookie<'static>>, String>
                     .filter_map(|cookie| {
                         let domain = cookie.domain().to_string();
                         let host = domain.trim_start_matches('.');
-                        if host != "xiaohongshu.com" && !host.ends_with(".xiaohongshu.com") {
+                        if host != site
+                            && !host
+                                .strip_suffix(site)
+                                .is_some_and(|prefix| prefix.ends_with('.'))
+                        {
                             return None;
                         }
                         Some(
@@ -57,7 +64,7 @@ pub(super) fn read(view: &WebviewWindow) -> Result<Vec<Cookie<'static>>, String>
     })
 }
 
-pub(super) fn update(
+pub(crate) fn update(
     view: &WebviewWindow,
     cookie: Cookie<'static>,
     delete: bool,
@@ -84,7 +91,7 @@ pub(super) fn update(
             properties.insert(ns_string!("HttpOnly"), ns_string!("TRUE"));
         }
         let Some(cookie) = NSHTTPCookie::cookieWithProperties(&properties) else {
-            let _ = sender.send(Err("小红书授权格式无效".into()));
+            let _ = sender.send(Err("官网授权格式无效".into()));
             return;
         };
         let complete = RcBlock::new(move || {
