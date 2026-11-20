@@ -30,7 +30,7 @@ export interface YoutubeMediaSource {
 export interface StreamUrlResult {
   streamSessionId?: string;
   url: string;
-  format: "flv" | "hls" | "youtube";
+  format: "flv" | "hls" | "hls-fmp4" | "youtube";
   youtube?: YoutubeMediaSource;
   actualQuality: Quality;
   headers?: Record<string, string>;

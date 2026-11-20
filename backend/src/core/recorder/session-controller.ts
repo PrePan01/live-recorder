@@ -2,6 +2,7 @@
 import { mkdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { type RoomPolicySettings } from "../../config/room-policy.js";
+import type { StreamInput } from "../../recorder/engine.js";
 import { finalizeYoutube, youtubeSize } from "../../recorder/youtube-media.js";
 import { AppError } from "../../types/error.js";
 import type {
@@ -325,14 +326,7 @@ export class RecordingSessions {
   async runSession(
     room: Room,
     recordingId: string,
-    stream: {
-      url: string;
-      format: "flv" | "hls" | "youtube";
-      youtube?: NonNullable<
-        import("../../recorder/engine.js").StreamInput["youtube"]
-      >;
-      headers?: Record<string, string>;
-    },
+    stream: StreamInput,
     filePath: string,
     session: ActiveSession,
     attempt: number,
