@@ -1,6 +1,11 @@
 {
   "releases": [
     {
+      "version": "1.6.2",
+      "publishedAt": "2026-11-20",
+      "notes": ["修复：修复部分b站直播无法正常预览的问题"]
+    },
+    {
       "version": "1.6.1",
       "publishedAt": "2026-11-17",
       "notes": [

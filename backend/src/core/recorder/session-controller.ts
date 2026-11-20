@@ -2,6 +2,7 @@
 import { mkdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { type RoomPolicySettings } from "../../config/room-policy.js";
+import type { StreamInput } from "../../recorder/engine.js";
 import { finalizeYoutube, youtubeSize } from "../../recorder/youtube-media.js";
 import { AppError } from "../../types/error.js";
 import type {
@@ -325,14 +326,7 @@ export class RecordingSessions {
   async runSession(
     room: Room,
     recordingId: string,
-    stream: {
-      url: string;
-      format: "flv" | "hls" | "youtube";
-      youtube?: NonNullable<
-        import("../../recorder/engine.js").StreamInput["youtube"]
-      >;
-      headers?: Record<string, string>;
-    },
+    stream: StreamInput,
     filePath: string,
     session: ActiveSession,
     attempt: number,
@@ -380,6 +374,8 @@ export class RecordingSessions {
 
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
+      // A timeout can hand this session off while the directory is being prepared.
+      if (session.generation !== generation || this.host.shuttingDown) return;
       const input = { ...stream };
       // 第 2 段起接着写同一个文件：追加写入 + 时间戳顺延到上一段结尾之后。
       const resume = {
@@ -388,7 +384,8 @@ export class RecordingSessions {
         timestampOffsetMs: session.timestampOffsetMs,
         ...(session.hlsCursor ? { hlsCursor: session.hlsCursor } : {}),
       };
-      for await (const event of engine.start(input, filePath, resume)) {
+      const events = session.stopRequested ? [] : engine.start(input, filePath, resume);
+      for await (const event of events) {
         if (session.generation !== generation) return;
         if (session.stopRequested) break;
         switch (event.type) {

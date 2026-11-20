@@ -8,6 +8,7 @@ import {
   type RoomPolicySettings,
 } from "../config/room-policy.js";
 import { HighlightBuffer } from "../recorder/highlight-buffer.js";
+import type { StreamInput } from "../recorder/engine.js";
 import {
   recordingFilePath,
   reserveRecordingPath,
@@ -971,14 +972,7 @@ export class RecorderManager {
   private runSession(
     room: Room,
     recordingId: string,
-    stream: {
-      url: string;
-      format: "flv" | "hls" | "youtube";
-      youtube?: NonNullable<
-        import("../recorder/engine.js").StreamInput["youtube"]
-      >;
-      headers?: Record<string, string>;
-    },
+    stream: StreamInput,
     filePath: string,
     session: ActiveSession,
     attempt: number,

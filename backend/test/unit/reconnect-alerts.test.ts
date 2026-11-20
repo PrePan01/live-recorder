@@ -1,12 +1,18 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { FakeClock } from '../../src/core/clock.js';
+import { START_TIMEOUT_MS } from '../../src/core/recorder/constants.js';
 import { buildServices } from '../../src/core/services.js';
 import { FakeRecordingEngine, type FakeEngineScript } from '../../src/recorder/fake-engine.js';
 import { AppError } from '../../src/types/error.js';
+
+vi.mock(import('node:fs/promises'), async importOriginal => {
+  const fs = await importOriginal();
+  return { ...fs, mkdir: vi.fn(fs.mkdir) };
+});
 
 const networkError = () => new AppError('NETWORK_UNAVAILABLE', '网络暂时不可用', { retryable: true }).toObject();
 
@@ -99,27 +105,52 @@ describe('recording reconnect alerts', () => {
 
   it('does not restart the alert cycle when repeated pulls time out without any media', async () => {
     const h = await setup();
-    let pulls = 0;
+    const directoryReady = Promise.withResolvers<undefined>();
+    const firstEngineStopped = Promise.withResolvers<void>();
+    const supersededStart = vi.fn(() => { throw new Error('Superseded engine started'); });
+    let nextPull = Promise.withResolvers<void>();
+    let firstEngine = true;
     h.probe.mockResolvedValue({ status: 'live', streamSessionId: 'same-broadcast' });
     h.services.engineFor = () => {
-      let finish: (() => void) | undefined;
+      if (firstEngine) {
+        firstEngine = false;
+        vi.mocked(mkdir).mockImplementationOnce(() => directoryReady.promise);
+        return { start: supersededStart, async stop() { firstEngineStopped.resolve(); } };
+      }
+      const stopped = Promise.withResolvers<void>();
       return {
         async *start(): AsyncGenerator<never, void> {
-          pulls++;
-          await new Promise<void>(resolve => { finish = resolve; });
+          nextPull.resolve();
+          await stopped.promise;
         },
-        async stop() { finish?.(); },
+        async stop() { stopped.resolve(); },
       };
+    };
+    const elapseStartupAndBackoff = () => {
+      h.clock.advance(START_TIMEOUT_MS);
+      h.clock.advance(30_000);
     };
     try {
       await h.start();
-      for (let i = 0; i < 32; i++) await h.step(30_000);
-      expect(pulls).toBeGreaterThan(5);
+      elapseStartupAndBackoff();
+      await firstEngineStopped.promise;
+      directoryReady.resolve(undefined);
+      await nextPull.promise;
+      expect(supersededStart).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 10; i++) {
+        nextPull = Promise.withResolvers<void>();
+        elapseStartupAndBackoff();
+        await nextPull.promise;
+      }
       expect(h.services.manager.isRoomActive(h.room.id)).toBe(true);
       expect(h.alerts().filter(a => a.errorCode === 'RECORDING_START_TIMEOUT')).toHaveLength(1);
       expect(h.alerts().filter(a => a.message === '正在努力恢复该直播间录制')).toHaveLength(1);
       expect(h.created).toHaveLength(2);
-    } finally { await h.cleanup(); }
+    } finally {
+      directoryReady.resolve(undefined);
+      await h.cleanup();
+    }
   });
 
   it('does not suppress another room or the terminal error after a non-retryable failure', async () => {
