@@ -269,12 +269,12 @@ export class BilibiliAdapter implements PlatformAdapter {
   private pickStream(
     data: BiliPlayResponse,
     targetQn: number,
-  ): { url: string; format: "flv" | "hls"; actualQn: number } | null {
+  ): { url: string; format: StreamUrlResult["format"]; actualQn: number } | null {
     const streams = data.data?.playurl_info?.playurl?.stream ?? [];
     const ordered = [...streams].sort(
       (a, b) => rankProtocol(a.protocol_name) - rankProtocol(b.protocol_name),
     );
-    let best: { url: string; format: "flv" | "hls"; actualQn: number } | null =
+    let best: { url: string; format: StreamUrlResult["format"]; actualQn: number } | null =
       null;
     for (const stream of ordered) {
       const formats = [...(stream.format ?? [])].sort(
@@ -292,11 +292,11 @@ export class BilibiliAdapter implements PlatformAdapter {
             fmt.format_name === "flv" || codec.base_url.includes(".flv");
           const candidate: {
             url: string;
-            format: "flv" | "hls";
+            format: StreamUrlResult["format"];
             actualQn: number;
           } = {
             url: `${info.host}${codec.base_url}${info.extra ?? ""}`,
-            format: isFlv ? "flv" : "hls",
+            format: isFlv ? "flv" : fmt.format_name === "fmp4" ? "hls-fmp4" : "hls",
             actualQn: granted,
           };
           // 多个 codec 的 current_qn 通常相同（画质由请求参数协商），此处仅作稳健的择优。

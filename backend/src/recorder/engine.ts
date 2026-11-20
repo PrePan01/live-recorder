@@ -1,12 +1,7 @@
 import type { ErrorObject } from "../types/index.js";
-import type { YoutubeMediaSource } from "../platform/adapter.js";
+import type { StreamUrlResult } from "../platform/adapter.js";
 
-export interface StreamInput {
-  url: string;
-  format: "flv" | "hls" | "youtube";
-  youtube?: YoutubeMediaSource;
-  headers?: Record<string, string>;
-}
+export type StreamInput = Pick<StreamUrlResult, "url" | "format" | "youtube" | "headers">;
 
 /**
  * 续录选项：中断恢复后接着写同一个文件，而不是另开一个文件。

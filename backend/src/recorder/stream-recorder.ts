@@ -1,10 +1,14 @@
 import type { ReadableStreamReadResult } from "node:stream/web";
+import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { stat, mkdtemp, open, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { BufferedRecordingWriter, type BufferedWriterOptions, recoverRecordingBuffer } from "./buffered-writer.js";
 import { StreamHealth, STREAM_IDLE_MS, MEDIA_IDLE_MS } from "./stream-health.js";
+import { trackFfmpeg } from "./ffmpeg-registry.js";
+import { resolveBin } from "../utils/ffmpeg.js";
 import { isFlvSequenceHeader, isFlvVideoKeyframe } from "./flv-tags.js";
 import { AppError } from "../types/error.js";
 import type { ErrorObject } from "../types/index.js";
@@ -254,6 +258,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
     this.stopped = false;
+    this.controller = new AbortController();
     this.dataIntervalMs = input.format === "hls" ? 10_000 : 0;
     // 本段一个字节都没拿到就中断时，把传入的偏移原样带回，
     // 避免上层把续录偏移重置为 0、导致下一段时间轴跳回开头。
@@ -262,8 +267,11 @@ export class StreamRecordingEngine implements RecordingEngine {
     try {
       if (input.format === "hls") {
         yield* this.runHls(input, outputPath ?? "", resume);
+      } else if (input.format === "hls-fmp4") {
+        yield* this.runFragmentedHls(input, outputPath ?? null, resume);
       } else {
-        yield* this.runHttp(input, outputPath ?? null, resume);
+        const response = await this.fetchResponse(input.url, input.headers, "拉流");
+        yield* this.runFlv(response.body!, outputPath ?? null, resume);
       }
     } catch (err) {
       this.controller?.abort();
@@ -284,13 +292,69 @@ export class StreamRecordingEngine implements RecordingEngine {
     }
   }
 
-  private async *runHttp(
+  private async *runFragmentedHls(
     input: StreamInput,
     outputPath: string | null,
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
-    this.controller = new AbortController();
-    const res = await this.fetchResponse(input.url, input.headers, "拉流");
+    const signal = this.controller!.signal;
+    const url = new URL(input.url);
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) {
+      throw new AppError("PLATFORM_CHANGED", "直播播放列表地址无效");
+    }
+    const headers = Array.from(new Headers(input.headers), ([name, value]) => `${name}: ${value}\r\n`).join("");
+    // FFmpeg resolves HLS initialization maps and media fragments. Keep the
+    // original encoded packets and feed the same FLV path as a direct stream.
+    const child = spawn(resolveBin("ffmpeg"), [
+      "-hide_banner", "-nostdin", "-loglevel", "error",
+      "-protocol_whitelist", "http,https,tcp,tls,crypto,httpproxy",
+      ...(url.protocol === "https:" ? ["-tls_verify", "1"] : []),
+      "-rw_timeout", String(this.stallTimeoutMs * 1000),
+      "-f", "hls", "-live_start_index", "-1",
+      ...(headers ? ["-headers", headers] : []),
+      "-i", input.url,
+      "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+      "-flvflags", "no_duration_filesize", "-flush_packets", "1", "-f", "flv", "pipe:1",
+    ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const untrack = trackFfmpeg(child);
+    let spawnFailed = false;
+    child.on("error", () => { spawnFailed = true; });
+    // FFmpeg errors can include signed upstream URLs. Drain without logging them.
+    child.stderr.resume();
+    const closed = new Promise<number | null>(resolve => child.once("close", code => {
+      untrack();
+      resolve(code);
+    }));
+    const kill = () => { child.kill("SIGKILL"); };
+    signal.addEventListener("abort", kill, { once: true });
+    try {
+      const body = Readable.toWeb(child.stdout, {
+        strategy: {
+          highWaterMark: child.stdout.readableHighWaterMark,
+          size: (chunk: Uint8Array) => chunk.byteLength,
+        },
+      }) as ReadableStream<Uint8Array>;
+      yield* this.runFlv(body, outputPath, resume, async hasMedia => {
+        const code = await closed;
+        if (this.stopped) return;
+        if (spawnFailed) throw new AppError("SERVICE_UNAVAILABLE", "无法启动直播转封装进程");
+        if (code !== 0 || !hasMedia) {
+          throw new AppError("NETWORK_UNAVAILABLE", "直播 HLS 转封装未能持续输出媒体", { retryable: true });
+        }
+      });
+    } finally {
+      signal.removeEventListener("abort", kill);
+      if (child.exitCode === null && child.signalCode === null) kill();
+      await closed;
+    }
+  }
+
+  private async *runFlv(
+    body: ReadableStream<Uint8Array>,
+    outputPath: string | null,
+    resume?: RecordingResumeOptions,
+    checkEnd?: (hasMedia: boolean) => Promise<void>,
+  ): AsyncIterable<RecordingEvent> {
     // 续录：追加写入已有文件；文件里已有 FLV 头时不再重复写入（首段 0 字节时仍需补头）。
     const append = Boolean(resume?.append);
     if (append && outputPath && this.writerOptions.directory) {
@@ -302,6 +366,9 @@ export class StreamRecordingEngine implements RecordingEngine {
     }
     const existing =
       append && outputPath ? await stat(outputPath).catch(() => null) : null;
+    if (outputPath && existing?.size && !await hasFlvHeader(outputPath)) {
+      throw new AppError("STREAM_FORMAT_CHANGED", "直播流格式变化，无法续写现有录像");
+    }
     const ws = outputPath
       ? createWriteStream(outputPath, { flags: append ? "a" : "w" })
       : null;
@@ -331,8 +398,7 @@ export class StreamRecordingEngine implements RecordingEngine {
       ? new FlvTimestampNormalizer({ rebaseFromFirstMedia: true })
       : null;
     let size = existing?.size ?? 0;
-    if (outputPath) yield { type: "file_created", filePath: outputPath };
-    const reader = res.body!.getReader();
+    const reader = body.getReader();
     const health = new StreamHealth(this.stallTimeoutMs, this.stallTimeoutMs === STREAM_IDLE_MS ? MEDIA_IDLE_MS : this.stallTimeoutMs, () => {
       void reader.cancel().catch(() => undefined);
       this.controller?.abort();
@@ -340,6 +406,7 @@ export class StreamRecordingEngine implements RecordingEngine {
     // The first body read needs the same deadline as every subsequent read.
     health.received(false);
     try {
+      if (outputPath) yield { type: "file_created", filePath: outputPath };
       while (!this.stopped) {
         health.begin();
         let result: ReadableStreamReadResult<Uint8Array>;
@@ -405,6 +472,7 @@ export class StreamRecordingEngine implements RecordingEngine {
         `[recording ${new Date().toISOString()}] capture-end file=${outputPath ?? "preview-upstream"} ${this.stopped ? "stop-requested" : "source-exhausted"}`,
       );
     }
+    if (!this.stopped && checkEnd) await checkEnd(normalizer.hasMedia);
     if (this.stopped) return;
     yield {
       type: "completed",
@@ -418,9 +486,11 @@ export class StreamRecordingEngine implements RecordingEngine {
     outputPath: string,
     resume?: RecordingResumeOptions,
   ): AsyncIterable<RecordingEvent> {
-    this.controller = new AbortController();
     if (resume?.append && outputPath && this.writerOptions.directory) await recoverRecordingBuffer(this.writerOptions.directory, outputPath);
     const existing = resume?.append ? await stat(outputPath).catch(() => null) : null;
+    if (existing?.size && await hasFlvHeader(outputPath)) {
+      throw new AppError("STREAM_FORMAT_CHANGED", "直播流格式变化，无法续写现有录像");
+    }
     const ws = outputPath ? createWriteStream(outputPath, { flags: resume?.append ? "a" : "w" }) : null;
     const writer = ws ? new BufferedRecordingWriter(ws, outputPath, { ...this.writerOptions, baseBytes: existing?.size ?? 0, ...(resume?.recordingId ? { recordingId: resume.recordingId } : {}) }) : null;
     let size = existing?.size ?? 0;
@@ -671,6 +741,15 @@ export function parseM3u8(
 export function hlsPollIntervalMs(targetDuration: number | null): number {
   if (!targetDuration) return 3000;
   return Math.min(Math.max(Math.round(targetDuration * 800), 1000), 3000);
+}
+
+async function hasFlvHeader(filePath: string): Promise<boolean> {
+  const handle = await open(filePath, "r");
+  try {
+    const signature = Buffer.alloc(3);
+    await handle.read(signature, 0, signature.length, 0);
+    return signature.toString() === "FLV";
+  } finally { await handle.close(); }
 }
 
 /** Read the complete tail tags after spool replay so the next source starts at

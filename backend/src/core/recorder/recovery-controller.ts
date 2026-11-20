@@ -1,6 +1,7 @@
 // 处理录制断流、自然断开和写盘失败后的恢复，保证续写前先停旧引擎。
 import { type RoomPolicySettings } from "../../config/room-policy.js";
 import type { RecordingSourceResult } from "../../platform/adapter.js";
+import type { StreamInput } from "../../recorder/engine.js";
 import { AppError } from "../../types/error.js";
 import type {
   AppSettings,
@@ -55,14 +56,7 @@ interface RecordingRecoveryHost {
   runSession(
     room: Room,
     recordingId: string,
-    stream: {
-      url: string;
-      format: "flv" | "hls" | "youtube";
-      youtube?: NonNullable<
-        import("../../recorder/engine.js").StreamInput["youtube"]
-      >;
-      headers?: Record<string, string>;
-    },
+    stream: StreamInput,
     filePath: string,
     session: ActiveSession,
     attempt: number,
@@ -530,14 +524,7 @@ export class RecordingRecovery {
     room: Room,
     recordingId: string,
     session: ActiveSession,
-    stream: {
-      url: string;
-      format: "flv" | "hls" | "youtube";
-      youtube?: NonNullable<
-        import("../../recorder/engine.js").StreamInput["youtube"]
-      >;
-      headers?: Record<string, string>;
-    },
+    stream: StreamInput,
     attempt: number,
   ): Promise<void> {
     // 先推进代次让旧会话失效，否则它收到错误事件后会再走一遍重连、重复处理。
