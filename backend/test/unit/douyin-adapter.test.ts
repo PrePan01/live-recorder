@@ -422,6 +422,64 @@ describe("DouyinAdapter", () => {
       .toEqual(["api", "api", "html", "api", "html", "api", "html"]);
   });
 
+  it.each(["live", "offline", "wrong-room", "wrong-anchor", "missing-stream"] as const)(
+    "checks the share API after an empty response and an HTML page with only an anchor: %s",
+    async (scenario) => {
+      const webRoomId = "56003874638";
+      const room = `https://live.douyin.com/${webRoomId}`;
+      const secUid = "test-anchor-id";
+      const cookie = "sessionid=valid; ttwid=visitor";
+      const id = "7707304016658909967";
+      const flv = "http://pull.example.com/live.flv";
+      const roomInfo = { web_rid: webRoomId, roomId: "", anchor: { sec_uid: secUid } };
+      const state = [{ state: { roomStore: { roomInfo } } }];
+      const html = `<script>self.__pace_f.push([1,${JSON.stringify(`0:${JSON.stringify(state)}`)}])</script>`;
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.hostname === "webcast.amemv.com") {
+          expect(url.pathname).toBe("/webcast/room/reflow/info/");
+          expect(url.searchParams.get("room_id")).toBe(webRoomId);
+          expect(url.searchParams.get("sec_user_id")).toBe(secUid);
+          expect(new Headers(init?.headers).has("Cookie")).toBe(false);
+          expect(init?.redirect).toBe("error");
+          return Response.json({ status_code: 0, data: { room: {
+            id_str: id,
+            title: "直播标题",
+            status: scenario === "offline" ? 4 : 2,
+            owner: {
+              web_rid: scenario === "wrong-room" ? "999999" : webRoomId,
+              sec_uid: scenario === "wrong-anchor" ? "other-anchor" : secUid,
+              nickname: "主播",
+              avatar_thumb: { url_list: ["https://image.example.com/avatar"] },
+            },
+            stream_url: { flv_pull_url: scenario === "missing-stream" ? {} : { HD1: flv } },
+          } } });
+        }
+        expect(new Headers(init?.headers).get("Cookie")).toBe(cookie);
+        if (String(input) === room) return new Response(html, { headers: { "Content-Type": "text/html" } });
+        return new Response("");
+      });
+      const adapter = new DouyinAdapter(fetcher);
+      const result = await adapter.checkLiveStatus(room, cookie);
+      if (scenario === "live") {
+        expect(result).toMatchObject({ status: "live", streamSessionId: id, availableQualities: ["1080p"] });
+        expect(adapter.getStreamUrlFromStatus(room, "1080p", cookie, result))
+          .toMatchObject({ url: flv, format: "flv", streamSessionId: id });
+        await expect(adapter.resolveRecordingSource(room, "1080p", cookie))
+          .resolves.toMatchObject({ status: "live", stream: { url: flv, format: "flv", streamSessionId: id } });
+        expect(fetcher).toHaveBeenCalledTimes(6);
+      } else if (scenario === "offline") {
+        expect(result).toEqual({ status: "offline" });
+        expect(fetcher).toHaveBeenCalledTimes(3);
+      } else {
+        expect(result).toMatchObject({
+          status: "error", error: { details: { reason: "douyin-enter-no-data" } },
+        });
+        expect(fetcher).toHaveBeenCalledTimes(4);
+      }
+    },
+  );
+
   it("uses the official room response for detection, stream lookup and the full internal room ID", async () => {
     const room = "https://live.douyin.com/123456";
     const cookie = "sessionid=current; ttwid=visitor";
