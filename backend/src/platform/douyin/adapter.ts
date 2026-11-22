@@ -13,6 +13,7 @@ import type {
   PlatformAdapter,
   StreamUrlResult,
   RecordingSourceResult,
+  PreviewSourceResult,
 } from "../adapter.js";
 
 const UA =
@@ -22,6 +23,8 @@ const UA =
 type EnterLane = "interactive" | "background";
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 const PLATFORM_REQUEST_ATTEMPTS = 2;
+const PREVIEW_DETECTION_TTL_MS = 120_000;
+const MAX_PREVIEW_DETECTIONS = 256;
 const REFLOW_TIMEOUT_MS = 5_000;
 const REFLOW_URL = "https://webcast.amemv.com/webcast/room/reflow/info/";
 const MOBILE_UA =
@@ -78,6 +81,12 @@ interface DouyinEnterResponse {
 }
 
 type DouyinRoom = NonNullable<DouyinEnterData["data"]>[number];
+
+interface PreviewDetection {
+  authorizationRevision: number;
+  observedAt: number;
+  status?: LiveStatusResult;
+}
 
 interface ReflowRoomReference {
   roomId: string;
@@ -156,6 +165,18 @@ function httpFlvUrls(
         typeof entry[1] === "string" && /^https?:\/\//.test(entry[1]),
     ),
   );
+}
+
+function isUsablePreviewUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const expire = url.searchParams.get("expire");
+    // Douyin's signed URLs normally use Unix seconds. Leave other formats to the CDN.
+    return !expire || !/^\d{10}$/.test(expire) || Number(expire) * 1000 > Date.now();
+  } catch {
+    return false;
+  }
 }
 
 /** HTML 实体解码（主播昵称等字段）。 */
@@ -337,6 +358,7 @@ export class DouyinAdapter implements PlatformAdapter {
     Pick<LiveStatusResult, "streamSessionId" | "streamTitle">,
     { roomId: string; cookie: string; entry: DouyinRoom }
   >();
+  private readonly previewDetections = new Map<string, PreviewDetection>();
   private nickCache = new Map<
     string,
     { name: string; avatar: string | null; at: number }
@@ -364,6 +386,7 @@ export class DouyinAdapter implements PlatformAdapter {
       cookie: string,
       interactive: boolean,
     ) => Promise<NativeBrowserResponse>,
+    private authorizationRevision = () => 0,
   ) {}
 
   /**
@@ -905,6 +928,7 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
+    this.previewDetections.delete(roomId);
     // 抖音未登录（本地没有 Cookie）时必须登录授权才能检测/观看/录制：不做任何匿名请求。
     // 匿名 enter 请求的结果不可靠——有时返回看似正常的数据（房间被判成离线，卡片上看不到
     // 任何报错，用户不知道要登录），有时长时间不返回，把房间一直留在「检测中」。直接按访问
@@ -919,9 +943,18 @@ export class DouyinAdapter implements PlatformAdapter {
         ).toObject(),
       };
     }
+    const detection: PreviewDetection = {
+      authorizationRevision: this.authorizationRevision(),
+      observedAt: performance.now(),
+    };
+    const oldest = this.previewDetections.keys().next().value;
+    if (oldest !== undefined && this.previewDetections.size >= MAX_PREVIEW_DETECTIONS)
+      this.previewDetections.delete(oldest);
+    this.previewDetections.set(roomId, detection);
     let data: DouyinEnterResponse;
     try {
       data = await this.fetchRoomInfoWithRetry(roomId, cookie, "background");
+      detection.observedAt = performance.now();
     } catch (err) {
       if (err instanceof AppError) {
         if (
@@ -1032,7 +1065,20 @@ export class DouyinAdapter implements PlatformAdapter {
         .map((k) => RESOLUTION_QUALITY[k])
         .filter((q): q is Quality => Boolean(q)),
     };
-    this.detectedStreams.set(result, { roomId, cookie, entry });
+    this.detectedStreams.set(result, {
+      roomId,
+      cookie,
+      entry: {
+        ...(entry.id_str !== undefined ? { id_str: entry.id_str } : {}),
+        ...(entry.id !== undefined ? { id: entry.id } : {}),
+        stream_url: { flv_pull_url: flv },
+      },
+    });
+    // Reuse only a known broadcast and the most recent check for this room.
+    if ((entry.id_str ?? entry.id) &&
+        this.previewDetections.get(roomId) === detection &&
+        detection.authorizationRevision === this.authorizationRevision())
+      detection.status = result;
     return result;
   }
 
@@ -1099,6 +1145,28 @@ export class DouyinAdapter implements PlatformAdapter {
       quality,
       cookie,
     );
+  }
+
+  async resolvePreviewSource(
+    roomUrl: string,
+    quality: Quality,
+    cookie?: string,
+    context?: { fresh?: boolean },
+  ): Promise<PreviewSourceResult> {
+    const roomId = this.parseRoomId(roomUrl);
+    const detected = roomId ? this.previewDetections.get(roomId) : undefined;
+    if (roomId && detected?.status) {
+      // Use each observation once. A failed CDN connection must get a fresh URL.
+      this.previewDetections.delete(roomId);
+      if (!context?.fresh &&
+          detected.authorizationRevision === this.authorizationRevision() &&
+          performance.now() - detected.observedAt < PREVIEW_DETECTION_TTL_MS) {
+        const stream = this.getStreamUrlFromStatus(roomUrl, quality, cookie, detected.status);
+        if (stream && isUsablePreviewUrl(stream.url))
+          return { status: "live", stream, reusedDetection: true };
+      }
+    }
+    return this.resolveRecordingSource(roomUrl, quality, cookie);
   }
 
   async getDanmakuRoomId(roomUrl: string, cookie: string): Promise<string> {

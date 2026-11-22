@@ -492,6 +492,106 @@ describe("DouyinAdapter", () => {
     await expect(adapter.getDanmakuRoomId(room, cookie)).resolves.toBe(id);
   });
 
+  it("uses a recent detection once for cold preview with the requested quality and full signed URL", async () => {
+    const room = "https://live.douyin.com/123456";
+    const cookie = "sessionid=valid";
+    const url = "https://pull.example.com/720.flv?sign=full%2Bsignature&expire=100";
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(Response.json(livePayload({
+        id_str: "7707304016658909967",
+        stream_url: { flv_pull_url: { FULL_HD1: "https://pull.example.com/full.flv", SD2: url } },
+      })))
+      .mockResolvedValueOnce(Response.json(livePayload()));
+    const adapter = new DouyinAdapter(fetcher);
+    await adapter.checkLiveStatus(room, cookie);
+
+    await expect(adapter.resolvePreviewSource(room, "720p", cookie)).resolves.toMatchObject({
+      status: "live", reusedDetection: true,
+      stream: { url, actualQuality: "720p", streamSessionId: "7707304016658909967", headers: { Referer: room } },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await adapter.resolvePreviewSource(room, "720p", cookie)).not.toHaveProperty("reusedDetection");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a cache hit whose signed URL is already past its Unix expiry", async () => {
+    const room = "https://live.douyin.com/123456";
+    const cookie = "sessionid=valid";
+    const expire = Math.floor(Date.now() / 1000) - 1;
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(Response.json(livePayload({
+        stream_url: { flv_pull_url: { FULL_HD1: `https://pull.example.com/old.flv?sign=example&expire=${expire}` } },
+      })))
+      .mockResolvedValueOnce(Response.json(livePayload()));
+    const adapter = new DouyinAdapter(fetcher);
+    await adapter.checkLiveStatus(room, cookie);
+
+    const source = await adapter.resolvePreviewSource(room, "original", cookie);
+    expect(source).toMatchObject({ status: "live", stream: { url: "https://pull.example.com/full.flv" } });
+    expect(source).not.toHaveProperty("reusedDetection");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not republish an older live detection after a newer offline result", async () => {
+    const room = "https://live.douyin.com/123456";
+    const cookie = "sessionid=valid";
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(Response.json(livePayload()))
+      .mockResolvedValueOnce(Response.json(livePayload({
+        status: 4,
+        user: { nickname: "抖音主播", avatar_thumb: { url_list: ["https://img.example.com/avatar"] } },
+      })))
+      .mockResolvedValueOnce(Response.json(livePayload({ status: 4 })));
+    const adapter = new DouyinAdapter(fetcher);
+    let resolveProfile!: (profile: { name: string; avatar: null }) => void;
+    const pendingProfile = new Promise<{ name: string; avatar: null }>(resolve => { resolveProfile = resolve; });
+    const profile = vi.spyOn(adapter, "fetchAnchorProfile").mockReturnValueOnce(pendingProfile);
+
+    const olderDetection = adapter.checkLiveStatus(room, cookie);
+    await vi.waitFor(() => expect(profile).toHaveBeenCalledOnce());
+    await expect(adapter.checkLiveStatus(room, cookie)).resolves.toMatchObject({ status: "offline" });
+    resolveProfile({ name: "抖音主播", avatar: null });
+    await olderDetection;
+
+    await expect(adapter.resolvePreviewSource(room, "original", cookie)).resolves.toEqual({ status: "offline" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["just before expiry", "expired", "new authorization", "different cookie", "later offline check"] as const)(
+    "reuses only a current detection for preview: %s",
+    async (scenario) => {
+      vi.useFakeTimers({ toFake: ["performance"] });
+      try {
+        const room = "https://live.douyin.com/123456";
+        const cookie = "sessionid=valid";
+        let revision = 0;
+        const fetcher = vi.fn().mockImplementation(async () => Response.json(livePayload()));
+        const adapter = new DouyinAdapter(fetcher, undefined, undefined, () => revision);
+        await adapter.checkLiveStatus(room, cookie);
+        if (scenario === "just before expiry") vi.advanceTimersByTime(119_999);
+        if (scenario === "expired") vi.advanceTimersByTime(120_000);
+        if (scenario === "new authorization") revision++;
+        if (scenario === "later offline check") {
+          fetcher.mockResolvedValueOnce(Response.json(livePayload({ status: 4 })));
+          await expect(adapter.checkLiveStatus(room, cookie)).resolves.toMatchObject({ status: "offline" });
+        }
+        const result = await adapter.resolvePreviewSource(
+          room, "original", scenario === "different cookie" ? "sessionid=other" : cookie,
+        );
+        expect(result).toMatchObject({ status: "live" });
+        if (scenario === "just before expiry") {
+          expect(result).toHaveProperty("reusedDetection", true);
+          expect(fetcher).toHaveBeenCalledTimes(1);
+        } else {
+          expect(result).not.toHaveProperty("reusedDetection");
+          expect(fetcher).toHaveBeenCalledTimes(scenario === "later offline check" ? 3 : 2);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("resolves the internal room ID for danmaku before FLV URLs are ready", async () => {
     const adapter = new DouyinAdapter(mockFetcher(() => livePayload({ id_str: "7707304016658909967", stream_url: undefined })));
     await expect(adapter.getDanmakuRoomId("https://live.douyin.com/123456", "sessionid=b"))
