@@ -6,6 +6,61 @@ const playlist = (sequence = 42) => `#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXT-X-ME
 const segments = (body: string) => body.split('\n').filter(line => line && !line.startsWith('#'));
 
 describe('YouTube parallel HLS source', () => {
+  it('keeps a segment alive while bytes continue arriving beyond the connection timeout', async () => {
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    let signal: AbortSignal | undefined;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('.m3u8')) return new Response(playlist());
+      if (!url.endsWith('/video/c.ts')) return new Response('other media');
+      signal = init?.signal ?? undefined;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          upstream = controller;
+          controller.enqueue(Buffer.from('first'));
+        },
+      }));
+    };
+    const source = await YoutubeHlsSource.open(tracks, new AbortController().signal, () => {}, fetcher);
+    try {
+      const text = await (await fetch(source.inputs[0]!)).text();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const response = await fetch(segments(text)[2]!);
+      const reader = response.body!.getReader();
+      expect(Buffer.from((await reader.read()).value!).toString()).toBe('first');
+      for (const chunk of ['second', 'third']) {
+        await vi.advanceTimersByTimeAsync(8_000);
+        upstream.enqueue(Buffer.from(chunk));
+        expect(Buffer.from((await reader.read()).value!).toString()).toBe(chunk);
+      }
+      expect(signal?.aborted).toBe(false);
+      upstream.close();
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      await source.close();
+    }
+  });
+
+  it('retries an on-demand segment on a temporary upstream outage', async () => {
+    let attempts = 0;
+    const fetcher: typeof fetch = async input => {
+      const url = String(input);
+      if (url.endsWith('.m3u8')) return new Response(playlist());
+      if (!url.endsWith('/video/c.ts')) return new Response('other media');
+      attempts++;
+      return attempts === 1 ? new Response(null, { status: 503 }) : new Response('recovered segment');
+    };
+    const source = await YoutubeHlsSource.open(tracks, new AbortController().signal, () => {}, fetcher);
+    try {
+      const text = await (await fetch(source.inputs[0]!)).text();
+      const response = await fetch(segments(text)[2]!);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('recovered segment');
+      expect(attempts).toBe(2);
+    } finally { await source.close(); }
+  });
+
   it('delivers the first prefetched packet while the rest of its segment is still pending', async () => {
     let finish!: ReadableStreamDefaultController<Uint8Array>;
     let firstReads = 0;

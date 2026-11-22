@@ -809,6 +809,10 @@ export class PreviewController {
       recording.startedAt,
       filePath,
     );
+    if (previewSession.input) {
+      const { url, streamSessionId } = previewSession.input;
+      session.lastSource = { url, ...(streamSessionId ? { streamSessionId } : {}) };
+    }
     let resolveDone!: () => void;
     session.done = new Promise<void>((resolve) => {
       resolveDone = resolve;

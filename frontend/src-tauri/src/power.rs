@@ -1,6 +1,8 @@
 //! Native sleep prevention and suspend/resume evidence, independent of WebViews.
 use std::sync::{atomic::{AtomicU64, Ordering}, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::time::Instant;
 use tauri::Manager;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,15 +37,23 @@ pub fn start(app: tauri::AppHandle) {
             .timeout(Duration::from_secs(2)).build() else { return; };
         let mut blocker = platform::Blocker::default();
         let mut pending = std::collections::VecDeque::new();
+        let mut renewed_at: Option<Instant> = None;
         loop {
             pending.extend(receiver.try_iter());
             while pending.len() > 64 { pending.pop_front(); }
             let instance = crate::backend::read_ready_file();
-            let prevent = instance.as_ref().and_then(|instance| {
+            let policy = instance.as_ref().and_then(|instance| {
                 client.get(format!("{}/api/v1/service/power", instance.base_url)).send().ok()
                     .filter(|response| response.status().is_success())?
                     .json::<serde_json::Value>().ok()?.get("preventSleep")?.as_bool()
-            }).unwrap_or(false);
+            });
+            match policy {
+                Some(true) => renewed_at = Some(Instant::now()),
+                Some(false) => renewed_at = None,
+                None => {}
+            }
+            // Keep the assertion through brief sidecar restarts or API timeouts.
+            let prevent = renewed_at.is_some_and(|at| at.elapsed() < Duration::from_secs(15));
             if let Err(error) = blocker.set(prevent) {
                 log::warn!("录制防休眠申请失败: {error}");
             }
@@ -59,7 +69,12 @@ pub fn start(app: tauri::AppHandle) {
             }
             // The handle keeps the shell alive; process exit releases all native assertions.
             let _ = app.state::<crate::ShellState>();
-            std::thread::sleep(Duration::from_secs(1));
+            let poll_interval = Duration::from_secs(1);
+            match receiver.recv_timeout(poll_interval) {
+                Ok(interval) => pending.push_back(interval),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(poll_interval),
+            }
         }
     });
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

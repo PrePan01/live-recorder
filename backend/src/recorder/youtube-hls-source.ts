@@ -2,13 +2,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomBytes, createHash } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { youtubeFetch } from '../platform/youtube/network.js';
+import { StreamHealth } from './stream-health.js';
 import type { YoutubeHlsTrack } from './youtube-source.js';
 
 const PLAYLIST_LIMIT = 2 * 1024 * 1024;
 const PREFETCH_HIGH_WATER_MARK = 1024 * 1024;
 const ROUTE_LIMIT = 4096;
 const ROUTE_BYTES_LIMIT = 8 * 1024 * 1024;
+const REQUEST_IDLE_MS = 15_000;
 type Resource = YoutubeHlsTrack & { kind: 'playlist' | 'segment' | 'init' | 'key'; bytes: number };
 type Prefetch = {
   ready: Promise<Response>; body: Promise<void>; stream: PassThrough;
@@ -133,12 +136,65 @@ export class YoutubeHlsSource {
   }
 
   private async request(resource: YoutubeHlsTrack, signal = this.abort.signal, range?: string): Promise<Response> {
-    const response = await this.fetcher(resource.url, {
-      headers: { ...resource.headers, ...(range ? { Range: range } : {}) },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+    const headers = { ...resource.headers, ...(range ? { Range: range } : {}) };
+    for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
+      const response = await this.fetchResource(resource.url, headers, signal).catch(error => {
+        if (signal.aborted || attempt === 3) throw error;
+        return null;
+      });
+      if (response?.ok) return response;
+      if (response) {
+        await response.body?.cancel().catch(() => undefined);
+        if (attempt === 3 || (response.status !== 408 && response.status < 500)) {
+          throw new Error(`YouTube media HTTP ${response.status}`);
+        }
+      }
+      await wait(150 * attempt, undefined, { signal });
+    }
+  }
+
+  private async fetchResource(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<Response> {
+    const request = new AbortController();
+    const timer = setTimeout(() => request.abort(), REQUEST_IDLE_MS);
+    timer.unref();
+    let response: Response;
+    try {
+      response = await this.fetcher(url, { headers, signal: AbortSignal.any([signal, request.signal]) });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok || !response.body) return response;
+
+    // The connection may legitimately take longer to deliver a large segment.
+    // Watch each upstream read while demand exists, rather than its total age.
+    const reader = response.body.getReader();
+    const health = new StreamHealth(REQUEST_IDLE_MS, REQUEST_IDLE_MS, () => {
+      request.abort();
+      void reader.cancel().catch(() => undefined);
     });
-    if (!response.ok) { await response.body?.cancel(); throw new Error(`YouTube media HTTP ${response.status}`); }
-    return response;
+    health.received(false);
+    const body = new ReadableStream<Uint8Array>({
+      async pull(output) {
+        health.begin();
+        try {
+          const result = await reader.read();
+          health.check();
+          if (result.done) output.close();
+          else output.enqueue(result.value);
+        } catch (error) {
+          health.check();
+          throw error;
+        } finally {
+          health.pause();
+        }
+      },
+      cancel(reason) {
+        health.pause();
+        return reader.cancel(reason);
+      },
+    }, { highWaterMark: 0 });
+    return new Response(body, { headers: response.headers, status: response.status, statusText: response.statusText });
   }
 
   private async read(response: Response, limit: number): Promise<Buffer | null> {
