@@ -44,7 +44,10 @@ import {
 import { useSettingsStore } from "../stores/settingsStore";
 import type { Room } from "../types/room";
 import { DanmakuLayer } from "./danmuku/DanmakuLayer";
-import { useDanmakuListModal, useDanmakuListVisibility } from "./danmuku/DanmakuListModalLayout";
+import {
+  useDanmakuListModal,
+  useDanmakuListVisibility,
+} from "./danmuku/DanmakuListModalLayout";
 import DanmakuSettings from "./danmuku/DanmakuSettings";
 import RecordingStopIcon from "./RecordingStopIcon";
 import VideoPlayer from "./VideoPlayer";
@@ -98,8 +101,13 @@ export default function PreviewModal({
   );
   const savesDanmaku = roomSavesDanmaku(live, globalDanmakuEnabled);
   const previewCacheEnabled = savesDanmaku && !recording;
-  const [cacheLeaseRoomId, setCacheLeaseRoomId] = useState<string | undefined>();
-  if (cacheLeaseRoomId !== room.id && (previewCacheEnabled || cacheLeaseRoomId !== undefined)) {
+  const [cacheLeaseRoomId, setCacheLeaseRoomId] = useState<
+    string | undefined
+  >();
+  if (
+    cacheLeaseRoomId !== room.id &&
+    (previewCacheEnabled || cacheLeaseRoomId !== undefined)
+  ) {
     setCacheLeaseRoomId(previewCacheEnabled ? room.id : undefined);
   }
   const keepCacheLease = previewCacheEnabled || cacheLeaseRoomId === room.id;
@@ -137,7 +145,11 @@ export default function PreviewModal({
     onPictureMouseDown,
     onPictureClick,
     onHandleDown,
-  } = usePreviewLayout(defaultWidth, displayedTrack, danmakuListVisibility.showPanel);
+  } = usePreviewLayout(
+    defaultWidth,
+    displayedTrack,
+    danmakuListVisibility.showPanel,
+  );
   const highlights = usePreviewHighlights(
     room,
     recording,
@@ -233,12 +245,23 @@ export default function PreviewModal({
   const readPage = useMemo(() => {
     if (!previewDanmakuLease) return previewCacheEnabled ? null : undefined;
     const readCachePage = (cursor: string, signal: AbortSignal) =>
-      fetchPreviewDanmakuListPage(room.id, previewDanmakuLease.token, cursor, signal);
+      fetchPreviewDanmakuListPage(
+        room.id,
+        previewDanmakuLease.token,
+        cursor,
+        signal,
+      );
     if (previewCacheEnabled) return readCachePage;
     return listId && keepCacheLease
       ? createRecordingPreviewListReader(listId, readCachePage)
       : undefined;
-  }, [previewDanmakuLease, room.id, previewCacheEnabled, keepCacheLease, listId]);
+  }, [
+    previewDanmakuLease,
+    room.id,
+    previewCacheEnabled,
+    keepCacheLease,
+    listId,
+  ]);
   const danmakuList = useDanmakuListModal({
     visibility: danmakuListVisibility,
     suspended: pictureInPicture,
@@ -373,7 +396,8 @@ export default function PreviewModal({
                   aria-label="画中画"
                   icon={<CompressOutlined />}
                   onClick={() => {
-                    if (!danmakuListVisibility.open) danmakuListVisibility.finishExit();
+                    if (!danmakuListVisibility.open)
+                      danmakuListVisibility.finishExit();
                     enterPictureInPicture();
                   }}
                 />
@@ -483,6 +507,10 @@ export default function PreviewModal({
             )}
           </div>
         </div>
+        <div
+          className={`lr-preview-modal__resize-handle${portrait ? " lr-preview-modal__resize-handle--portrait" : ""}`}
+          onMouseDown={onHandleDown}
+        />
       </Modal>
       {createPortal(
         <div
@@ -551,13 +579,6 @@ export default function PreviewModal({
               />
             </div>
           ) : null}
-          {!pictureInPicture && (
-            <div
-              onMouseDown={onHandleDown}
-              title="拖动调整大小"
-              className={`lr-preview-player__resize-handle${portrait ? " lr-preview-player__resize-handle--portrait" : ""}`}
-            />
-          )}
         </div>,
         document.body,
       )}
