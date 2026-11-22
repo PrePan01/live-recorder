@@ -30,6 +30,7 @@ import RoomAvatar from "./RoomAvatar";
 import RoomStats from "./RoomStats";
 import RoomHealth from "./RoomHealth";
 import LiveStatusTag from "../../../components/LiveStatusTag";
+import { renderRoomPlanTags } from "../../../components/RoomPlanTags";
 import { RoomQualityLight } from "../../../components/QualityLight";
 import LivePredictionBadge from "./LivePredictionBadge";
 import { useRoomSortableItem } from "../../../components/RoomSortable";
@@ -302,16 +303,7 @@ export const RoomCard = memo(function RoomCard({
               自动录制
             </Tag>
           ) : null}
-          {room.enabledPlans?.schedule && (
-            <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-              定时计划
-            </Tag>
-          )}
-          {room.enabledPlans?.keyword && (
-            <Tag color="cyan" style={{ marginInlineEnd: 0 }}>
-              关键词计划
-            </Tag>
-          )}
+          {renderRoomPlanTags(room.enabledPlans)}
           {onAir ? (
             <LiveStatusTag
               status="live"
