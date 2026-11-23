@@ -826,6 +826,9 @@
   border: 1px solid color-mix(in srgb, var(--lr-ink) 40%, transparent);
   background: var(--lr-surface);
 }
+.lr-room-policy-console .lr-console-pad:has(> .ant-switch:enabled) {
+  cursor: pointer;
+}
 .lr-console-pad-label {
   display: flex;
   align-items: center;

@@ -55,6 +55,7 @@ function render(room: Room) {
   const tree = elements(component({ room, selected: false, onSelect: vi.fn(), onEdit: vi.fn(), onPlans: vi.fn(), onDelete: vi.fn() }));
   hooks.effects.forEach(effect => effect());
   return {
+    stateRow: tree.find(el => el.props.className === "lr-room-policy-state-row")!,
     busy: tree[0].props["aria-busy"],
     fields: tree.find(el => el.type === "policy-fields")!.props as {
       value: RoomPolicy; disabled: boolean; status: ReactNode; onChange: (patch: RoomPolicy) => void;
@@ -68,6 +69,29 @@ beforeEach(() => {
   hooks.slots = [];
   hooks.cursor = 0;
   vi.resetAllMocks();
+});
+
+it.each([
+  { enabledPlans: undefined, labels: [] },
+  { enabledPlans: { schedule: false, keyword: false }, labels: [] },
+  { enabledPlans: { schedule: true, keyword: false }, labels: ["定时计划"] },
+  { enabledPlans: { schedule: false, keyword: true }, labels: ["关键词计划"] },
+  { enabledPlans: { schedule: true, keyword: true }, labels: ["定时计划", "关键词计划"] },
+])("renders enabled plan tags after the room status ($enabledPlans)", ({ enabledPlans, labels }) => {
+  const room = {
+    ...DEFAULT_ROOM_POLICY,
+    id: "plan-room",
+    displayName: "测试房间",
+    monitorState: "idle",
+    tags: [],
+    enabledPlans,
+  } as unknown as Room;
+  const { stateRow } = render(room);
+  const state = elements(stateRow.props.children as ReactNode)
+    .find(el => el.props.className === "lr-channel-state")!;
+  expect(elements(state.props.children as ReactNode).map(el =>
+    el.type === "tag" ? el.props.children : el.type,
+  )).toEqual(["status", ...labels]);
 });
 
 describe("room policy reset with overlapping saves", () => {

@@ -6,6 +6,8 @@ import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { START_TIMEOUT_MS } from '../../src/core/recorder/constants.js';
 import { buildServices } from '../../src/core/services.js';
+import type { RecordingRecovery } from '../../src/core/recorder/recovery-controller.js';
+import type { RecordingSessions } from '../../src/core/recorder/session-controller.js';
 import { FakeRecordingEngine, type FakeEngineScript } from '../../src/recorder/fake-engine.js';
 import { AppError } from '../../src/types/error.js';
 
@@ -55,6 +57,56 @@ async function setup() {
 }
 
 describe('recording reconnect alerts', () => {
+  it('finishes the old recording when recovery reaches a new broadcast', async () => {
+    const h = await setup();
+    h.probe.mockResolvedValue({ status: 'live', streamSessionId: 'new-broadcast' });
+    const adapter = h.services.adapterFor('bilibili');
+    const original = adapter.getStreamUrl.bind(adapter);
+    let lookups = 0;
+    vi.spyOn(adapter, 'getStreamUrl').mockImplementation(async (...args) => ({
+      ...await original(...args),
+      streamSessionId: ++lookups === 1 ? 'same-broadcast' : 'new-broadcast',
+    }));
+    try {
+      const old = await h.start();
+      await h.until(() => h.services.recordings.get(old.id)?.state === 'completed');
+      expect(h.services.manager.isRoomActive(h.room.id)).toBe(false);
+      delete h.script.failAfterMs;
+      expect(await h.services.manager.maybeStartRecording(h.room, { streamSessionId: 'new-broadcast' })).toBe(true);
+      const records = h.services.recordings.list({ roomId: h.room.id }).items;
+      expect(records.map(rec => rec.streamSessionId).sort()).toEqual(['new-broadcast', 'same-broadcast']);
+      await h.services.manager.stopRecording(h.room.id);
+    } finally { await h.cleanup(); }
+  });
+
+  it('keeps recovering when the next pull fails before the previous handoff returns', async () => {
+    const h = await setup();
+    h.probe.mockResolvedValue({ status: 'live', streamSessionId: 'same-broadcast' });
+    const manager = h.services.manager as unknown as {
+      runSession: RecordingSessions['runSession'];
+      recoveryController: RecordingRecovery;
+    };
+    const original = manager.runSession.bind(manager);
+    let pulls = 0;
+    let currentRecordingId = '';
+    vi.spyOn(manager, 'runSession').mockImplementation((...args) => {
+      pulls++;
+      if (pulls === 2) {
+        delete h.script.failAfterMs;
+        void manager.recoveryController.handleDisconnect(h.room, currentRecordingId, networkError(), 1, 0);
+        return Promise.resolve();
+      }
+      return original(...args);
+    });
+    try {
+      const rec = await h.start();
+      currentRecordingId = rec.id;
+      await h.until(() => pulls >= 3 && h.services.recordings.get(rec.id)?.state === 'recording');
+      expect(h.services.recordings.list({ roomId: h.room.id }).items).toHaveLength(1);
+      await h.services.manager.stopRecording(h.room.id);
+    } finally { await h.cleanup(); }
+  });
+
   it('reports one cause and one five-minute warning while continuing retries and respecting read state', async () => {
     const h = await setup();
     try {

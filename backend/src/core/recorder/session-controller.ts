@@ -81,6 +81,7 @@ export class RecordingSessions {
     const existing = this.systemSleepIntervals.find(
       (interval) => interval.startedAt === startedAt,
     );
+    if (existing && existing.endedAt >= endedAt) return;
     if (existing) existing.endedAt = endedAt;
     else this.systemSleepIntervals.push({ startedAt, endedAt });
     this.systemSleepIntervals = this.systemSleepIntervals.slice(-64);
@@ -92,6 +93,7 @@ export class RecordingSessions {
       if (Date.parse(session.startedAt) >= endedAt) continue;
       if (session.lastDataAt < endedAt) {
         session.gapStartAt ??= session.lastDataAt;
+        session.wakeReconnect?.();
       } else if (
         !changed.includes(session.recordingId) &&
         session.gapStartAt === null
@@ -210,7 +212,6 @@ export class RecordingSessions {
       lastRecoveryAt: now,
       generation: 0,
       pullDone: null,
-      handingOff: false,
     };
   }
 
@@ -342,6 +343,11 @@ export class RecordingSessions {
     engine.setPreviewActive?.(this.host.preview?.hasClients(room.id) ?? false);
     const generation = session.generation;
     session.engine = engine;
+    const streamSessionId = stream.streamSessionId ?? session.lastSource?.streamSessionId;
+    session.lastSource = {
+      url: stream.url,
+      ...(streamSessionId ? { streamSessionId } : {}),
+    };
     engine.setDownloadObserver?.((bytes) => {
       if (session.generation === generation && !session.stopRequested)
         session.downloadSpeed.add(bytes, this.services.clock.now());
@@ -354,7 +360,7 @@ export class RecordingSessions {
     let gotData = false;
     const pendingTimeout = this.services.clock.setTimeout(
       () => {
-        if (!gotData) {
+        if (!gotData && session.generation === generation && !session.stopRequested && !this.host.shuttingDown) {
           const err = new AppError(
             "RECORDING_START_TIMEOUT",
             "等待直播数据超时",
@@ -374,8 +380,14 @@ export class RecordingSessions {
 
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
-      // A timeout can hand this session off while the directory is being prepared.
+      // 目录准备期间，启动超时可能已将录制交给下一次拉流。
       if (session.generation !== generation || this.host.shuttingDown) return;
+      if (session.stopRequested) {
+        await this.completeRecording(room, recordingId, session.size, "ended", {
+          endReason: session.requestedEndReason ?? "stopped",
+        });
+        return;
+      }
       const input = { ...stream };
       // 第 2 段起接着写同一个文件：追加写入 + 时间戳顺延到上一段结尾之后。
       const resume = {
@@ -384,8 +396,7 @@ export class RecordingSessions {
         timestampOffsetMs: session.timestampOffsetMs,
         ...(session.hlsCursor ? { hlsCursor: session.hlsCursor } : {}),
       };
-      const events = session.stopRequested ? [] : engine.start(input, filePath, resume);
-      for await (const event of events) {
+      for await (const event of engine.start(input, filePath, resume)) {
         if (session.generation !== generation) return;
         if (session.stopRequested) break;
         switch (event.type) {
@@ -490,6 +501,7 @@ export class RecordingSessions {
           }
           case "completed": {
             if (event.hlsCursor) session.hlsCursor = event.hlsCursor;
+            this.services.clock.clearTimeout(pendingTimeout);
             // 这一路拉流已结束（写流已关闭），接力时无需再等它。
             session.pullDone = null;
             await this.host.handleNaturalEnd(
@@ -507,11 +519,13 @@ export class RecordingSessions {
             this.services.clock.clearTimeout(pendingTimeout);
             // 同上：错误事件意味着该路拉流已收尾，写流已关闭。
             session.pullDone = null;
-            session.size =
+            const size =
               room.platform === "youtube"
                 ? await youtubeSize(filePath)
                 : ((await stat(filePath).catch(() => null))?.size ??
                   session.size);
+            if (session.generation !== generation || this.host.shuttingDown) return;
+            session.size = size;
             await this.host.handleDisconnect(
               room,
               recordingId,

@@ -207,7 +207,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
             if (revision !== douyinAuthorization.revision)
               throw new Error("抖音授权已更新");
             return result;
-          }) as PlatformAdapter,
+          }, () => douyinAuthorization.revision) as PlatformAdapter,
           xiaohongshu: new XiaohongshuAdapter(fetch, {
             load: profile => xhsSources.load(profile),
             save: (profile, url) => saveXiaohongshuSource(db, profile, url),

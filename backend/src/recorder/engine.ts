@@ -1,7 +1,7 @@
 import type { ErrorObject } from "../types/index.js";
 import type { StreamUrlResult } from "../platform/adapter.js";
 
-export type StreamInput = Pick<StreamUrlResult, "url" | "format" | "youtube" | "headers">;
+export type StreamInput = Pick<StreamUrlResult, "url" | "format" | "youtube" | "headers" | "streamSessionId">;
 
 /**
  * 续录选项：中断恢复后接着写同一个文件，而不是另开一个文件。

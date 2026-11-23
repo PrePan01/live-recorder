@@ -393,6 +393,7 @@ export function usePreviewLayout(
   };
 
   const onHandleDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     const startPosition = portrait ? e.clientY : e.clientX;
@@ -405,14 +406,17 @@ export function usePreviewLayout(
           Math.max(0, baseVideoHeight - measuredTrackHeight),
         )
       : Math.min(MAX_WIDTH, maxModalWidth);
-    const minSize = Math.min(portrait ? MIN_VIDEO_HEIGHT : MIN_WIDTH, maxSize);
+    const minSize = Math.min(startSize, portrait ? MIN_VIDEO_HEIGHT : MIN_WIDTH);
+    // 居中弹窗的两侧同时伸缩，角点移动量约为尺寸变化的一半。
+    const resizeScale = portrait || !hasSidePanel ? 2 : 1;
     let latestSize = startSize;
 
     const onMove = (ev: MouseEvent) => {
       const delta = (portrait ? ev.clientY : ev.clientX) - startPosition;
-      const size = delta === 0
-        ? startSize
-        : Math.min(maxSize, Math.max(minSize, startSize + delta));
+      const size = Math.min(
+        Math.max(startSize, maxSize),
+        Math.max(minSize, startSize + delta * resizeScale),
+      );
       if (size === latestSize) return;
       latestSize = size;
       queuePreviewResize({

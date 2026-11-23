@@ -33,6 +33,8 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const PLATFORM_REQUEST_TIMEOUT_MS = 8_000;
 const PLATFORM_REQUEST_ATTEMPTS = 2;
+const CDN_FAILURE_WINDOW_MS = 2 * 60_000;
+const MAX_CDN_FAILURE_ENTRIES = 128;
 
 type PlayLane = "interactive" | "background";
 
@@ -117,6 +119,7 @@ function platformStartedAt(liveTime: number | undefined): string | undefined {
 
 export class BilibiliAdapter implements PlatformAdapter {
   readonly platform = "bilibili" as const;
+  private readonly cdnFailures = new Map<string, { count: number; at: number }>();
   private playBusy = false;
   private playLanes: Record<PlayLane, Array<() => void>> = {
     interactive: [],
@@ -139,6 +142,27 @@ export class BilibiliAdapter implements PlatformAdapter {
 
   parseRoomId(roomUrl: string): number | null {
     return parseBilibiliRoomId(roomUrl);
+  }
+
+  noteMediaSourceFailure(roomUrl: string, sourceUrl: string): void {
+    const room = this.parseRoomId(roomUrl);
+    const host = streamHost(sourceUrl);
+    if (!room || !host) return;
+    const key = `${room}/${host}`;
+    const now = Date.now();
+    const last = this.cdnFailures.get(key);
+    const count = last && now - last.at < CDN_FAILURE_WINDOW_MS ? last.count + 1 : 1;
+    this.cdnFailures.delete(key);
+    this.cdnFailures.set(key, { count, at: now });
+    if (this.cdnFailures.size > MAX_CDN_FAILURE_ENTRIES) {
+      const oldest = this.cdnFailures.keys().next().value!;
+      this.cdnFailures.delete(oldest);
+    }
+  }
+
+  private cdnIsUnstable(room: number, host: string): boolean {
+    const failure = this.cdnFailures.get(`${room}/${host}`);
+    return !!failure && failure.count >= 2 && Date.now() - failure.at < CDN_FAILURE_WINDOW_MS;
   }
 
   private async runPlayRequest<T>(
@@ -269,6 +293,8 @@ export class BilibiliAdapter implements PlatformAdapter {
   private pickStream(
     data: BiliPlayResponse,
     targetQn: number,
+    roomId: number,
+    previousHost?: string,
   ): { url: string; format: StreamUrlResult["format"]; actualQn: number } | null {
     const streams = data.data?.playurl_info?.playurl?.stream ?? [];
     const ordered = [...streams].sort(
@@ -286,7 +312,18 @@ export class BilibiliAdapter implements PlatformAdapter {
         );
         for (const codec of codecs) {
           const granted = codec.current_qn ?? 0;
-          const info = codec.url_info?.[0];
+          const sources = codec.url_info?.filter((info) => info.host) ?? [];
+          const next = previousHost
+            ? sources.findIndex((source) => streamHost(source.host) === previousHost) + 1
+            : 0;
+          const rotated = sources.slice(next).concat(sources.slice(0, next));
+          const candidates = rotated.flatMap((info) => {
+            const host = streamHost(info.host);
+            return host ? [{ info, host }] : [];
+          });
+          const healthy = candidates.filter(({ host }) => !this.cdnIsUnstable(roomId, host));
+          const eligible = healthy.length ? healthy : candidates;
+          const info = (eligible.find(({ host }) => host !== previousHost) ?? eligible[0])?.info;
           if (!info?.host || !codec.base_url) continue;
           const isFlv =
             fmt.format_name === "flv" || codec.base_url.includes(".flv");
@@ -483,6 +520,7 @@ export class BilibiliAdapter implements PlatformAdapter {
     roomUrl: string,
     quality: Quality,
     cookie?: string,
+    context?: { previousStreamUrl?: string },
   ): Promise<RecordingSourceResult> {
     const roomId = this.parseRoomId(roomUrl);
     if (!roomId)
@@ -505,7 +543,7 @@ export class BilibiliAdapter implements PlatformAdapter {
         return { status: "offline" };
       return {
         status: "live",
-        stream: this.streamFromPlayInfo(data, roomId, quality),
+        stream: this.streamFromPlayInfo(data, roomId, quality, streamHost(context?.previousStreamUrl)),
       };
     } catch (error) {
       const cause =
@@ -526,11 +564,12 @@ export class BilibiliAdapter implements PlatformAdapter {
     data: BiliPlayResponse,
     roomId: number,
     quality: Quality,
+    previousHost?: string,
   ): StreamUrlResult {
     if (data.code !== 0 || !data.data) {
       throw new AppError("PLATFORM_CHANGED", "平台接口有变动，请稍后重试", {});
     }
-    const picked = this.pickStream(data, BILI_QN[quality]);
+    const picked = this.pickStream(data, BILI_QN[quality], roomId, previousHost);
     if (!picked) {
       throw new AppError(
         "PLATFORM_ACCESS_RESTRICTED",
@@ -542,6 +581,9 @@ export class BilibiliAdapter implements PlatformAdapter {
       url: picked.url,
       format: picked.format,
       actualQuality: qnToQuality(picked.actualQn),
+      ...(data.data.live_time && data.data.live_time > 0
+        ? { streamSessionId: `${roomId}:${data.data.live_time}` }
+        : {}),
       headers: {
         "User-Agent": UA,
         Referer: `${this.roomBase}/${roomId}`,
@@ -549,6 +591,11 @@ export class BilibiliAdapter implements PlatformAdapter {
       },
     };
   }
+}
+
+function streamHost(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try { return new URL(url).host; } catch { return undefined; }
 }
 
 function rankProtocol(name: string | undefined): number {
