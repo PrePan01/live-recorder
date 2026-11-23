@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from 'node:path';
 import { describe, expect, it } from "vitest";
@@ -542,6 +542,71 @@ describe("StreamRecordingEngine (HTTP)", () => {
 });
 
 describe("StreamRecordingEngine (HLS)", () => {
+  it("recovers a timed-out segment request and an interrupted body without losing or duplicating media", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lr-hls-retry-"));
+    try {
+      const output = path.join(directory, "recording.ts");
+      let requests = 0;
+      const fetcher: typeof fetch = async (url) => {
+        if (String(url).endsWith(".m3u8")) {
+          return new Response("#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:10\n#EXTINF:2,\na.ts\n#EXTINF:2,\nb.ts\n#EXT-X-ENDLIST\n");
+        }
+        if (String(url).endsWith("b.ts")) return new Response("second");
+        requests++;
+        if (requests === 1) {
+          throw new DOMException("transient transport timeout", "TimeoutError");
+        }
+        if (requests === 2) {
+          let sent = false;
+          return new Response(new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent) controller.error(new TypeError("socket reset"));
+              else controller.enqueue(Buffer.from("truncated segment"));
+              sent = true;
+            },
+          }));
+        }
+        return new Response("first");
+      };
+      const engine = new StreamRecordingEngine(fetcher, 1_000);
+      const events = [];
+      for await (const event of engine.start({ url: "https://x/live.m3u8", format: "hls" }, output)) events.push(event);
+      expect(requests).toBe(3);
+      expect(events.some((event) => event.type === "error")).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "completed", hlsCursor: { sequence: 11 } });
+      expect(await readFile(output, "utf8")).toBe("firstsecond");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a segment that is still delivering bytes beyond the retry window", async () => {
+    const parts = ["first", "second", "third"];
+    let i = 0;
+    const fetcher: typeof fetch = async (url) => {
+      if (String(url).endsWith(".m3u8")) {
+        return new Response("#EXTM3U\n#EXTINF:2,\nseg.ts\n#EXT-X-ENDLIST\n");
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (i === parts.length) {
+            controller.close();
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 70));
+          controller.enqueue(Buffer.from(parts[i++]!));
+        },
+      }));
+    };
+    const engine = new StreamRecordingEngine(fetcher, 160);
+    const chunks: Buffer[] = [];
+    for await (const event of engine.start({ url: "https://x/live.m3u8", format: "hls" })) {
+      expect(event.type).not.toBe("error");
+      if (event.type === "data") chunks.push(event.chunk);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe(parts.join(""));
+  });
+
   it("downloads playlist segments and concatenates them", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-hls-"));
     const out = path.join(dir, "e.ts");
@@ -595,6 +660,7 @@ describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）'
   it('③ HLS 停流看门狗：分片静默超阈 → 收束报错交上层断流重连（不再裸奔）', async () => {
     const { StreamRecordingEngine } = await import("../../src/recorder/stream-recorder.js");
     // 伪 fetcher：首个清单正常、分片请求永久挂起（模拟 CDN 挂连接不吐数据）
+    let segmentRequests = 0;
     const fakeFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".m3u8")) {
@@ -602,6 +668,7 @@ describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）'
           new Response("#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n"),
         );
       }
+      if (++segmentRequests === 1) return Promise.resolve(new Response(null, { status: 503 }));
       // 挂起的分片请求：真实 fetch 在 abort 时会 reject——伪实现必须同样听 signal。
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () =>
@@ -622,9 +689,10 @@ describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）'
       if (ev.type === "error") { errors.push(ev.error.code); expect(ev.error.retryable).toBe(true); }
     }
     const elapsed = Date.now() - t0;
-    // 看门狗必须在阈值附近收束（远小于旧 30s 语义），且不会挂死
-    expect(elapsed).toBeLessThan(3000);
+    // 一次快速 503 和一次挂起共享预算，到期后不能再用旧地址重试。
+    expect(elapsed).toBeLessThan(500);
     expect(elapsed).toBeGreaterThanOrEqual(60);
+    expect(segmentRequests).toBe(2);
     expect(errors).toEqual(["NETWORK_UNAVAILABLE"]);
     expect(events).not.toContain("completed");
   });

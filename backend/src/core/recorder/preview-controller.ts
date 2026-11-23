@@ -3,6 +3,7 @@ import { createWriteStream } from "node:fs";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 import { type RoomPolicySettings } from "../../config/room-policy.js";
+import type { PreviewSourceResult } from "../../platform/adapter.js";
 import { BufferedRecordingWriter } from "../../recorder/buffered-writer.js";
 import { HighlightBuffer } from "../../recorder/highlight-buffer.js";
 import {
@@ -64,7 +65,11 @@ interface PreviewControllerHost {
     endTimestampMs: number,
   ): Promise<void>;
   settleRecordingGap(session: ActiveSession, now: number): void;
-  createRecordingFile(filePath: string, roomId: string, unique?: boolean): Promise<string>;
+  createRecordingFile(
+    filePath: string,
+    roomId: string,
+    unique?: boolean,
+  ): Promise<string>;
   newSession(
     recordingId: string,
     roomId: string,
@@ -92,11 +97,14 @@ export class PreviewController {
 
   readonly previewStarts = new Map<string, Promise<boolean>>();
 
-  private readonly offlineChecks = new Map<string, {
-    room: Room;
-    result: Promise<boolean>;
-    expiresAt: number;
-  }>();
+  private readonly offlineChecks = new Map<
+    string,
+    {
+      room: Room;
+      result: Promise<boolean>;
+      expiresAt: number;
+    }
+  >();
 
   /** 启动窗内换源续试次数（出数后清零）；防一次上游断流踢掉观看端。 */
   readonly previewStartupRetries = new Map<string, number>();
@@ -113,24 +121,43 @@ export class PreviewController {
   }
 
   private canConfirmOffline(roomId: string): boolean {
-    return !this.services.resetting && !this.host.shuttingDown &&
-      !this.host.active.has(roomId) && !this.previewTransitions.has(roomId);
+    return (
+      !this.services.resetting &&
+      !this.host.shuttingDown &&
+      !this.host.active.has(roomId) &&
+      !this.previewTransitions.has(roomId)
+    );
   }
 
   private sameObservation(a: Room, b: Room): boolean {
-    return a.platform === b.platform && a.url === b.url &&
-      a.liveStartedAt === b.liveStartedAt && a.lastCheckedAt === b.lastCheckedAt;
+    return (
+      a.platform === b.platform &&
+      a.url === b.url &&
+      a.liveStartedAt === b.liveStartedAt &&
+      a.lastCheckedAt === b.lastCheckedAt
+    );
   }
 
   private endOfflinePreview(observed: Room, session?: PreviewSession): boolean {
     const room = this.services.rooms.get(observed.id);
     const currentSession = this.previewSessions.get(observed.id);
-    if (!room || !this.canConfirmOffline(room.id) ||
-        (currentSession && currentSession !== session)) return false;
+    if (
+      !room ||
+      !this.canConfirmOffline(room.id) ||
+      (currentSession && currentSession !== session)
+    )
+      return false;
     if (room.lastLiveStatus !== "offline") {
-      if (room.lastLiveStatus !== "live" || !this.sameObservation(room, observed)) return false;
+      if (
+        room.lastLiveStatus !== "live" ||
+        !this.sameObservation(room, observed)
+      )
+        return false;
       this.services.rooms.setLiveStatus(room.id, "offline");
-      if (room.enabled && ["idle", "failed", "checking"].includes(room.monitorState)) {
+      if (
+        room.enabled &&
+        ["idle", "failed", "checking"].includes(room.monitorState)
+      ) {
         this.services.rooms.setState(room.id, "idle", {
           lastCheckedAt: this.services.clock.iso(),
           lastError: null,
@@ -150,22 +177,31 @@ export class PreviewController {
     const room = this.services.rooms.get(roomId);
     if (!room || !this.canConfirmOffline(roomId)) return false;
     const session = this.previewSessions.get(roomId);
-    if (room.lastLiveStatus === "offline") return this.endOfflinePreview(room, session);
+    if (room.lastLiveStatus === "offline")
+      return this.endOfflinePreview(room, session);
     if (room.lastLiveStatus !== "live") return false;
 
     const now = this.services.clock.now();
     const cached = this.offlineChecks.get(roomId);
-    if (cached && cached.expiresAt > now && this.sameObservation(cached.room, room))
+    if (
+      cached &&
+      cached.expiresAt > now &&
+      this.sameObservation(cached.room, room)
+    )
       return cached.result;
     const probe = this.checkPreviewOffline(room, session);
     const check = {
       room,
       expiresAt: now + PREVIEW_STATUS_RECHECK_MS,
-      result: new Promise<boolean>(resolve => {
+      result: new Promise<boolean>((resolve) => {
         // Keep the existing recovery responsive if the platform probe is slow.
         // The probe can still publish a confirmed end for the current session.
-        const timer = setTimeout(resolve, PREVIEW_STATUS_WAIT_MS, false).unref();
-        void probe.then(ended => {
+        const timer = setTimeout(
+          resolve,
+          PREVIEW_STATUS_WAIT_MS,
+          false,
+        ).unref();
+        void probe.then((ended) => {
           clearTimeout(timer);
           resolve(ended);
         });
@@ -173,19 +209,25 @@ export class PreviewController {
     };
     this.offlineChecks.set(roomId, check);
     setTimeout(() => {
-      if (this.offlineChecks.get(roomId) === check) this.offlineChecks.delete(roomId);
+      if (this.offlineChecks.get(roomId) === check)
+        this.offlineChecks.delete(roomId);
     }, PREVIEW_STATUS_RECHECK_MS).unref();
     return check.result;
   }
 
-  private async checkPreviewOffline(room: Room, session?: PreviewSession): Promise<boolean> {
+  private async checkPreviewOffline(
+    room: Room,
+    session?: PreviewSession,
+  ): Promise<boolean> {
     try {
       const cookie = await this.services.platformCookie(room.platform);
       const adapter = this.services.adapterFor(room.platform);
       const status = await adapter.checkLiveStatus(room.url, cookie);
-      return status.status === "offline" &&
+      return (
+        status.status === "offline" &&
         this.offlineChecks.get(room.id)?.room === room &&
-        this.endOfflinePreview(room, session);
+        this.endOfflinePreview(room, session)
+      );
     } catch {
       return false;
     }
@@ -208,7 +250,10 @@ export class PreviewController {
   }
 
   /** 返回是否有人接走这个房间的观看端：false=没有会话也没有在录，调用方负责收口。 */
-  private async ensurePreviewStreamInner(roomId: string): Promise<boolean> {
+  private async ensurePreviewStreamInner(
+    roomId: string,
+    freshSource = false,
+  ): Promise<boolean> {
     if (this.services.resetting) return true;
     this.host.preview?.reportProgress?.(
       roomId,
@@ -229,30 +274,42 @@ export class PreviewController {
     const startupTrace = this.host.beginStartupTrace("preview_start", room);
     try {
       const settings = this.host.settings();
+      const authorizationRevision = this.services.douyinAuthorization.revision;
       const cookie = await this.services.platformCookie(room.platform);
       startupTrace.mark("platform_cookie_ready");
       const adapter = this.services.adapterFor(room.platform);
-      const quality = room.platform === "youtube" && settings.quality === "original"
-        ? "1080p" : settings.quality;
-      const source = await (adapter.resolvePreviewSource?.(room.url, quality, cookie) ??
+      const quality =
+        room.platform === "youtube" && settings.quality === "original"
+          ? "1080p"
+          : settings.quality;
+      const source: PreviewSourceResult = await (adapter.resolvePreviewSource?.(
+        room.url,
+        quality,
+        cookie,
+        { fresh: freshSource },
+      ) ??
         adapter.resolveRecordingSource?.(room.url, quality, cookie) ??
-        adapter.getStreamUrl(room.url, quality, cookie)
-          .then(stream => ({ status: "live" as const, stream })));
+        adapter
+          .getStreamUrl(room.url, quality, cookie)
+          .then((stream) => ({ status: "live" as const, stream })));
       if (source.status === "offline") {
         startupTrace.finish("skipped", "PREVIEW_OFFLINE");
-        if (!this.endOfflinePreview(room) && this.canConfirmOffline(roomId) &&
-            !this.previewSessions.has(roomId)) {
+        if (
+          !this.endOfflinePreview(room) &&
+          this.canConfirmOffline(roomId) &&
+          !this.previewSessions.has(roomId)
+        ) {
           this.host.preview?.closeRoom(roomId, 4004, "stream_lost");
         }
         return true;
       }
       if (source.status !== "live") throw AppError.fromObject(source.error);
       const stream = source.stream;
-      startupTrace.mark("stream_url_ready");
+      const currentRoom = this.services.rooms.get(roomId);
       // getStreamUrl 期间可能已经点击了录制；二次检查避免迟到的 preview-only 流覆盖录制流。
       if (
         this.services.resetting ||
-        !this.services.rooms.get(roomId) ||
+        !currentRoom ||
         this.previewSessions.has(roomId) ||
         this.previewTransitions.has(roomId) ||
         this.host.active.has(roomId)
@@ -265,6 +322,22 @@ export class PreviewController {
           this.host.active.has(roomId)
         );
       }
+      if (source.reusedDetection) {
+        if (
+          currentRoom.platform !== room.platform ||
+          currentRoom.url !== room.url ||
+          currentRoom.lastLiveStatus !== "live" ||
+          currentRoom.liveStartedAt !== room.liveStartedAt ||
+          authorizationRevision !== this.services.douyinAuthorization.revision
+        ) {
+          startupTrace.finish("skipped");
+          const started = await this.ensurePreviewStreamInner(roomId, true);
+          if (!started) this.host.preview?.closeRoom(roomId, 4004, "stream_lost");
+          return true;
+        }
+        startupTrace.mark("stream_url_reused");
+      }
+      startupTrace.mark("stream_url_ready");
       const engine = this.services.engineFor(room.platform);
       // 启动预算按进展续期：慢速出口下逐段推进的冷启动不该被一刀切总时长收割。
       // 每个阶段/每批数据续一段静默窗，总上限尒住真僵尸。
@@ -505,25 +578,43 @@ export class PreviewController {
             }
           }
           if (!handedOver) {
-            const stillWatching = this.host.preview?.hasClients(roomId) &&
-              !this.previewSessions.has(roomId) && this.canConfirmOffline(roomId);
-            const ended = stillWatching && await this.recheckPreviewOffline(roomId);
+            const attempts = this.previewStartupRetries.get(roomId) ?? 0;
+            const stillWatching =
+              this.host.preview?.hasClients(roomId) &&
+              !this.previewSessions.has(roomId) &&
+              this.canConfirmOffline(roomId);
+            // The fresh Douyin lookup can report offline itself, so a cached
+            // source failure does not need a separate platform status probe.
+            const canRefreshCachedSource =
+              source.reusedDetection &&
+              !gotData &&
+              !session.transitioningToRecording &&
+              attempts < 2 &&
+              this.services.rooms.get(roomId)?.lastLiveStatus === "live";
+            const ended =
+              stillWatching &&
+              !canRefreshCachedSource &&
+              (await this.recheckPreviewOffline(roomId));
             if (ended) {
               this.previewStartupRetries.delete(roomId);
               return;
             }
             // A recording, another preview, or a handoff may have started during the probe.
-            if (!session.transitioningToRecording &&
-                (this.host.active.has(roomId) || this.previewSessions.has(roomId) ||
-                  this.previewTransitions.has(roomId))) return;
+            if (
+              !session.transitioningToRecording &&
+              (this.host.active.has(roomId) ||
+                this.previewSessions.has(roomId) ||
+                this.previewTransitions.has(roomId))
+            )
+              return;
             // 出画前的上游断流不踢观看端：换新源续试（预算重新起算），真失败才收口。
-            const attempts = this.previewStartupRetries.get(roomId) ?? 0;
             const canRetryStartup =
               !gotData &&
-              !startupTimedOut &&
               !session.transitioningToRecording &&
               !this.host.shuttingDown &&
-              (streamError === null || streamError.retryable !== false) &&
+              (source.reusedDetection ||
+                (!startupTimedOut &&
+                  (streamError === null || streamError.retryable))) &&
               attempts < 2 &&
               this.services.rooms.get(roomId)?.lastLiveStatus === "live" &&
               (this.host.preview?.hasClients?.(room.id) ?? false);
@@ -533,7 +624,7 @@ export class PreviewController {
                 `[preview] startup-retry room=…${roomId.slice(-6)} attempt=${attempts + 1} error=${streamError?.code ?? "STREAM_ENDED_BEFORE_DATA"}`,
               );
               // 直接换新源起步：上一次启动的去重承诺可能还在收尾，走 ensurePreviewStream 会被它吞掉。
-              void this.ensurePreviewStreamInner(room.id)
+              void this.ensurePreviewStreamInner(room.id, true)
                 .then((started) => {
                   // 二次起步可能发现已下播/无源：没人接走就按原语义收口，别让观看端干等。
                   if (!started)
@@ -560,8 +651,12 @@ export class PreviewController {
       // waiting sockets now so the player retries instead of waiting for its
       // first-frame watchdog. A recording started during resolution owns them.
       const checkOffline = !(error instanceof AppError) || error.retryable;
-      if (checkOffline && this.host.preview?.hasClients(roomId) &&
-          await this.recheckPreviewOffline(roomId)) return true;
+      if (
+        checkOffline &&
+        this.host.preview?.hasClients(roomId) &&
+        (await this.recheckPreviewOffline(roomId))
+      )
+        return true;
       if (
         !this.host.active.has(roomId) &&
         !this.previewSessions.has(roomId) &&
@@ -714,6 +809,10 @@ export class PreviewController {
       recording.startedAt,
       filePath,
     );
+    if (previewSession.input) {
+      const { url, streamSessionId } = previewSession.input;
+      session.lastSource = { url, ...(streamSessionId ? { streamSessionId } : {}) };
+    }
     let resolveDone!: () => void;
     session.done = new Promise<void>((resolve) => {
       resolveDone = resolve;

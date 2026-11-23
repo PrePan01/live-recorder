@@ -81,7 +81,7 @@ export class RecordingRecovery {
     endTimestampMs: number,
   ): Promise<void> {
     const session = this.host.active.get(room.id);
-    if (!session) return;
+    if (!session || session.recordingId !== recordingId) return;
     // 启动超时与随后的断流可能同时触发重连：只允许一次接力在途。
     await this.withHandoff(session, () =>
       this.handleDisconnectInner(
@@ -111,6 +111,11 @@ export class RecordingRecovery {
     if (session.gapStartAt === null)
       session.gapStartAt = session.lastDataAt || this.services.clock.now();
     session.gapCause = error;
+    if (session.lastSource && error.retryable &&
+        (error.code === "NETWORK_UNAVAILABLE" || error.code === "PLATFORM_SERVER_ERROR") &&
+        error.details?.httpStatus !== 429) {
+      this.services.adapterFor(room.platform).noteMediaSourceFailure?.(room.url, session.lastSource.url);
+    }
     console.log(
       `[recording-recovery] id=${recordingId} generation=${session.generation} cause=${error.code} trigger=${error.details?.trigger ?? "source_error"} lastDataAgeMs=${Math.max(0, this.services.clock.now() - session.lastDataAt)}`,
     );
@@ -310,7 +315,7 @@ export class RecordingRecovery {
         }
         const stream = live.stream;
         const cur = this.host.active.get(room.id);
-        if (!cur || this.host.shuttingDown) return;
+        if (cur !== session || this.host.shuttingDown) return;
         if (cur.stopRequested) continue;
         await this.resumeSession(room, recordingId, cur, stream, next);
         return;
@@ -443,10 +448,10 @@ export class RecordingRecovery {
             return;
           }
           const cur = this.host.active.get(room.id);
-          if (!cur) return;
-          await this.resumeSession(room, recordingId, cur, stream, nth);
+          if (cur !== session) return;
+          const resumed = await this.resumeSession(room, recordingId, cur, stream, nth);
           // 恢复成功：清掉尝试期的失败原因，历史页只在真正失败/中断时显示原因。
-          this.services.recordings.update(recordingId, { failureReason: null });
+          if (resumed) this.services.recordings.update(recordingId, { failureReason: null });
           return;
         } catch (err) {
           cause = err instanceof AppError ? err.toObject() : cause;
@@ -470,13 +475,13 @@ export class RecordingRecovery {
     cookie?: string,
   ): Promise<RecordingSourceResult> {
     const adapter = this.services.adapterFor(room.platform);
-    if (adapter.resolveRecordingSource)
-      return room.platform === "xiaohongshu" || room.platform === "youtube"
-        ? adapter.resolveRecordingSource(room.url, quality, cookie, {
-            streamSessionId:
-              this.host.active.get(room.id)?.streamSessionId ?? null,
-          })
-        : adapter.resolveRecordingSource(room.url, quality, cookie);
+    if (adapter.resolveRecordingSource) {
+      const session = this.host.active.get(room.id);
+      return adapter.resolveRecordingSource(room.url, quality, cookie, {
+        streamSessionId: session?.streamSessionId ?? null,
+        ...(session?.lastSource ? { previousStreamUrl: session.lastSource.url } : {}),
+      });
+    }
     const live = await adapter.checkLiveStatus(room.url, cookie);
     if (live.status === "offline") return { status: "offline" };
     if (live.status !== "live")
@@ -526,11 +531,23 @@ export class RecordingRecovery {
     session: ActiveSession,
     stream: StreamInput,
     attempt: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // 先推进代次让旧会话失效，否则它收到错误事件后会再走一遍重连、重复处理。
     session.generation += 1;
     await session.engine?.stop().catch(() => undefined);
     await this.waitForPullToStop(session);
+    if (this.host.active.get(room.id) !== session || this.host.shuttingDown) return false;
+    if (session.stopRequested) {
+      await this.host.completeRecording(room, recordingId, session.size, "ended", {
+        endReason: session.requestedEndReason ?? "stopped",
+      });
+      return false;
+    }
+    const previousId = session.lastSource?.streamSessionId;
+    if (previousId && stream.streamSessionId && previousId !== stream.streamSessionId) {
+      await this.host.completeRecording(room, recordingId, session.size, "ended");
+      return false;
+    }
     session.segments += 1;
     session.lastRecoveryAt = this.services.clock.now();
     const run = this.host.runSession(
@@ -543,6 +560,7 @@ export class RecordingRecovery {
     );
     session.pullDone = run;
     void run.catch(() => undefined);
+    return true;
   }
 
   /**
@@ -553,12 +571,27 @@ export class RecordingRecovery {
     session: ActiveSession,
     action: () => Promise<void>,
   ): Promise<void> {
-    if (session.handingOff) return;
-    session.handingOff = true;
+    const generation = session.generation;
+    const current = session.recoveryHandoff;
+    if (current) {
+      if (generation > current.generation && current.next?.generation !== generation) {
+        current.next = { generation, run: action };
+      }
+      return;
+    }
+    const handoff: NonNullable<ActiveSession["recoveryHandoff"]> = { generation };
+    session.recoveryHandoff = handoff;
     try {
       await action();
+      while (handoff.next && this.host.active.get(session.roomId) === session && !this.host.shuttingDown) {
+        const next = handoff.next;
+        delete handoff.next;
+        if (next.generation !== session.generation) continue;
+        handoff.generation = next.generation;
+        await next.run();
+      }
     } finally {
-      session.handingOff = false;
+      delete session.recoveryHandoff;
     }
   }
 
@@ -690,7 +723,7 @@ export class RecordingRecovery {
       }
       const stream = live.stream;
       const cur = this.host.active.get(room.id);
-      if (!cur || this.host.shuttingDown) return;
+      if (cur !== session || this.host.shuttingDown) return;
       if (cur.stopRequested) {
         await this.host.completeRecording(
           room,
@@ -702,6 +735,10 @@ export class RecordingRecovery {
           },
         );
         return;
+      }
+      const previous = session.lastSource;
+      if (previous?.streamSessionId && previous.streamSessionId === stream.streamSessionId) {
+        this.services.adapterFor(room.platform).noteMediaSourceFailure?.(room.url, previous.url);
       }
       await this.resumeSession(room, recordingId, cur, stream, effective + 1);
     } catch (err) {

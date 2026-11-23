@@ -41,17 +41,25 @@ export type RecordingSourceResult =
   | { status: "offline"; error?: ErrorObject }
   | { status: "error" | "restricted"; error: ErrorObject };
 
+export type PreviewSourceResult = RecordingSourceResult & { reusedDetection?: true };
+
 export interface PlatformAdapter {
   readonly platform: Platform;
+  noteMediaSourceFailure?(roomUrl: string, sourceUrl: string): void;
   resolveRoomUrl?(rawUrl: string, cookie?: string): Promise<string>;
   getRoomPageUrl?(rawUrl: string): string | undefined;
   checkLiveStatusForStartup?(roomUrl: string, cookie?: string): Promise<LiveStatusResult>;
-  resolvePreviewSource?(roomUrl: string, quality: Quality, cookie?: string): Promise<RecordingSourceResult>;
+  resolvePreviewSource?(
+    roomUrl: string,
+    quality: Quality,
+    cookie?: string,
+    context?: { fresh?: boolean },
+  ): Promise<PreviewSourceResult>;
   resolveRecordingSource?(
     roomUrl: string,
     quality: Quality,
     cookie?: string,
-    context?: { streamSessionId?: string | null },
+    context?: { streamSessionId?: string | null; previousStreamUrl?: string },
   ): Promise<RecordingSourceResult>;
   checkLiveStatus(roomUrl: string, cookie?: string): Promise<LiveStatusResult>;
   getStreamUrl(

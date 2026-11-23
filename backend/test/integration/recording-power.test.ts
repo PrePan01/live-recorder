@@ -93,4 +93,31 @@ describe('recording power policy and sleep evidence', () => {
     expect(invalid.statusCode).toBe(422);
     await app.close();
   });
+
+  it('wakes an active reconnect immediately and ignores native notification retries', async () => {
+    const { services, app, clock, rec, room } = setup();
+    const active = (services.manager as unknown as { active: Map<string, unknown> }).active;
+    let wakeCount = 0;
+    active.set(room.id, {
+      recordingId: rec.id,
+      startedAt: clock.iso(),
+      lastDataAt: clock.now(),
+      gapStartAt: null,
+      wakeReconnect: () => { wakeCount++; },
+    });
+    const startedAt = clock.now();
+    clock.advance(60_000);
+    for (let i = 0; i < 2; i++) {
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/v1/service/system-sleep',
+        headers,
+        payload: { startedAt, endedAt: clock.now() },
+      });
+      expect(result.statusCode).toBe(200);
+    }
+    expect(wakeCount).toBe(1);
+    active.clear();
+    await app.close();
+  });
 });

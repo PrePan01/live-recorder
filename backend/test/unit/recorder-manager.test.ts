@@ -2395,6 +2395,93 @@ describe("preview startup resilience", () => {
     services.db.close();
   });
 
+  it.each(["live", "offline"] as const)("refreshes a failed detected Douyin URL without a duplicate status probe: %s", async (status) => {
+    const clock = new FakeClock();
+    const services = buildServices({ dbPath: ":memory:", clock });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = services.rooms.create({
+      platform: "douyin", url: "https://live.douyin.com/123456", displayName: "检测复用",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    const adapter = services.adapterFor("douyin");
+    vi.spyOn(adapter, "checkLiveStatus").mockResolvedValue({ status: "live" });
+    adapter.resolvePreviewSource = vi.fn()
+      .mockResolvedValueOnce({
+        status: "live", reusedDetection: true,
+        stream: { url: "https://pull.example.com/cached.flv", format: "flv", actualQuality: "original" },
+      })
+      .mockResolvedValueOnce(status === "offline" ? { status } : {
+        status: "live",
+        stream: { url: "https://pull.example.com/fresh.flv", format: "flv", actualQuality: "original" },
+      });
+    const inputs: string[] = [];
+    let stopPreview!: () => void;
+    const stopped = new Promise<void>(resolve => { stopPreview = resolve; });
+    services.engineFor = () => ({
+      stop: async () => { stopPreview(); },
+      start: async function* (input) {
+        inputs.push(input.url);
+        if (inputs.length === 1)
+          throw new AppError("NETWORK_UNAVAILABLE", "过期地址", { retryable: false });
+        yield { type: "data", chunk: Buffer.from("video") };
+        await stopped;
+      },
+    });
+    await services.manager.ensurePreviewStream(room.id);
+    await settle(clock, 50);
+
+    expect(adapter.resolvePreviewSource).toHaveBeenNthCalledWith(
+      2, room.url, "original", undefined, { fresh: true },
+    );
+    expect(adapter.checkLiveStatus).not.toHaveBeenCalled();
+    if (status === "live") {
+      expect(inputs).toEqual(["https://pull.example.com/cached.flv", "https://pull.example.com/fresh.flv"]);
+      expect(preview.closed).toEqual([]);
+      expect(preview.frames.get(room.id) ?? 0).toBeGreaterThan(0);
+    } else {
+      expect(inputs).toEqual(["https://pull.example.com/cached.flv"]);
+      expect(services.rooms.get(room.id)?.lastLiveStatus).toBe("offline");
+      expect(preview.closed).toEqual([{ roomId: room.id, code: 1000, reason: "live_ended" }]);
+    }
+    expect(services.manager.performance.recent().flatMap(trace => trace.stages.map(stage => stage.name)))
+      .toContain("stream_url_reused");
+    await services.manager.shutdown();
+    services.db.close();
+  });
+
+  it("discards a cached Douyin source when authorization changes before stream startup", async () => {
+    const services = buildServices({ dbPath: ":memory:", clock: new FakeClock() });
+    const preview = new FakePreview();
+    services.manager.preview = preview;
+    const room = services.rooms.create({
+      platform: "douyin", url: "https://live.douyin.com/123456", displayName: "授权切换",
+    });
+    services.rooms.setLiveStatus(room.id, "live");
+    await services.douyinAuthorization.save("sessionid=old");
+    const adapter = services.adapterFor("douyin");
+    adapter.resolvePreviewSource = vi.fn()
+      .mockImplementationOnce(async () => {
+        await services.douyinAuthorization.save("sessionid=new");
+        return {
+          status: "live", reusedDetection: true,
+          stream: { url: "https://pull.example.com/old.flv", format: "flv", actualQuality: "original" },
+        };
+      })
+      .mockResolvedValueOnce({ status: "offline" });
+    const engine = vi.spyOn(services, "engineFor");
+
+    await services.manager.ensurePreviewStream(room.id);
+
+    expect(adapter.resolvePreviewSource).toHaveBeenNthCalledWith(
+      2, room.url, "original", "sessionid=new", { fresh: true },
+    );
+    expect(engine).not.toHaveBeenCalled();
+    expect(preview.closed).toEqual([{ roomId: room.id, code: 1000, reason: "live_ended" }]);
+    await services.manager.shutdown();
+    services.db.close();
+  });
+
   it("closes the room only after startup retries are exhausted", async () => {
     const clock = new FakeClock();
     const services = buildServices({ dbPath: ":memory:", clock });

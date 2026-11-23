@@ -6,6 +6,8 @@ import { useServiceStore } from "../stores/serviceStore";
 import { startUpdateMonitoring, useUpdateStore } from "../stores/updateStore";
 import type { UpdateState } from "../types/update";
 
+const UPDATE_DIALOG_WIDTH = 520;
+
 export default function AppVersion() {
   const { message, modal } = App.useApp();
   const state = useUpdateStore((s) => s.state);
@@ -35,6 +37,7 @@ export default function AppVersion() {
       dialogOpen.current = true;
       modal.confirm({
         title: `更新 ${snapshot.update.version} 已下载完成`,
+        width: UPDATE_DIALOG_WIDTH,
         content: (
           <div>
             {snapshot.update.notes.length > 0 && (
@@ -82,6 +85,7 @@ export default function AppVersion() {
     dialogOpen.current = true;
     modal.confirm({
       title: `发现新版本 ${snapshot.update.version}`,
+      width: UPDATE_DIALOG_WIDTH,
       content: (
         <div>
           <p>当前版本 {snapshot.currentVersion}</p>

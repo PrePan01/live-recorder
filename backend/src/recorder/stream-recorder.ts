@@ -2,7 +2,7 @@ import type { ReadableStreamReadResult } from "node:stream/web";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { stat, mkdtemp, open, rm } from "node:fs/promises";
+import { stat, mkdtemp, open, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { BufferedRecordingWriter, type BufferedWriterOptions, recoverRecordingBuffer } from "./buffered-writer.js";
@@ -500,7 +500,8 @@ export class StreamRecordingEngine implements RecordingEngine {
     try {
       while (!this.stopped) {
         const waitingAt = performance.now();
-        const text = await this.fetchText(input.url, input.headers);
+        const text = await this.withHlsRetry((_attempt, connectBy) =>
+          this.fetchText(input.url, input.headers, connectBy));
         quietMs += performance.now() - waitingAt;
         const parsed = parseM3u8(text, input.url);
         this.dataIntervalMs = (parsed.targetDuration || 10) * 1000;
@@ -520,41 +521,35 @@ export class StreamRecordingEngine implements RecordingEngine {
           // Publish complete segments only. A failed or stopped download must
           // never append a partial TS segment and then duplicate it on retry.
           const directory = await mkdtemp(path.join(tmpdir(), "lr-hls-segment-"));
-          const stage = await open(path.join(directory, "segment"), "w+");
+          const file = path.join(directory, "segment");
           try {
-            let segmentSize = 0;
-            for await (const chunk of this.fetchChunks(seg, input.headers)) {
+            const stage = await open(file, "w+");
+            try {
+              const segmentSize = await this.downloadHlsSegment(seg, input.headers, stage);
               if (this.stopped) return;
-              let offset = 0;
-              while (offset < chunk.length) {
-                const written = await stage.write(chunk, offset, chunk.length - offset, segmentSize + offset);
-                if (!written.bytesWritten) throw new Error("分片暂存无写入进度");
-                offset += written.bytesWritten;
+              const cursor = parsed.mediaSequence === null ? undefined : { sequence: parsed.mediaSequence + i, discontinuitySequence: parsed.discontinuitySequence };
+              if (writer) {
+                await writer.writeStagedFile(file, segmentSize, () => { size += segmentSize; });
+                if (cursor) this.hlsCursor = cursor;
               }
-              segmentSize += chunk.length;
-              if (segmentSize > 512 * 1024 ** 2) throw new AppError("RECORDING_WRITE_SLOW", "直播分片超过暂存上限", { retryable: false });
+              let offset = 0;
+              while (offset < segmentSize) {
+                const buffer = Buffer.alloc(Math.min(256 * 1024, segmentSize - offset));
+                const read = await stage.read(buffer, 0, buffer.length, offset);
+                if (!read.bytesRead) throw new Error("分片暂存读取无进度");
+                const chunk = buffer.subarray(0, read.bytesRead);
+                if (!writer) size += chunk.length;
+                yield { type: "data", chunk };
+                offset += chunk.length;
+              }
+              if (!writer && cursor) this.hlsCursor = cursor;
+              seen.add(key);
+              downloaded = true;
+              quietMs = 0;
+            } finally {
+              await stage.close();
             }
-            if (this.stopped) return;
-            const cursor = parsed.mediaSequence === null ? undefined : { sequence: parsed.mediaSequence + i, discontinuitySequence: parsed.discontinuitySequence };
-            if (writer && segmentSize) await writer.writeStagedFile(path.join(directory, "segment"), segmentSize, () => {
-              size += segmentSize;
-            });
-            if (writer && cursor) this.hlsCursor = cursor;
-            let offset = 0;
-            while (offset < segmentSize) {
-              const buffer = Buffer.alloc(Math.min(256 * 1024, segmentSize - offset));
-              const read = await stage.read(buffer, 0, buffer.length, offset);
-              if (!read.bytesRead) throw new Error("分片暂存读取无进度");
-              const chunk = buffer.subarray(0, read.bytesRead);
-              if (!writer) size += chunk.length;
-              yield { type: "data", chunk };
-              offset += chunk.length;
-            }
-            if (!writer && cursor) this.hlsCursor = cursor;
-            seen.add(key);
-            downloaded = true;
-            quietMs = 0;
-          } finally { await stage.close(); await rm(directory, { recursive: true, force: true }); }
+          } finally { await rm(directory, { recursive: true, force: true }); }
         }
         // Retain only the current playlist window; sequence identities survive
         // signed URL changes without growing a set for the whole broadcast.
@@ -577,6 +572,63 @@ export class StreamRecordingEngine implements RecordingEngine {
     yield { type: "completed", fileSize: size, endTimestampMs: this.lastTimestampMs, ...(this.hlsCursor ? { hlsCursor: this.hlsCursor } : {}) };
   }
 
+  private async downloadHlsSegment(
+    url: string,
+    headers: Record<string, string> | undefined,
+    stage: FileHandle,
+  ): Promise<number> {
+    return this.withHlsRetry(async (attempt, connectBy) => {
+      // A failed attempt may have written bytes to the staging file.
+      if (attempt > 1) await stage.truncate(0);
+      const signal = this.controller!.signal;
+      let size = 0;
+      for await (const chunk of this.fetchChunks(url, headers, connectBy)) {
+        signal.throwIfAborted();
+        if (size + chunk.length > 512 * 1024 ** 2) {
+          throw new AppError("RECORDING_WRITE_SLOW", "直播分片超过暂存上限", { retryable: false });
+        }
+        let offset = 0;
+        while (offset < chunk.length) {
+          const result = await stage.write(chunk, offset, chunk.length - offset, size + offset);
+          if (result.bytesWritten === 0) {
+            throw new AppError("RECORDING_WRITE_FAILED", "分片暂存无写入进度");
+          }
+          offset += result.bytesWritten;
+        }
+        size += chunk.length;
+      }
+      if (size === 0) {
+        throw new AppError("NETWORK_UNAVAILABLE", "直播分片为空", { retryable: true });
+      }
+      return size;
+    });
+  }
+
+  private async withHlsRetry<T>(run: (attempt: number, connectBy: number) => Promise<T>): Promise<T> {
+    const signal = this.controller!.signal;
+    // Leave time to refresh the source before more of the live window expires.
+    const budgetMs = Math.min(this.stallTimeoutMs, Math.max(4_000, this.dataIntervalMs));
+    const deadline = performance.now() + budgetMs;
+    let lastError: AppError | undefined;
+    for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
+      if (lastError && performance.now() >= deadline) throw lastError;
+      try {
+        return await run(attempt, deadline);
+      } catch (error) {
+        if (signal.aborted || attempt === 3 || !(error instanceof AppError) ||
+            !error.retryable || error.details?.httpStatus === 429 ||
+            (error.code !== "NETWORK_UNAVAILABLE" && error.code !== "PLATFORM_SERVER_ERROR")) {
+          throw error;
+        }
+        lastError = error;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) throw error;
+        await this.waitForPoll(Math.min(150 * attempt, remaining / 4));
+      }
+    }
+  }
+
   private async waitForPoll(ms: number): Promise<void> {
     const signal = this.controller!.signal;
     if (signal.aborted) return;
@@ -587,11 +639,11 @@ export class StreamRecordingEngine implements RecordingEngine {
     });
   }
 
-  private async fetchResponse(url: string, headers: Record<string, string> | undefined, what = "HLS 拉取"): Promise<Response> {
-    const controller = this.controller!;
+  private async fetchResponse(url: string, headers: Record<string, string> | undefined, what = "HLS 拉取",
+    controller = this.controller!, timeoutMs = this.stallTimeoutMs): Promise<Response> {
     const timer = setTimeout(() => controller.abort(new AppError("NETWORK_UNAVAILABLE", "直播源连接超时，正在恢复", {
-      retryable: true, details: { trigger: "request_timeout", timeoutMs: this.stallTimeoutMs },
-    })), this.stallTimeoutMs);
+      retryable: true, details: { trigger: "request_timeout", timeoutMs },
+    })), timeoutMs);
     timer.unref();
     try {
       const res = await this.fetcher(url, { ...(headers ? { headers } : {}), signal: controller.signal });
@@ -606,10 +658,10 @@ export class StreamRecordingEngine implements RecordingEngine {
     } finally { clearTimeout(timer); }
   }
 
-  private async fetchText(url: string, headers: Record<string, string> | undefined): Promise<string> {
+  private async fetchText(url: string, headers: Record<string, string> | undefined, connectBy: number): Promise<string> {
     const parts: Buffer[] = [];
     let bytes = 0;
-    for await (const chunk of this.fetchChunks(url, headers)) {
+    for await (const chunk of this.fetchChunks(url, headers, connectBy)) {
       bytes += chunk.length;
       if (bytes > 1024 * 1024) throw new AppError("PLATFORM_CHANGED", "直播播放列表过大", { retryable: true });
       parts.push(chunk);
@@ -617,26 +669,57 @@ export class StreamRecordingEngine implements RecordingEngine {
     return Buffer.concat(parts).toString("utf8");
   }
 
-  private async *fetchChunks(url: string, headers: Record<string, string> | undefined): AsyncIterable<Buffer> {
-    const res = await this.fetchResponse(url, headers);
-    const reader = res.body!.getReader();
-    const health = new StreamHealth(this.stallTimeoutMs, this.stallTimeoutMs, () => {
-      void reader.cancel().catch(() => undefined); this.controller?.abort();
-    });
+  private async *fetchChunks(url: string, headers: Record<string, string> | undefined, connectBy: number): AsyncIterable<Buffer> {
+    const parent = this.controller!.signal;
+    const request = new AbortController();
+    const cancelRequest = () => request.abort(parent.reason);
+    parent.throwIfAborted();
+    parent.addEventListener("abort", cancelRequest, { once: true });
+    try {
+      const timeoutMs = Math.max(1, Math.ceil(connectBy - performance.now()));
+      const res = await this.fetchResponse(url, headers, "HLS 拉取", request, timeoutMs);
+      yield* this.readHlsBody(res.body!, request, connectBy);
+    } finally {
+      parent.removeEventListener("abort", cancelRequest);
+    }
+  }
+
+  private async *readHlsBody(body: ReadableStream<Uint8Array>, request: AbortController, connectBy: number): AsyncIterable<Buffer> {
+    const reader = body.getReader();
+    const cancel = () => { void reader.cancel().catch(() => undefined); };
+    const interrupt = () => request.abort();
+    const firstByteMs = Math.max(1, Math.ceil(connectBy - performance.now()));
+    let health = new StreamHealth(firstByteMs, firstByteMs, interrupt);
+    let receivedBody = false;
+    request.signal.addEventListener("abort", cancel, { once: true });
     health.received(false);
     try {
       while (!this.stopped) {
         health.begin();
         let result: ReadableStreamReadResult<Uint8Array>;
-        try { result = await reader.read(); } catch (error) { health.check(); throw error; }
+        try { result = await reader.read(); } catch (error) {
+          health.check();
+          throw toNetworkError(error);
+        }
         finally { health.pause(); }
         health.check();
+        request.signal.throwIfAborted();
         if (result.done) break;
+        if (!result.value.byteLength) continue;
+        if (!receivedBody) {
+          // A download that is making progress may outlive the retry window.
+          health = new StreamHealth(this.stallTimeoutMs, this.stallTimeoutMs, interrupt);
+          receivedBody = true;
+        }
         this.downloadObserver?.(result.value.byteLength);
         health.received(false);
         yield Buffer.from(result.value);
       }
-    } finally { health.pause(); await reader.cancel().catch(() => undefined); }
+    } finally {
+      request.signal.removeEventListener("abort", cancel);
+      health.pause();
+      await reader.cancel().catch(() => undefined);
+    }
   }
 
   private toErrorObject(err: unknown): ErrorObject {
@@ -703,6 +786,7 @@ function httpStreamError(status: number, what: string): AppError {
   }
   return new AppError("NETWORK_UNAVAILABLE", `${what}失败 HTTP ${status}`, {
     retryable: true,
+    details: { httpStatus: status },
   });
 }
 

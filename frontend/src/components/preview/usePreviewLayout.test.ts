@@ -58,12 +58,12 @@ function openLayout(ratio: number, defaultWidth?: number) {
   return renderLayout(defaultWidth);
 }
 
-function mouseEvent(type: string, clientX: number, clientY: number) {
-  return Object.assign(new Event(type), { clientX, clientY });
+function mouseEvent(type: string, clientX: number, clientY: number, button = 0) {
+  return Object.assign(new Event(type), { clientX, clientY, button });
 }
 
-function startDrag(layout: ReturnType<typeof renderLayout>) {
-  layout.onHandleDown(mouseEvent("mousedown", 0, 0) as unknown as React.MouseEvent);
+function startDrag(layout: ReturnType<typeof renderLayout>, button = 0) {
+  layout.onHandleDown(mouseEvent("mousedown", 0, 0, button) as unknown as React.MouseEvent);
 }
 
 function flushFrame() {
@@ -76,22 +76,22 @@ it("updates layout once per frame and saves only the final size for each orienta
   const landscape = openLayout(16 / 9);
   expect(landscape.modalWidth).toBe(960);
   startDrag(landscape);
-  target.dispatchEvent(mouseEvent("mousemove", -100, 0));
-  target.dispatchEvent(mouseEvent("mousemove", -150, 0));
+  target.dispatchEvent(mouseEvent("mousemove", -50, 0));
+  target.dispatchEvent(mouseEvent("mousemove", -75, 0));
   expect(frames.size).toBe(1);
   expect(renderLayout().modalWidth).toBe(960);
   flushFrame();
   expect(renderLayout().modalWidth).toBe(810);
   expect(write).not.toHaveBeenCalled();
 
-  target.dispatchEvent(mouseEvent("mousemove", -180, 0));
-  target.dispatchEvent(mouseEvent("mouseup", -200, 0));
+  target.dispatchEvent(mouseEvent("mousemove", -90, 0));
+  target.dispatchEvent(mouseEvent("mouseup", -100, 0));
   expect(frames.size).toBe(0);
   expect(write).toHaveBeenCalledExactlyOnceWith(landscapeKey, "760");
   const portrait = openLayout(9 / 16);
   expect(portrait.videoBox.height).toBe(760);
   startDrag(portrait);
-  target.dispatchEvent(mouseEvent("mouseup", 100, -210));
+  target.dispatchEvent(mouseEvent("mouseup", 100, -105));
   expect(write).toHaveBeenCalledTimes(2);
   expect(write).toHaveBeenLastCalledWith(portraitKey, "550");
   expect(openLayout(16 / 9).modalWidth).toBe(760);
@@ -109,12 +109,14 @@ it("retains defaults for invalid stored sizes and skips clicks and cancelled dra
   expect(landscape.modalWidth).toBe(1080);
   startDrag(landscape);
   target.dispatchEvent(mouseEvent("mouseup", 0, 0));
+  startDrag(landscape, 2);
+  target.dispatchEvent(mouseEvent("mouseup", -100, 0, 2));
   expect(openLayout(9 / 16).videoBox.height).toBe(760);
   startDrag(renderLayout());
-  target.dispatchEvent(mouseEvent("mousemove", 0, -200));
+  target.dispatchEvent(mouseEvent("mousemove", 0, -100));
   flushFrame();
   expect(renderLayout().videoBox.height).toBe(560);
-  target.dispatchEvent(mouseEvent("mousemove", 0, -210));
+  target.dispatchEvent(mouseEvent("mousemove", 0, -105));
   target.dispatchEvent(new Event("blur"));
   expect(frames.size).toBe(0);
   expect(renderLayout().videoBox.height).toBe(760);
@@ -126,8 +128,14 @@ it("clamps restored sizes to a smaller viewport without replacing the preference
   storage.set(portraitKey, "700");
   target.innerWidth = 700;
   target.innerHeight = 620;
-  expect(openLayout(16 / 9).modalWidth).toBe(668);
-  expect(openLayout(9 / 16).videoBox.height).toBe(480);
+  const landscape = openLayout(16 / 9);
+  expect(landscape.modalWidth).toBe(668);
+  startDrag(landscape);
+  target.dispatchEvent(mouseEvent("mouseup", 50, 0));
+  const portrait = openLayout(9 / 16);
+  expect(portrait.videoBox.height).toBe(480);
+  startDrag(portrait);
+  target.dispatchEvent(mouseEvent("mouseup", 0, 50));
   target.innerWidth = 1200;
   target.innerHeight = 900;
   expect(openLayout(16 / 9).modalWidth).toBe(1000);

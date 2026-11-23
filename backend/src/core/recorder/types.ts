@@ -34,6 +34,7 @@ export interface ActiveSession {
   recordingId: string;
   roomId: string;
   streamSessionId: string | null;
+  lastSource?: Pick<import("../../recorder/engine.js").StreamInput, "url" | "streamSessionId">;
   stopRequested: boolean;
   wakeReconnect?: () => void;
   reconnectSince?: number;
@@ -76,8 +77,11 @@ export interface ActiveSession {
   generation: number;
   /** 当前这一路拉流的完成信号（含关闭写流）；续录前必须等它，否则新旧两个写流会同时写同一个文件。 */
   pullDone: Promise<void> | null;
-  /** 接力互斥：超时/断流/自然结束可能同时触发，只允许一次接力在途。 */
-  handingOff: boolean;
+  /** 续录引擎有可能在上一次接力返回前再次断开。 */
+  recoveryHandoff?: {
+    generation: number;
+    next?: { generation: number; run: () => Promise<void> };
+  };
   /** 手动停止接口等待录制记录和房间状态真正收口，避免响应先于异步生成器退出。 */
   done?: Promise<void>;
   resolveDone?: () => void;

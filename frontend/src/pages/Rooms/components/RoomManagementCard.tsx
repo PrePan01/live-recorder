@@ -15,6 +15,7 @@ import { useSettingsStore } from "../../../stores/settingsStore";
 import { useRoomSortableItem } from "../../../components/RoomSortable";
 import { PlatformLogoTag } from "../../../components/PlatformLogo";
 import { MonitorStateTag } from "../../../components/StatusTags";
+import { renderRoomPlanTags } from "../../../components/RoomPlanTags";
 import RoomAvatar from "../../Monitor/components/RoomAvatar";
 import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/error/errorMap";
@@ -240,6 +241,7 @@ export default memo(function RoomManagementCard({
           <div className="lr-room-policy-state-row">
             <div className="lr-channel-state">
               <MonitorStateTag state={room.monitorState} />
+              {renderRoomPlanTags(room.enabledPlans)}
             </div>
             <div className="lr-room-policy-tags">
               <div className="lr-room-policy-tags-row" ref={tagsRef}>
