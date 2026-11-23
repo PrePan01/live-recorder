@@ -67,8 +67,20 @@ test('published index repair does not download or upload installers', () => {
   const steps = release.jobs.release.steps.filter(step => !step.if || evaluate(step.if, needs, { published: 'true', frozen: 'true' }));
   assert(!steps.some(step => step.uses?.startsWith('actions/download-artifact@')));
   assert(!steps.some(step => step.run?.includes(' publish ')));
+  assert(!steps.some(step => step.name === 'Install release upload dependencies'));
   assert(steps.some(step => step.run?.includes(' restore ')));
   assert(steps.some(step => step.run?.includes(' sync ')));
+});
+
+test('publication installs the locked uploader beside the selected release tooling', () => {
+  const steps = release.jobs.release.steps;
+  const install = steps.findIndex(step => step.name === 'Install release upload dependencies');
+  const publish = steps.findIndex(step => step.run?.includes(' publish '));
+  assert(install >= 0 && install < publish);
+  assert.equal(steps[install].if, steps[publish].if);
+  assert.equal(steps[install]['working-directory'], "\u0024{{ inputs.resume_version != '' && 'release-tools' || '.' }}");
+  assert.match(steps[install].run, /^npm ci /);
+  assert.equal(steps[publish].env.QINIU_ACCELERATE_UPLOAD, '\u0024{{ vars.QINIU_ACCELERATE_UPLOAD }}');
 });
 
 test('workflow lint and both native platforms are covered on PRs before entering the release branch', () => {

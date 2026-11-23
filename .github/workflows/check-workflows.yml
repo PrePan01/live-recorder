@@ -19,7 +19,7 @@ jobs:
       - name: Install workflow test dependencies
         run: npm ci --include=dev --ignore-scripts --no-audit --no-fund
       - name: Validate release gates and recovery contract
-        run: node --test .github/tests/*.test.mjs
+        run: node --test .github/tests/*.test.mjs scripts/release-pipeline.test.mjs
       - name: Check GitHub Actions syntax and expressions
         shell: bash
         run: |

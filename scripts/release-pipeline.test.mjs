@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertReleaseIdentity, publishRelease, ReleaseRemote, checksMatchJournal, prepareReleaseFiles, syncRelease, verifyFrozenFiles, asyncCommand } from './release-pipeline.mjs';
 
+import { ensureQiniuObject } from './release-qiniu.mjs';
 import { pubkey, signature } from './test-fixtures/signatures.mjs';
 
 const state = {
@@ -162,7 +163,7 @@ test('validation builds on another branch do not reserve tags or publish', async
   assert.equal(result.stdout, 'should_release=true\nreuse_release=false\nreuse_checks=false\n');
 });
 
-test('AWS batch overlaps GitHub uploads with bounded GitHub concurrency', async () => {
+test('Kodo uploads overlap GitHub uploads with bounded GitHub concurrency', async () => {
   const remote = new FakeRemote();
   const active = { github: 0, cdn: 0 };
   const peak = { github: 0, cdn: 0 };
@@ -204,44 +205,34 @@ test('failed transfer drains other uploads before rejecting and never activates 
   assert(!remote.objects.has('latest.json'));
 });
 
-test('CDN uploads use one recursive AWS batch, native progress and transfer defaults', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'lr-transfer-test-'));
+test('CDN uses independent Kodo workers with bounded concurrency and a shared budget', async () => {
   const calls = [];
-  const remote = new ReleaseRemote(directory, state.version, async (...args) => calls.push(args));
+  let active = 0;
+  let peak = 0;
+  const remote = new ReleaseRemote('assets', state.version, async (...args) => {
+    calls.push(args);
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setImmediate(resolve));
+    active--;
+  });
   try {
-    writeFileSync(join(directory, 'app.dmg'), 'mac bytes');
-    writeFileSync(join(directory, 'latest.json'), '{}');
-    remote.objectHead = () => null;
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
-    const [program, args, options] = calls[0];
-    assert.equal(program, 'aws');
-    assert.equal(args[args.indexOf('s3') + 1], 'cp');
-    assert(!args.includes('--cli-connect-timeout'));
-    assert(!args.includes('--cli-read-timeout'));
-    assert(!args.includes('--metadata'));
-    assert(!args.includes('--only-show-errors'));
-    assert(options.timeout > 44 * 60 * 1000);
-    assert(options.timeout <= 45 * 60 * 1000);
-    assert.equal(options.idleTimeout, 5 * 60 * 1000);
-    assert(args.includes('--recursive'));
-    assert.equal(options.liveOutput, true);
-    const staging = args[args.indexOf('cp') + 1];
-    assert.equal(readFileSync(join(staging, 'app.dmg'), 'utf8'), 'mac bytes');
-    assert.equal(readFileSync(join(staging, 'releases/v1.2.3/latest.json'), 'utf8'), '{}');
-    assert.throws(() => readFileSync(join(staging, 'latest.json')));
-    assert(args.includes('public, max-age=31536000, immutable'));
-    assert(!args.includes('--profile'));
-    assert.equal(options.env, undefined);
-    const metadata = { 'release-set-sha256': createHash('sha256').update(JSON.stringify([
-      ['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash'],
-    ].sort())).digest('hex') };
-    remote.objectHead = key => ({ Metadata: metadata, ContentLength: key === 'app.dmg' ? 9 : 2 });
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash']]);
-    assert.equal(calls.length, 1);
-    remote.objectHead = () => ({ Metadata: { sha256: 'mac-hash' } });
-    await assert.rejects(remote.ensureObjects([['app.dmg', 'app.dmg', 'changed-hash']]), /Refusing to overwrite/);
-    assert.equal(calls.length, 1);
-  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+    await remote.ensureObjects([
+      ['releases/v1.2.3/latest.json', 'latest.json', 'manifest-hash'],
+      ['app.dmg', 'app.dmg', 'mac-hash'],
+      ['app.exe', 'app.exe', 'win-hash'],
+    ]);
+    assert.equal(peak, 2);
+    assert.deepEqual(calls.map(([, args]) => args[1]), ['app.dmg', 'app.exe', 'releases/v1.2.3/latest.json']);
+    for (const [program, [worker, , file, digest, resume], options] of calls) {
+      assert.equal(program, process.execPath);
+      assert.equal(worker, join(import.meta.dirname, 'release-qiniu.mjs'));
+      assert.equal(resume, join(remote.scratch, 'qiniu-resume'));
+      assert(file.startsWith('assets/'));
+      assert(digest.endsWith('-hash'));
+      assert(options.timeout > 44 * 60_000 && options.timeout <= 45 * 60_000);
+      assert.equal(options.idleTimeout, 5 * 60_000);
+    }
+  } finally { remote.close(); }
 });
 
 test('public allowlist contains only two installers and required manifests', async () => {
@@ -503,101 +494,110 @@ test('upload subprocesses stop on timeout and close interactive input', async ()
   assert.match(result, /closed/);
 });
 
-test('uncertain CDN upload is checked before retry, preserving a completed object', async () => {
-  let calls = 0;
-  let heads = 0;
-  const directory = mkdtempSync(join(tmpdir(), 'lr-batch-retry-'));
-  writeFileSync(join(directory, 'app.dmg'), 'fixture');
-  const remote = new ReleaseRemote(directory, state.version, async () => { calls++; throw new Error('upload connection interrupted'); });
-  remote.objectHead = () => ++heads === 1 ? null : { Metadata: { sha256: 'mac-hash' } };
+test('partial Kodo upload retries only the failed file with the same resume directory', async () => {
+  const calls = [];
+  const remote = new ReleaseRemote('assets', state.version, async (_program, args) => {
+    calls.push(args);
+    if (args[1] === 'app.exe' && calls.length === 2) throw new Error('connection interrupted');
+  });
   try {
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash']]);
-    assert.equal(calls, 1);
-    assert.equal(heads, 2);
-  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash'], ['app.exe', 'app.exe', 'win-hash']]);
+    assert.deepEqual(calls.map(args => args[1]), ['app.dmg', 'app.exe', 'app.exe']);
+    assert.deepEqual(calls[1], calls[2]);
+  } finally { remote.close(); }
 });
 
-test('a partially completed AWS batch retries only missing files', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'lr-partial-batch-'));
-  const uploaded = new Map();
-  const batches = [];
-  const reads = [];
-  for (const name of ['app.dmg', 'app.exe']) writeFileSync(join(directory, name), name);
-  const remote = new ReleaseRemote(directory, state.version, async (program, args) => {
-    const staging = args[args.indexOf('cp') + 1];
-    assert(!args.includes('--metadata'));
-    const names = ['app.dmg', 'app.exe'].filter(name => {
-      try { readFileSync(join(staging, name)); return true; }
-      catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
-    });
-    batches.push(names);
-    // 上传不附带自定义摘要，重试时需要核对文件内容。
-    uploaded.set(names[0], { ContentLength: Buffer.byteLength(names[0]) });
-    if (batches.length === 1) throw new Error('connection interrupted after first file');
-  });
-  remote.objectHead = key => uploaded.get(key) ?? null;
-  remote.objectDigest = async key => { reads.push(key); return createHash('sha256').update(key).digest('hex'); };
-  try {
-    await remote.ensureObjects(['app.dmg', 'app.exe'].map(name => [name, name, createHash('sha256').update(name).digest('hex')]));
-    assert.deepEqual(batches, [['app.dmg', 'app.exe'], ['app.exe']]);
-    assert.deepEqual(reads, ['app.dmg']);
-    assert.equal(uploaded.size, 2);
-  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
-});
-
-test('CDN transfer can finish after the former 25-minute cutoff', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'lr-slow-cdn-'));
-  writeFileSync(join(directory, 'app.dmg'), 'fixture');
-  const realNow = Date.now;
-  const started = realNow();
-  let elapsed = 0, uploads = 0;
-  const remote = new ReleaseRemote(directory, state.version, async (_program, _args, options) => {
-    uploads++;
-    assert(options.timeout > 26 * 60 * 1000);
-    assert.equal(options.idleTimeout, 5 * 60 * 1000);
-    elapsed = 26 * 60 * 1000;
-  });
-  remote.objectHead = () => null;
-  Date.now = () => started + elapsed;
-  try {
-    await remote.ensureObjects([['app.dmg', 'app.dmg', 'mac-hash']]);
-    assert.equal(uploads, 1);
-  } finally { Date.now = realNow; remote.close(); rmSync(directory, { recursive: true, force: true }); }
-});
-
-test('HeadObject 403 during recovery identifies the key and never treats it as a missing object', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'lr-cdn-permissions-'));
-  writeFileSync(join(directory, 'app.exe'), 'fixture');
-  let uploads = 0, probes = 0;
-  const remote = new ReleaseRemote(directory, state.version, async () => {
-    uploads++;
-    throw new Error('CDN batch upload timed out after 1493s');
-  });
-  remote.aws = () => {
-    probes++;
-    throw new Error(`An error occurred (${uploads ? '403' : '404'}) when calling the HeadObject operation: ${uploads ? 'Forbidden' : 'Not Found'}`);
+test('Kodo worker failures distinguish missing, disabled, denied and existing objects', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-kodo-object-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bytes = 'frozen bytes';
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const file = join(directory, 'app.dmg');
+  writeFileSync(file, bytes);
+  const input = { bucket: 'fixture', key: 'app.dmg', file, digest, baseUrl: 'https://cdn.example.com' };
+  const response = (statusCode, data) => ({ data, resp: { statusCode, headers: { 'x-reqid': 'fixture-request' } } });
+  const metadata = { fsize: bytes.length, 'x-qn-meta': { 'release-sha256': digest } };
+  const upload = t.mock.fn(async () => response(200, { key: input.key, hash: 'fixture-etag' }));
+  const manager = {
+    stat: async () => response(612),
+    changeHeaders: t.mock.fn(async () => response(200)),
   };
-  try {
-    await assert.rejects(remote.ensureObjects([['app.exe', 'app.exe', 'win-hash']]), /Cannot inspect CDN object app\.exe:.*\(403\)/);
-    assert.equal(uploads, 1);
-    assert.equal(probes, 3); // 一次 404，再用 HEAD 和只读 GET 诊断 403。
-  } finally { remote.close(); rmSync(directory, { recursive: true, force: true }); }
+  await ensureQiniuObject(input, { manager, upload });
+  assert.equal(upload.mock.callCount(), 1);
+  assert.deepEqual(manager.changeHeaders.mock.calls[0].arguments, [
+    input.bucket, input.key, { 'Cache-Control': 'public, max-age=31536000, immutable' },
+  ]);
+
+  manager.stat = async () => response(200, metadata);
+  await ensureQiniuObject(input, { manager, upload });
+  assert.equal(manager.changeHeaders.mock.callCount(), 2);
+
+  manager.stat = async () => response(200, { ...metadata, status: 1 });
+  await assert.rejects(ensureQiniuObject(input, { manager, upload }), /object is disabled/);
+  manager.stat = async () => response(403);
+  await assert.rejects(ensureQiniuObject(input, { manager, upload }), /stat app\.dmg \(403\), request ID fixture-request/);
+  manager.stat = async () => response(200, metadata);
+  await assert.rejects(ensureQiniuObject({ ...input, digest: 'changed' }, { manager, upload }), /SHA-256 mismatch/);
+  assert.equal(upload.mock.callCount(), 1);
+});
+
+test('a successful part response cannot stand in for a completed Kodo object', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-kodo-completion-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = join(directory, 'app.dmg');
+  writeFileSync(file, 'fixture');
+  const manager = {
+    stat: async () => ({ resp: { statusCode: 612 } }),
+    changeHeaders: t.mock.fn(),
+  };
+  const upload = async () => ({ data: { etag: 'part-etag' }, resp: { statusCode: 200 } });
+  await assert.rejects(ensureQiniuObject({ bucket: 'fixture', key: 'app.dmg', file }, { manager, upload }), /did not confirm/);
+  assert.equal(manager.changeHeaders.mock.callCount(), 0);
+});
+
+test('legacy Kodo objects require matching origin ETag and full SHA-256 over the custom CDN', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'lr-kodo-legacy-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bytes = 'frozen bytes';
+  const file = join(directory, 'app.dmg');
+  writeFileSync(file, bytes);
+  let body = bytes;
+  let etag = 'origin-etag';
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(body, { headers: { etag: `"${etag}"` } }));
+  const input = {
+    bucket: 'fixture', key: 'app.dmg', file, baseUrl: 'https://cdn.example.com',
+    digest: createHash('sha256').update(bytes).digest('hex'),
+  };
+  const manager = {
+    stat: async () => ({ data: { fsize: bytes.length, hash: 'origin-etag' }, resp: { statusCode: 200 } }),
+    changeHeaders: t.mock.fn(),
+  };
+  const upload = t.mock.fn();
+  await ensureQiniuObject(input, { manager, upload });
+  assert.equal(fetch.mock.calls[0].arguments[0], 'https://cdn.example.com/app.dmg');
+  etag = 'stale-etag';
+  await assert.rejects(ensureQiniuObject(input, { manager, upload }), /ETag does not match/);
+  etag = 'origin-etag';
+  body = 'tamper bytes';
+  await assert.rejects(ensureQiniuObject(input, { manager, upload }), /SHA-256 mismatch/);
+  assert.equal(upload.mock.callCount(), 0);
+  assert.equal(manager.changeHeaders.mock.callCount(), 0);
 });
 
 test('native upload progress is visible even when the subprocess fails', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { asyncCommand } from './scripts/release-pipeline.mjs';
     try {
-      await asyncCommand(process.execPath, ['-e', 'process.stdout.write("Completed 8 MiB/64 MiB\\r");process.exit(1)'], { liveOutput: true });
+      await asyncCommand(process.execPath, ['-e', 'process.stdout.write("Uploaded 8/64 bytes\\r");process.exit(1)'], { liveOutput: true });
     } catch { process.exitCode = 1; }
   `], { encoding: 'utf8' });
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /Completed 8 MiB\/64 MiB\n/);
+  assert.match(result.stdout, /Uploaded 8\/64 bytes\n/);
 });
 
 test('active byte progress extends the idle window while stalled uploads stop', async () => {
-  const result = await asyncCommand(process.execPath, ['-e', 'let n=0;const timer=setInterval(()=>{console.log(`Completed ${++n}.0 MiB/9.0 MiB`);if(n===5){clearInterval(timer)}},150)'], { timeout: 3000, idleTimeout: 500 });
-  assert.match(result, /Completed 5.0 MiB/);
+  const result = await asyncCommand(process.execPath, ['-e', 'let n=0;const timer=setInterval(()=>{console.log(`Uploaded ${++n}/9 bytes`);if(n===5){clearInterval(timer)}},150)'], { timeout: 3000, idleTimeout: 500 });
+  assert.match(result, /Uploaded 5\/9 bytes/);
   await assert.rejects(asyncCommand(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeout: 2000, idleTimeout: 80 }), /no upload progress/);
 });
 
@@ -605,18 +605,19 @@ test('split progress records keep an active upload alive', async () => {
   const result = await asyncCommand(process.execPath, ['-e', `
     let n = 0;
     const timer = setInterval(() => {
-      process.stdout.write('Completed ');
-      setTimeout(() => process.stdout.write(++n + '.0 MiB/9.0 MiB\\r'), 30);
+      const index = ++n;
+      process.stdout.write('Uploaded ');
+      setTimeout(() => process.stdout.write(index + '/9 bytes\\r'), 30);
       if (n === 4) clearInterval(timer);
     }, 150);
   `], { timeout: 3000, idleTimeout: 400 });
-  assert.match(result, /Completed 5\.0 MiB/);
+  assert.match(result, /Uploaded 4\/9 bytes/);
 });
 
 test('repeated or regressing progress totals cannot hide a stalled upload', async () => {
   await assert.rejects(asyncCommand(process.execPath, ['-e', `
     let n = 0;
-    setInterval(() => console.log('Completed ' + (++n % 2 + 1) + '.0 MiB/9.0 MiB'), 50);
+    setInterval(() => console.log('Uploaded ' + (++n % 2 + 1) + '/9 bytes'), 50);
   `], { timeout: 2500, idleTimeout: 300 }), /no upload progress/);
 });
 
@@ -641,20 +642,5 @@ test('HEAD 403 is absent only after an authoritative read-only GET 404', () => {
       return '{}';
     };
     assert.throws(() => remote.objectHead('unknown.exe'), /no authoritative object size/);
-  } finally { remote.close(); }
-});
-
-
-test('existing CDN objects are hashed from disk with bounded asynchronous downloads', async () => {
-  const remote = new ReleaseRemote('unused', state.version, async (program, args, options) => {
-    assert.equal(program, 'aws');
-    assert(args.includes('get-object'));
-    assert(args.includes('--bucket'));
-    assert.equal(options.timeout, 45 * 60000);
-    writeFileSync(args.at(-1), 'existing bytes');
-  });
-  try {
-    assert.equal(await remote.objectDigest('existing.exe', 45 * 60000), createHash('sha256').update('existing bytes').digest('hex'));
-    assert.throws(() => readFileSync(join(remote.scratch, 'existing-object')), { code: 'ENOENT' });
   } finally { remote.close(); }
 });

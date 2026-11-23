@@ -1,15 +1,16 @@
 // 封装 GitHub 和 CDN 操作，负责文件上传、校验及发布恢复。
 import {
   mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, statSync,
-  openSync, readSync, closeSync, appendFileSync, mkdirSync, linkSync,
+  openSync, readSync, closeSync, appendFileSync, mkdirSync,
   copyFileSync, existsSync, renameSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generateUpdateManifest, updaterPublicKey } from "./generate-update-manifest.mjs";
 import {
   STATE, assertReleaseIdentity, validateJournal, verifyFrozenFiles,
-  checksMatchJournal, hashBytes, hashFile,
+  checksMatchJournal, hashBytes,
 } from "./release-state.mjs";
 import { asyncCommand, command, retry, retryTransfer, transferFiles } from "./release-command.mjs";
 
@@ -333,76 +334,26 @@ export class ReleaseRemote {
     retry(() => this.aws(["get-object", "--key", key, file]));
     return readFileSync(file);
   }
-  async objectDigest(key, timeout) {
-    const file = join(this.scratch, "existing-object");
-    try {
-      await this.runAsync(
-        "aws",
-        [
-          "--endpoint-url",
-          process.env.QINIU_ENDPOINT,
-          "s3api",
-          "get-object",
-          "--bucket",
-          process.env.QINIU_BUCKET,
-          "--key",
-          key,
-          file,
-        ],
-        {
-          label: `Verify existing CDN object ${key}`,
-          timeout,
-        },
-      );
-      return await hashFile(file);
-    } finally {
-      rmSync(file, { force: true });
-    }
-  }
   async ensureObjects(entries) {
-    // 只上传缺失的版本文件，公共索引单独更新；硬链接可避免复制大文件。
-    const fingerprint = hashBytes(JSON.stringify([...entries].sort()));
-    const staging = join(this.scratch, "cdn-upload");
     const started = Date.now();
-    // 慢速上传最多允许 45 分钟；连续 5 分钟无进展则提前停止。
     const budget = 45 * 60 * 1000;
-    await retryTransfer(async () => {
-      rmSync(staging, { recursive: true, force: true });
-      mkdirSync(staging, { recursive: true });
-      let pending = 0;
-      for (const [key, name, digest] of entries) {
-        const head = this.objectHead(key);
-        if (head) {
-          if (head.Metadata?.["release-set-sha256"] === fingerprint &&
-              head.ContentLength === statSync(join(this.directory, name)).size) continue;
-          const remaining = budget - (Date.now() - started);
-          if (remaining <= 0) throw new Error("CDN upload budget exceeded");
-          const actual = head.Metadata?.sha256 || await this.objectDigest(key, remaining);
-          if (actual !== digest) throw new Error(`Refusing to overwrite CDN object ${key}`);
-          continue;
-        }
-        const target = join(staging, key);
-        mkdirSync(dirname(target), { recursive: true });
-        try { linkSync(join(this.directory, name), target); }
-        catch (error) {
-          if (error.code !== "EXDEV") throw error;
-          copyFileSync(join(this.directory, name), target);
-        }
-        pending++;
-      }
-      if (!pending) return;
-      const remaining = budget - (Date.now() - started);
-      if (remaining <= 0) throw new Error("CDN upload budget exceeded");
-      console.log(`Uploading ${pending} CDN objects in one AWS recursive batch`);
-      await this.runAsync("aws", [
-        "--endpoint-url", process.env.QINIU_ENDPOINT,
-        "s3", "cp", staging, `s3://${process.env.QINIU_BUCKET}/`, "--recursive",
-        "--cache-control", "public, max-age=31536000, immutable",
-      ], {
-        label: "CDN batch upload", liveOutput: true, timeout: remaining,
-        idleTimeout: 5 * 60 * 1000,
-      });
-    });
+    const worker = fileURLToPath(new URL("./release-qiniu.mjs", import.meta.url));
+    const stateDirectory = join(this.scratch, "qiniu-resume");
+    // 大文件独立重试，保留同一 job 中已确认的分片记录。
+    const ordered = [...entries].sort((a, b) =>
+      Number(/\.(dmg|exe)$/.test(b[1])) - Number(/\.(dmg|exe)$/.test(a[1])));
+    await transferFiles(ordered, ([key, name, digest]) =>
+      retryTransfer(async () => {
+        const remaining = budget - (Date.now() - started);
+        if (remaining <= 0) throw new Error("CDN upload budget exceeded");
+        await this.runAsync(process.execPath, [
+          worker, key, join(this.directory, name), digest, stateDirectory,
+        ], {
+          label: `Kodo ${key}`, liveOutput: true, timeout: remaining,
+          idleTimeout: 5 * 60 * 1000,
+        });
+      }),
+    );
   }
 
   reportStatus(status) {

@@ -21,7 +21,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.6",
+    "qiniu": "7.15.2"
   },
   "devDependencies": {
     "yaml": "2.9.1"

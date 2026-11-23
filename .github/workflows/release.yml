@@ -296,9 +296,8 @@ jobs:
            (needs.prepare.outputs.reuse_release == 'true' && needs.build.result == 'skipped')) &&
           needs.prepare.outputs.should_release == 'true' &&
           (github.event_name == 'push' || inputs.publish) }}
-    # Keep the image used for the last successful large uploads to Qiniu.
     runs-on: ubuntu-24.04
-    # Uploads have a 45-minute total bound and a 5-minute no-progress watchdog.
+    # Kodo uploads share a 45-minute budget and have a per-file 5-minute idle limit.
     # Leave time for checkpoint recovery, verification and version-index sync.
     timeout-minutes: 60
     permissions:
@@ -390,6 +389,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Install release upload dependencies
+        if: steps.publication.outputs.published != 'true'
+        working-directory: ${{ inputs.resume_version != '' && 'release-tools' || '.' }}
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
       # GitHub publication is the formal release commit point.
       - name: Verify staged assets and publish GitHub Release
         if: steps.publication.outputs.published != 'true'
@@ -400,6 +404,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.QINIU_SK }}
           AWS_DEFAULT_REGION: cn-south-1
           AWS_EC2_METADATA_DISABLED: 'true'
+          # Set this repository variable after enabling Kodo transfer acceleration on the bucket.
+          QINIU_ACCELERATE_UPLOAD: ${{ vars.QINIU_ACCELERATE_UPLOAD }}
         run: node "$RELEASE_PIPELINE" publish release-assets "$RELEASE_VERSION"
 
       # This phase may fail after publication. Reruns restore only three small

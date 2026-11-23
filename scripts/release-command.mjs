@@ -62,8 +62,8 @@ export function asyncCommand(program, args, options = {}) {
       // 进度行可能分批到达，保留末尾片段；字节数增加才算传输有进展。
       const streamIndex = isError ? 1 : 0;
       const progressOutput = progressTails[streamIndex] + output;
-      for (const match of progressOutput.matchAll(/Completed ([\d.]+) (Bytes|KiB|MiB|GiB)\//g)) {
-        const amount = Number(match[1]) * ({ Bytes: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3 })[match[2]];
+      for (const match of progressOutput.matchAll(/Uploaded (\d+)\/\d+ bytes/g)) {
+        const amount = Number(match[1]);
         if (amount > lastAmount) { lastAmount = amount; lastProgress = Date.now(); }
       }
       progressTails[streamIndex] = progressOutput.slice(-128);
@@ -88,7 +88,7 @@ export async function retryTransfer(fn) {
     } catch (error) {
       if (
         attempt === 3 || isS3PermissionError(error) ||
-        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify|upload budget exceeded/.test(
+        /HTTP 404|\((404|NoSuchKey|NotFound)\)|Refusing to overwrite|refusing to modify|upload budget exceeded|Kodo .+ \((401|403|631)\)|Kodo object is disabled|Missing Kodo release configuration/.test(
           error.message,
         )
       )
