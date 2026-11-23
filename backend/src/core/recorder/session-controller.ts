@@ -380,6 +380,7 @@ export class RecordingSessions {
 
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
+      // 目录准备期间，启动超时可能已将录制交给下一次拉流。
       if (session.generation !== generation || this.host.shuttingDown) return;
       if (session.stopRequested) {
         await this.completeRecording(room, recordingId, session.size, "ended", {
