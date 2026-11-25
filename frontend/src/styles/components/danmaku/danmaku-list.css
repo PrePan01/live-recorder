@@ -94,13 +94,14 @@
 }
 
 .lr-danmaku-list__title {
+  --lr-danmaku-header-padding: 12px;
   display: flex;
   flex: 0 0 var(--lr-player-header-height);
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 var(--lr-danmaku-header-padding);
   border-bottom: 3px solid var(--lr-ink);
   background: var(--lr-yellow);
   color: #000;
@@ -110,11 +111,21 @@
 }
 
 .lr-danmaku-list__title h2 {
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
   font: inherit;
+  white-space: nowrap;
 }
 
-.lr-danmaku-list__collapse.ant-btn {
+.lr-danmaku-list__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.lr-danmaku-list__actions .ant-btn {
   --lr-text: #000;
   flex: none;
   width: 26px;
@@ -124,8 +135,65 @@
   font-size: 14px;
 }
 
-.lr-danmaku-list__collapse.ant-btn:is(:hover, :focus-visible):not(:disabled) {
+.lr-danmaku-list__actions .ant-btn:is(:hover, :focus-visible):not(:disabled) {
   background: rgb(0 0 0 / 8%) !important;
+}
+
+.lr-danmaku-list__search {
+  display: flex;
+  align-items: center;
+  width: 26px;
+  height: 26px;
+  transition:
+    width var(--lr-motion) ease,
+    background-color var(--lr-motion) ease,
+    box-shadow var(--lr-motion) ease;
+}
+
+.lr-danmaku-list__title[data-search-open] .lr-danmaku-list__search {
+  width: min(190px, calc(100cqi - 116px));
+  background: color-mix(in srgb, var(--lr-yellow) 24%, white);
+  box-shadow: inset 0 0 0 1px var(--lr-ink);
+}
+
+.lr-danmaku-list__search:has(input:focus) {
+  outline: 2px solid var(--lr-primary);
+  outline-offset: 1px;
+}
+
+.lr-danmaku-list__search-input {
+  flex: 1;
+  min-width: 0;
+  overflow: clip;
+}
+
+.lr-danmaku-list__search-input .ant-input-affix-wrapper {
+  --lr-text: #000;
+  height: 24px;
+  min-height: 0;
+  padding-inline: 6px 0;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+}
+
+.lr-danmaku-list__search-input .ant-input {
+  min-width: 0;
+  font-weight: 400;
+}
+
+@container (max-width: 195px) {
+  .lr-danmaku-list__title {
+    column-gap: 0;
+  }
+
+  .lr-danmaku-list__title[data-search-open] h2 {
+    opacity: 0;
+  }
+
+  .lr-danmaku-list__title[data-search-open] .lr-danmaku-list__search {
+    width: calc(100cqi - 30px - 2 * var(--lr-danmaku-header-padding));
+  }
 }
 
 .lr-danmaku-list__viewport {
@@ -277,10 +345,17 @@ button.lr-danmaku-list__item:not([aria-disabled="true"]) {
 }
 
 @container (max-width: 140px) {
+  .lr-danmaku-list__title {
+    --lr-danmaku-header-padding: 3px;
+  }
+
   .lr-danmaku-list__title,
   .lr-danmaku-list__notice {
-    padding-inline: 3px;
     font-size: 10px;
+  }
+
+  .lr-danmaku-list__notice {
+    padding-inline: 3px;
   }
 
   .lr-danmaku-list__notice .ant-btn {

@@ -1,12 +1,13 @@
-import { MenuFoldOutlined } from "@ant-design/icons";
+import { MenuFoldOutlined, SearchOutlined } from "@ant-design/icons";
 import { isTauri } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { App, Button, Tooltip } from "antd";
+import { App, Button, Input, Tooltip, type InputRef } from "antd";
 import dayjs from "dayjs";
 import {
   memo,
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -155,15 +156,42 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
     open,
   );
   const viewportRef = useRef<HTMLDivElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<InputRef>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const query = searchOpen ? searchText.trim().toLowerCase() : "";
   // Only the last chunk is copied when a page arrives.
   const [rows, setRows] = useState(EMPTY_ROWS);
   const { chunks, count, startIndex, firstRecordedIndex } = rows;
   const isPreview = previewOnly;
-  const dividerIndex =
+  const matchingIndices = useMemo(() => {
+    if (!query) return null;
+    const indices: number[] = [];
+    chunks.forEach((chunk, chunkIndex) => {
+      chunk.forEach((row, offset) => {
+        if (row.text.toLowerCase().includes(query))
+          indices.push(chunkIndex * CHUNK_SIZE + offset);
+      });
+    });
+    return indices;
+  }, [chunks, query]);
+  const visibleCount = matchingIndices?.length ?? count;
+  const unfilteredDivider =
     !isPreview && count > 0 && firstRecordedIndex !== 0
       ? (firstRecordedIndex ?? count)
       : null;
-  const itemCount = count + (dividerIndex === null ? 0 : 1);
+  const firstMatchingRecorded =
+    matchingIndices && unfilteredDivider !== null
+      ? matchingIndices.findIndex((index) => index >= unfilteredDivider)
+      : -1;
+  const dividerIndex =
+    matchingIndices === null
+      ? unfilteredDivider
+      : firstMatchingRecorded > 0
+        ? firstMatchingRecorded
+        : null;
+  const itemCount = visibleCount + (dividerIndex === null ? 0 : 1);
   const [scrollTop, setScrollTop] = useState(0);
   const [{ height, rowHeight }, setViewportSize] = useState({
     height: 0,
@@ -182,6 +210,8 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
   const lastPosition = useRef({
     startIndex: 0,
     dividerIndex: null as number | null,
+    query: "",
+    matchingIndices: null as number[] | null,
   });
   const programmaticTop = useRef<number | null>(null);
   const [cacheTruncated, setCacheTruncated] = useState(false);
@@ -275,34 +305,87 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
   }, []);
 
   useLayoutEffect(() => {
+    if (!open || !searchOpen) return;
+    const frame = requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, searchOpen]);
+
+  useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const previous = lastPosition.current;
     const resized = resizeScrollTop.current;
     const anchor = resized ?? viewport.scrollTop;
     const topRow = Math.floor(anchor / rowHeight);
-    const oldDividerBefore =
-      previous.dividerIndex !== null && topRow >= previous.dividerIndex ? 1 : 0;
-    const contentRow =
-      topRow - oldDividerBefore + previous.startIndex - startIndex;
-    const newDividerBefore =
-      dividerIndex !== null && contentRow >= dividerIndex ? 1 : 0;
-    const shift =
-      previous.startIndex - startIndex + newDividerBefore - oldDividerBefore;
-    const target =
-      live && rows.next === null && stickToTail.current
-        ? viewport.scrollHeight
-        : resized === undefined && shift === 0
-          ? undefined
-          : Math.max(0, anchor + shift * rowHeight);
+    let target = resized;
+    if (live && rows.next === null && stickToTail.current) {
+      target = viewport.scrollHeight;
+    } else if (query !== previous.query) {
+      target = 0;
+    } else if (matchingIndices) {
+      // Anchor a live search on the underlying row when its retained window moves.
+      if (live && matchingIndices !== previous.matchingIndices) {
+        const oldIndex =
+          topRow -
+          Number(
+            previous.dividerIndex !== null && topRow > previous.dividerIndex,
+          );
+        const oldRow = previous.matchingIndices?.[oldIndex];
+        if (oldRow !== undefined) {
+          const contentRow = oldRow + previous.startIndex - startIndex;
+          const nextIndex = matchingIndices.findIndex(
+            (index) => index >= contentRow,
+          );
+          if (nextIndex === -1) {
+            target = viewport.scrollHeight;
+          } else {
+            const nextRow =
+              nextIndex +
+              Number(dividerIndex !== null && nextIndex >= dividerIndex);
+            target = anchor + (nextRow - topRow) * rowHeight;
+          }
+        }
+      }
+      target = Math.max(
+        0,
+        Math.min(
+          target ?? anchor,
+          viewport.scrollHeight - viewport.clientHeight,
+        ),
+      );
+    } else {
+      const oldDividerBefore =
+        previous.dividerIndex !== null && topRow >= previous.dividerIndex
+          ? 1
+          : 0;
+      const contentRow =
+        topRow - oldDividerBefore + previous.startIndex - startIndex;
+      const newDividerBefore =
+        dividerIndex !== null && contentRow >= dividerIndex ? 1 : 0;
+      const shift =
+        previous.startIndex - startIndex + newDividerBefore - oldDividerBefore;
+      if (shift !== 0) target = Math.max(0, anchor + shift * rowHeight);
+    }
     resizeScrollTop.current = undefined;
     committedRowHeight.current = rowHeight;
-    lastPosition.current = { startIndex, dividerIndex };
+    lastPosition.current = { startIndex, dividerIndex, query, matchingIndices };
     if (target === undefined) return;
     viewport.scrollTop = target;
     programmaticTop.current = viewport.scrollTop;
     setScrollTop(viewport.scrollTop);
-  }, [dividerIndex, height, itemCount, live, rowHeight, rows.next, startIndex]);
+  }, [
+    dividerIndex,
+    height,
+    itemCount,
+    live,
+    matchingIndices,
+    query,
+    rowHeight,
+    rows.next,
+    startIndex,
+  ]);
 
   const loadEdge = useCallback(
     async (direction: "older" | "newer") => {
@@ -362,13 +445,14 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
   useLayoutEffect(() => {
     if (
       !live &&
+      !query &&
       hasNext &&
       status === "ready" &&
       itemCount * rowHeight - scrollTop - height <= rowHeight * OVERSCAN
     ) {
       void sessionRef.current?.load();
     }
-  }, [itemCount, hasNext, height, live, rowHeight, scrollTop, status]);
+  }, [itemCount, hasNext, height, live, query, rowHeight, scrollTop, status]);
 
   const copy = async (text: string) => {
     try {
@@ -385,7 +469,7 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
     itemCount,
     Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN,
   );
-  const empty = count === 0 && status === "ready";
+  const empty = visibleCount === 0 && status === "ready";
   return (
     <aside
       id={id}
@@ -412,18 +496,58 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
         resizeProps.onPointerLeave(event);
       }}
     >
-      <header className="lr-danmaku-list__title">
+      <header
+        className="lr-danmaku-list__title"
+        data-search-open={searchOpen ? "" : undefined}
+      >
         <h2 id={`${id}-title`}>弹幕列表</h2>
-        <Tooltip title="收起弹幕列表" trigger={["hover", "focus"]}>
-          <Button
-            className="lr-danmaku-list__collapse"
-            type="text"
-            size="small"
-            icon={<MenuFoldOutlined />}
-            aria-label="收起弹幕列表"
-            onClick={onCollapse}
-          />
-        </Tooltip>
+        <div className="lr-danmaku-list__actions">
+          <div className="lr-danmaku-list__search">
+            <div className="lr-danmaku-list__search-input" inert={!searchOpen}>
+              <Input
+                ref={searchInputRef}
+                id={`${id}-search`}
+                size="small"
+                variant="borderless"
+                allowClear
+                aria-label="搜索弹幕"
+                placeholder="搜索弹幕"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+              />
+            </div>
+            <Tooltip
+              title={searchOpen ? "收起弹幕搜索" : "搜索弹幕"}
+              trigger={["hover", "focus"]}
+            >
+              <Button
+                ref={searchButtonRef}
+                type="text"
+                size="small"
+                icon={<SearchOutlined />}
+                aria-label={searchOpen ? "收起弹幕搜索" : "搜索弹幕"}
+                aria-expanded={searchOpen}
+                aria-controls={`${id}-search`}
+                onClick={() => {
+                  if (searchOpen) {
+                    setSearchText("");
+                    searchButtonRef.current?.focus({ preventScroll: true });
+                  }
+                  setSearchOpen(!searchOpen);
+                }}
+              />
+            </Tooltip>
+          </div>
+          <Tooltip title="收起弹幕列表" trigger={["hover", "focus"]}>
+            <Button
+              type="text"
+              size="small"
+              icon={<MenuFoldOutlined />}
+              aria-label="收起弹幕列表"
+              onClick={onCollapse}
+            />
+          </Tooltip>
+        </div>
       </header>
       <div
         className="lr-danmaku-list__viewport"
@@ -478,8 +602,9 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
                 </li>
               );
             }
-            const rowIndex =
+            const visibleIndex =
               dividerIndex !== null && index > dividerIndex ? index - 1 : index;
+            const rowIndex = matchingIndices?.[visibleIndex] ?? visibleIndex;
             const row =
               chunks[Math.floor(rowIndex / CHUNK_SIZE)][rowIndex % CHUNK_SIZE];
             const useLocalTime = isPreview || row.beforeRecording;
@@ -542,10 +667,26 @@ export const DanmakuListPanel = memo(function DanmakuListPanel({
         </ul>
         {empty && (
           <div className="lr-danmaku-list__empty" role="status">
-            {isPreview ? "正在采集弹幕" : "正在保存实时弹幕"}
+            {query
+              ? "没有匹配结果"
+              : isPreview
+                ? "正在采集弹幕"
+                : "正在保存实时弹幕"}
           </div>
         )}
       </div>
+      {query && !live && hasNext && status !== "error" && (
+        <div className="lr-danmaku-list__notice">
+          <Button
+            type="link"
+            size="small"
+            loading={status === "loading"}
+            onClick={load}
+          >
+            加载更多弹幕
+          </Button>
+        </div>
+      )}
       {(cacheTruncated || cacheSkipped) && (
         <div className="lr-danmaku-list__notice" role="status">
           {cacheTruncated && "预览缓存已达上限，仅保留最近弹幕。"}
