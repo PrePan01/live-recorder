@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +20,9 @@ vi.mock('../../src/recorder/pipeline-ffmpeg.js', async (importOriginal) => {
 
 function baseSettings(dir: string): AppSettings {
   return {
+    recordingFormat: DEFAULT_SETTINGS.recordingFormat,
+    theme: DEFAULT_SETTINGS.theme,
+    floatingRecorderSize: DEFAULT_SETTINGS.floatingRecorderSize,
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',

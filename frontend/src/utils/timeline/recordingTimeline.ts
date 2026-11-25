@@ -32,6 +32,15 @@ export function recordingSeekTarget(
   return mode === "recording" && target >= duration ? "live" : target;
 }
 
+export function playheadStepTarget(
+  mode: RecordingTrackMode,
+  position: number,
+  delta: number,
+  duration: number,
+): number | "live" | undefined {
+  return recordingSeekTarget(mode, "playhead", position + delta, duration);
+}
+
 export function timelinePercent(second: number, timelineEnd: number): number {
   return timelineEnd > 0
     ? Math.max(0, Math.min(100, (second / timelineEnd) * 100))

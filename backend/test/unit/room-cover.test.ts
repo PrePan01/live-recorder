@@ -41,7 +41,7 @@ function setup() {
     displayName: '主播',
   });
   services.rooms.setLiveStatus(created.id, 'live');
-  services.rooms.update(created.id, { liveCoverUrl: room.liveCoverUrl });
+  services.rooms.update(created.id, { liveCoverUrl: room.liveCoverUrl ?? null });
   return { services, id: created.id };
 }
 
@@ -185,7 +185,7 @@ describe('cover routes', () => {
         platform: 'bilibili', url: 'https://live.bilibili.com/2', displayName: '主播',
       });
       services.rooms.setLiveStatus(created.id, 'live');
-      services.rooms.update(created.id, { liveCoverUrl: room.liveCoverUrl });
+      services.rooms.update(created.id, { liveCoverUrl: room.liveCoverUrl ?? null });
       vi.stubGlobal('fetch', fetcher);
       const { app } = buildApp(services, { extraOrigins: ['http://localhost:5173'] });
       try {

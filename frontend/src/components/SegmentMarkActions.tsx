@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Button, Tooltip } from "antd";
 import Icon from "@ant-design/icons";
 import type { useSegmentMarking } from "../hooks/useSegmentMarking";
-import { formatAltShortcut } from "../utils/keyboardShortcuts";
+import { formatShortcut, shortcutTitle, type Shortcut } from "../utils/keyboardShortcuts";
 
 function SegmentIcon() {
   return (
@@ -24,15 +24,18 @@ export function SegmentMarkActions({
   marking,
   disabled,
   children,
+  shortcut,
 }: {
   marking: ReturnType<typeof useSegmentMarking>;
   current?: number;
   disabled?: boolean;
   children?: ReactNode;
+  shortcut?: Shortcut | null;
 }) {
+  const label = marking.start == null ? "标记片段" : "片段结束";
   return (
     <>
-      <Tooltip title={formatAltShortcut("P")}>
+      <Tooltip title={shortcut === undefined ? formatShortcut({ code: "KeyP", alt: true }) : shortcutTitle(label, shortcut)}>
         <Button
           size="small"
           className={marking.start != null ? "lr-segment-mark-end" : undefined}
@@ -41,7 +44,7 @@ export function SegmentMarkActions({
           loading={marking.saving}
           onClick={() => void marking.mark()}
         >
-          {marking.start == null ? "标记片段" : "片段结束"}
+          {label}
         </Button>
       </Tooltip>
       {marking.start != null ? (

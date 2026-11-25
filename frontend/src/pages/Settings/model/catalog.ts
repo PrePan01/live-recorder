@@ -14,6 +14,7 @@ export const SECTIONS = [
   ["appearance", "外观", "界面主题与快捷操作"],
   ["recording", "录制", "录制默认值与自动录制"],
   ["monitoring", "监测", "开播状态监测与检测频率"],
+  ["shortcuts", "快捷键", "自定义直播预览操作"],
   ["files", "文件与存储", "保存位置与文件命名"],
   ["highlights", "精彩时刻", "直播回溯缓存"],
   ["pipeline", "录制后处理", "录制完成后的文件处理"],
@@ -65,11 +66,13 @@ const MONITORING_INTERVAL_KEYS = [
   "xiaohongshu",
   "youtube",
 ] as const satisfies readonly (keyof PlatformIntervals)[];
-export const MONITORING_INTERVAL_COLUMNS = MONITORING_INTERVAL_KEYS.map((key) => ({
-  id: `interval-${key}`,
-  key,
-  heading: key === "default" ? "全局" : PLATFORM_LABEL[key],
-}));
+export const MONITORING_INTERVAL_COLUMNS = MONITORING_INTERVAL_KEYS.map(
+  (key) => ({
+    id: `interval-${key}`,
+    key,
+    heading: key === "default" ? "全局" : PLATFORM_LABEL[key],
+  }),
+);
 
 export const DEFINITIONS: SettingDefinition[] = [
   field(
@@ -162,22 +165,21 @@ export const DEFINITIONS: SettingDefinition[] = [
     "录制完成后询问是否保留",
     "等待保留确认时，后处理和上传将暂缓执行。",
   ),
-  ...MONITORING_INTERVAL_COLUMNS.map(
-    ({ id, key, heading }) =>
-      field(
-        id,
-        "monitoring",
-        "settings",
-        `checkIntervalSec.${key}`,
-        `${key === "default" ? "全局默认" : heading}检测间隔`,
-        "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
-        {
-          min: 1,
-          max: 3600,
-          unit: "秒",
-          keywords: "检测频率 轮询",
-        },
-      ),
+  ...MONITORING_INTERVAL_COLUMNS.map(({ id, key, heading }) =>
+    field(
+      id,
+      "monitoring",
+      "settings",
+      `checkIntervalSec.${key}`,
+      `${key === "default" ? "全局默认" : heading}检测间隔`,
+      "开播状态检查间隔，数值越小响应越快；自动录制关闭时仍生效。",
+      {
+        min: 1,
+        max: 3600,
+        unit: "秒",
+        keywords: "检测频率 轮询",
+      },
+    ),
   ),
   field(
     "recording-directory",

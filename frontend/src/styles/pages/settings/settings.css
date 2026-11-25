@@ -158,6 +158,19 @@
   padding: 12px 0;
   scroll-margin-top: 28px;
 }
+#shortcuts .lr-settings-row {
+  padding-block: 8px;
+  row-gap: 6px;
+}
+.lr-shortcut-binding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lr-shortcut-binding__actions {
+  margin-inline-start: auto;
+}
 .lr-settings-row__copy {
   grid-column: 1;
   grid-row: 1;

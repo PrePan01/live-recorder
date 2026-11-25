@@ -36,9 +36,13 @@ describe('YouTube selected HLS input reuse', () => {
     expect(args).toContain('https://manifest.googlevideo.com/audio.m3u8');
     expect(args).not.toContain('https://manifest.googlevideo.com/video.m3u8');
   });
+  it('keeps the normal downloader when no snapshot is available', () => {
+    const media = source();
+    delete media.snapshot;
+    expect(youtubeDirectInputs(media, [])).toBeNull();
+  });
   it.each([
     { cookie: 'saved credential' },
-    { snapshot: undefined },
     { snapshot: { json: '{}', expiresAt: Date.now() - 1 } },
     { snapshot: { json: 'x'.repeat(8 * 1024 * 1024 + 1), expiresAt: Date.now() + 15_000 } },
     { formatSelector: 'bv[height<=720]+ba/b[height<=720]/bv+ba/b' },

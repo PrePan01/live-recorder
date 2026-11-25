@@ -97,9 +97,9 @@ describe("录制健康接口与告警", () => {
         .list()
         .filter((a) => a.source === "stream-health");
       expect(alerts).toHaveLength(1);
-      expect(alerts[0].resolved).toBe(false);
+      expect(alerts[0]!.resolved).toBe(false);
       advance(3, 300000);
-      expect(services.alerts.get(alerts[0].id)?.resolved).toBe(true);
+      expect(services.alerts.get(alerts[0]!.id)?.resolved).toBe(true);
     } finally {
       services.quality.stop();
       services.db.close();

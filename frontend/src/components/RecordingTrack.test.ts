@@ -85,6 +85,14 @@ describe("recording and file playback track", () => {
     expect(html).toContain('aria-label="回看位置 01:01:01"');
     expect(html).toContain('tabindex="-1" aria-disabled="true"');
   });
+  it("delegates playhead keys based on the explicit flag, independently of the tooltip", () => {
+    expect(render({ previewMode: "live", externalPlayheadKeyboard: true }))
+      .toContain('data-preview-playhead=""');
+    expect(render({ previewMode: "history", previewSecond: 10, previewPlayheadTitle: "移动播放头" }))
+      .toContain('title="移动播放头"');
+    expect(render({ previewMode: "history", previewSecond: 10, previewPlayheadTitle: "移动播放头" }))
+      .not.toContain("data-preview-playhead");
+  });
   it("renders persistent segments as stretched yellow markers without hiding point markers", () => {
     const html = render({
       mode: "playback",

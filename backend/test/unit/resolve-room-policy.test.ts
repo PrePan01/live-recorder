@@ -66,7 +66,7 @@ describe('继承生效值唯一出口（T1/T2/T4）', () => {
     expect(roomQuality(roomWith({ quality: null }), settings)).toBe('1080p');
     expect(roomQuality(roomWith({ quality: '720p' }), settings)).toBe('720p');
     const auto = resolveRoomPolicy(roomWith({ autoRecord: null }), settings).autoRecord.value;
-    expect(auto).toBe((null ?? settings.autoRecord ?? false));
+    expect(auto).toBe(settings.autoRecord);
     const noGlobal = resolveRoomPolicy(roomWith({ autoRecord: null }), { ...settings, autoRecord: undefined } as unknown as AppSettings).autoRecord.value;
     expect(noGlobal).toBe(false);
     // 间隔：房间值优先，否则平台解析（与 scheduler 收敛前表达式同式）

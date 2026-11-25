@@ -167,6 +167,6 @@ describe('#112 删除录制中行：拦截+清理网', () => {
     await services.manager.stopActiveSessionForDeletion(rec.id);
     expect((services.manager as unknown as { active: Map<string, unknown> }).active.has(room.id)).toBe(false);
     expect(fakeSession.stopRequested).toBe(true);
-    expect(services.rooms.get(room.id)!.state).not.toBe('recording');
+    expect(services.rooms.get(room.id)?.monitorState).toBe('idle');
   });
 });

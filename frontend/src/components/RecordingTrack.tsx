@@ -15,13 +15,13 @@ import {
   GENERIC_GAP_REASON,
   recordingGapKindText,
 } from "../utils/recording/recordingGapKindText";
-import { recordingSeekTarget } from "../utils/timeline/recordingTimeline";
+import { playheadStepTarget } from "../utils/timeline/recordingTimeline";
 
 import type { RecordingTrackProps } from "./recording-track/types";
 import { useRecordingTrack } from "./recording-track/useRecordingTrack";
 import { useTimelineZoom } from "./recording-track/useTimelineZoom";
 import { TIMELINE_VISUAL_OVERFLOW } from "../utils/timeline/timelineZoom";
-import { formatAltShortcut } from "../utils/keyboardShortcuts";
+import { shortcutTitle } from "../utils/keyboardShortcuts";
 export default function RecordingTrack(props: RecordingTrackProps) {
   const {
     mode = "recording",
@@ -35,6 +35,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     onQuickAdd,
     addingMarker = false,
     quickAddDisabled = false,
+    quickAddTitle = shortcutTitle("标记当前位置", { code: "KeyM", alt: true }),
     onDelete,
     segmentActions,
     temporarySegment,
@@ -46,6 +47,9 @@ export default function RecordingTrack(props: RecordingTrackProps) {
     onSeekIntent,
     onSeekCommit,
     onReturnToLive,
+    returnToLiveTitle,
+    externalPlayheadKeyboard = false,
+    previewPlayheadTitle,
     previewMode,
     previewSecond,
     previewLoading = false,
@@ -149,12 +153,13 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                 size="small"
                 icon={<ForwardOutlined />}
                 onClick={onReturnToLive}
+                title={returnToLiveTitle}
               >
                 直播
               </Button>
             )}
             {onQuickAdd && (
-              <Tooltip title={`标记当前位置（${formatAltShortcut("M")}）`}>
+              <Tooltip title={quickAddTitle}>
                 <Button
                   size="small"
                   icon={<PushpinOutlined />}
@@ -326,6 +331,8 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                         : `回看位置 ${clock(Math.floor(positionSecond))}`
                     }
                     role="slider"
+                    data-preview-playhead={externalPlayheadKeyboard ? "" : undefined}
+                    title={previewPlayheadTitle || undefined}
                     tabIndex={seekDisabled ? -1 : 0}
                     aria-disabled={seekDisabled}
                     aria-valuemin={0}
@@ -333,7 +340,7 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                     aria-valuenow={positionSecond}
                     aria-valuetext={clock(Math.floor(positionSecond))}
                     onPointerDown={(event) => beginPlayhead(event, true)}
-                    onKeyDown={(event) => {
+                    onKeyDown={externalPlayheadKeyboard ? undefined : (event) => {
                       const direction =
                         event.key === "ArrowLeft" || event.key === "ArrowDown"
                           ? -1
@@ -343,22 +350,15 @@ export default function RecordingTrack(props: RecordingTrackProps) {
                             : 0;
                       if (!direction || seekDisabled) return;
                       event.preventDefault();
-                      const second = Math.max(
-                        0,
-                        Math.min(
-                          recordingEnd,
-                          positionSecond + direction * (event.shiftKey ? 5 : 1),
-                        ),
-                      );
-                      onSeekIntent?.(second);
-                      const target = recordingSeekTarget(
+                      const target = playheadStepTarget(
                         mode,
-                        "playhead",
-                        second,
+                        positionSecond,
+                        direction * (event.shiftKey ? 5 : 1),
                         recordingEnd,
-                        seekDisabled,
                       );
-                      if (target !== undefined) onSeekCommit?.(target);
+                      if (target === undefined) return;
+                      onSeekIntent?.(target === "live" ? recordingEnd : target);
+                      onSeekCommit?.(target);
                     }}
                   />
                 )}

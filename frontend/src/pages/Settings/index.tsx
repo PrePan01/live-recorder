@@ -63,6 +63,8 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import ResetSettingsCard from "./components/ResetSettingsCard";
 import SelfDiagnosticsCard from "./components/SelfDiagnosticsCard";
 import AlertsCard from "./components/AlertsCard";
+import { ShortcutsPanel } from "./components/ShortcutsPanel";
+import { previewShortcutDefinitions } from "../../utils/previewShortcuts";
 
 function openExternalUrl(url: string) {
   if (bridge.isDesktop)
@@ -336,9 +338,14 @@ function SettingsContent() {
     }
   };
 
-  const results = searchSettings(query, false, () => false);
+  const shortcutQuery = query.trim().toLowerCase();
+  const shortcutResults = shortcutQuery ? previewShortcutDefinitions
+    .filter(({ label }) => `${label} 快捷键 直播预览`.includes(shortcutQuery))
+    .map(({ id, label }) => ({ id: `shortcut-${id}`, label, section: "shortcuts" })) : [];
+  const results = [...searchSettings(query, false, () => false), ...shortcutResults];
   const panels = {
     appearance: <AppearancePanel />,
+    shortcuts: <ShortcutsPanel />,
     recording: <RecordingPanel />,
     monitoring: <MonitoringPanel />,
     files: (

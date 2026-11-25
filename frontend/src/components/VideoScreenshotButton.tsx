@@ -6,9 +6,10 @@ export function VideoScreenshotButton({
   enabled,
   saving,
   takeScreenshot,
-}: ReturnType<typeof useVideoScreenshot>) {
+  tooltip = "截图",
+}: ReturnType<typeof useVideoScreenshot> & { tooltip?: string }) {
   return (
-    <Tooltip title="截图">
+    <Tooltip title={tooltip}>
       <Button
         type="text"
         size="small"

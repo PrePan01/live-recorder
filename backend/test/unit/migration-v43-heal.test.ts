@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { openDatabase } from '../../src/db/connection.ts';
+import { openDatabase } from '../../src/db/connection.js';
 import {
   currentSchemaVersion,
   ensureCriticalColumns,
   runMigrations,
-} from '../../src/db/migrations/index.ts';
-import { RecordingRepository } from '../../src/db/repositories/recording.repo.ts';
+} from '../../src/db/migrations/index.js';
+import { RecordingRepository } from '../../src/db/repositories/recording.repo.js';
 
 /**
  * P0 事故复刻（rec_01M3NY370…「no such column: gap_count」）：

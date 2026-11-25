@@ -1,3 +1,4 @@
+import type { InjectOptions } from 'fastify';
 import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -145,8 +146,8 @@ async function setup() {
   return { services, app, filePath, rec, factory, calls, flv };
 }
 
-function host(app: { inject: (o: Record<string, unknown>) => Promise<{ statusCode: number; json: () => any; body: string; headers: Record<string, string> }> }) {
-  return (o: Record<string, unknown>) => app.inject({ ...o, headers: { host: '127.0.0.1:43120', ...(o.headers ?? {}) } });
+function host(app: ReturnType<typeof buildApp>['app']) {
+  return (o: InjectOptions) => app.inject({ ...o, headers: { host: '127.0.0.1:43120', ...(o.headers ?? {}) } });
 }
 
 describe('跳播 seek-stream / seek-prewarm', () => {

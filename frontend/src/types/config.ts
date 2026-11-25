@@ -2,6 +2,7 @@ import type { Settings } from "./settings";
 import type { Room } from "./room";
 import type { Alert } from "./alert";
 import type { Tag } from "./tag";
+import type { ShortcutOverrides } from "../utils/previewShortcuts";
 
 export interface DirectoryEntry {
   name: string;
@@ -90,6 +91,7 @@ export interface ExportConfig {
   version: 1;
   exportedAt: string;
   appearance?: ClientAppearanceConfig;
+  previewShortcuts?: ShortcutOverrides;
   settings: Settings;
   rooms: Room[];
   tags: Tag[];
@@ -108,6 +110,7 @@ export interface ExportConfigFileResult {
 export interface ImportConfigInput {
   version?: number;
   appearance?: ClientAppearanceConfig;
+  previewShortcuts?: ShortcutOverrides;
   settings?: Partial<Settings>;
   rooms?: Array<{
     platform: string;

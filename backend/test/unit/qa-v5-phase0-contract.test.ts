@@ -1,3 +1,4 @@
+import { DEFAULT_PIPELINE_CONFIG } from '../../src/types/settings.js';
 import { describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -277,10 +278,10 @@ describe('QA Batch2 #114/#115 gaps: pipeline & naming', () => {
     services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/snap.flv' });
     // 启用管线并发起 run（配置快照 A）
     const base = services.settings.load()!;
-    services.settings.save({ ...base, pipeline: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
     const run1 = services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, attempt: 0 } });
     // 改配置（快照 B：切片开启）——不追溯 run1
-    services.settings.save({ ...base, pipeline: { enabled: true, verify: false, segmentSeconds: 60, crf: 23, archiveDirectory: '', maxConcurrency: 2 } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: false, segmentSeconds: 60, crf: 23, archiveDirectory: '', maxConcurrency: 2 } });
     const loaded = services.pipeline.repo.getRun(run1.id);
     expect(loaded?.configSnapshot.segmentSeconds).toBe(0);
     expect(loaded?.configSnapshot.crf).toBeNull();
@@ -311,7 +312,7 @@ describe('QA Batch2 #114/#115 gaps: pipeline & naming', () => {
     const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'sg1', streamTitle: 't' });
     services.recordings.update(rec.id, { state: 'completed', filePath: '/tmp/single.flv' });
     const base = services.settings.load()!;
-    services.settings.save({ ...base, pipeline: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
+    services.settings.save({ ...base, pipeline: { ...DEFAULT_PIPELINE_CONFIG, enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2 } });
     // 手动模拟运行中 run → retry 应拒绝（ok=false）
     services.pipeline.repo.createRun({ recordingId: rec.id, configSnapshot: { enabled: true, verify: true, segmentSeconds: 0, crf: null, archiveDirectory: '', maxConcurrency: 2, attempt: 0 } });
     services.pipeline.repo.setRunStatus(rec.id === '' ? '' : services.pipeline.repo.runForRecording(rec.id)!.id, 'queued', services.clock.iso());

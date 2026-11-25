@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, DEFAULT_DISK_GUARD, DEFAULT_RETRY } from '../../src/config/defaults.ts';
-import { validateSettings } from '../../src/config/schema.ts';
-import { AppError, httpStatusFor } from '../../src/types/error.ts';
+import { DEFAULT_SETTINGS, DEFAULT_DISK_GUARD, DEFAULT_RETRY } from '../../src/config/defaults.js';
+import { validateSettings } from '../../src/config/schema.js';
+import { AppError, httpStatusFor } from '../../src/types/error.js';
 
 describe('config defaults', () => {
   it('matches frozen review defaults', () => {

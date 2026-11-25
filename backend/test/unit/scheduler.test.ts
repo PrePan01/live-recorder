@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -9,7 +10,7 @@ import type { PlatformAdapter } from '../../src/platform/adapter.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeMailer } from '../../src/mail/mailer.js';
 import { DEFAULT_NOTIFICATION_PREFERENCE, type AppSettings, type ScheduleDay } from '../../src/types/index.js';
-import { AppError } from '../../src/types/error.js';
+import { AppError, type ErrorCode } from '../../src/types/error.js';
 
 function newServices(): { services: Services; clock: FakeClock } {
   const clock = new FakeClock();
@@ -32,6 +33,9 @@ async function settle(clock: FakeClock, ms: number): Promise<void> {
 
 function baseSettings(dir = ''): AppSettings {
   return {
+    recordingFormat: DEFAULT_SETTINGS.recordingFormat,
+    theme: DEFAULT_SETTINGS.theme,
+    floatingRecorderSize: DEFAULT_SETTINGS.floatingRecorderSize,
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',
@@ -58,7 +62,7 @@ describe('Scheduler', () => {
     services.rooms.setLiveStatus(room.id, 'live', opening);
     if (stopped) {
       services.rooms.setAutoRecordStopped(room.id, opening);
-      const previous = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'same-live', quality: 'original' });
+      const previous = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: 'same-live', streamTitle: '', quality: 'original' });
       services.recordings.update(previous.id, { state: 'completed', endedAt: services.clock.iso() });
     }
     const previousCount = services.recordings.list({ roomId: room.id }).items.length;
@@ -157,7 +161,7 @@ describe('Scheduler', () => {
       ...baseSettings(),
       autoRecord: false,
       mail: { enabled: true, host: 'smtp.x.com', port: 465, secure: true, username: 'u', from: 'u@x.com', recipients: ['me@x.com'] },
-      notifications: { desktopEnabled: true, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+      notifications: DEFAULT_NOTIFICATION_PREFERENCE,
     });
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/601', displayName: '主播A', liveNotificationEnabled: true, liveEmailNotificationEnabled: true });
     (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([{ status: 'offline' }, { status: 'live', streamTitle: '今晚聊新游戏' }, { status: 'live', streamTitle: '更新后的标题' }]);
@@ -182,7 +186,10 @@ describe('Scheduler', () => {
     services.settings.save({
       ...baseSettings(),
       autoRecord: false,
-      notifications: { desktopEnabled: false, liveStarted: true, recordingStarted: true, recordingEnded: false, recordingFailed: true, diskSpaceLow: true, uploadFailed: true, dedupeWindowMinutes: 30 },
+      notifications: {
+        ...DEFAULT_NOTIFICATION_PREFERENCE,
+        desktop: { liveStarted: false, recordingStarted: false, recordingEnded: false, recordingFailed: false, diskSpaceLow: false, uploadFailed: false, pipelineCompleted: false, pipelineFailed: false },
+      },
     });
     const initiallyLive = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/602', displayName: '首次开播', liveNotificationEnabled: true });
     const gated = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/603', displayName: '总开关关闭', liveNotificationEnabled: true });
@@ -471,7 +478,7 @@ describe('Scheduler', () => {
   it('三票门·换码重计：连续语义被不同错误打断，各码从零各算各账', async () => {
     const { services, clock } = newServices();
     const room = services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/89', displayName: 'churncode' });
-    const err = (code: string) =>
+    const err = (code: ErrorCode) =>
       (services.adapterFor('bilibili') as FakePlatformAdapter).setScript([
         { status: 'error', error: new AppError(code, `错误 ${code}`).toObject() },
       ]);
@@ -918,7 +925,7 @@ describe('Scheduler', () => {
   it('ignores an expired response from the previous Douyin account during reauthorization', async () => {
     const { services } = newServices();
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/6', displayName: 'C' });
-    const adapter = new FakePlatformAdapter('douyin');
+    const adapter: PlatformAdapter = new FakePlatformAdapter('douyin');
     services.adapterFor = () => adapter;
     const previous = Promise.withResolvers<Awaited<ReturnType<PlatformAdapter['checkLiveStatus']>>>();
     const check = vi.spyOn(adapter, 'checkLiveStatus')
@@ -980,7 +987,7 @@ describe('Scheduler', () => {
   it.each([
     { cookie: 'sessionid=authorized', status: 'restricted' as const, code: 'PLATFORM_ACCESS_RESTRICTED' },
     { cookie: undefined, status: 'error' as const, code: 'NETWORK_UNAVAILABLE' },
-  ])('keeps the error gate for douyin $code (cookie=$cookie)', async ({ cookie, status, code }) => {
+  ] satisfies Array<{ cookie: string | undefined; status: 'restricted' | 'error'; code: ErrorCode }>)('keeps the error gate for douyin $code (cookie=$cookie)', async ({ cookie, status, code }) => {
     const { services, clock } = newServices();
     if (cookie) await services.secretStore.set('douyin.cookie', cookie);
     const room = services.rooms.create({ platform: 'douyin', url: 'https://live.douyin.com/74', displayName: 'temporary failure' });
@@ -1209,7 +1216,7 @@ describe('Scheduler', () => {
 });
 
 describe('检测负载防呆（调度集成）', () => {
-  const errorOf = (code: string, retryable: boolean) => ({
+  const errorOf = (code: ErrorCode, retryable: boolean) => ({
     code, message: code, roomId: null, recordingId: null,
     occurredAt: new Date().toISOString(), retryable,
   });

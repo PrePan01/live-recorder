@@ -64,7 +64,7 @@ describe('YouTube parallel HLS source', () => {
   it('delivers the first prefetched packet while the rest of its segment is still pending', async () => {
     let finish!: ReadableStreamDefaultController<Uint8Array>;
     let firstReads = 0;
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('.m3u8')) return new Response(playlist());
       if (!url.endsWith('/video/a.ts')) return new Response('other media');
@@ -94,7 +94,7 @@ describe('YouTube parallel HLS source', () => {
   });
   it.each(['before-response', 'after-response'])('retries a failed speculative prefetch (%s) when the decoder requests the segment', async stage => {
     const calls = new Map<string, number>();
-    const fetcher = (async (input: RequestInfo | URL) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.endsWith('.m3u8')) return new Response(playlist());
       const attempt = (calls.get(url) ?? 0) + 1;
@@ -116,7 +116,7 @@ describe('YouTube parallel HLS source', () => {
   });
   it('cancels a claimed progressive fetch when the decoder disconnects mid-segment', async () => {
     let mediaSignal: AbortSignal | undefined;
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('.m3u8')) return new Response(playlist());
       if (!url.endsWith('/video/a.ts')) return new Response('other media');
@@ -140,7 +140,7 @@ describe('YouTube parallel HLS source', () => {
     const calls: string[] = [];
     let release!: () => void;
     const manifests = new Promise<void>(resolve => { release = resolve; });
-    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = String(input); calls.push(url);
       const name = url.includes('/video/') ? 'video' : 'audio';
       expect(new Headers(init?.headers).get('user-agent')).toBe(`${name}-agent`);
@@ -169,7 +169,7 @@ describe('YouTube parallel HLS source', () => {
   it('refreshes playlists and forwards byte ranges without using a whole-segment prefetch', async () => {
     let sequence = 42;
     const ranges: (string | null)[] = [];
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       if (String(input).endsWith('.m3u8')) return new Response(playlist(sequence));
       const range = new Headers(init?.headers).get('range'); ranges.push(range);
       return new Response(range ? 'partial' : 'whole', { status: range ? 206 : 200,
@@ -191,7 +191,7 @@ describe('YouTube parallel HLS source', () => {
 
   it('releases the input server and cancels pending upstream reads on stop', async () => {
     const signals: AbortSignal[] = [];
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       if (String(input).endsWith('.m3u8')) return new Response(playlist());
       signals.push(init!.signal!);
       return new Response(new ReadableStream({ start(c) {
@@ -211,7 +211,7 @@ describe('YouTube parallel HLS source', () => {
   it('streams large prefetched segments through the bounded queue without downloading them twice', async () => {
     let mediaCalls = 0;
     const large = new Uint8Array(2 * 1024 * 1024 + 1);
-    const fetcher = (async (input: RequestInfo | URL) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
       if (String(input).endsWith('.m3u8')) return new Response(playlist());
       mediaCalls++; return new Response(large);
     }) as typeof fetch;

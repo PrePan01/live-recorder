@@ -25,6 +25,7 @@
     "qiniu": "7.15.2"
   },
   "devDependencies": {
+    "typescript": "~6.0.3",
     "yaml": "2.9.1"
   }
 }

@@ -1,5 +1,6 @@
 import { http } from "./client";
 import { useAppearanceStore } from "../stores/appearanceStore";
+import { usePreviewShortcutStore } from "../stores/previewShortcutStore";
 import type {
   BrowseDirectoriesResult,
   ExportConfig,
@@ -7,6 +8,14 @@ import type {
   ImportConfigInput,
   ImportResult,
 } from "../types/config";
+
+function clientBackupPreferences() {
+  const { showStatusBarAlerts, showLiveRoomCover } = useAppearanceStore.getState();
+  return {
+    appearance: { showStatusBarAlerts, showLiveRoomCover },
+    previewShortcuts: usePreviewShortcutStore.getState().overrides,
+  };
+}
 
 export async function browseDirectories(
   path?: string,
@@ -33,22 +42,14 @@ export async function exportConfig(): Promise<ExportConfig> {
   const { data } = await http.get<{ config: ExportConfig }>("/config/export");
   return {
     ...data.config,
-    appearance: {
-      showStatusBarAlerts: useAppearanceStore.getState().showStatusBarAlerts,
-      showLiveRoomCover: useAppearanceStore.getState().showLiveRoomCover,
-    },
+    ...clientBackupPreferences(),
   };
 }
 
 export async function exportConfigToFile(): Promise<ExportConfigFileResult> {
   const { data } = await http.post<ExportConfigFileResult>(
     "/config/export-file",
-    {
-      appearance: {
-        showStatusBarAlerts: useAppearanceStore.getState().showStatusBarAlerts,
-        showLiveRoomCover: useAppearanceStore.getState().showLiveRoomCover,
-      },
-    },
+    clientBackupPreferences(),
     { timeout: 0 },
   );
   return data;
@@ -70,5 +71,6 @@ export async function importConfig(
       .getState()
       .setShowLiveRoomCover(input.appearance.showLiveRoomCover);
   }
+  if (data.ok) usePreviewShortcutStore.getState().restoreFromBackup(input.previewShortcuts);
   return data;
 }

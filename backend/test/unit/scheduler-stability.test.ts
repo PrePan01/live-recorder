@@ -30,8 +30,8 @@ function setup(platform: Platform, count: number, interval = 60) {
   const advance = async (ms: number) => { clock.advance(ms); await settle(); };
   return { services, clock, rooms, check, advance };
 }
-const failure = {
-  status: 'error' as const,
+const failure: Status = {
+  status: 'error',
   error: { code: 'PLATFORM_SERVER_ERROR', message: 'throttled', roomId: null, recordingId: null,
     occurredAt: '2026-08-28T00:00:00.000Z', retryable: true },
 };

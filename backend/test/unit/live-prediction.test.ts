@@ -183,7 +183,7 @@ describe('live prediction', () => {
     expect(result.kind).toBe('next');
     expect(result.startAt).toBe('20:00');
     expect(result.todayProbability).toBeNull();
-    expect(result.slots[0].likelihood).toBe('low');
+    expect(result.slots[0]?.likelihood).toBe('low');
     expect(result.probabilityKnown).toBe(false);
   });
 

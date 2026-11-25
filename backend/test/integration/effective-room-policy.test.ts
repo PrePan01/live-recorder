@@ -6,7 +6,7 @@ import type { AppEvent } from '../../src/core/events.js';
 import type { Platform, Room } from '../../src/types/index.js';
 
 const headers = { host: '127.0.0.1:43120' };
-const opened: ReturnType<typeof setup>[] = [];
+const opened: { app: ReturnType<typeof buildApp>['app']; services: ReturnType<typeof buildServices> }[] = [];
 function setup() {
   const services = buildServices({ dbPath: ':memory:' });
   services.settings.save({ ...structuredClone(DEFAULT_SETTINGS), recordingDirectory: '/tmp/lr-effective-policy' });

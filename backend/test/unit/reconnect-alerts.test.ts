@@ -13,7 +13,7 @@ import { AppError } from '../../src/types/error.js';
 
 vi.mock(import('node:fs/promises'), async importOriginal => {
   const fs = await importOriginal();
-  return { ...fs, mkdir: vi.fn(fs.mkdir) };
+  return { ...fs, mkdir: vi.fn(fs.mkdir) as typeof fs.mkdir };
 });
 
 const networkError = () => new AppError('NETWORK_UNAVAILABLE', '网络暂时不可用', { retryable: true }).toObject();

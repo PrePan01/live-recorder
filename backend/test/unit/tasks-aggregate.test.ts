@@ -1,3 +1,5 @@
+import type { InjectOptions } from 'fastify';
+import type { TaskItem } from '../../src/api/routes/tasks.js';
 import { describe, expect, it } from 'vitest';
 import { buildServices } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
@@ -8,8 +10,8 @@ import { buildApp } from '../../src/api/server.js';
  * 失败人话契约随行（error 字段）。
  */
 
-function host(app: { inject: (o: Record<string, unknown>) => Promise<{ statusCode: number; json: () => any }> }) {
-  return (o: Record<string, unknown>) => app.inject({ ...o, headers: { host: '127.0.0.1:43120' } });
+function host(app: ReturnType<typeof buildApp>['app']) {
+  return (o: InjectOptions) => app.inject({ ...o, headers: { host: '127.0.0.1:43120' } });
 }
 
 async function seed() {
@@ -59,22 +61,23 @@ describe('GET /api/v1/tasks（四类在途聚合）', () => {
     const inj = host(app);
     const res = await inj({ method: 'GET', url: '/api/v1/tasks' });
     expect(res.statusCode).toBe(200);
-    const byKind = new Map(res.json().tasks.map((t: { kind: string }) => [t.kind, t]));
+    const { tasks } = res.json<{ tasks: TaskItem[] }>();
+    const byKind = new Map(tasks.map((task) => [task.kind, task]));
     expect(byKind.size).toBe(4);
     const clipTask = byKind.get('clip');
-    expect(clipTask.title).toBe('片段甲');
-    expect(clipTask.state).toBe('exporting');
+    expect(clipTask?.title).toBe('片段甲');
+    expect(clipTask?.state).toBe('exporting');
     const pipelineTask = byKind.get('pipeline');
-    expect(pipelineTask.title).toBe('管线乙');
-    expect(pipelineTask.progressPercent).toBe(42);
-    expect(pipelineTask.step).toBe('convert');
-    expect(pipelineTask.etaSeconds).toBe(30);
+    expect(pipelineTask?.title).toBe('管线乙');
+    expect(pipelineTask?.progressPercent).toBe(42);
+    expect(pipelineTask?.step).toBe('convert');
+    expect(pipelineTask?.etaSeconds).toBe(30);
     const uploadTask = byKind.get('upload');
-    expect(uploadTask.title).toBe('上传丙');
-    expect(uploadTask.progressPercent).toBe(60);
+    expect(uploadTask?.title).toBe('上传丙');
+    expect(uploadTask?.progressPercent).toBe(60);
     const exportTask = byKind.get('export');
-    expect(exportTask.title).toBe('导出丁');
-    expect(exportTask.state).toBe('queued');
+    expect(exportTask?.title).toBe('导出丁');
+    expect(exportTask?.state).toBe('queued');
 
     // 终态即离在途扫描（宽限=前端层，后端不存已读）
     services.pipeline.repo.setRunStatus(run.id, 'ok');
@@ -165,7 +168,7 @@ describe('clip 与其后处理管线合并单卡（#106）', () => {
     const { app } = buildApp(services);
     const inj = host(app);
     const res = await inj({ method: 'GET', url: '/api/v1/tasks' });
-    const tasks = res.json().tasks as Array<{ id: string; kind: string; state: string; progressPercent?: number; step?: string | null }>;
+    const { tasks } = res.json<{ tasks: TaskItem[] }>();
     // clip 只有一张卡（其 run 不再单独出条）、角标不双计
     expect(tasks.filter((t) => t.id === clip.id || t.id === clipRun.id)).toHaveLength(1);
     const merged = tasks.find((t) => t.kind === 'clip')!;
@@ -176,7 +179,7 @@ describe('clip 与其后处理管线合并单卡（#106）', () => {
     expect(merged.step).toBe('compress');
     // 普通录制管线不受影响
     const pipelineTask = tasks.find((t) => t.kind === 'pipeline')!;
-    expect(pipelineTask.title).toBe('普通管线');
+    expect(pipelineTask?.title).toBe('普通管线');
     await app.close();
   });
 });

@@ -3,6 +3,7 @@ import { http } from './client';
 import type { ExportConfig } from '../types/config';
 
 let useAppearanceStore: typeof import('../stores/appearanceStore').useAppearanceStore;
+let usePreviewShortcutStore: typeof import('../stores/previewShortcutStore').usePreviewShortcutStore;
 let exportConfig: typeof import('./config').exportConfig;
 let exportConfigToFile: typeof import('./config').exportConfigToFile;
 let importConfig: typeof import('./config').importConfig;
@@ -17,7 +18,9 @@ beforeEach(async () => {
     setItem: (key: string, value: string) => saved.set(key, value),
     removeItem: (key: string) => saved.delete(key),
   });
+  vi.stubGlobal('window', { localStorage });
   ({ useAppearanceStore } = await import('../stores/appearanceStore'));
+  ({ usePreviewShortcutStore } = await import('../stores/previewShortcutStore'));
   ({ exportConfig, exportConfigToFile, importConfig } = await import('./config'));
   useAppearanceStore.setState({ showGlobalSearch: true, showStatusBarAlerts: false, showLiveRoomCover: true });
 });
@@ -51,6 +54,7 @@ it.each([true, false])('includes the preference in native file exports (%s)', as
   await exportConfigToFile();
   expect(http.post).toHaveBeenCalledWith('/config/export-file', {
     appearance: { showStatusBarAlerts: enabled, showLiveRoomCover: true },
+    previewShortcuts: {},
   }, { timeout: 0 });
 });
 
@@ -78,6 +82,7 @@ it.each([true, false])('round-trips cover visibility through both export paths (
   await exportConfigToFile();
   expect(http.post).toHaveBeenCalledWith('/config/export-file', {
     appearance: { showStatusBarAlerts: false, showLiveRoomCover: enabled },
+    previewShortcuts: {},
   }, { timeout: 0 });
   useAppearanceStore.getState().setShowLiveRoomCover(!enabled);
   await importConfig(backup);
@@ -95,4 +100,55 @@ it.each([true, false])('leaves cover visibility unchanged for legacy or invalid 
   vi.mocked(http.post).mockRejectedValue(new Error('导入失败'));
   await expect(importConfig({ appearance: { showLiveRoomCover: !enabled } })).rejects.toThrow('导入失败');
   expect(useAppearanceStore.getState().showLiveRoomCover).toBe(enabled);
+});
+
+it('restores custom shortcuts and cleared bindings from either export path', async () => {
+  vi.mocked(http.get).mockResolvedValue({ data: { config: { version: 1 } } });
+  vi.mocked(http.post).mockResolvedValue({ data: { ok: true, saved: true } });
+  const { setBinding, resetAll } = usePreviewShortcutStore.getState();
+  setBinding('closePreview', null);
+  setBinding('screenshot', { code: 'Escape' });
+
+  const backup = JSON.parse(JSON.stringify(await exportConfig()));
+  expect(backup.previewShortcuts).toEqual({ closePreview: null, screenshot: { code: 'Escape' } });
+  await exportConfigToFile();
+  expect(http.post).toHaveBeenCalledWith('/config/export-file', expect.objectContaining({
+    previewShortcuts: backup.previewShortcuts,
+  }), { timeout: 0 });
+
+  resetAll();
+  setBinding('mark', { code: 'KeyK' });
+  await importConfig(backup);
+  expect(usePreviewShortcutStore.getState().overrides).toEqual(backup.previewShortcuts);
+  expect(JSON.parse(localStorage.getItem('lr-preview-shortcuts')!)).toEqual(backup.previewShortcuts);
+});
+
+it('preserves local shortcuts for old, malformed, and rejected imports', async () => {
+  vi.mocked(http.post).mockResolvedValue({ data: { ok: true } });
+  usePreviewShortcutStore.getState().setBinding('closePreview', null);
+  for (const backup of [{ version: 1 }, { previewShortcuts: null }, { previewShortcuts: [] }, { previewShortcuts: 'invalid' }]) {
+    await importConfig(backup as never);
+    expect(usePreviewShortcutStore.getState().overrides).toEqual({ closePreview: null });
+  }
+  vi.mocked(http.post).mockRejectedValueOnce(new Error('导入失败'));
+  await expect(importConfig({ previewShortcuts: {} })).rejects.toThrow('导入失败');
+  expect(usePreviewShortcutStore.getState().overrides).toEqual({ closePreview: null });
+});
+
+it('uses the target platform to validate restored shortcuts and supports restoring defaults', async () => {
+  vi.stubGlobal('navigator', { platform: 'Win32' });
+  vi.mocked(http.post).mockResolvedValue({ data: { ok: true } });
+  await importConfig({
+    previewShortcuts: {
+      screenshot: { code: 'KeyK', meta: true },
+      mark: { code: 'KeyG', alt: true },
+      closePreview: null,
+    },
+  });
+  expect(usePreviewShortcutStore.getState().overrides).toEqual({
+    mark: { code: 'KeyG', alt: true },
+    closePreview: null,
+  });
+  await importConfig({ previewShortcuts: {} });
+  expect(usePreviewShortcutStore.getState().overrides).toEqual({});
 });

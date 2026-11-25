@@ -83,7 +83,8 @@ describe('XiaohongshuAdapter', () => {
   });
   it('uses the official PC profile live object instead of permanently polling the previous room', async () => {
     let requested = '';
-    const fetcher = vi.fn(async (raw: string) => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const raw = String(input);
       requested = raw;
       return new Response(raw.includes('/user/profile')
         ? `<script>window.__INITIAL_STATE__=${JSON.stringify({ user: { userPageData: { basicInfo: { live: { liveStatus: 2, roomId: '789', xsecToken: 'new-token' } } } } })}</script>`
@@ -103,7 +104,7 @@ describe('XiaohongshuAdapter', () => {
     }
   });
   it('discovers the current room through the official signed profile card when desktop SSR omits live metadata', async () => {
-    const native = vi.fn(async () => ({ status: 200, text: JSON.stringify({ success: true, data: { basic_info: {
+    const native = vi.fn<NonNullable<ConstructorParameters<typeof XiaohongshuAdapter>[2]>>(async () => ({ status: 200, text: JSON.stringify({ success: true, data: { basic_info: {
       nickname: '主播', live: { live_status: 2, room_id: '456', xsec_token: 'fresh' },
     } } }) }));
     const fetcher = vi.fn(async (raw: string) => new Response(raw.includes('/user/profile') ? '<html>profile</html>' : page({}, '456')));
@@ -177,7 +178,7 @@ describe('XiaohongshuAdapter', () => {
     expect(await adapter.resolveRecordingSource(roomUrl, '720p', 'web_session=local')).toEqual({ status: 'offline' });
   });
   it('rejects cross-host redirects before sending cookies', async () => {
-    const fetcher = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://evil.test/live' } }));
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 302, headers: { location: 'https://evil.test/live' } }));
     const adapter = new XiaohongshuAdapter(fetcher as typeof fetch);
     await expect(adapter.resolveRoom('https://xhslink.com/a/abcd', 'web_session=secret')).rejects.toMatchObject({ code: 'ROOM_LINK_INVALID' });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -240,7 +241,7 @@ describe('Xiaohongshu danmaku polling', () => {
 
 describe('Xiaohongshu startup and recovery isolation', () => {
   it('starts video from an associated share without profile or signing requests, and coalesces preview/start', async () => {
-    const fetcher = vi.fn(async () => new Response(page()));
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(page()));
     const native = vi.fn(async () => { throw new Error('must not be on startup critical path'); });
     const adapter = new XiaohongshuAdapter(fetcher as typeof fetch, { load: () => roomUrl, save: () => {} }, native);
     const [preview, recording] = await Promise.all([

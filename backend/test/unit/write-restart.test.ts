@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -28,6 +29,9 @@ const WRITE_ERROR: ErrorObject = {
 
 function baseSettings(dir: string): AppSettings {
   return {
+    recordingFormat: DEFAULT_SETTINGS.recordingFormat,
+    theme: DEFAULT_SETTINGS.theme,
+    floatingRecorderSize: DEFAULT_SETTINGS.floatingRecorderSize,
     recordingDirectory: dir,
     maxConcurrentRecordings: 2,
     quality: 'original',

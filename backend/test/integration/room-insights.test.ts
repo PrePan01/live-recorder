@@ -160,7 +160,7 @@ describe('room insight batch endpoint', () => {
     for (const [startedAt, endedAt] of [
       ['2026-01-01T00:00:00Z', '2026-01-01T04:00:00Z'],
       ['2026-10-06T00:00:00Z', '2026-10-06T01:00:00Z'],
-    ]) {
+    ] as const) {
       const rec = services.recordings.create({ roomId: room.id, roomName: room.displayName, platform: room.platform, streamSessionId: startedAt, streamTitle: '' });
       services.recordings.update(rec.id, { startedAt, endedAt, state: 'completed' });
     }

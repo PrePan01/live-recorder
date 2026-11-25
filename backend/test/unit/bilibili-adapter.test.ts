@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { BilibiliAdapter } from "../../src/platform/bilibili";
-import { AppError } from "../../src/types";
+import { BilibiliAdapter } from "../../src/platform/bilibili/index.js";
+import { AppError } from "../../src/types/index.js";
 
 function mockFetcher(resolver: (url: string) => unknown): typeof fetch {
   return async (url) =>
@@ -85,7 +85,7 @@ function flvCodec(payload: unknown): Record<string, unknown> {
       };
     };
   };
-  return p.data.playurl_info.playurl.stream[0].format[0].codec[0];
+  return p.data.playurl_info.playurl.stream[0]!.format[0]!.codec[0]!;
 }
 
 describe("BilibiliAdapter", () => {
@@ -490,12 +490,12 @@ describe("BilibiliAdapter", () => {
         playurl_info: {
           playurl: {
             stream: { format: { codec: Array<Record<string, unknown>> }[] }[];
-          }[];
+          };
         };
       };
     };
     // 构造两个 codec：第一个仅原画（current=10000），第二个服务端授予 720p（current=150）。
-    p.data.playurl_info.playurl.stream[0].format[0].codec = [
+    p.data.playurl_info.playurl.stream[0]!.format[0]!.codec = [
       {
         codec_name: "avc",
         current_qn: 10000,
@@ -572,10 +572,10 @@ describe("BilibiliAdapter", () => {
       },
       { code: 0, data: { title: "标题" } },
     );
-    const counting = (async (url: unknown, init?: RequestInit) => {
+    const counting: typeof fetch = async (url, init) => {
       if (String(url).includes("get_anchor_in_room")) anchorHits += 1;
       return inner(url, init);
-    }) as unknown as typeof fetch;
+    };
     const a = new BilibiliAdapter(counting);
     const off = await a.checkLiveStatus("https://live.bilibili.com/888");
     expect(off.status).toBe("offline");

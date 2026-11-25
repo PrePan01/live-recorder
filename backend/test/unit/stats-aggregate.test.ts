@@ -82,8 +82,8 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
     };
     expect(localDay(iso)).toBe("2026-09-12");
     expect(body.byDay).toHaveLength(1);
-    expect(body.byDay[0].date).toBe("2026-09-12");
-    expect(body.byDay[0].date).not.toBe("2026-09-11"); // 与旧 UTC 切日结果相异，证明口径已切换
+    expect(body.byDay[0]!.date).toBe("2026-09-12");
+    expect(body.byDay[0]!.date).not.toBe("2026-09-11"); // 与旧 UTC 切日结果相异，证明口径已切换
   });
 
   it("byDay 逐日与本地日复算一致，且日期全部落在取数范围内（C2/C3）", () => {
@@ -100,10 +100,10 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
       totals: { recordings: number; bytes: number };
     };
     expect(body.byDay.map((d) => d.date)).toEqual(["2026-03-02", "2026-03-03"]);
-    expect(body.byDay[0].recordings).toBe(3);
-    expect(body.byDay[0].bytes).toBe(60);
-    expect(body.byDay[1].recordings).toBe(1);
-    expect(body.byDay[1].bytes).toBe(40);
+    expect(body.byDay[0]!.recordings).toBe(3);
+    expect(body.byDay[0]!.bytes).toBe(60);
+    expect(body.byDay[1]!.recordings).toBe(1);
+    expect(body.byDay[1]!.bytes).toBe(40);
     expect(body.totals.recordings).toBe(4);
     expect(body.totals.bytes).toBe(100);
     // C3：每个日期 ∈ [from,to] 本地日集合（此处全部命中播种日期）。
@@ -129,7 +129,7 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
     expect(body.totals.recordings).toBe(2);
     expect(body.totals.bytes).toBe(6);
     expect(body.byDay).toHaveLength(1);
-    expect(body.byDay[0].recordings).toBe(2);
+    expect(body.byDay[0]!.recordings).toBe(2);
   });
 
   it("byRoom 契约：字段齐全、双/三指标齐备、最新 room_name 快照（G2 + QA bare-column 断言）", () => {
@@ -302,7 +302,7 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
     expect(byTag.totals.bytes).toBe(60);
     expect(byTag.byRoom).toHaveLength(2);
     expect(byTag.byPlatform).toHaveLength(1);
-    expect(byTag.byPlatform[0].platform).toBe("douyin");
+    expect(byTag.byPlatform[0]!.platform).toBe("douyin");
 
     const byRoom = aggregateStats(services, { ...RANGE, roomId: "room-a" }) as {
       totals: { recordings: number };
@@ -368,9 +368,9 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
       runs.sort((a, b) => a - b);
       // 断言取 min（无 CPU 争用时的能力值）：本机多任务混载下单次/中位数都会被尖峰污染（实测同轮 328-859ms），
       // 实现能力回归（如慢 30%+）仍会抬高 min 触发失败；验收口径 F1′ p95 由 QA 按「超阈先复跑」协议独立执行。
-      const cap = runs[0];
+      const cap = runs[0]!;
       console.log(
-        `  [F1′] n=${n} min=${cap.toFixed(1)}ms p50=${runs[2].toFixed(1)}ms runs=${runs.map((r) => r.toFixed(0)).join("/")}`,
+        `  [F1′] n=${n} min=${cap.toFixed(1)}ms p50=${runs[2]!.toFixed(1)}ms runs=${runs.map((r) => r.toFixed(0)).join("/")}`,
       );
       return cap;
     };
@@ -392,7 +392,7 @@ describe("stats aggregate（Q6=A 本地切日 + byRoom + SQL GROUP BY）", () =>
     // 负载门：本机多 agent 混载常态下 min 也会整体抬升（实测 load≈核数时能力值 420+），测量失真时跳过——
     // 验收口径本就由 QA 独立造数 p95（隔离实例）+ 超阈复跑协议裁定，本单测仅作安静环境下的回归绊线。
     const cores = availableParallelism();
-    const load1 = loadavg()[0];
+    const load1 = loadavg()[0]!;
     if (load1 > cores) {
       console.log(
         `  [F1′] 跳过性能断言：load1=${load1.toFixed(1)} > cores=${cores}，负载失真（QA p95 口径为验收）`,

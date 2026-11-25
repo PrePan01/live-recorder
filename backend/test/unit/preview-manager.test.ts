@@ -226,10 +226,10 @@ describe('preview session accounting', () => {
       { type: 'preview_progress', stage: 'stream_url_ready' },
     ]);
     const joining = socket(); preview.addClient('r', joining.ws, true);
-    expect(JSON.parse(joining.sent[0].toString()).stage).toBe('stream_url_ready');
+    expect(JSON.parse(joining.sent[0]?.toString() ?? '').stage).toBe('stream_url_ready');
     preview.resetRoom('r');
     const replacement = socket(); preview.addClient('r', replacement.ws, true);
-    expect(JSON.parse(replacement.sent[0].toString()).stage).toBe('requested');
+    expect(JSON.parse(replacement.sent[0]?.toString() ?? '').stage).toBe('requested');
     preview.closeAll(1000);
   });
   it('does not consume viewer slots for recordings with only a warm cache', () => {

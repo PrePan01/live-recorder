@@ -51,6 +51,7 @@ export function useDanmakuListModal({
   suspended = false,
   readPage,
   previewOnly = false,
+  toggleTitle = "弹幕列表",
 }: {
   visibility: ReturnType<typeof useDanmakuListVisibility>;
   playerWidth: number;
@@ -61,6 +62,7 @@ export function useDanmakuListModal({
   suspended?: boolean;
   readPage?: DanmakuListPageReader | null;
   previewOnly?: boolean;
+  toggleTitle?: string;
 }) {
   const id = useId();
   const { listId, open, finishExit, setExpanded } = visibility;
@@ -81,6 +83,11 @@ export function useDanmakuListModal({
   const seek = useCallback((second: number) => seekRef.current(second), []);
   const toggleRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
+  const toggleList = () => {
+    if (open && document.getElementById(id)?.contains(document.activeElement))
+      toggleRef.current?.focus({ preventScroll: true });
+    setExpanded(!open);
+  };
   const collapse = useCallback(() => {
     setExpanded(false);
     toggleRef.current?.focus({ preventScroll: true });
@@ -91,8 +98,9 @@ export function useDanmakuListModal({
       showPanel && !centerPlayer
         ? `calc(${playerSize} + ${gap}px + ${panelWidth})`
         : playerSize,
+    toggleList,
     toggle: listId ? (
-      <Tooltip title="弹幕列表">
+      <Tooltip title={toggleTitle}>
         <span className="lr-danmaku-list-toggle">
           <Button
             ref={toggleRef}
@@ -102,7 +110,7 @@ export function useDanmakuListModal({
             aria-label="弹幕列表"
             aria-expanded={open}
             aria-controls={open ? id : undefined}
-            onClick={() => setExpanded(!open)}
+            onClick={toggleList}
           />
         </span>
       </Tooltip>

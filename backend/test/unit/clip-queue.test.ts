@@ -167,7 +167,7 @@ describe("persistent segments and task snapshots", () => {
       endSecond: 4,
     });
     release();
-    await waitFor(() => services.clipQueue.list(rec.id)[0].state === "done");
+    await waitFor(() => services.clipQueue.list(rec.id)[0]?.state === "done");
   });
   it("does not label a real export failure as done, and isolates another successful segment", async () => {
     const { rec, a, b } = await setup();
@@ -186,7 +186,7 @@ describe("persistent segments and task snapshots", () => {
       "failed",
       "done",
     ]);
-    expect(services.clipQueue.list(rec.id)[0].error).toBe("片段导出失败");
+    expect(services.clipQueue.list(rec.id)[0]?.error).toBe("片段导出失败");
   });
   it("aborts the actual running job and cannot overwrite cancellation with done", async () => {
     const { rec, a } = await setup();
@@ -210,7 +210,7 @@ describe("persistent segments and task snapshots", () => {
     );
     await services.clipQueueManager.submit(rec.id, [a.id], "cancel");
     await waitFor(() => !!observedSignal);
-    const item = services.clipQueue.list(rec.id)[0];
+    const item = services.clipQueue.list(rec.id)[0]!;
     services.clipQueueManager.cancel(item.id);
     expect(services.clipQueue.get(item.id)?.state).toBe("cancelling");
     expect(observedSignal!.aborted).toBe(true);
@@ -257,7 +257,7 @@ describe("persistent segments and task snapshots", () => {
       stderr: "first failed",
     });
     await services.clipQueueManager.submit(rec.id, [a.id], "retry");
-    const item = services.clipQueue.list(rec.id)[0];
+    const item = services.clipQueue.list(rec.id)[0]!;
     await waitFor(() => services.clipQueue.get(item.id)?.state === "failed");
     const previous = services.clipQueue.get(item.id)!.outputRecordingId;
     services.clipQueueManager.retry(item.id);
@@ -277,12 +277,12 @@ describe("persistent segments and task snapshots", () => {
     );
     const other = services.clipQueue.createBatch(rec.id, "other", [b], "auto");
     const items = services.clipQueue.list(undefined, batch);
-    services.clipQueue.setState(items[0].id, "running");
+    services.clipQueue.setState(items[0]!.id, "running");
     services.clipQueue.reconcileOnBoot();
-    expect(services.clipQueue.get(items[0].id)?.state).toBe("interrupted");
-    expect(services.clipQueue.get(items[1].id)?.state).toBe("queued");
+    expect(services.clipQueue.get(items[0]!.id)?.state).toBe("interrupted");
+    expect(services.clipQueue.get(items[1]!.id)?.state).toBe("queued");
     services.clipQueueManager.cancelPending(batch);
-    expect(services.clipQueue.list(undefined, other)[0].state).toBe("queued");
+    expect(services.clipQueue.list(undefined, other)[0]?.state).toBe("queued");
   });
   it("stops running work before deleting a source and its task rows", async () => {
     const { rec, a } = await setup();

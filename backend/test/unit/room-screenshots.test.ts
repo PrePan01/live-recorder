@@ -62,6 +62,7 @@ function recording(services: Services, roomId: string, filePath: string) {
     roomId,
     roomName: "主播",
     platform: "bilibili",
+    streamSessionId: null,
     streamTitle: "test",
     quality: "original",
   });
@@ -141,6 +142,7 @@ describe("preview screenshots", () => {
       roomId: room.id,
       roomName: "主播",
       platform: "bilibili",
+      streamSessionId: null,
       streamTitle: "test",
       quality: "original",
     });

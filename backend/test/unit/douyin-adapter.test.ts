@@ -632,7 +632,7 @@ describe("DouyinAdapter", () => {
   });
 
   it("recovers checks, previews, recording and danmaku through the authorized room page", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes("/webcast/")
+    const fetcher = vi.fn(async (input: Parameters<typeof fetch>[0]) => String(input).includes("/webcast/")
       ? new Response("")
       : new Response("<script>location.reload()</script>", { headers: { "content-type": "text/html" } }));
     const browserRoom = vi.fn(async () => ({
@@ -655,7 +655,7 @@ describe("DouyinAdapter", () => {
   });
 
   it.each([403, 8, 40199])("keeps a valid account authorized after live-site response %s", async (code) => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith("https://creator.douyin.com/")
+    const fetcher = vi.fn(async (input: Parameters<typeof fetch>[0]) => String(input).startsWith("https://creator.douyin.com/")
       ? Response.json({ status_code: 0 })
       : code === 403
         ? new Response("", { status: 403 })

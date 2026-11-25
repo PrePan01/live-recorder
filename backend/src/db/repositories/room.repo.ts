@@ -182,7 +182,7 @@ export class RoomRepository {
     return row?.id ?? null;
   }
 
-  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'liveEmailNotificationEnabled' | 'uploadEnabled' | 'danmakuEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed' | 'checkIntervalSec' | 'quality'>>): Room {
+  update(id: string, patch: Partial<Pick<Room, 'url' | 'displayName' | 'avatarUrl' | 'liveCoverUrl' | 'enabled' | 'favorited' | 'autoRecord' | 'liveNotificationEnabled' | 'liveEmailNotificationEnabled' | 'uploadEnabled' | 'danmakuEnabled' | 'titleSource' | 'titleUpdatedAt' | 'titleFallbackUsed' | 'checkIntervalSec' | 'quality'>>): Room {
     validateRoomPolicy({ ...patch });
     const existing = this.get(id);
     if (!existing) throw new AppError('RESOURCE_NOT_FOUND', '房间不存在', { roomId: id, details: { resource: 'room' } });

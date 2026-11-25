@@ -275,6 +275,30 @@ describe('v1.4 config export/import', () => {
     await app.close();
   });
 
+  it.each([
+    {},
+    { closePreview: null, screenshot: { code: 'Escape' } },
+  ])('saves client shortcut overrides in v1 backups (%j)', async (previewShortcuts) => {
+    const services = newServices();
+    const dir = await mkdtemp(path.join(tmpdir(), 'lr-shortcut-export-'));
+    const written = await exportConfigToPath(services, path.join(dir, 'backup'), undefined, previewShortcuts);
+    const { config } = JSON.parse(await readFile(written, 'utf8'));
+    expect(config.version).toBe(1);
+    expect(config.previewShortcuts).toEqual(previewShortcuts);
+
+    const { app } = buildApp(services);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/config/import',
+      headers: HOST,
+      payload: { config: { previewShortcuts: config.previewShortcuts } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ok).toBe(true);
+    expect(services.settings.load()).toBeNull();
+    await app.close();
+  });
+
   it('rejects invalid settings on import', async () => {
     const { app } = buildApp(newServices());
     const res = await app.inject({

@@ -86,25 +86,6 @@ export function useSegmentMarking(
       setSaving(false);
     }
   }, [recordingId, disabled, getPosition, markers, onSaved, message]);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (
-        !e.altKey ||
-        e.ctrlKey ||
-        e.metaKey ||
-        e.repeat ||
-        e.code !== "KeyP" ||
-        (e.target as HTMLElement | null)?.closest(
-          "input,textarea,select,[contenteditable=true]",
-        )
-      )
-        return;
-      e.preventDefault();
-      void mark();
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [mark]);
   return {
     start,
     end,

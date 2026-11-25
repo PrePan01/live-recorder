@@ -1,3 +1,4 @@
+import type { InjectOptions } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../../src/api/server.js";
 import { buildServices } from "../../src/core/services.js";
@@ -15,7 +16,7 @@ function setup() {
   return {
     services,
     app,
-    call: (method: "GET" | "PUT" | "POST", path: string, payload?: unknown) =>
+    call: (method: "GET" | "PUT" | "POST", path: string, payload?: InjectOptions["payload"]) =>
       app.inject({
         method,
         url: `/api/v1/${path}`,

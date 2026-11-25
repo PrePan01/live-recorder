@@ -18,6 +18,7 @@ export type RecordingTrackProps = {
   onQuickAdd?: () => void;
   addingMarker?: boolean;
   quickAddDisabled?: boolean;
+  quickAddTitle?: string;
   onEdit?: (id: string, text: string) => Promise<void>;
   onMove?: (id: string, positionSeconds: number, endPositionSeconds?: number) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
@@ -37,6 +38,9 @@ export type RecordingTrackProps = {
   onSeekIntent?: (second: number) => void;
   onSeekCommit?: (target: number | "live", indicatorSecond?: number) => void;
   onReturnToLive?: () => void;
+  returnToLiveTitle?: string;
+  externalPlayheadKeyboard?: boolean;
+  previewPlayheadTitle?: string;
   previewMode?: "live" | "history";
   previewSecond?: number;
   previewLoading?: boolean;

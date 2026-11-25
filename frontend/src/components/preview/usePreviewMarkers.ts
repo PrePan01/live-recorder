@@ -115,25 +115,6 @@ export function usePreviewMarkers(
     getPosition,
   ]);
 
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (
-        event.repeat ||
-        event.ctrlKey ||
-        event.metaKey ||
-        !event.altKey ||
-        event.code !== "KeyM" ||
-        target?.closest("input, textarea, select, [contenteditable=true]")
-      )
-        return;
-      event.preventDefault();
-      quickAddMarker();
-    };
-    window.addEventListener("keydown", keydown);
-    return () => window.removeEventListener("keydown", keydown);
-  }, [quickAddMarker]);
-
   return {
     markers,
     addingMarker,

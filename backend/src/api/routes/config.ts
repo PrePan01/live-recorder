@@ -42,6 +42,7 @@ export interface ExportConfig {
   version: 1;
   exportedAt: string;
   appearance?: { showStatusBarAlerts?: boolean; showLiveRoomCover?: boolean };
+  previewShortcuts?: Record<string, unknown>;
   settings: Awaited<ReturnType<typeof settingsView>>;
   rooms: ReturnType<Services['rooms']['list']>;
   tags: ReturnType<Services['tags']['list']>;
@@ -192,7 +193,12 @@ async function buildExportConfig(services: Services): Promise<ExportConfig> {
 }
 
 /** 把导出内容写入指定路径，返回实际写入的文件名。 */
-export async function exportConfigToPath(services: Services, target: string, appearance?: unknown): Promise<string> {
+export async function exportConfigToPath(
+  services: Services,
+  target: string,
+  appearance?: unknown,
+  previewShortcuts?: unknown,
+): Promise<string> {
   const filePath = /\.json$/i.test(target) ? target : `${target}.json`;
   const config = await buildExportConfig(services);
   const showStatusBarAlerts = (appearance as { showStatusBarAlerts?: unknown } | null)?.showStatusBarAlerts;
@@ -202,6 +208,10 @@ export async function exportConfigToPath(services: Services, target: string, app
   const showLiveRoomCover = (appearance as { showLiveRoomCover?: unknown } | null)?.showLiveRoomCover;
   if (typeof showLiveRoomCover === 'boolean') {
     config.appearance = { ...config.appearance, showLiveRoomCover };
+  }
+  // The client resolves the bindings against the target platform on import.
+  if (previewShortcuts && typeof previewShortcuts === 'object' && !Array.isArray(previewShortcuts)) {
+    config.previewShortcuts = previewShortcuts as Record<string, unknown>;
   }
   const payload = `${JSON.stringify({ config }, null, 2)}\n`;
   await writeFile(filePath, payload, 'utf8');
@@ -219,8 +229,11 @@ export function registerConfigRoutes(app: FastifyInstance, services: Services): 
     if (picked.status === 'unsupported') return reply.send({ ok: true, saved: false, path: null, reason: 'no-dialog' });
     if (picked.status === 'cancelled') return reply.send({ ok: true, saved: false, path: null, reason: 'cancelled' });
     try {
-      const { appearance } = (req.body ?? {}) as { appearance?: unknown };
-      const filePath = await exportConfigToPath(services, picked.path, appearance);
+      const { appearance, previewShortcuts } = (req.body ?? {}) as {
+        appearance?: unknown;
+        previewShortcuts?: unknown;
+      };
+      const filePath = await exportConfigToPath(services, picked.path, appearance, previewShortcuts);
       return reply.send({ ok: true, saved: true, path: filePath, reason: null });
     } catch {
       throw new AppError('CONFIG_EXPORT_FAILED', '无法写入所选位置');

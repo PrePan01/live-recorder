@@ -42,7 +42,10 @@ import {
   useDanmakuStore,
 } from "../stores/danmakuStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { usePreviewShortcutStore } from "../stores/previewShortcutStore";
 import type { Room } from "../types/room";
+import { shortcutTitle } from "../utils/keyboardShortcuts";
+import { previewBinding } from "../utils/previewShortcuts";
 import { DanmakuLayer } from "./danmuku/DanmakuLayer";
 import {
   useDanmakuListModal,
@@ -53,13 +56,14 @@ import RecordingStopIcon from "./RecordingStopIcon";
 import VideoPlayer from "./VideoPlayer";
 
 import { HighlightActions } from "./preview/HighlightActions";
-import { PreviewRecordingTrack } from "./preview/PreviewRecordingTrack";
+import { PreviewRecordingTrack, type PreviewTrackControls } from "./preview/PreviewRecordingTrack";
 import { usePreviewDanmaku } from "./preview/usePreviewDanmaku";
 import { usePreviewHighlights } from "./preview/usePreviewHighlights";
 import { usePreviewLayout } from "./preview/usePreviewLayout";
 import { usePreviewMarkers } from "./preview/usePreviewMarkers";
 import { usePreviewRecording } from "./preview/usePreviewRecording";
 import { usePreviewSeek } from "./preview/usePreviewSeek";
+import { usePreviewShortcuts } from "./preview/usePreviewShortcuts";
 import { VideoScreenshotButton } from "./VideoScreenshotButton";
 
 export default function PreviewModal({
@@ -74,6 +78,10 @@ export default function PreviewModal({
   enableHighlights?: boolean;
 }) {
   const playerPortalId = useId();
+  const shortcutOverrides = usePreviewShortcutStore((state) => state.overrides);
+  const shortcutAnchor = useRef<HTMLDivElement>(null);
+  const trackControls = useRef<PreviewTrackControls>(null);
+  const [stopConfirmationRoom, setStopConfirmationRoom] = useState<string>();
   const [screenshotFrameReady, setScreenshotFrameReady] = useState(false);
   const [previewVideo, setPreviewVideo] = useState<HTMLVideoElement | null>(
     null,
@@ -272,6 +280,7 @@ export default function PreviewModal({
     readPage,
     previewOnly: previewCacheEnabled,
     centerPlayer: portrait,
+    toggleTitle: shortcutTitle("弹幕列表", previewBinding(shortcutOverrides, "toggleDanmaku")),
   });
   const previewSegment = (marker: RecordingMarker) => {
     handleSeekCommit(marker.positionSeconds);
@@ -320,6 +329,50 @@ export default function PreviewModal({
       void disableHighlightBuffer(room.id).catch(() => undefined);
     onClose();
   };
+  const handlePictureInPicture = () => {
+    if (!danmakuListVisibility.open) danmakuListVisibility.finishExit();
+    enterPictureInPicture();
+  };
+  const canStart = !recording && onAir && !busy && !recentStop;
+  const canStop = recording && !busy;
+  const confirmationOpen = canStop && !pictureInPicture && stopConfirmationRoom === room.id;
+  if (stopConfirmationRoom && !confirmationOpen) setStopConfirmationRoom(undefined);
+  usePreviewShortcuts({
+    enabled: !pictureInPicture,
+    anchor: shortcutAnchor,
+    playerPortalId,
+    selectionActive: () => trackControls.current?.selectionActive ?? false,
+    dismissConfirmation: confirmationOpen ? () => setStopConfirmationRoom(undefined) : undefined,
+    run(action) {
+      switch (action) {
+        case "startRecording":
+          if (!canStart) return false;
+          handleStart();
+          break;
+        case "stopRecording":
+          if (!canStop) return false;
+          setStopConfirmationRoom(room.id);
+          break;
+        case "screenshot":
+          if (!screenshot.enabled || screenshot.saving) return false;
+          void screenshot.takeScreenshot();
+          break;
+        case "toggleDanmaku":
+          if (!listId) return false;
+          danmakuList.toggleList();
+          break;
+        case "pictureInPicture":
+          handlePictureInPicture();
+          break;
+        case "closePreview":
+          handleClose();
+          break;
+        default:
+          return trackControls.current?.run(action) ?? false;
+      }
+      return true;
+    },
+  });
 
   const playerBounds = pictureInPicture
     ? { left: picturePosition.x, top: picturePosition.y, ...pictureBox }
@@ -335,9 +388,10 @@ export default function PreviewModal({
     <>
       <Modal
         open={!pictureInPicture}
+        keyboard={false}
         aria-owns={playerPortalId}
         title={
-          <div className="lr-preview-modal__header">
+          <div ref={shortcutAnchor} className="lr-preview-modal__header">
             <div className="lr-preview-modal__heading">
               {streamTitle && (
                 <Typography.Text ellipsis={{ tooltip: streamTitle }}>
@@ -352,7 +406,10 @@ export default function PreviewModal({
               </Typography.Text>
             </div>
             <Space className="lr-preview-modal__header-actions" size={4}>
-              <VideoScreenshotButton {...screenshot} />
+              <VideoScreenshotButton
+                {...screenshot}
+                tooltip={shortcutTitle("截图", previewBinding(shortcutOverrides, "screenshot"))}
+              />
               {danmakuList.toggle}
               <Popover
                 trigger="click"
@@ -389,20 +446,16 @@ export default function PreviewModal({
                   />
                 </Tooltip>
               </Popover>
-              <Tooltip title="画中画">
+              <Tooltip title={shortcutTitle("画中画", previewBinding(shortcutOverrides, "pictureInPicture"))}>
                 <Button
                   type="text"
                   size="small"
                   aria-label="画中画"
                   icon={<CompressOutlined />}
-                  onClick={() => {
-                    if (!danmakuListVisibility.open)
-                      danmakuListVisibility.finishExit();
-                    enterPictureInPicture();
-                  }}
+                  onClick={handlePictureInPicture}
                 />
               </Tooltip>
-              <Tooltip title="关闭">
+              <Tooltip title={shortcutTitle("关闭预览", previewBinding(shortcutOverrides, "closePreview"))}>
                 <Button
                   type="text"
                   size="small"
@@ -448,6 +501,8 @@ export default function PreviewModal({
               />
             </div>
             <PreviewRecordingTrack
+              ref={trackControls}
+              shortcutOverrides={shortcutOverrides}
               roomId={room.id}
               displayedTrack={displayedTrack}
               trackClosing={trackClosing}
@@ -473,13 +528,22 @@ export default function PreviewModal({
           </div>
           <div className="lr-preview-modal__footer">
             {recording ? (
-              <Popconfirm title="确定停止当前录制？" onConfirm={handleStop}>
+              <Popconfirm
+                title="确定停止当前录制？"
+                open={confirmationOpen}
+                onOpenChange={(open) => setStopConfirmationRoom(open && canStop ? room.id : undefined)}
+                onConfirm={handleStop}
+                destroyOnHidden
+                cancelButtonProps={{ autoFocus: true }}
+              >
                 <Button
                   size="small"
                   danger
                   className="lr-record-stop-button"
                   icon={<RecordingStopIcon />}
                   loading={busy && actingAction === "stop"}
+                  disabled={!canStop}
+                  title={shortcutTitle("停止录制", previewBinding(shortcutOverrides, "stopRecording"))}
                 >
                   停止录制（
                   {playbackClock(trackElapsedSeconds)}）
@@ -487,13 +551,16 @@ export default function PreviewModal({
               </Popconfirm>
             ) : (
               <Space>
-                <Tooltip title={!onAir ? "未开播，无法录制" : undefined}>
+                <Tooltip title={shortcutTitle(
+                  !onAir ? "未开播，无法录制" : "开始录制",
+                  previewBinding(shortcutOverrides, "startRecording"),
+                )}>
                   <Button
                     className="lr-preview-modal__action-button"
                     size="small"
                     type="primary"
                     icon={<VideoCameraAddOutlined />}
-                    disabled={!onAir || recentStop}
+                    disabled={!canStart}
                     loading={busy && actingAction === "record"}
                     onClick={handleStart}
                   >

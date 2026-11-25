@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   slots: [] as unknown[], cursor: 0, effects: [] as Array<() => void>,
   players: [] as Array<{ destroy: ReturnType<typeof vi.fn>; error?: () => void }>,
   message: { error: vi.fn(), success: vi.fn() },
+  markSegment: vi.fn(),
 }));
 vi.mock('react', async original => ({
   ...await original<typeof import('react')>(),
@@ -52,7 +53,7 @@ vi.mock('../../utils/player/captureVideoFrame', async original => ({
 }));
 vi.mock('../../api/config', () => ({ pickDirectory: vi.fn() }));
 vi.mock('../../utils/timeline/promptRangeExport', () => ({ promptRangeExport: vi.fn() }));
-vi.mock('../../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null }) }));
+vi.mock('../../hooks/useSegmentMarking', () => ({ useSegmentMarking: () => ({ start: null, mark: h.markSegment }) }));
 vi.mock('../../hooks/useSegmentExport', () => ({ useSegmentExport: () => ({}) }));
 vi.mock('../../stores/danmakuPrefsStore', () => ({ useDanmakuPrefsStore: () => ({ visible: true, opacity: 1, density: 100, fontScale: 1, speedMultiplier: 1 }) }));
 vi.mock('../SegmentExportActions', () => ({ SegmentExportActions: 'export-actions' }));
@@ -67,7 +68,7 @@ vi.mock('../MarkerNavPanel', () => ({ MarkerNavPanel: 'markers' }));
 vi.mock('./DanmakuSettings', () => ({ default: 'settings' }));
 vi.mock('../VideoScreenshotButton', () => ({ VideoScreenshotButton: 'screenshot' }));
 import { DanmakuPlayerModal } from './DanmakuPlayerModal';
-import { fetchRecordingPosition } from '../../api/recordings';
+import { createRecordingMarker, fetchRecordingPosition } from '../../api/recordings';
 import { saveRecordingScreenshot } from '../../api/screenshots';
 import { captureVideoFrame } from '../../utils/player/captureVideoFrame';
 
@@ -117,6 +118,43 @@ beforeEach(() => {
 afterEach(() => {
   for (const slot of h.slots) (slot as { cleanup?: () => void } | undefined)?.cleanup?.();
   vi.useRealTimers(); vi.unstubAllGlobals();
+});
+
+it('dispatches both fixed replay shortcuts with Shift through one listener', async () => {
+  const contains = vi.fn(() => true);
+  const dialog = {
+    closest: () => null,
+    getClientRects: () => [{}],
+    classList: { contains },
+  };
+  vi.stubGlobal('document', { querySelectorAll: () => [dialog] });
+  const overrides = { platform: 'bilibili', filePath: 'recording.mp4' };
+  const element = video();
+  const initial = render(overrides);
+  (initial.video.props.ref as (element: HTMLVideoElement) => void)(element);
+  const attached = render(overrides);
+  event(attached, 'onTimeUpdate', element);
+  render(overrides);
+  vi.mocked(createRecordingMarker).mockResolvedValue({
+    id: 'mark', recordingId: 'rec', positionSeconds: 1, text: '标记 1', createdAt: '', updatedAt: '',
+  });
+
+  const listeners = vi.mocked(window.addEventListener).mock.calls.filter(([type]) => type === 'keydown');
+  const removedListeners = vi.mocked(window.removeEventListener).mock.calls.filter(([type]) => type === 'keydown');
+  expect(listeners.length - removedListeners.length).toBe(1);
+  const keydown = listeners.at(-1)?.[1] as (event: KeyboardEvent) => void;
+  const press = (code: string, isComposing = false) => keydown({
+    code, isComposing, altKey: true, shiftKey: true, target: null,
+    getModifierState: () => false, preventDefault: vi.fn(),
+  } as unknown as KeyboardEvent);
+  press('KeyP');
+  press('KeyP', true);
+  contains.mockReturnValueOnce(false);
+  press('KeyP');
+  press('KeyM');
+  await Promise.resolve();
+  expect(h.markSegment).toHaveBeenCalledOnce();
+  expect(createRecordingMarker).toHaveBeenCalledExactlyOnceWith('rec', '标记 1', 1);
 });
 
 describe('history playback errors', () => {

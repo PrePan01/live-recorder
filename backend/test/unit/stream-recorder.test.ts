@@ -661,7 +661,7 @@ describe('断流立即重试·代证用例（HLS 停流 + 涓流判据双面）'
     const { StreamRecordingEngine } = await import("../../src/recorder/stream-recorder.js");
     // 伪 fetcher：首个清单正常、分片请求永久挂起（模拟 CDN 挂连接不吐数据）
     let segmentRequests = 0;
-    const fakeFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const fakeFetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".m3u8")) {
         return Promise.resolve(
@@ -766,7 +766,7 @@ describe("HLS watchdog cleanup", () => {
   it("does not abort after the final playlist completes", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "lr-hls-end-"));
     let signal: AbortSignal | null = null;
-    const fetcher = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
       signal = init?.signal ?? null;
       return new Response("#EXTM3U\n#EXT-X-ENDLIST\n");
     }) as typeof fetch;
@@ -881,7 +881,7 @@ describe('recording continuity regressions', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lr-hls-sequence-'));
     let playlists = 0;
     let segments = 0;
-    const fetcher = (async (input: RequestInfo | URL) => {
+    const fetcher = (async (input: Parameters<typeof fetch>[0]) => {
       if (String(input).includes('m3u8')) {
         playlists++;
         return new Response(`#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:123\n#EXT-X-DISCONTINUITY-SEQUENCE:${shift ? playlists : 0}\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\ns.ts?token=${playlists}\n${playlists === 2 ? '#EXT-X-ENDLIST\n' : ''}`);

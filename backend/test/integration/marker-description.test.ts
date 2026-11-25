@@ -151,7 +151,7 @@ describe("录制结束后补写标记说明", () => {
         payload: { positionSeconds: 60 },
       });
       expect(moved.json().error.code).toBe("CONFIG_INVALID");
-      session.mediaPositionMs = undefined;
+      delete session.mediaPositionMs;
       expect(
         services.manager.recordingMarkerTail(room.id, rec.id),
       ).toBeGreaterThanOrEqual(59);

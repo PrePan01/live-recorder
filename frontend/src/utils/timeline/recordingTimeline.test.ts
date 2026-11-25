@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  playheadStepTarget,
   previewPosition,
   recordingTimelineEnd,
   recordingSeekTarget,
@@ -72,6 +73,14 @@ describe("指针与绘制坐标使用相同的轨道内部宽度", () => {
 });
 
 describe("文件回放轨道与录制轨道的交互区别", () => {
+  it("播放头按 1 秒或 5 秒步进，两个模式分别处理片尾", () => {
+    expect(playheadStepTarget("recording", 30.5, -1, 30.5)).toBe(29.5);
+    expect(playheadStepTarget("recording", 26, 5, 30.5)).toBe("live");
+    expect(playheadStepTarget("playback", 26, 5, 30.5)).toBe(30.5);
+    expect(playheadStepTarget("playback", 2, -5, 30.5)).toBe(0);
+    expect(playheadStepTarget("recording", 0, -1, 0)).toBeUndefined();
+  });
+
   it("短视频和带小数的片尾使用真实时长，录制模式继续跨分钟扩展", () => {
     expect(recordingTimelineEnd(28.995, "playback")).toBe(28.995);
     expect(recordingTimelineEnd(28.995, "recording")).toBe(60);

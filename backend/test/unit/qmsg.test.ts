@@ -19,10 +19,10 @@ describe("Qmsg sender and queue", () => {
       "主播 https://example.com/123 127.0.0.1 123456 开播了",
       new AbortController().signal,
     );
-    expect(fetcher.mock.calls[0][0]).toBe(
+    expect(fetcher.mock.calls[0]![0]).toBe(
       "https://qmsg.zendee.cn/v3/send/secret-key",
     );
-    const request = fetcher.mock.calls[0][1];
+    const request = fetcher.mock.calls[0]![1];
     expect(request.method).toBe("POST");
     expect(request.body.get("msg")).not.toMatch(/https:|127|123456/);
     expect(Array.from(qmsgText("中".repeat(2000)))).toHaveLength(1800);

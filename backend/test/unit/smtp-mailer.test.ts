@@ -16,8 +16,7 @@ describe('SmtpMailer', () => {
       },
     );
     await mailer.send(MAIL, { to: ['a@b.c'], subject: '标题', text: '正文' });
-    expect(transportOptions?.password).toBe('secret-pass');
-    expect(transportOptions?.config.host).toBe('smtp.x.com');
+    expect(transportOptions).toMatchObject({ password: 'secret-pass', config: { host: 'smtp.x.com' } });
     expect(sentMessage).toMatchObject({ from: 'f', to: ['a@b.c'], subject: '标题', text: '正文' });
   });
 

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { openDatabase } from '../../src/db/connection.ts';
-import { currentSchemaVersion, MIGRATIONS, runMigrations } from '../../src/db/migrations/index.ts';
-import { RoomRepository } from '../../src/db/repositories/room.repo.ts';
-import { RecordingRepository } from '../../src/db/repositories/recording.repo.ts';
-import { SettingsRepository } from '../../src/db/repositories/settings.repo.ts';
-import { AlertRepository } from '../../src/db/repositories/alert.repo.ts';
-import { PredictionCalibrationRepository } from '../../src/db/repositories/prediction-calibration.repo.ts';
-import { AppError } from '../../src/types/error.ts';
-import { DEFAULT_SETTINGS } from '../../src/config/defaults.ts';
+import { openDatabase } from '../../src/db/connection.js';
+import { currentSchemaVersion, MIGRATIONS, runMigrations } from '../../src/db/migrations/index.js';
+import { RoomRepository } from '../../src/db/repositories/room.repo.js';
+import { RecordingRepository } from '../../src/db/repositories/recording.repo.js';
+import { SettingsRepository } from '../../src/db/repositories/settings.repo.js';
+import { AlertRepository } from '../../src/db/repositories/alert.repo.js';
+import { PredictionCalibrationRepository } from '../../src/db/repositories/prediction-calibration.repo.js';
+import { AppError } from '../../src/types/error.js';
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 
 function freshDb() {
   const db = openDatabase(':memory:');

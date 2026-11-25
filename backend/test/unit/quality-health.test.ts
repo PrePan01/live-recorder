@@ -181,7 +181,7 @@ describe("录制健康状态", () => {
     f.advance(10);
     expect(f.events.length - count).toBe(2);
     expect(f.events.at(-1)!.lastDataAt).toBeGreaterThan(
-      f.events[count - 1].lastDataAt!,
+      f.events[count - 1]!.lastDataAt!,
     );
   });
   it("结束后收口并释放历史快照", () => {

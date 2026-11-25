@@ -1,13 +1,19 @@
+import { DEFAULT_SETTINGS } from '../../src/config/defaults.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
-import { WebSocket } from 'ws';
+import { WebSocket, type RawData } from 'ws';
 import { buildApp } from '../../src/api/server.js';
 import { buildServices, type Services } from '../../src/core/services.js';
 import { FakeClock } from '../../src/core/clock.js';
 import { FakePlatformAdapter } from '../../src/platform/fake-adapter.js';
+
+function frameBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  return Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+}
 
 function newServices(): Services {
   return buildServices({ dbPath: ':memory:', clock: new FakeClock() });
@@ -82,6 +88,10 @@ describe('SSE events', () => {
     await new Promise((r) => setTimeout(r, 100));
     const room = server.services.rooms.create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: 'svc' });
     server.services.settings.save({
+      recordingFormat: DEFAULT_SETTINGS.recordingFormat,
+      autoRecord: DEFAULT_SETTINGS.autoRecord,
+      theme: DEFAULT_SETTINGS.theme,
+      floatingRecorderSize: DEFAULT_SETTINGS.floatingRecorderSize,
       recordingDirectory: '',
       maxConcurrentRecordings: 2,
       quality: 'original',
@@ -196,6 +206,10 @@ describe('WebSocket preview', () => {
     // 平台子目录位置被一个文件占用：基础目录检查通过，但共享预览写入前的 mkdir 必然失败。
     await writeFile(path.join(base, 'bilibili'), 'x');
     server.services.settings.save({
+      recordingFormat: DEFAULT_SETTINGS.recordingFormat,
+      autoRecord: DEFAULT_SETTINGS.autoRecord,
+      theme: DEFAULT_SETTINGS.theme,
+      floatingRecorderSize: DEFAULT_SETTINGS.floatingRecorderSize,
       recordingDirectory: base,
       maxConcurrentRecordings: 2,
       quality: 'original',
@@ -447,7 +461,7 @@ describe('WebSocket preview', () => {
     server.preview.broadcastFrame(room.id, buildVideoTag(1, 48));
 
     const c1 = connect(server.url, room.id);
-    const first1 = await new Promise<Buffer>((resolve) => c1.ws.once('message', (d) => resolve(Buffer.from(d))));
+    const first1 = await new Promise<Buffer>((resolve) => c1.ws.once('message', (d) => resolve(frameBuffer(d))));
     expect(first1.subarray(0, 3).toString()).toBe('FLV');
     c1.ws.close();
     await c1.closed;
@@ -496,7 +510,7 @@ it('init extractor completes at first media when audio seq missing (#193 QA 边�
     server.preview.broadcastFrame(room.id, media);
 
     const c = connect(server.url, room.id);
-    const first = await new Promise<Buffer>((resolve) => c.ws.once('message', (d) => resolve(Buffer.from(d))));
+    const first = await new Promise<Buffer>((resolve) => c.ws.once('message', (d) => resolve(frameBuffer(d))));
     expect(first.subarray(0, 3).toString()).toBe('FLV');
     // init = 13(FLV头) + 19(onMetaData) + 19(AVC seq)，不含首个媒体帧。
     expect(first.length).toBe(51);

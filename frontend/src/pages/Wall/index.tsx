@@ -29,6 +29,7 @@ import type { Room } from "../../types/room";
 import { recordRecentErrorAction } from "../../utils/error/errorDiagnostics";
 import styles from "./index.module.css";
 import { enterWallFullscreen as requestWallFullscreen } from "../../utils/wall/wallFullscreen";
+import { topModalDialog } from "../../utils/foregroundDialog";
 
 const GRID_OPTIONS = [
   { label: "2x2", value: "2x2" },
@@ -140,7 +141,7 @@ export default function Wall() {
   useEffect(() => {
     if (!wallFullscreen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.repeat && !event.isComposing && !topModalDialog()) {
         event.preventDefault();
         void exitWallFullscreen();
       }

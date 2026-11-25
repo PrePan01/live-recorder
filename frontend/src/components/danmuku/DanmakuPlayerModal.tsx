@@ -31,6 +31,8 @@ import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/error/errorMap";
 import { DanmakuLayer } from "./DanmakuLayer";
 import { useDanmakuListModal, useDanmakuListVisibility } from "./DanmakuListModalLayout";
+import { topModalDialog } from "../../utils/foregroundDialog";
+import { isReplayAltShortcut } from "../../utils/keyboardShortcuts";
 import RecordingTrack from "../RecordingTrack";
 import { MarkerNavPanel } from "../MarkerNavPanel";
 import DanmakuSettings from "./DanmakuSettings";
@@ -42,6 +44,8 @@ import {
 import type { RecordingGap, RecordingMarker } from "../../types/recording";
 import { useDanmakuPrefsStore } from "../../stores/danmakuPrefsStore";
 import type { DanmakuGap, DanmakuMessage } from "../../types/danmaku";
+
+const replayKeyboardActive = () => topModalDialog()?.classList.contains("lr-danmaku-player-modal") ?? false;
 
 const PLAYBACK_RATES = Array.from({ length: 11 }, (_, index) => {
   const value = 0.5 + index * 0.25;
@@ -446,27 +450,18 @@ export function DanmakuPlayerModal({
       .then((second) => addLabel(`标记 ${index}`, second))
       .catch(() => undefined);
   }, [markers, addLabel, getPosition, failed, message]);
+  const markSegment = marking.mark;
   useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (
-        failed ||
-        duration <= 0 ||
-        e.repeat ||
-        !e.altKey ||
-        e.ctrlKey ||
-        e.metaKey ||
-        e.code !== "KeyM" ||
-        (e.target as HTMLElement | null)?.closest(
-          "input,textarea,select,[contenteditable=true]",
-        )
-      )
-        return;
-      e.preventDefault();
-      quickAddLabel();
+    const keydown = (event: KeyboardEvent) => {
+      const action = event.code === "KeyP" ? markSegment :
+        event.code === "KeyM" && !failed && duration > 0 ? quickAddLabel : undefined;
+      if (!action || !isReplayAltShortcut(event) || !replayKeyboardActive()) return;
+      event.preventDefault();
+      void action();
     };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [quickAddLabel, failed, duration]);
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [quickAddLabel, markSegment, failed, duration]);
   useEffect(() => {
     setEditingRange(null);
     previewEnd.current = null;

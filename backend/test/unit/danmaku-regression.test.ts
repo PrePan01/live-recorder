@@ -264,10 +264,10 @@ it('stores messages and gaps in .danmaku beside .cache without cluttering the vi
   const store = await DanmakuStore.open(rec);
   expect(store.filePath).toBe(path.join(dir, '.danmaku', 'rec.danmaku.jsonl'));
   store.append({ id: 'a', tMs: 100, wallMs: 1, text: 'A' });
-  await store.saveGaps([{ fromMs: 0, toMs: 50 }]);
+  await store.saveGaps([{ fromMs: 0, toMs: 50, reason: 'disconnected' }]);
   await store.close();
   expect((await store.readRange(0, 1000)).messages).toHaveLength(1);
-  expect(await store.readGaps()).toEqual([{ fromMs: 0, toMs: 50 }]);
+  expect(await store.readGaps()).toEqual([{ fromMs: 0, toMs: 50, reason: 'disconnected' }]);
   await expect(readFile(path.join(dir, 'rec.danmaku.jsonl'))).rejects.toThrow();
   await expect(readFile(path.join(dir, 'rec.danmaku.jsonl.gaps.json'))).rejects.toThrow();
 });

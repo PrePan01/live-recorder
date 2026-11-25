@@ -5,10 +5,10 @@ import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { pickPort, BACKUP_PORTS, osFreePort } from '../../src/sidecar/ports.ts';
-import { InstanceLock } from '../../src/sidecar/instance-lock.ts';
-import { writeReadyFile, readReadyFile, removeReadyFile } from '../../src/sidecar/ready-file.ts';
-import { startSidecar } from '../../src/sidecar/start.ts';
+import { pickPort, BACKUP_PORTS, osFreePort } from '../../src/sidecar/ports.js';
+import { InstanceLock } from '../../src/sidecar/instance-lock.js';
+import { writeReadyFile, readReadyFile, removeReadyFile } from '../../src/sidecar/ready-file.js';
+import { startSidecar } from '../../src/sidecar/start.js';
 
 let occupied: import('node:net').Server[] = [];
 
@@ -205,7 +205,7 @@ describe('startup resilience', () => {
       expect(run.instance.port).toBeGreaterThan(0);
       const response = await fetch(`${run.instance.baseUrl}/api/v1/health`);
       expect(response.status).toBe(200);
-      expect((await response.json()).serviceStatus.instanceId).toBe(run.instance.instanceId);
+      expect(await response.json()).toMatchObject({ serviceStatus: { instanceId: run.instance.instanceId } });
       expect((await readReadyFile(run.readyFile))?.port).toBe(run.instance.port);
     } finally { await run.close(); }
   });
