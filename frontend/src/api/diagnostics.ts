@@ -1,3 +1,4 @@
+import type { Platform } from "../types/room";
 import { http } from "./client";
 import type { ErrorDiagnostic } from "../utils/error/errorDiagnostics";
 import type {
@@ -15,7 +16,7 @@ export interface PerformanceDiagnostic {
   id: number;
   kind: "recording_start" | "preview_start";
   roomId: string;
-  platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube";
+  platform: Platform;
   startedAt: string;
   elapsedMs: number;
   outcome: "running" | "ok" | "failed" | "skipped";

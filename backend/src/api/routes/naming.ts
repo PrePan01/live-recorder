@@ -1,3 +1,4 @@
+import { isPlatform } from '../../types/room.js';
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '../../types/error.js';
 import type { Services } from '../../core/services.js';
@@ -64,7 +65,7 @@ export function registerNamingRoutes(app: FastifyInstance, services: Services): 
     const ctx: NamingContext = {
       room: typeof body.room === 'string' && body.room ? body.room : '主播名',
       roomTitle: typeof body.roomTitle === 'string' && body.roomTitle.trim() ? body.roomTitle : '房间名',
-      platform: body.platform === 'youtube' ? 'youtube' : body.platform === 'xiaohongshu' ? 'xiaohongshu' : body.platform === 'douyin' ? 'douyin' : 'bilibili',
+      platform: isPlatform(body.platform) ? body.platform : 'bilibili',
       date: '2026-08-29',
       time: '18_30_00',
       quality: '1080p',

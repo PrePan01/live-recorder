@@ -23,6 +23,10 @@ const CDN_DOMAINS = [
   'ytimg.com',
   'yt3.googleusercontent.com',
   'yt3.ggpht.com',
+  'douyucdn.cn',
+  'douyucdn2.cn',
+  'msstatic.com',
+  'huya.com',
 ];
 function validateUrl(raw: string): URL {
   const url = new URL(raw);
@@ -94,7 +98,9 @@ export async function fetchRoomCover(
                 ? 'https://www.youtube.com/'
                 : room.platform === 'xiaohongshu'
                 ? 'https://www.xiaohongshu.com/'
-                : 'https://live.douyin.com/',
+                : room.platform === 'douyu' || room.platform === 'huya'
+                  ? `https://www.${room.platform}.com/`
+                  : 'https://live.douyin.com/',
         },
       });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;

@@ -1,3 +1,5 @@
+import type { Platform } from "./room";
+
 export type Quality = "original" | "1080p" | "720p" | "540p" | "360p";
 
 export type RecordingFormat = "source_flv" | "mp4_after";
@@ -13,6 +15,8 @@ export type PlatformIntervals = {
   douyin: number;
   xiaohongshu?: number;
   youtube?: number;
+  douyu?: number;
+  huya?: number;
 };
 
 export interface RetryPolicy {
@@ -41,10 +45,7 @@ export interface Settings {
   recordingDirectory: string;
   maxConcurrentRecordings: number;
   checkIntervalSec: PlatformIntervals;
-  checkIntervalDefaults?: Record<
-    "bilibili" | "douyin" | "xiaohongshu" | "youtube",
-    number
-  >;
+  checkIntervalDefaults?: Record<Platform, number>;
   detectionLoad?: {
     perMinute: number;
     limitPerMinute: number;
@@ -64,6 +65,8 @@ export interface Settings {
   bilibiliCookie: { hasCookie: boolean };
   xiaohongshuCookie?: { hasCookie: boolean };
   youtubeCookie?: { hasCookie: boolean };
+  douyuCookie?: { hasCookie: boolean };
+  huyaCookie?: { hasCookie: boolean };
   theme?: ThemePreference;
   floatingRecorderSize?: number;
   notifications?: NotificationPreference;
@@ -124,6 +127,8 @@ export interface SettingsInput {
   bilibiliCookie?: string;
   xiaohongshuCookie?: string;
   youtubeCookie?: "";
+  douyuCookie?: string;
+  huyaCookie?: string;
   theme?: ThemePreference;
   floatingRecorderSize?: number;
   confirmAfterComplete?: boolean;

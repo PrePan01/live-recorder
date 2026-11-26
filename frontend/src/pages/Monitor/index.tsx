@@ -20,6 +20,7 @@ import {
 import { credentialStatus } from "../../utils/credentialStatus";
 import { ApiError } from "../../types/error";
 import { describeError } from "../../utils/error/errorMap";
+import { PLATFORM_OPTIONS } from "../../utils/room/roomPlatform";
 import type { MonitorStatusFilter, Platform, Room } from "../../types/room";
 import RoomMasonry from "./components/RoomMasonry";
 import RoomGrid from "./components/RoomGrid";
@@ -54,10 +55,7 @@ function readSavedMonitorFilters(): SavedMonitorFilters {
   ];
   const PLATFORM_FILTERS: readonly ("全部" | Platform)[] = [
     "全部",
-    "bilibili",
-    "douyin",
-    "xiaohongshu",
-    "youtube",
+    ...PLATFORM_OPTIONS.map(({ value }) => value),
   ];
   try {
     const raw = localStorage.getItem("lr-monitor-filters");

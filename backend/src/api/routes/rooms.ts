@@ -1,3 +1,4 @@
+import { PLATFORMS, isPlatform } from "../../types/room.js";
 import { isDanmakuListCursor } from "../../danmaku/store.js";
 import {
   defaultDanmakuEnabled,
@@ -22,7 +23,6 @@ import {
 import { registerRoomScreenshotRoutes } from "./room-screenshots.js";
 import { registerRoomCoverRoutes } from "./room-cover.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
 const INSIGHT_CACHE_TTL_MS = 30_000;
 /** 手动开录可直接采信的「刚检测在播」时效：期内跳过重复确认，省一次平台往返。 */
 const MANUAL_LIVE_FRESH_MS = 10_000;
@@ -366,9 +366,8 @@ export function registerRoomRoutes(
     // #M2（QA 指派）：platform 缺省时按 URL 自动识别平台（与 POST /rooms/batch 一致），
     // 修复有效链接因缺 platform 被误拒 422、重复检测（409 ROOM_LINK_DUPLICATE）永远到不了的问题。
     const platform: Platform | undefined =
-      body.platform !== undefined &&
-      PLATFORMS.includes(body.platform as Platform)
-        ? (body.platform as Platform)
+      isPlatform(body.platform)
+        ? body.platform
         : PLATFORMS.find((p) =>
             services.adapterFor(p).validateUrl(body.url as string),
           );

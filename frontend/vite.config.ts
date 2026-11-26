@@ -43,6 +43,8 @@ export default defineConfig({
             import.meta.url,
           ),
         ),
+        "douyu-auth": fileURLToPath(new URL("./src/window-entries/platform-auth/douyu-auth.html", import.meta.url)),
+        "huya-auth": fileURLToPath(new URL("./src/window-entries/platform-auth/huya-auth.html", import.meta.url)),
         "youtube-auth": fileURLToPath(
           new URL(
             "./src/window-entries/platform-auth/youtube-auth.html",

@@ -32,6 +32,8 @@ export interface NativeBridge {
   onXiaohongshuAuthorized(cb: () => void): () => void;
   startYoutubeAuthorization(): Promise<void>;
   onYoutubeAuthorized(cb: () => void): () => void;
+  startChineseLiveAuthorization(platform: "douyu" | "huya"): Promise<void>;
+  onChineseLiveAuthorized(platform: "douyu" | "huya", cb: () => void): () => void;
   startBilibiliAuthorization(): Promise<void>;
   onBilibiliAuthorized(cb: () => void): () => void;
   quit(): Promise<void>;
@@ -141,6 +143,20 @@ class TauriBridge implements NativeBridge {
     let disposed = false;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const off = await listen<void>('douyin:authorized', () => { if (!disposed) cb(); });
+      if (disposed) off(); else unlisten = off;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }
+
+  async startChineseLiveAuthorization(platform: "douyu" | "huya"): Promise<void> {
+    await this.invoke<void>('start_chinese_live_authorization', { platform });
+  }
+
+  onChineseLiveAuthorized(platform: "douyu" | "huya", cb: () => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen<void>(`${platform}:authorized`, () => { if (!disposed) cb(); });
       if (disposed) off(); else unlisten = off;
     });
     return () => { disposed = true; unlisten?.(); };
@@ -352,6 +368,12 @@ class BrowserBridge implements NativeBridge {
   }
 
   onDouyinAuthorized(_cb: () => void): () => void { return () => {}; }
+
+  async startChineseLiveAuthorization(_platform: "douyu" | "huya"): Promise<void> {
+    throw new Error('应用内授权仅限桌面客户端');
+  }
+
+  onChineseLiveAuthorized(_platform: "douyu" | "huya", _cb: () => void): () => void { return () => {}; }
 
   async startBilibiliAuthorization(): Promise<void> {
     throw new Error('应用内授权仅限桌面客户端');

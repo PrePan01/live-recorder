@@ -1078,6 +1078,20 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'").get();
     if (table) ensureColumn(db, 'pipeline_runs', 'step_progress_pct', 'step_progress_pct INTEGER');
   } },
+  { version: 59, foreignKeysOff: true, up: db => {
+    const original = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='rooms'").get() as { sql: string };
+    const objects = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='rooms' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>;
+    const constraint = /CHECK\s*\(platform IN \([^)]*\)\)/i;
+    if (!constraint.test(original.sql)) throw new Error('rooms platform constraint could not be upgraded');
+    const create = original.sql.replace(/^CREATE TABLE\s+["`\[]?rooms["`\]]?/i, 'CREATE TABLE rooms_platform_upgrade')
+      .replace(constraint, "CHECK(platform IN ('bilibili', 'douyin', 'xiaohongshu', 'youtube', 'douyu', 'huya'))");
+    const columns = (db.prepare('PRAGMA table_info(rooms)').all() as Array<{ name: string }>).map(column => `"${column.name.replaceAll('"', '""')}"`).join(',');
+    db.exec(create);
+    db.exec(`INSERT INTO rooms_platform_upgrade (${columns}) SELECT ${columns} FROM rooms`);
+    db.exec('DROP TABLE rooms; ALTER TABLE rooms_platform_upgrade RENAME TO rooms');
+    for (const object of objects) db.exec(object.sql);
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Foreign key validation failed after platform upgrade');
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

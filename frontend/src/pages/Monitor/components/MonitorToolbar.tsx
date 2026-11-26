@@ -1,3 +1,4 @@
+import { PLATFORM_OPTIONS } from "../../../utils/room/roomPlatform";
 import { Button, Input, Popover, Select, Tooltip, Typography } from "antd";
 import {
   AppstoreOutlined,
@@ -67,38 +68,14 @@ export function MonitorToolbar({
           aria-label="平台筛选"
           options={[
             { label: "全部", value: "全部" },
-            {
+            ...PLATFORM_OPTIONS.map(({ value, label }) => ({
+              value,
               label: (
-                <Tooltip title="B站">
-                  <PlatformIcon platform="bilibili" />
+                <Tooltip title={label}>
+                  <PlatformIcon platform={value} />
                 </Tooltip>
               ),
-              value: "bilibili",
-            },
-            {
-              label: (
-                <Tooltip title="抖音">
-                  <PlatformIcon platform="douyin" />
-                </Tooltip>
-              ),
-              value: "douyin",
-            },
-            {
-              label: (
-                <span className="lr-platform-filter-option">
-                  <PlatformIcon platform="xiaohongshu" />
-                </span>
-              ),
-              value: "xiaohongshu",
-            },
-            {
-              label: (
-                <span>
-                  <PlatformIcon platform="youtube" />{" "}
-                </span>
-              ),
-              value: "youtube",
-            },
+            })),
           ]}
           value={platformFilter}
           onChange={(e) =>

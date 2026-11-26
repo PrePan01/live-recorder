@@ -1,3 +1,4 @@
+import { PLATFORMS } from "../types/room.js";
 import { platformCheckInterval, resolveCheckInterval, resolveRoomPolicy } from '../config/room-policy.js';
 import {
   backoffDelayMs,
@@ -20,7 +21,6 @@ import {
   type PredictionCoverageInterval,
 } from "./live-prediction.js";
 
-const PLATFORMS: Platform[] = ["bilibili", "douyin", "xiaohongshu", "youtube"];
 const RECORDING_MISSING_COVER_INTERVAL_MS = 60_000;
 const RECORDING_COVER_INTERVAL_MS = 5 * 60_000;
 /**
@@ -31,6 +31,8 @@ const PLATFORM_CHECK_CONCURRENCY: Record<Platform, number> = {
   douyin: 3,
   xiaohongshu: 1,
   youtube: 2,
+  douyu: 2,
+  huya: 2,
 };
 
 export class Scheduler {
@@ -239,7 +241,8 @@ export class Scheduler {
     if (!this.running || this.platformTasks.has(platform)) return;
     const previous = this.handles.get(platform);
     if (previous !== undefined) this.services.clock.clearTimeout(previous);
-    if (platform === 'youtube' && ![...this.pollingRooms.values()].some(room => room.platform === 'youtube' && (room.enabled || this.manager.isRoomActive(room.id)))) {
+    if ((platform === 'youtube' || platform === 'douyu' || platform === 'huya') &&
+      ![...this.pollingRooms.values()].some(room => room.platform === platform && (room.enabled || this.manager.isRoomActive(room.id)))) {
       this.handles.delete(platform);
       return;
     }
@@ -382,10 +385,14 @@ export class Scheduler {
    * 与拉流档位无关；风控 406/461 不等于 Cookie 过期，因此有意不做抖音那样的凭证失效
    * 熔断（避免误判），仅等待旧 Cookie 的在途请求收口后重新发起检测。
    */
-  async recheckYoutubeRoomsAfterCookieUpdate(): Promise<void> {
-    const rooms = this.services.rooms.listEnabled().filter(room => room.platform === 'youtube' && !this.manager.isRoomActive(room.id));
+  async recheckRoomsAfterCookieUpdate(platform: "youtube" | "douyu" | "huya"): Promise<void> {
+    const rooms = this.services.rooms.listEnabled().filter(room => room.platform === platform && !this.manager.isRoomActive(room.id));
     await Promise.all(rooms.map(room => this.waitForRoomCheck(room.id)));
     await this.runChecks(rooms, { allowWhenStopped: true });
+  }
+
+  async recheckYoutubeRoomsAfterCookieUpdate(): Promise<void> {
+    await this.recheckRoomsAfterCookieUpdate("youtube");
   }
 
   async recheckXiaohongshuRoomsAfterCookieUpdate(): Promise<void> {

@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, Input, Select, Slider, Space } from "antd";
 import { MONITORING_INTERVAL_COLUMNS } from "../model/catalog";
 import { useSettingsModelContext } from "../model/SettingsContext";
@@ -86,54 +85,74 @@ export function RecordingPanel() {
     </>
   );
 }
+const MAX_MONITORING_COLUMNS = 5;
+const MONITORING_COLUMN_WIDTH_REM = 8;
+
 export function MonitoringPanel() {
+  const tableContainer = useRef<HTMLDivElement>(null);
+  const [columnsPerRow, setColumnsPerRow] = useState(MAX_MONITORING_COLUMNS);
+  useLayoutEffect(() => {
+    const container = tableContainer.current;
+    if (!container) return;
+
+    const measure = () => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const columns = Math.floor(container.clientWidth / (MONITORING_COLUMN_WIDTH_REM * rem));
+      setColumnsPerRow(Math.max(1, Math.min(MAX_MONITORING_COLUMNS, columns)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const monitoringRows = Array.from(
+    { length: Math.ceil(MONITORING_INTERVAL_COLUMNS.length / columnsPerRow) },
+    (_, index) => {
+      const start = index * columnsPerRow;
+      return MONITORING_INTERVAL_COLUMNS.slice(start, start + columnsPerRow);
+    },
+  );
+
   return (
     <>
       <p className="lr-settings-row__help">
         按平台设置检查开播状态的默认间隔（秒），数值越小响应越快，也可以在直播间设置内手动设置不同直播间的间隔
       </p>
       <div
-        className="lr-monitoring-table-scroll"
+        ref={tableContainer}
+        className="lr-monitoring-table-container"
         role="region"
         aria-label="检测间隔设置"
-        tabIndex={0}
       >
-        <table
-          className="lr-monitoring-table"
-          style={
-            {
-              "--lr-monitoring-column-count":
-                MONITORING_INTERVAL_COLUMNS.length,
-            } as CSSProperties
-          }
-        >
+        <table className="lr-monitoring-table">
           <caption className="lr-settings-sr-only">开播检测间隔</caption>
-          <thead>
-            <tr>
-              {MONITORING_INTERVAL_COLUMNS.map(({ id, key, heading }) => (
-                <th key={id} scope="col">
-                  <label id={`${id}-label`} htmlFor={`${id}-control`}>
-                    {key !== "default" && (
-                      <span aria-hidden="true">
-                        <PlatformLogoTag platform={key} />
-                      </span>
-                    )}
-                    {heading}
-                  </label>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              {MONITORING_INTERVAL_COLUMNS.map(({ id }) => (
-                <td key={id} id={id}>
-                  <SettingControl id={id} />
-                  <SaveStatus id={id} />
-                </td>
-              ))}
-            </tr>
-          </tbody>
+          {monitoringRows.map((row) => (
+            <tbody key={row[0].id}>
+              <tr>
+                {row.map(({ id, key, heading }) => (
+                  <th key={id} id={`${id}-heading`}>
+                    <label id={`${id}-label`} htmlFor={`${id}-control`}>
+                      {key !== "default" && (
+                        <span aria-hidden="true">
+                          <PlatformLogoTag platform={key} />
+                        </span>
+                      )}
+                      {heading}
+                    </label>
+                  </th>
+                ))}
+              </tr>
+              <tr>
+                {row.map(({ id }) => (
+                  <td key={id} id={id} headers={`${id}-heading`}>
+                    <SettingControl id={id} />
+                    <SaveStatus id={id} />
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          ))}
         </table>
       </div>
       <DetectionLoadHint />

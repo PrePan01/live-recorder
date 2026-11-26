@@ -237,13 +237,11 @@
 .lr-settings-number > span {
   white-space: nowrap;
 }
-.lr-monitoring-table-scroll {
+.lr-monitoring-table-container {
   margin: 12px 0;
-  overflow-x: auto;
 }
 .lr-monitoring-table {
   width: 100%;
-  min-width: calc(var(--lr-monitoring-column-count) * 8rem);
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
@@ -266,6 +264,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow-wrap: anywhere;
 }
 .lr-monitoring-table th .lr-platform-logo-tag {
   margin-inline-end: 0;

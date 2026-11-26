@@ -21,3 +21,14 @@ export function keychainService(): string {
 export const YOUTUBE_COOKIE_KEY = 'youtube.cookie';
 
 export const QMSG_KEY = 'qmsg-api-key';
+
+export const CHINESE_LIVE_COOKIE_KEYS = {
+  douyu: 'douyu.cookie',
+  huya: 'huya.cookie',
+} as const;
+
+export type ChineseLivePlatform = keyof typeof CHINESE_LIVE_COOKIE_KEYS;
+
+export function isChineseLivePlatform(platform: unknown): platform is ChineseLivePlatform {
+  return platform === 'douyu' || platform === 'huya';
+}

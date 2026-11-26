@@ -1363,6 +1363,7 @@ pub fn run() {
                         layout_auth_window(&window.app_handle(), *size, scale_factor, login_label, controls_label);
                     }
                 }
+                platform::chinese_live::on_resize(window, *size);
                 emit_window_visibility(&window.app_handle());
             }
             if matches!(event, tauri::WindowEvent::Focused(_)) {
@@ -1387,6 +1388,8 @@ pub fn run() {
             set_floating_recorder_size,
             start_douyin_authorization,
             complete_douyin_authorization,
+            platform::chinese_live::start_chinese_live_authorization,
+            platform::chinese_live::complete_chinese_live_authorization,
             start_bilibili_authorization,
             complete_bilibili_authorization,
             start_xiaohongshu_authorization,

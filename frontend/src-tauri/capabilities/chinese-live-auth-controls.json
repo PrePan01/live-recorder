@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chinese-live-auth-controls",
+  "description": "Local confirmation bars for the Douyu and Huya authorization windows.",
+  "webviews": ["douyu-auth-controls", "huya-auth-controls"],
+  "permissions": ["core:default"]
+}

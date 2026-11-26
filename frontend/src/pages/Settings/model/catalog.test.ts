@@ -33,6 +33,8 @@ describe("settings catalog", () => {
       ["interval-douyin", "checkIntervalSec.douyin"],
       ["interval-xiaohongshu", "checkIntervalSec.xiaohongshu"],
       ["interval-youtube", "checkIntervalSec.youtube"],
+      ["interval-douyu", "checkIntervalSec.douyu"],
+      ["interval-huya", "checkIntervalSec.huya"],
     ]);
   });
   it("finds authorization and connection synonyms without reading user input", () => {

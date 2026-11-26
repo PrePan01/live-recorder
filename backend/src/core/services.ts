@@ -1,3 +1,7 @@
+import { DouyuAdapter } from "../platform/douyu/adapter.js";
+import { HuyaAdapter } from "../platform/huya/adapter.js";
+import { CHINESE_LIVE_COOKIE_KEYS, isChineseLivePlatform } from "../security/keys.js";
+import type { Platform } from "../types/room.js";
 import { QmsgQueue } from '../notifications/qmsg.js';
 import { QMSG_KEY } from '../security/keys.js';
 import { YoutubeAdapter } from "../platform/youtube/index.js";
@@ -107,11 +111,11 @@ export interface Services {
   exporter: ExportManager;
   /** 跳播服务（正在录的这条：索引状态/预热/起流）。 */
   seek: SeekService;
-  adapterFor(platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): PlatformAdapter;
-  engineFor(platform?: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): RecordingEngine;
+  adapterFor(platform: Platform): PlatformAdapter;
+  engineFor(platform?: Platform): RecordingEngine;
   recordingBufferDirectory: string;
   /** 平台会话凭证（v1.3：抖音 Cookie；B站 Cookie），非该平台返回 undefined。 */
-  platformCookie(platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube"): Promise<string | undefined>;
+  platformCookie(platform: Platform): Promise<string | undefined>;
 }
 
 export interface BuildOptions {
@@ -200,6 +204,8 @@ export function buildServices(opts: BuildOptions = {}): Services {
             load: url => (db.prepare('SELECT channel_url FROM youtube_sources WHERE input_url = ?').get(url) as { channel_url: string } | undefined)?.channel_url,
             save: (url, channel) => { db.prepare('INSERT INTO youtube_sources (input_url,channel_url) VALUES (?,?) ON CONFLICT(input_url) DO UPDATE SET channel_url=excluded.channel_url').run(url, channel); },
           }) as PlatformAdapter,
+          douyu: new DouyuAdapter(),
+          huya: new HuyaAdapter(),
           bilibili: new BilibiliAdapter() as PlatformAdapter,
           douyin: new DouyinAdapter(undefined, undefined, async (roomId, cookie, interactive) => {
             const revision = douyinAuthorization.revision;
@@ -221,6 +227,8 @@ export function buildServices(opts: BuildOptions = {}): Services {
         }
       : {
           youtube: new FakePlatformAdapter("youtube") as PlatformAdapter,
+          douyu: new FakePlatformAdapter("douyu"),
+          huya: new FakePlatformAdapter("huya"),
           bilibili: new FakePlatformAdapter("bilibili") as PlatformAdapter,
           douyin: new FakePlatformAdapter("douyin") as PlatformAdapter,
           xiaohongshu: new FakePlatformAdapter("xiaohongshu") as PlatformAdapter,
@@ -284,6 +292,7 @@ export function buildServices(opts: BuildOptions = {}): Services {
           })
         : fakeEngine,
     platformCookie: async (platform) => {
+      if (isChineseLivePlatform(platform)) return (await secretStore.get(CHINESE_LIVE_COOKIE_KEYS[platform])) ?? undefined;
       if (platform === "youtube") return (await secretStore.get(YOUTUBE_COOKIE_KEY)) ?? undefined;
       if (platform === "douyin")
         return await douyinAuthorization.cookie();

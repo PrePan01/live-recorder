@@ -1,3 +1,6 @@
+import { douyuDanmakuAdapter } from "./adapters/douyu.js";
+import { createHuyaDanmakuAdapter } from "./adapters/huya.js";
+import { HuyaAdapter } from "../platform/huya/adapter.js";
 import { createYoutubeDanmakuAdapter } from "./adapters/youtube.js";
 import { YoutubeAdapter } from "../platform/youtube/index.js";
 import { createXiaohongshuDanmakuAdapter } from "./adapters/xiaohongshu.js";
@@ -20,6 +23,11 @@ import type { DanmakuAdapter, DanmakuGap, DanmakuStatus } from "./types.js";
 function adapterFor(platform: string, services?: Services): DanmakuAdapter {
   if (platform === "youtube" && services?.adapterFor("youtube") instanceof YoutubeAdapter) return createYoutubeDanmakuAdapter(services.adapterFor("youtube") as YoutubeAdapter);
   if (platform === "bilibili") return bilibiliDanmakuAdapter;
+  if (platform === "douyu") return douyuDanmakuAdapter;
+  if (platform === "huya") {
+    const adapter = services?.adapterFor("huya");
+    if (adapter instanceof HuyaAdapter) return createHuyaDanmakuAdapter(adapter.getDanmakuUid.bind(adapter));
+  }
   if (platform === "douyin") {
     const adapter = services?.adapterFor("douyin");
     return adapter instanceof DouyinAdapter

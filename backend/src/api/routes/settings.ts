@@ -1,3 +1,5 @@
+import { CHINESE_LIVE_COOKIE_KEYS, type ChineseLivePlatform } from '../../security/keys.js';
+import { CHINESE_LIVE_COOKIE_FIELDS, CHINESE_LIVE_PLATFORMS, checkChineseLiveCookie, normalizeChineseLiveCookie } from '../../security/chinese-live-cookie.js';
 import { checkDouyinCookieStatus } from '../../security/douyin-authorization.js';
 import { checkYoutubeCookieStatus } from "../../security/youtube-cookie.js";
 import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
@@ -26,6 +28,30 @@ export { settingsView };
 const BILIBILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 export function registerSettingsRoutes(app: FastifyInstance, services: Services): void {
+  const saveChineseLiveCookie = async (platform: ChineseLivePlatform, cookie: string) => {
+    const key = CHINESE_LIVE_COOKIE_KEYS[platform];
+    if (cookie) await services.secretStore.set(key, cookie);
+    else await services.secretStore.delete(key);
+    void services.scheduler.recheckRoomsAfterCookieUpdate(platform).catch(() => undefined);
+  };
+  for (const platform of CHINESE_LIVE_PLATFORMS) {
+    app.get(`/api/v1/settings/${platform}-cookie-status`, async () => {
+      const cookie = await services.secretStore.get(CHINESE_LIVE_COOKIE_KEYS[platform]);
+      return { status: cookie ? await checkChineseLiveCookie(platform, cookie) : 'missing' };
+    });
+    app.post(`/api/v1/settings/${platform}-cookie`, async req => {
+      const { cookie } = (req.body ?? {}) as { cookie?: unknown };
+      const normalized = normalizeChineseLiveCookie(platform, cookie);
+      if (normalized && await checkChineseLiveCookie(platform, normalized) === 'invalid') {
+        throw new AppError('CONFIG_INVALID', '登录凭据已失效，请重新授权');
+      }
+      await saveChineseLiveCookie(platform, normalized);
+      const view = await settingsView(services);
+      services.events.emit({ type: 'settings:updated', data: view });
+      return { settings: view };
+    });
+  }
+
   app.get('/api/v1/settings/youtube-cookie-status', async () => { const cookie = await services.secretStore.get(YOUTUBE_COOKIE_KEY); return { status: cookie ? await checkYoutubeCookieStatus(cookie) : 'missing' }; });
   app.post('/api/v1/settings/youtube-cookie', async (req) => {
     const { cookie } = (req.body ?? {}) as { cookie?: unknown };
@@ -44,7 +70,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
   });
 
   app.put('/api/v1/settings', async (req, reply) => {
-    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string; bilibiliCookie?: string; xiaohongshuCookie?: string; youtubeCookie?: string };
+    const body = (req.body ?? {}) as Partial<AppSettings> & { mail?: MailConfig & { password?: string } } & { douyinCookie?: string; bilibiliCookie?: string; xiaohongshuCookie?: string; youtubeCookie?: string; douyuCookie?: unknown; huyaCookie?: unknown };
     const password = typeof body.mail?.password === 'string' && body.mail.password.length > 0 ? body.mail.password : null;
     const douyinCookie = typeof body.douyinCookie === 'string' ? normalizeDouyinCookie(body.douyinCookie) : null;
     const bilibiliCookie = typeof body.bilibiliCookie === 'string' ? normalizeBilibiliCookie(body.bilibiliCookie) : null;
@@ -63,10 +89,23 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     delete (incoming as { douyinCookie?: string }).douyinCookie;
     delete (incoming as { bilibiliCookie?: string }).bilibiliCookie;
     delete (incoming as { xiaohongshuCookie?: string }).xiaohongshuCookie;
+    const chineseCookies = new Map<ChineseLivePlatform, string>();
+    for (const platform of CHINESE_LIVE_PLATFORMS) {
+      const field = CHINESE_LIVE_COOKIE_FIELDS[platform];
+      delete (incoming as typeof body)[field];
+      if (body[field] !== undefined) chineseCookies.set(platform, normalizeChineseLiveCookie(platform, body[field]));
+    }
     if (xiaohongshuCookie) validateXiaohongshuCookie(xiaohongshuCookie);
     // Validate secrets before any ordinary settings are persisted.
     if (douyinCookie) validateDouyinCookie(douyinCookie);
     if (bilibiliCookie) validateBilibiliCookie(bilibiliCookie);
+    if (chineseCookies.size && Object.keys(incoming).length === 0 &&
+        [body.douyinCookie, body.bilibiliCookie, body.xiaohongshuCookie, body.youtubeCookie].every(value => value === undefined)) {
+      for (const [platform, cookie] of chineseCookies) await saveChineseLiveCookie(platform, cookie);
+      const view = await settingsView(services);
+      services.events.emit({ type: 'settings:updated', data: view });
+      return reply.send({ settings: view });
+    }
     const current = services.settings.load() ?? (structuredClone(DEFAULT_SETTINGS) as unknown as AppSettings);
     const merged: AppSettings = {
       ...current,
@@ -77,6 +116,7 @@ export function registerSettingsRoutes(app: FastifyInstance, services: Services)
     };
     validateSettings(merged);
     services.settings.save(merged);
+    for (const [platform, cookie] of chineseCookies) await saveChineseLiveCookie(platform, cookie);
     if (merged.highlightEnabled === false) await services.manager.disableAllHighlightBuffers();
     if (password !== null) await services.secretStore.set(MAIL_PASSWORD_KEY, password);
     if (body.mail?.password === '') await services.secretStore.delete(MAIL_PASSWORD_KEY);

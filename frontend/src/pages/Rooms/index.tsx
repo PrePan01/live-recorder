@@ -1,3 +1,4 @@
+import { PLATFORM_OPTIONS } from "../../utils/room/roomPlatform";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -216,12 +217,7 @@ export default function Rooms() {
             setPlatform(v);
             resetPage();
           }}
-          options={[
-            { value: "bilibili", label: "B站" },
-            { value: "douyin", label: "抖音" },
-            { value: "xiaohongshu", label: "小红书" },
-            { value: "youtube", label: "YouTube" },
-          ]}
+          options={PLATFORM_OPTIONS}
         />
         <Select
           allowClear

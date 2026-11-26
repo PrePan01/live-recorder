@@ -1,4 +1,4 @@
-import { QMSG_KEY } from '../../security/keys.js';
+import { CHINESE_LIVE_COOKIE_KEYS, QMSG_KEY } from '../../security/keys.js';
 import { YOUTUBE_COOKIE_KEY } from "../../security/keys.js";
 import type { Services } from "../../core/services.js";
 import { DEFAULT_SETTINGS } from "../../config/defaults.js";
@@ -36,6 +36,8 @@ export async function settingsView(services: Services): Promise<SettingsView> {
       douyin: platformCheckInterval('douyin', settings),
       xiaohongshu: platformCheckInterval('xiaohongshu', settings),
       youtube: platformCheckInterval('youtube', settings),
+      douyu: platformCheckInterval('douyu', settings),
+      huya: platformCheckInterval('huya', settings),
     },
     detectionLoad: detectionLoad(
       services.rooms
@@ -49,6 +51,8 @@ export async function settingsView(services: Services): Promise<SettingsView> {
     douyinCookie: { hasCookie: hasDouyinCookie },
     bilibiliCookie: { hasCookie: hasBilibiliCookie },
     xiaohongshuCookie: { hasCookie: hasXiaohongshuCookie },
+    douyuCookie: { hasCookie: await services.secretStore.has(CHINESE_LIVE_COOKIE_KEYS.douyu) },
+    huyaCookie: { hasCookie: await services.secretStore.has(CHINESE_LIVE_COOKIE_KEYS.huya) },
     youtubeCookie: {
       hasCookie: await services.secretStore.has(YOUTUBE_COOKIE_KEY),
     },

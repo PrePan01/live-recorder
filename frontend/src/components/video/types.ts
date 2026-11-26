@@ -1,3 +1,5 @@
+import type { Platform } from "../../types/room";
+
 export interface VideoPlayerProps {
   roomId: string;
   muted?: boolean;
@@ -7,7 +9,7 @@ export interface VideoPlayerProps {
   thumbnail?: boolean;
   onPreviewError?: () => void;
   /** 平台：douyin 无 Cookie 受限时加载超时给明确提示 */
-  platform?: "bilibili" | "douyin" | "xiaohongshu" | "youtube";
+  platform?: Platform;
   /** 竖屏墙：不写死宽高比，画面撑满容器高度并按真实比例显示。 */
   fill?: boolean;
   /** 直播墙窗口模式中供重复格子镜像主画面。 */

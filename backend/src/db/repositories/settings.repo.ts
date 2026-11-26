@@ -25,9 +25,11 @@ export class SettingsRepository {
         autoRecord?: boolean;
         mail?: MailConfig & { password?: string };
       };
-      parsed.checkIntervalSec = { youtube: 120, xiaohongshu: 120, ...parsed.checkIntervalSec };
+      parsed.checkIntervalSec = { youtube: 120, xiaohongshu: 120, douyu: 60, huya: 60, ...parsed.checkIntervalSec };
       delete (parsed as unknown as Record<string, unknown>).xiaohongshuCookie;
       delete (parsed as unknown as Record<string, unknown>).youtubeCookie;
+      delete (parsed as unknown as Record<string, unknown>).douyuCookie;
+      delete (parsed as unknown as Record<string, unknown>).huyaCookie;
       if (parsed.qmsg) parsed.qmsg = { enabled: parsed.qmsg.enabled === true };
       if (parsed.mail) delete (parsed.mail as { password?: string }).password;
       // v4 之前已保存的设置没有 autoRecord 字段，历史行为是自动录制默认开启。
@@ -67,6 +69,8 @@ export class SettingsRepository {
     delete (safe.mail as { password?: string }).password;
     delete (safe as unknown as Record<string, unknown>).xiaohongshuCookie;
     delete (safe as unknown as Record<string, unknown>).youtubeCookie;
+    delete (safe as unknown as Record<string, unknown>).douyuCookie;
+    delete (safe as unknown as Record<string, unknown>).huyaCookie;
     this.setRaw('settings', JSON.stringify(safe));
   }
 }

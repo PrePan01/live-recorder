@@ -57,3 +57,8 @@ export async function fetchYoutubeCookieStatus(): Promise<DouyinCookieStatus> {
   const { data } = await http.get<{ status: DouyinCookieStatus }>('/settings/youtube-cookie-status');
   return data.status;
 }
+
+export async function fetchChineseLiveCookieStatus(platform: 'douyu' | 'huya'): Promise<DouyinCookieStatus> {
+  const { data } = await http.get<{ status: DouyinCookieStatus }>(`/settings/${platform}-cookie-status`, { timeout: 12_000 });
+  return data.status;
+}

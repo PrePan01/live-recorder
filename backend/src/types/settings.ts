@@ -18,6 +18,8 @@ export interface CheckIntervalSec {
   douyin: number;
   xiaohongshu?: number;
   youtube?: number;
+  douyu?: number;
+  huya?: number;
 }
 
 export interface MailConfig {
@@ -184,6 +186,8 @@ export interface SettingsView {
   bilibiliCookie: { hasCookie: boolean };
   xiaohongshuCookie?: { hasCookie: boolean };
   youtubeCookie?: { hasCookie: boolean };
+  douyuCookie?: { hasCookie: boolean };
+  huyaCookie?: { hasCookie: boolean };
   /** V5 界面主题偏好。 */
   theme: ThemePreference;
   floatingRecorderSize: number;

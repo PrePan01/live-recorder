@@ -2,7 +2,7 @@ import type { ApiErrorEnvelope } from "./error";
 import type { Quality } from "./settings";
 import type { Tag } from "./tag";
 
-export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "youtube";
+export type Platform = "bilibili" | "douyin" | "xiaohongshu" | "youtube" | "douyu" | "huya";
 
 export type MonitorStatusFilter = "全部" | "开播中" | "录制中" | "收藏";
 

@@ -46,12 +46,9 @@ import {
   type StatMetric,
 } from "../../utils/statsAggregation";
 
-const PLATFORM_LABEL: Record<string, string> = {
-  bilibili: "B站",
-  douyin: "抖音",
-  xiaohongshu: "小红书",
-  youtube: "YouTube",
-};
+import { PLATFORM_LABEL, PLATFORM_OPTIONS } from "../../utils/room/roomPlatform";
+
+const platformLabels: Record<string, string> = PLATFORM_LABEL;
 
 type MetricKey = "trend" | "platform" | "room" | "heat";
 const DEFAULT_METRICS: Record<MetricKey, StatMetric> = {
@@ -381,7 +378,7 @@ export default function Stats() {
     if (rows.length === 0) return null;
     const data = toPieData(
       rows.map((p) => ({
-        name: PLATFORM_LABEL[p.platform] ?? p.platform,
+        name: platformLabels[p.platform] ?? p.platform,
         recordings: p.recordings,
         bytes: p.bytes,
         durationMs: p.durationMs,
@@ -579,12 +576,7 @@ export default function Stats() {
             style={{ width: 110 }}
             value={platform}
             onChange={setPlatform}
-            options={[
-              { value: "bilibili", label: "B站" },
-              { value: "douyin", label: "抖音" },
-              { value: "xiaohongshu", label: "小红书" },
-            { value: "youtube", label: "YouTube" },
-            ]}
+            options={PLATFORM_OPTIONS}
           />
           <TagFilterSelect
             tags={tags}

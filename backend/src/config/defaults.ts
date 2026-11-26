@@ -11,6 +11,8 @@ export const DEFAULT_CHECK_INTERVAL: CheckIntervalSec = {
   douyin: 120,
   xiaohongshu: 120,
   youtube: 120,
+  douyu: 60,
+  huya: 60,
 };
 
 export const DEFAULT_RETRY: RetryConfig = {

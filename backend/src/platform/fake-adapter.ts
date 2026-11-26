@@ -1,3 +1,5 @@
+import type { Platform } from "../types/room.js";
+import { chineseRoomUrl, parseChineseRoomLink } from "./chinese-live/url.js";
 import { normalizeYoutubeUrl, parseYoutubeUrl } from './youtube/url.js';
 import type { PlatformAdapter, LiveStatusResult, StreamUrlResult } from './adapter.js';
 import type { Quality } from '../types/index.js';
@@ -10,12 +12,12 @@ import { normalizeBilibiliUrl, validateBilibiliUrl } from './bilibili/url.js';
  * 阶段 B 全 fake 交付用，FE 可直接连预览链路。
  */
 export class FakePlatformAdapter implements PlatformAdapter {
-  readonly platform: 'bilibili' | 'douyin' | 'xiaohongshu' | 'youtube';
+  readonly platform: Platform;
   private callCount = 0;
   /** 可编程结果队列；耗尽后回落到 live。 */
   public script: LiveStatusResult[] = [{ status: 'offline' }, { status: 'live', streamSessionId: 'sess_fake_1', streamTitle: 'Fake 直播', availableQualities: ['original', '1080p', '720p'] }];
 
-  constructor(platform: 'bilibili' | 'douyin' | 'xiaohongshu' | 'youtube' = 'bilibili') {
+  constructor(platform: Platform = 'bilibili') {
     this.platform = platform;
   }
 
@@ -35,6 +37,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   normalizeUrl(raw: string): string {
+    if (this.platform === "douyu" || this.platform === "huya") return chineseRoomUrl(this.platform, parseChineseRoomLink(this.platform, raw)!);
     if (this.platform === "youtube") return normalizeYoutubeUrl(raw);
     if (this.platform === 'xiaohongshu') return normalizeXiaohongshuUrl(raw);
     if (this.platform === 'douyin') return normalizeDouyinUrl(raw);
@@ -42,6 +45,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   validateUrl(raw: string): boolean {
+    if (this.platform === "douyu" || this.platform === "huya") return parseChineseRoomLink(this.platform, raw) !== null;
     if (this.platform === "youtube") return parseYoutubeUrl(raw) !== null;
     if (this.platform === 'xiaohongshu') return parseXiaohongshuUrl(raw) !== null;
     // 与真实适配器口径一致，便于 fake 模式下按 URL 自动识别平台。

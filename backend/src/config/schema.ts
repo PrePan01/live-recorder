@@ -53,7 +53,7 @@ export function validateSettings(input: unknown): AppSettings {
     typeof value === 'number' && Number.isSafeInteger(value) &&
     value >= CHECK_INTERVAL_MIN_SEC && value <= CHECK_INTERVAL_MAX_SEC;
   if (!ci || ![ci.default, ci.bilibili, ci.douyin].every(validInterval) ||
-      [ci.youtube, ci.xiaohongshu].some(value => value !== undefined && !validInterval(value))) {
+      [ci.youtube, ci.xiaohongshu, ci.douyu, ci.huya].some(value => value !== undefined && !validInterval(value))) {
     throw new AppError('CONFIG_INVALID', `检测间隔需为 ${CHECK_INTERVAL_MIN_SEC}~${CHECK_INTERVAL_MAX_SEC} 秒的整数`);
   }
   const r = s.retry;

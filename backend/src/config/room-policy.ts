@@ -90,7 +90,9 @@ export function platformCheckInterval(
     intervals?.[platform] ??
     (platform === "xiaohongshu" || platform === "youtube"
       ? 120
-      : (intervals?.default ?? (platform === "douyin" ? 120 : 60)))
+      : platform === "douyu" || platform === "huya"
+        ? 60
+        : (intervals?.default ?? (platform === "douyin" ? 120 : 60)))
   );
 }
 

@@ -1,3 +1,4 @@
+import { PLATFORM_OPTIONS } from "../../../utils/room/roomPlatform";
 import { useState } from "react";
 import { Alert, App, Input, List, Modal, Typography } from "antd";
 import { useRoomStore } from "../../../stores/roomStore";
@@ -67,13 +68,13 @@ export default function BatchAddRoomsModal({
       destroyOnHidden
     >
       <Typography.Paragraph type="secondary">
-        每行一个直播链接，支持 B站 / 抖音 / 小红书 / YouTube 混排，最多 100
+        每行一个直播链接，支持 {PLATFORM_OPTIONS.map(({ label }) => label).join(" / ")} 混排，最多 100
         条。自动去重（含已存在直播间与批内重复）。
       </Typography.Paragraph>
       <Input.TextArea
         rows={6}
         placeholder={
-          "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/...\nhttps://www.youtube.com/@频道名\nhttps://www.youtube.com/watch?v=视频ID"
+          "https://live.bilibili.com/...\nhttps://live.douyin.com/...\nhttps://www.xiaohongshu.com/livestream/...\nhttps://www.youtube.com/@频道名\nhttps://www.youtube.com/watch?v=视频ID\nhttps://www.douyu.com/房间号\nhttps://www.huya.com/房间号"
         }
         value={batchText}
         onChange={(e) => setBatchText(e.target.value)}

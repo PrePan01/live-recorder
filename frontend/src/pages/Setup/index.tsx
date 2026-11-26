@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { PLATFORM_OPTIONS } from "../../utils/room/roomPlatform";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -244,25 +245,17 @@ export default function Setup() {
               <br />
               自动录制：{autoRecord ? "开启" : "关闭"}
               <br />
-              抖音授权：
-              {authorizationStatuses.douyin === "authorized"
-                ? "已登录"
-                : "未登录"}
-              <br />
-              B站授权：
-              {authorizationStatuses.bilibili === "authorized"
-                ? "已登录"
-                : "未登录"}
-              <br />
-              小红书授权：
-              {authorizationStatuses.xiaohongshu === "authorized"
-                ? "已登录"
-                : "未登录"}
-              <br />
-              YouTube授权：
-              {authorizationStatuses.youtube === "authorized"
-                ? "已登录"
-                : "未登录"}
+              {PLATFORM_OPTIONS.map(({ value, label }, index) => (
+                <Fragment key={value}>
+                  {index > 0 && <br />}
+                  {label}授权：
+                  {authorizationStatuses[value] === "authorized"
+                    ? "已登录"
+                    : authorizationStatuses[value] === "unknown"
+                      ? "登录状态待确认"
+                      : "未登录"}
+                </Fragment>
+              ))}
             </Typography.Paragraph>
             <div className="lr-setup-first-room">
               <div className="lr-setup-first-room__copy">

@@ -5,6 +5,8 @@ const PLATFORM_STYLE: Record<
   Platform,
   { color: string; bg: string; label: string; icon: string }
 > = {
+  douyu: { color: "#ff5d23", bg: "#fff2e9", label: "斗鱼", icon: "https://www.douyu.com/favicon.ico" },
+  huya: { color: "#b85400", bg: "#fff3d8", label: "虎牙", icon: "https://www.huya.com/favicon.ico" },
   youtube: { color: "#ff0000", bg: "rgba(255,0,0,0.08)", label: "YouTube", icon: "https://www.youtube.com/favicon.ico" },
   xiaohongshu: {
     color: "#ff2442",

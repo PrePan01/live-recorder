@@ -7,8 +7,10 @@ const authorizationCommands = {
   xiaohongshu: 'complete_xiaohongshu_authorization',
   douyin: 'complete_douyin_authorization',
   youtube: 'complete_youtube_authorization',
+  douyu: 'complete_chinese_live_authorization',
+  huya: 'complete_chinese_live_authorization',
 };
-if (platform !== 'bilibili' && platform !== 'douyin' && platform !== 'xiaohongshu' && platform !== 'youtube') {
+if (platform !== 'bilibili' && platform !== 'douyin' && platform !== 'xiaohongshu' && platform !== 'youtube' && platform !== 'douyu' && platform !== 'huya') {
   throw new Error('授权页面未配置有效平台');
 }
 const command = authorizationCommands[platform];
@@ -20,7 +22,8 @@ button.addEventListener('click', async () => {
   button.disabled = true;
   status.textContent = '正在读取登录凭证…';
   try {
-    await invoke(command);
+    if (platform === 'douyu' || platform === 'huya') await invoke(command, { platform });
+    else await invoke(command);
     status.textContent = '授权成功，正在关闭窗口…';
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : String(error);

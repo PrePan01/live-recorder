@@ -5,7 +5,11 @@ import { useRoomStore } from "../../../stores/roomStore";
 import type { Room } from "../../../types/room";
 import { ApiError } from "../../../types/error";
 import { describeError } from "../../../utils/error/errorMap";
-import { guessPlatform, PLATFORM_LABEL } from "../../../utils/room/roomPlatform";
+import {
+  guessPlatform,
+  PLATFORM_LABEL,
+  PLATFORM_OPTIONS,
+} from "../../../utils/room/roomPlatform";
 import { promptDouyinAuthorization } from "../utils/douyinAuthorization";
 import TagSelect from "./TagSelect";
 
@@ -19,6 +23,8 @@ function RoomTagField({
 }) {
   return <TagSelect value={value} onChange={(next) => onChange?.(next)} />;
 }
+
+const supportedLinks = `支持 ${PLATFORM_OPTIONS.map(({ label }) => label).join("、")} 直播链接`;
 
 interface RoomEditorModalProps {
   open: boolean;
@@ -54,7 +60,10 @@ export default function RoomEditorModal({
     if (!open) return;
     form.resetFields();
     if (editing) {
-      form.setFieldsValue({ url: editing.url, displayName: editing.displayName });
+      form.setFieldsValue({
+        url: editing.url,
+        displayName: editing.displayName,
+      });
     }
     form.setFieldValue("tagIds", editing?.tags.map((tag) => tag.id) ?? []);
   }, [open, editing, form]);
@@ -69,7 +78,7 @@ export default function RoomEditorModal({
     const { tagIds, ...values } = fields;
     const platform = guessPlatform(values.url);
     if (!platform) {
-      message.error("支持 B站、抖音、小红书、YouTube 直播链接");
+      message.error(supportedLinks);
       return;
     }
     setSubmitting(true);
@@ -141,11 +150,7 @@ export default function RoomEditorModal({
               validator: (_, v: string) =>
                 !v || guessPlatform(v)
                   ? Promise.resolve()
-                  : Promise.reject(
-                      new Error(
-                        "支持 B站 / 抖音直播链接、小红书主页或直播分享链接、YouTube 频道或直播视频链接",
-                      ),
-                    ),
+                  : Promise.reject(new Error(supportedLinks)),
             },
           ]}
           extra={
@@ -155,7 +160,7 @@ export default function RoomEditorModal({
           }
         >
           <Input
-            placeholder="B站、抖音、小红书直播链接或 YouTube 频道/直播视频链接"
+            placeholder="直播间或直播分享链接"
             addonAfter={
               <Button
                 className="lr-room-url-paste"
@@ -177,7 +182,11 @@ export default function RoomEditorModal({
         </Form.Item>
       </Form>
       {submitting && submitHint && !editing ? (
-        <div className="lr-room-submit-pending" role="status" aria-live="polite">
+        <div
+          className="lr-room-submit-pending"
+          role="status"
+          aria-live="polite"
+        >
           <Spin size="small" />
           <Typography.Text type="secondary">
             正在解析直播间信息，约需 10 秒…

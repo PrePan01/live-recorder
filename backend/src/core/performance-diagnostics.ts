@@ -1,3 +1,4 @@
+import type { Platform } from "../types/room.js";
 import type { Clock } from "./clock.js";
 
 const MAX_ENTRIES = 100;
@@ -14,7 +15,7 @@ export interface PerformanceDiagnostic {
   id: number;
   kind: PerformanceOperationKind;
   roomId: string;
-  platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube";
+  platform: Platform;
   startedAt: string;
   elapsedMs: number;
   outcome: PerformanceOutcome;
@@ -55,7 +56,7 @@ export class PerformanceDiagnostics {
 
   begin(
     kind: PerformanceOperationKind,
-    room: { id: string; platform: "bilibili" | "douyin" | "xiaohongshu" | "youtube" },
+    room: { id: string; platform: Platform },
   ): PerformanceTrace {
     if (!this.enabled) return NOOP_TRACE;
     const startedMs = this.clock.now();

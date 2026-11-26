@@ -2,7 +2,12 @@ import type { ErrorObject } from './error.js';
 import type { Quality } from './recording.js';
 import type { Tag } from './tag.js';
 
-export type Platform = 'bilibili' | 'douyin' | 'xiaohongshu' | 'youtube';
+export const PLATFORMS = ['bilibili', 'douyin', 'xiaohongshu', 'youtube', 'douyu', 'huya'] as const;
+export type Platform = typeof PLATFORMS[number];
+
+export function isPlatform(value: unknown): value is Platform {
+  return PLATFORMS.some(platform => platform === value);
+}
 
 export type MonitorState =
   | 'idle'

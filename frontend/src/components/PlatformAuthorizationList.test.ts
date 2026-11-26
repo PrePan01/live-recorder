@@ -6,7 +6,7 @@ import PlatformAuthorizationList, { type PlatformAuthorizationConfig } from "./P
 vi.mock("../stores/bootStore", () => ({ bridge: { isDesktop: true } }));
 
 describe("platform authorization methods", () => {
-  it("offers one-click authorization for all platforms and manual entry only for the other three", () => {
+  it("offers one-click authorization for all platforms and manual entry for platforms that support it", () => {
     const supplement = vi.fn((config: PlatformAuthorizationConfig) => createElement("span", null, `manual-${config.platform}`));
     const html = renderToStaticMarkup(createElement(PlatformAuthorizationList, {
       settings: null,
@@ -14,10 +14,10 @@ describe("platform authorization methods", () => {
       renderSupplement: supplement,
     }));
     expect(supplement.mock.calls.map(([config]) => config.platform)).toEqual([
-      "douyin", "bilibili", "xiaohongshu",
+      "douyin", "bilibili", "xiaohongshu", "douyu", "huya",
     ]);
     expect(html).not.toContain("manual-youtube");
     expect(html).toContain('id="youtube-cookie"');
-    expect(html.match(/登录并授权/g)).toHaveLength(4);
+    expect(html.match(/登录并授权/g)).toHaveLength(6);
   });
 });

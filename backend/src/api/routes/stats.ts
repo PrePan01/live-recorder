@@ -1,3 +1,4 @@
+import { PLATFORMS, isPlatform } from '../../types/room.js';
 import type { FastifyInstance } from "fastify";
 import { AppError } from "../../types/error.js";
 import type { Services } from "../../core/services.js";
@@ -222,12 +223,8 @@ export function registerStatsRoutes(
     ) {
       throw new AppError("CONFIG_INVALID", `统计时间跨度最长 ${MAX_DAYS} 天`);
     }
-    if (
-      qs.platform !== undefined &&
-      qs.platform !== "bilibili" &&
-      qs.platform !== "douyin" && qs.platform !== "xiaohongshu" && qs.platform !== "youtube"
-    ) {
-      throw new AppError("CONFIG_INVALID", "platform 仅支持 bilibili/douyin/xiaohongshu/youtube");
+    if (qs.platform !== undefined && !isPlatform(qs.platform)) {
+      throw new AppError("CONFIG_INVALID", `platform 仅支持 ${PLATFORMS.join("/")}`);
     }
     const from = new Date(Date.parse(fromRaw)).toISOString();
     const to = new Date(Date.parse(toRaw)).toISOString();

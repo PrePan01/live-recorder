@@ -5,6 +5,8 @@ import { baseUrl } from "../../../api/client";
 const PLATFORM_FALLBACK_CHAR: Record<Platform, string> = {
   youtube: "Y",
   bilibili: "B",
+  douyu: "鱼",
+  huya: "虎",
   douyin: "抖",
   xiaohongshu: "红",
 };

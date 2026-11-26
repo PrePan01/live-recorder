@@ -65,6 +65,8 @@ const MONITORING_INTERVAL_KEYS = [
   "douyin",
   "xiaohongshu",
   "youtube",
+  "douyu",
+  "huya",
 ] as const satisfies readonly (keyof PlatformIntervals)[];
 export const MONITORING_INTERVAL_COLUMNS = MONITORING_INTERVAL_KEYS.map(
   (key) => ({
@@ -323,6 +325,17 @@ export const DEFINITIONS: SettingDefinition[] = [
     "B站授权",
     "授权用于获取可用的高画质档位；凭据已保存不等于授权有效。",
     { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
+  ),
+  ...(["douyu", "huya"] as const).map(platform =>
+    field(
+      `${platform}-cookie`,
+      "authorization",
+      "settings",
+      `${platform}Cookie`,
+      `${PLATFORM_LABEL[platform]}授权`,
+      "在授权窗口登录，或手动保存完整 Cookie。",
+      { restorable: false, secret: true, keywords: "Cookie 登录 账户" },
+    ),
   ),
   field(
     "youtube-cookie",

@@ -1,4 +1,7 @@
-import { fetchYoutubeCookieStatus } from "../api/settings";
+import {
+  fetchChineseLiveCookieStatus,
+  fetchYoutubeCookieStatus,
+} from "../api/settings";
 import {
   useCallback,
   useEffect,
@@ -20,6 +23,7 @@ import {
   type CookieProbeStatus,
   type CredentialStatus,
 } from "../utils/credentialStatus";
+import { PLATFORM_LABEL } from "../utils/room/roomPlatform";
 import { PlatformIcon } from "./PlatformLogo";
 
 export interface PlatformAuthorizationConfig {
@@ -27,7 +31,13 @@ export interface PlatformAuthorizationConfig {
   label: string;
   anchor: string;
   unauthorizedHint: string;
-  cookieField: "douyinCookie" | "bilibiliCookie" | "xiaohongshuCookie" | "youtubeCookie";
+  cookieField:
+    | "douyinCookie"
+    | "bilibiliCookie"
+    | "xiaohongshuCookie"
+    | "youtubeCookie"
+    | "douyuCookie"
+    | "huyaCookie";
   manualHost?: string;
   fetchStatus: () => Promise<CookieProbeStatus>;
   startAuthorization?: () => Promise<void>;
@@ -71,8 +81,24 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
     startAuthorization: () => bridge.startXiaohongshuAuthorization(),
     authorizedEvent: (callback) => bridge.onXiaohongshuAuthorized(callback),
   },
+  ...(["douyu", "huya"] as const).map(
+    (platform): PlatformAuthorizationConfig => ({
+      platform,
+      label: PLATFORM_LABEL[platform],
+      anchor: `${platform}-cookie`,
+      unauthorizedHint: "公开直播无需登录，部分画质可能需要授权",
+      cookieField: `${platform}Cookie`,
+      manualHost: `www.${platform}.com`,
+      fetchStatus: () => fetchChineseLiveCookieStatus(platform),
+      startAuthorization: () => bridge.startChineseLiveAuthorization(platform),
+      authorizedEvent: (callback) =>
+        bridge.onChineseLiveAuthorized(platform, callback),
+    }),
+  ),
   {
-    platform: "youtube", label: "YouTube", anchor: "youtube-cookie",
+    platform: "youtube",
+    label: "YouTube",
+    anchor: "youtube-cookie",
     unauthorizedHint: "公开直播无需登录，受限直播需要登录授权",
     cookieField: "youtubeCookie",
     fetchStatus: fetchYoutubeCookieStatus,
@@ -81,23 +107,23 @@ const PLATFORM_AUTHORIZATION_CONFIGS: PlatformAuthorizationConfig[] = [
   },
 ];
 
-const STATUS_TEXT: Record<CredentialStatus, string> = {
+type PlatformCredentialStatus = CredentialStatus | "unknown";
+
+const STATUS_TEXT: Record<PlatformCredentialStatus, string> = {
   authorized: "已登录",
+  unknown: "登录状态待确认",
   invalid: "登录已失效",
   unauthorized: "未登录",
 };
 
 export type PlatformAuthorizationStatuses = Partial<
-  Record<Platform, CredentialStatus>
+  Record<Platform, PlatformCredentialStatus>
 >;
 
 interface PlatformAuthorizationListProps {
   settings: Settings | null;
-  /** 登录成功后由页面刷新 Settings store，避免各页面各自维护 Cookie 标记。 */
   onAuthorized: () => Promise<void>;
-  /** 设置页传入清除操作；首次向导无需暴露此高阶操作。 */
   onClear?: (platform: Platform) => void;
-  /** 设置页用它附加手动 Cookie 高级入口；首次向导保持简洁。 */
   renderSupplement?: (
     config: PlatformAuthorizationConfig,
     hasCookie: boolean,
@@ -113,10 +139,15 @@ function resolveStatuses(
   return PLATFORM_AUTHORIZATION_CONFIGS.reduce<PlatformAuthorizationStatuses>(
     (result, config) => {
       const hasCookie = settings?.[config.cookieField]?.hasCookie ?? false;
-      result[config.platform] = credentialStatus(
-        probes[config.platform] ?? null,
-        hasCookie,
-      );
+      const probe = probes[config.platform] ?? null;
+      const needsConfirmation =
+        config.platform === "douyu" || config.platform === "huya";
+      result[config.platform] =
+        needsConfirmation &&
+        hasCookie &&
+        (probe === null || probe === "unknown")
+          ? "unknown"
+          : credentialStatus(probe, hasCookie);
       return result;
     },
     {},
@@ -239,7 +270,9 @@ export default function PlatformAuthorizationList({
                     >
                       {status === "invalid"
                         ? "请重新登录"
-                        : config.unauthorizedHint}
+                        : status === "unknown"
+                          ? "已保存凭据，暂时无法确认登录状态"
+                          : config.unauthorizedHint}
                     </Typography.Text>
                   )}
                 </div>
