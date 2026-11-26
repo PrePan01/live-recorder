@@ -1,8 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { RoomCard } from './RoomCard';
 import type { Room } from '../../../types/room';
+import type { Quality } from '../../../types/settings';
 
 const preferences = vi.hoisted(() => ({ showLiveRoomCover: true }));
 const coverSrc = vi.hoisted(() => vi.fn(() => '/test-live-cover'));
@@ -21,17 +23,37 @@ const room = {
   tags: [], liveCoverUrl: 'https://cdn.example.com/cover.jpg',
 } as unknown as Room;
 const noop = () => undefined;
-const render = (currentRoom = room, layout: 'card' | 'list' = 'card', autoRecordEnabled = false) => renderToStaticMarkup(
-  createElement(RoomCard, {
+const render = (
+  currentRoom = room,
+  layout: 'card' | 'list' = 'card',
+  autoRecordEnabled = false,
+  defaultQuality: Quality | null = null,
+) => renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(RoomCard, {
     room: currentRoom, layout, onManageRoom: noop, onWatch: noop, onCheck: noop,
     selectedTagIds: [], onToggleTagFilter: noop,
     onStop: noop, onRecord: noop, onFavorite: noop, onEnableFloating: noop,
-    autoRecordEnabled, qualityPreference: null, bilibiliAuthorized: true,
+    autoRecordEnabled, defaultQuality, bilibiliAuthorized: true,
     floatingEnabled: false, floatingReady: true,
-  }),
+  })),
 );
 
 beforeEach(() => { coverSrc.mockClear(); preferences.showLiveRoomCover = true; });
+
+it('compares Bilibili availability with the effective room quality, then the room or global fallback', () => {
+  const available: Room = { ...room, availableQualities: ['720p'] };
+  const effective: NonNullable<Room['effective']> = {
+    quality: { value: '720p', source: 'global' },
+    checkIntervalSec: { value: 60, source: 'global' },
+    autoRecord: { value: false, source: 'global' },
+    danmakuEnabled: { value: false, source: 'global' },
+  };
+  const warning = '当前最高可观看、录制';
+  expect(render({ ...available, quality: null, effective }, 'card', false, 'original')).not.toContain(warning);
+  expect(render({ ...available, quality: '720p' }, 'card', false, 'original')).not.toContain(warning);
+  expect(render({ ...available, quality: '1080p' }, 'card', false, '720p')).toContain(warning);
+  expect(render(available, 'card', false, 'original')).toContain(warning);
+});
 
 it('offers copying the current stream title on live cards with a title', () => {
   const currentRoom = { ...room, currentStreamTitle: '  今晚直播 🎙️  ' };

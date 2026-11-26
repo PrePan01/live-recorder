@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Alert, App, Button, Empty, Table } from "antd";
 import { bridge } from "../../stores/bootStore";
@@ -81,6 +81,12 @@ function readSavedMonitorFilters(): SavedMonitorFilters {
   }
 }
 
+function isRecordingRoom(room: Room): boolean {
+  return (
+    room.monitorState === "recording" || room.monitorState === "reconnecting"
+  );
+}
+
 export default function Monitor() {
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -110,15 +116,14 @@ export default function Monitor() {
   const [view, setView] = useState<"卡片" | "列表">(() =>
     localStorage.getItem("lr-monitor-view") === "列表" ? "列表" : "卡片",
   );
+  const [savedFilters] = useState(readSavedMonitorFilters);
   const [filter, setFilter] = useState<MonitorStatusFilter>(
-    () => readSavedMonitorFilters().filter ?? "全部",
+    savedFilters.filter ?? "全部",
   );
   const [platformFilter, setPlatformFilter] = useState<"全部" | Platform>(
-    () => readSavedMonitorFilters().platformFilter ?? "全部",
+    savedFilters.platformFilter ?? "全部",
   );
-  const [tagIds, setTagIds] = useState<string[]>(
-    () => readSavedMonitorFilters().tagIds ?? [],
-  );
+  const [tagIds, setTagIds] = useState<string[]>(savedFilters.tagIds ?? []);
   const toggleTagFilter = useCallback((tagId: string) => {
     setTagIds((current) =>
       current.includes(tagId)
@@ -127,9 +132,7 @@ export default function Monitor() {
     );
   }, []);
   const [keyword, setKeyword] = useState("");
-  const [sort, setSort] = useState<MonitorSort>(
-    () => readSavedMonitorFilters().sort ?? "manual",
-  );
+  const [sort, setSort] = useState<MonitorSort>(savedFilters.sort ?? "manual");
   const manualSort = sort === "manual";
   const CardLayout = manualSort ? RoomGrid : RoomMasonry;
   const tags = useTagStore((st) => st.tags);
@@ -304,27 +307,34 @@ export default function Monitor() {
     platformFilter !== "全部" ||
     tagIds.length > 0 ||
     normalizedKeyword.length > 0;
-  const keywordMatches = (r: Room) =>
-    !normalizedKeyword ||
-    r.displayName.toLowerCase().includes(normalizedKeyword) ||
-    r.url.toLowerCase().includes(normalizedKeyword);
-  const tagsMatch = (r: Room) =>
-    tagIds.length === 0 || r.tags.some((t) => tagIds.includes(t.id));
-  const filteredRooms = rooms
-    .filter((r) => r.enabled)
-    .filter((r) => platformFilter === "全部" || r.platform === platformFilter)
-    .filter((r) => {
-      if (filter === "开播中") return r.lastLiveStatus === "live";
-      if (filter === "录制中")
-        return (
-          r.monitorState === "recording" || r.monitorState === "reconnecting"
-        );
-      if (filter === "收藏") return r.favorited;
+  const { matchingRooms, liveCount, recordingCount } = useMemo(() => {
+    const selectedTags = new Set(tagIds);
+    const matchingRooms = rooms.filter(
+      (room) =>
+        room.enabled &&
+        (platformFilter === "全部" || room.platform === platformFilter) &&
+        (!normalizedKeyword ||
+          room.displayName.toLowerCase().includes(normalizedKeyword) ||
+          room.url.toLowerCase().includes(normalizedKeyword)) &&
+        (selectedTags.size === 0 ||
+          room.tags.some((tag) => selectedTags.has(tag.id))),
+    );
+    return {
+      matchingRooms,
+      liveCount: matchingRooms.filter((room) => room.lastLiveStatus === "live")
+        .length,
+      recordingCount: matchingRooms.filter(isRecordingRoom).length,
+    };
+  }, [rooms, platformFilter, normalizedKeyword, tagIds]);
+  const monitorRooms = useMemo(() => {
+    const filteredRooms = matchingRooms.filter((room) => {
+      if (filter === "开播中") return room.lastLiveStatus === "live";
+      if (filter === "录制中") return isRecordingRoom(room);
+      if (filter === "收藏") return room.favorited;
       return true;
-    })
-    .filter(keywordMatches)
-    .filter(tagsMatch);
-  const monitorRooms = sortMonitorRooms(filteredRooms, insights, sort);
+    });
+    return sortMonitorRooms(filteredRooms, insights, sort);
+  }, [matchingRooms, filter, insights, sort]);
 
   const commitRoomOrder = useCallback(
     async (roomIds: string[]) => {
@@ -332,7 +342,7 @@ export default function Monitor() {
       try {
         await reorderRooms(roomIds);
       } catch {
-        message.error("排序保存失败，已恢复服务端顺序");
+        message.error("排序保存失败，已恢复");
       }
     },
     [message, reorderRooms, manualSort],
@@ -340,7 +350,7 @@ export default function Monitor() {
 
   const [shown, setShown] = useState(20);
   useEffect(() => {
-    if (view !== "卡片") return; // 列表视图不参与分片：否则 state 推进会连发整表重渲染
+    if (view !== "卡片") return;
     if (shown >= monitorRooms.length) return;
     let raf = 0;
     const timer = setTimeout(() => {
@@ -353,21 +363,6 @@ export default function Monitor() {
       if (raf) cancelAnimationFrame(raf);
     };
   }, [shown, monitorRooms.length, view]);
-
-  const platformRooms = rooms
-    .filter(
-      (r) =>
-        r.enabled &&
-        (platformFilter === "全部" || r.platform === platformFilter),
-    )
-    .filter(keywordMatches)
-    .filter(tagsMatch);
-  const liveCount = platformRooms.filter(
-    (r) => r.lastLiveStatus === "live",
-  ).length;
-  const recordingCount = platformRooms.filter(
-    (r) => r.monitorState === "recording" || r.monitorState === "reconnecting",
-  ).length;
 
   const handleWatch = useCallback(
     (room: Room) => {
@@ -468,19 +463,6 @@ export default function Monitor() {
     [navigate],
   );
 
-  const listColumns = buildMonitorListColumns({
-    onManageRoom,
-    favoriteRoom,
-    checkRoomNow,
-    startRoomRecording,
-    handleWatch,
-    onStopRoom,
-    actingRoomId,
-    actingAction,
-    recentStop,
-    message,
-  });
-
   return (
     <div className="lr-page lr-monitor-page">
       <MonitorToolbar
@@ -550,7 +532,18 @@ export default function Monitor() {
         >
           <Table
             rowKey="id"
-            columns={listColumns}
+            columns={buildMonitorListColumns({
+              onManageRoom,
+              favoriteRoom,
+              checkRoomNow,
+              startRoomRecording,
+              handleWatch,
+              onStopRoom,
+              actingRoomId,
+              actingAction,
+              recentStop,
+              message,
+            })}
             components={{ body: { row: SortableRoomTableRow } }}
             dataSource={monitorRooms}
             loading={loading}
@@ -592,7 +585,7 @@ export default function Monitor() {
                   insight={insights[room.id]}
                   insightsLoading={insightsLoading}
                   insightsFailed={insightsFailed}
-                  qualityPreference={settings?.quality ?? null}
+                  defaultQuality={settings?.quality ?? null}
                   bilibiliAuthorized={bilibiliAuthorized}
                   floatingEnabled={floatingRoomId === room.id}
                   floatingReady={settings !== null}

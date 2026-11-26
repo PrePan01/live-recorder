@@ -63,3 +63,10 @@ button:disabled {
 :root[data-platform="youtube"] {
   --platform-auth-color: #ff0033;
 }
+:root[data-platform="douyu"] {
+  --platform-auth-color: rgb(255, 85, 46);
+}
+
+:root[data-platform="huya"] {
+  --platform-auth-color: rgb(255, 215, 50);
+}

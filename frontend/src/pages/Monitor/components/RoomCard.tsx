@@ -93,7 +93,7 @@ export const RoomCard = memo(function RoomCard({
   insight,
   insightsLoading,
   insightsFailed,
-  qualityPreference,
+  defaultQuality,
   bilibiliAuthorized,
   floatingEnabled,
   floatingReady,
@@ -116,7 +116,7 @@ export const RoomCard = memo(function RoomCard({
   insight?: RoomInsight;
   insightsLoading?: boolean;
   insightsFailed?: boolean;
-  qualityPreference: Quality | null;
+  defaultQuality: Quality | null;
   bilibiliAuthorized: boolean;
   floatingEnabled: boolean;
   floatingReady: boolean;
@@ -140,6 +140,8 @@ export const RoomCard = memo(function RoomCard({
   const onAir = room.lastLiveStatus === "live";
   const streamTitle = room.currentStreamTitle?.trim();
   const bestAvailable = bestQuality(room.availableQualities);
+  const qualityPreference =
+    room.effective?.quality.value ?? room.quality ?? defaultQuality;
   const qualityShortfall =
     room.platform === "bilibili" &&
     bestAvailable !== null &&
