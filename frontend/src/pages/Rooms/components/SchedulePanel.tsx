@@ -1,4 +1,4 @@
-import { Form, Select, TimePicker, Typography } from "antd";
+import { Form, Select, TimePicker } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import {
@@ -139,9 +139,6 @@ export default function SchedulePanel({
               />
             </Form.Item>
           </div>
-          <Typography.Paragraph type="secondary">
-            按本机时间执行；结束早于开始视为跨天
-          </Typography.Paragraph>
         </>
       }
     />

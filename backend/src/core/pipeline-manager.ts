@@ -29,7 +29,6 @@ export class PipelineManager {
   private queue: QueueEntry[] = [];
   private running = new Set<string>();
   private mediaChecks = new Map<string, Promise<{ ok: boolean; reason?: string; warning?: string }>>();
-  private lastProgressEmitAt = new Map<string, number>();
   /** 槽位看门狗缺省阈值：心跳超时即判挂死强制收割（正常步秒级刷心跳，不会误杀）。 */
   static readonly HEARTBEAT_TIMEOUT_MS = 10 * 60_000;
   /** 实际生效阈值：环境变量 PIPELINE_HEARTBEAT_TIMEOUT_MS 可覆盖（测试在 dev 缩短窗口实证收割；产品缺省 10min 不变，零后门）。 */
@@ -210,22 +209,37 @@ export class PipelineManager {
     signal?.throwIfAborted();
     const existing = this.pipelineRepo.listArtifacts(run.id).find((a) => a.step === step);
     const art = existing ?? this.pipelineRepo.createArtifact({ runId: run.id, step });
-    // 刻度归一：进度=已完成/跳过步权重和（从 0 起铺满 0-100，不再混算步序/硬编码两套刻度）。
-    const pct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), step, 0);
-    const startedAt = run.startedAt ? Date.parse(run.startedAt) : Date.now();
-    const elapsed = Math.max(1, Date.now() - startedAt);
-    const eta = pct > 0 ? Math.round(((elapsed / pct) * (100 - pct)) / 1000) : null;
+    this.publishStepProgress(run, step, null, true);
+    return art;
+  }
+
+  private publishStepProgress(run: PipelineRun, step: PipelineStep, ratio: number | null, estimateEta = false): void {
+    const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), step, ratio ?? 0);
+    const elapsed = run.startedAt ? Math.max(1, this.services.clock.now() - Date.parse(run.startedAt)) : 1;
     this.pipelineRepo.setRunProgress(run.id, {
       progressStep: step,
-      progressPct: pct,
+      progressPct,
+      stepProgressPct: ratio === null ? null : Math.round(ratio * 100),
       heartbeatAt: this.services.clock.iso(),
-      etaSeconds: eta,
+      etaSeconds: estimateEta && progressPct > 0 ? Math.round(((elapsed / progressPct) * (100 - progressPct)) / 1000) : null,
     });
     const fresh = this.pipelineRepo.getRun(run.id);
     if (fresh) {
-      this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
+      this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: fresh.artifacts } });
     }
-    return art;
+  }
+
+  private stepProgressReporter(run: PipelineRun, step: PipelineStep, signal?: AbortSignal) {
+    let lastReportedAt = -Infinity;
+    return (processed: number, total: number) => {
+      const now = this.services.clock.now();
+      if (signal?.aborted || now - lastReportedAt < 1_000) return;
+      lastReportedAt = now;
+      const ratio = Number.isFinite(total) && total > 0 && Number.isFinite(processed)
+        ? Math.max(0, Math.min(0.99, processed / total))
+        : null;
+      this.publishStepProgress(run, step, ratio);
+    };
   }
 
   /** 跳步判定=状态 ok 且产物有效（存在且非空）；无产物步骤只看状态。 */
@@ -381,7 +395,7 @@ export class PipelineManager {
           this.pipelineRepo.setArtifact(convertArt.id, { status: 'skipped', error: '源文件已是 MP4', endedAt: this.services.clock.iso() });
         } else {
           this.pipelineRepo.setArtifact(convertArt.id, { status: 'running', startedAt: this.services.clock.iso() });
-          const durationMs = metadata.durationMs ?? 0;
+          const reportProgress = this.stepProgressReporter(run, 'convert', signal);
           const space = await this.services.diskGuard.inspect(path.dirname(recording.filePath));
           // 转换写同目录临时文件；可用空间不足时在启动 ffmpeg 前失败，源文件不会被触碰。
           const converted = space.totalBytes > 0 && space.freeBytes < st.size
@@ -389,17 +403,8 @@ export class PipelineManager {
             : this.stepDone(convertArt) && convertArt.path
               ? { outPath: convertArt.path, sizeBytes: convertArt.sizeBytes ?? 0 }
               : await convertToMp4(recording.filePath, {
-                ...(signal ? { signal } : {}),
-                onProgress: ({ outTimeMs }) => {
-                  const now = Date.now();
-                  if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
-                  this.lastProgressEmitAt.set(run.id, now);
-                  const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-                  const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'convert', ratio);
-                  this.pipelineRepo.setRunProgress(run.id, { progressStep: 'convert', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
-                  const fresh = this.pipelineRepo.getRun(run.id);
-                  if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
-                },
+                  ...(signal ? { signal } : {}),
+                  onProgress: ({ outTimeMs }) => reportProgress(outTimeMs, metadata.durationMs ?? 0),
                 });
           signal?.throwIfAborted();
           if (converted) {
@@ -446,6 +451,7 @@ export class PipelineManager {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'skipped', endedAt: this.services.clock.iso() });
         } else {
           this.pipelineRepo.setArtifact(compArt.id, { status: 'running', startedAt: this.services.clock.iso() });
+          const reportProgress = this.stepProgressReporter(run, 'compress', signal);
           const comp = this.stepDone(compArt) && compArt.path ? { outPath: compArt.path, sizeBytes: compArt.sizeBytes ?? 0 } : await compressOrRemux(recording.filePath, config.crf, {
             encodingMode,
             onEncoder: ({ actualEncoder, fallbackReason }) => {
@@ -454,17 +460,7 @@ export class PipelineManager {
               if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
             },
             ...(signal ? { signal } : {}),
-            onProgress: ({ outTimeMs }) => {
-              const now = Date.now();
-              if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
-              this.lastProgressEmitAt.set(run.id, now);
-              const durationMs = metadata.durationMs ?? 0;
-              const ratio = durationMs > 0 ? Math.min(0.99, outTimeMs / durationMs) : 0;
-              const progressPct = composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'compress', ratio);
-              this.pipelineRepo.setRunProgress(run.id, { progressStep: 'compress', progressPct, heartbeatAt: this.services.clock.iso(), etaSeconds: null });
-              const fresh = this.pipelineRepo.getRun(run.id);
-              if (fresh) this.services.events.emit({ type: 'pipeline:updated', data: { run: fresh, artifacts: this.pipelineRepo.listArtifacts(run.id) } });
-            },
+            onProgress: ({ outTimeMs }) => reportProgress(outTimeMs, metadata.durationMs ?? 0),
           });
           signal?.throwIfAborted();
           if (comp) {
@@ -493,19 +489,8 @@ export class PipelineManager {
       if (config.archiveDirectory) {
     const archArt = this.stepStart(run, 'archive', signal);
         this.pipelineRepo.setArtifact(archArt.id, { status: 'running', startedAt: this.services.clock.iso() });
-        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory, (copied, total) => {
-          // 长步骤心跳+步内进度：归档大文件复制耗时长，分块回调既当刻度数据源也保心跳活跃。
-          const now = Date.now();
-          if (now - (this.lastProgressEmitAt.get(run.id) ?? 0) < 1_000) return;
-          this.lastProgressEmitAt.set(run.id, now);
-          const ratio = total > 0 ? Math.min(0.99, copied / total) : 0;
-          this.pipelineRepo.setRunProgress(run.id, {
-            progressStep: 'archive',
-            progressPct: composeRunProgress(this.pipelineRepo.listArtifacts(run.id), 'archive', ratio),
-            heartbeatAt: this.services.clock.iso(),
-            etaSeconds: null,
-          });
-        }, signal);
+        const reportProgress = this.stepProgressReporter(run, 'archive', signal);
+        const archived = this.stepDone(archArt) && archArt.path ? archArt.path : await archiveTo(recording.filePath, config.archiveDirectory, reportProgress, signal);
         signal?.throwIfAborted();
         if (archived) {
           this.pipelineRepo.setArtifact(archArt.id, { status: 'ok', path: archived, sizeBytes: (await stat(archived as string).catch(() => ({ size: 0 }))).size, endedAt: this.services.clock.iso() });
@@ -582,7 +567,6 @@ export class PipelineManager {
   private finish(runId: string, status: PipelineRunStatus, notify = true): void {
     const previous = this.pipelineRepo.getRun(runId);
     const terminal = previous && ['ok', 'partial', 'failed'].includes(previous.status);
-    this.lastProgressEmitAt.delete(runId);
     this.pipelineRepo.setRunStatus(runId, status, this.services.clock.iso());
     const run = this.pipelineRepo.getRun(runId);
     if (run) {

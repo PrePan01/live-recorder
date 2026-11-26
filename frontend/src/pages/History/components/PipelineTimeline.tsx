@@ -88,8 +88,6 @@ export default function PipelineTimeline({
 
   useEffect(() => {
     if (run?.run?.status !== "running") return;
-    // SSE 是主通道；运行期间做低频校验，覆盖服务端在单步收尾时尚未广播
-    // pipeline:updated 的窗口，避免详情抽屉停在旧快照。
     const timer = setInterval(() => {
       setNow(Date.now());
       void load();
@@ -161,9 +159,6 @@ export default function PipelineTimeline({
 
   const meta = RUN_META[run.run.status];
   const canRetry = run.run.status === "failed" || run.run.status === "partial";
-
-  // task #58：开关关闭时也要展示「音频 · 未启用」节点（run 快照 exportAudio === false
-  // 且 BE 未产出 audio artifact 时合成一个展示节点；老 run 无该键不显示）。
   const artifacts = [...run.artifacts];
   const hasAudio = artifacts.some((a) => a.step === "audio");
   const configSnapshot = run.run.configSnapshot as {
@@ -171,7 +166,6 @@ export default function PipelineTimeline({
     segmentSeconds?: number;
     archiveDirectory?: string;
   } | null;
-  // exportAudio 是后来新增的配置；旧 run 快照缺字段时沿用历史默认值 false。
   const audioOff = configSnapshot?.exportAudio !== true;
   if (!hasAudio && audioOff) {
     const virtualAudio: PipelineArtifact = {
@@ -193,8 +187,6 @@ export default function PipelineTimeline({
       segIdx >= 0 ? segIdx + 1 : cmpIdx >= 0 ? cmpIdx : artifacts.length;
     artifacts.splice(insertAt, 0, virtualAudio);
   }
-  // segment/archive 在关闭时后端不会创建 artifact；为与设置页的完整流程对齐，
-  // 仅在该次运行的配置快照明确关闭时补一个“跳过”节点。
   const virtualSkippedStep = (step: "segment" | "archive") => {
     if (artifacts.some((artifact) => artifact.step === step)) return;
     const disabled =
@@ -216,8 +208,6 @@ export default function PipelineTimeline({
   };
   virtualSkippedStep("segment");
   virtualSkippedStep("archive");
-  // sidecar 是系统内部写入录制信息的实现细节，不是设置页的可配置步骤。
-  // 详情页仅展示设置中的七个流程，避免用户看到两套不一致的管线定义。
   const visibleArtifacts = artifacts
     .filter(
       (
@@ -329,7 +319,13 @@ export default function PipelineTimeline({
             key={artifact.id}
             artifact={artifact}
             recordingId={recordingId}
-            stepProgress={stepProgressFor(artifact.step, run.run)}
+            stepProgress={
+              run.run?.status === "running" &&
+              artifact.status === "running" &&
+              run.run.progressStep === artifact.step
+                ? (run.run.stepProgressPct ?? null)
+                : null
+            }
           />
         ))}
       </div>
@@ -460,24 +456,4 @@ function statusIcon(status: PipelineArtifact["status"]) {
   if (status === "failed") return <CloseOutlined />;
   if (status === "skipped") return <MinusOutlined />;
   return <ClockCircleOutlined />;
-}
-
-function stepProgressFor(
-  step: PipelineArtifact["step"],
-  run: Awaited<ReturnType<typeof fetchPipelineRun>>["run"],
-): number | null {
-  if (
-    !run ||
-    run.status !== "running" ||
-    run.progressStep !== step ||
-    run.progressPct == null
-  )
-    return null;
-  const rangeStart = step === "convert" ? 62 : step === "compress" ? 75 : null;
-  return rangeStart == null
-    ? null
-    : Math.max(
-        0,
-        Math.min(100, Math.round(((run.progressPct - rangeStart) / 13) * 100)),
-      );
 }

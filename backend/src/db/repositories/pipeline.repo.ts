@@ -9,6 +9,7 @@ interface PipelineRunRow {
   config_snapshot: string;
   progress_step: string | null;
   progress_pct: number | null;
+  step_progress_pct: number | null;
   heartbeat_at: string | null;
   eta_seconds: number | null;
   started_at: string | null;
@@ -62,10 +63,11 @@ export class PipelineRepository {
       recordingId: row.recording_id,
       status: row.status as PipelineRunStatus,
       configSnapshot: parseSnapshot(row.config_snapshot),
-    progressStep: row.progress_step ?? null,
-    progressPct: row.progress_pct ?? null,
-    heartbeatAt: row.heartbeat_at ?? null,
-    etaSeconds: row.eta_seconds ?? null,
+      progressStep: row.progress_step ?? null,
+      progressPct: row.progress_pct ?? null,
+      stepProgressPct: row.step_progress_pct,
+      heartbeatAt: row.heartbeat_at ?? null,
+      etaSeconds: row.eta_seconds ?? null,
       startedAt: row.started_at,
       endedAt: row.ended_at,
       createdAt: row.created_at,
@@ -91,10 +93,19 @@ export class PipelineRepository {
     return rows.map((r) => this.getRun(r.id)).filter((r): r is PipelineRun => r !== null);
   }
 
-  setRunProgress(id: string, patch: { progressStep?: string | null; progressPct?: number | null; heartbeatAt?: string | null; etaSeconds?: number | null }): void {
+  setRunProgress(id: string, progress: {
+    progressStep: string;
+    progressPct: number;
+    stepProgressPct?: number | null;
+    heartbeatAt: string;
+    etaSeconds: number | null;
+  }): void {
     this.db
-      .prepare('UPDATE pipeline_runs SET progress_step = COALESCE(?, progress_step), progress_pct = COALESCE(?, progress_pct), heartbeat_at = COALESCE(?, heartbeat_at), eta_seconds = COALESCE(?, eta_seconds) WHERE id = ?')
-      .run(patch.progressStep ?? null, patch.progressPct ?? null, patch.heartbeatAt ?? null, patch.etaSeconds ?? null, id);
+      .prepare(`UPDATE pipeline_runs
+        SET progress_step = ?, progress_pct = ?, step_progress_pct = ?, heartbeat_at = ?,
+          eta_seconds = COALESCE(?, eta_seconds)
+        WHERE id = ?`)
+      .run(progress.progressStep, progress.progressPct, progress.stepProgressPct ?? null, progress.heartbeatAt, progress.etaSeconds, id);
   }
 
   listArtifacts(runId: string): PipelineArtifact[] {

@@ -1073,6 +1073,11 @@ ALTER TABLE rooms ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0;
     );
     CREATE INDEX idx_keyword_plans_room ON recording_keyword_plans(room_id);
   ` },
+  { version: 58, up: db => {
+    // Some legacy databases skipped the migration that created pipeline_runs.
+    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pipeline_runs'").get();
+    if (table) ensureColumn(db, 'pipeline_runs', 'step_progress_pct', 'step_progress_pct INTEGER');
+  } },
 ];
 
 /** 条件补列：列在则跳过（幂等），ALTER 前唯一判据 pragma_table_info。 */

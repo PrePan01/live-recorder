@@ -27,6 +27,8 @@ export interface PipelineRun {
   /** 运行中进度快照：服务端按步骤心跳持久化。 */
   progressStep?: string | null;
   progressPct?: number | null;
+  /** 当前 progressStep 的完成百分比，未知时为 null。 */
+  stepProgressPct?: number | null;
   heartbeatAt?: string | null;
   etaSeconds?: number | null;
   configSnapshot: Record<string, unknown>;

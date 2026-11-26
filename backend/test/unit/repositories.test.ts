@@ -3,6 +3,7 @@ import { openDatabase } from '../../src/db/connection.js';
 import { currentSchemaVersion, MIGRATIONS, runMigrations } from '../../src/db/migrations/index.js';
 import { RoomRepository } from '../../src/db/repositories/room.repo.js';
 import { RecordingRepository } from '../../src/db/repositories/recording.repo.js';
+import { PipelineRepository } from '../../src/db/repositories/pipeline.repo.js';
 import { SettingsRepository } from '../../src/db/repositories/settings.repo.js';
 import { AlertRepository } from '../../src/db/repositories/alert.repo.js';
 import { PredictionCalibrationRepository } from '../../src/db/repositories/prediction-calibration.repo.js';
@@ -18,12 +19,31 @@ function freshDb() {
 describe('migrations', () => {
   it('is idempotent and records schema_version', () => {
     const db = openDatabase(':memory:');
-    expect(runMigrations(db)).toBe(57);
+    expect(runMigrations(db)).toBe(58);
     expect(runMigrations(db)).toBe(0);
-    expect(currentSchemaVersion(db)).toBe(57);
+    expect(currentSchemaVersion(db)).toBe(58);
     db.prepare(`INSERT INTO rooms (id, platform, url) VALUES ('r1', 'bilibili', 'https://live.bilibili.com/1')`).run();
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS c FROM rooms').get() as { c: number }).c).toBe(1);
+  });
+
+  it('preserves pipeline progress from v57 without inventing a step percentage', () => {
+    const db = freshDb();
+    try {
+      const room = new RoomRepository(db).create({ platform: 'bilibili', url: 'https://live.bilibili.com/1', displayName: '旧管线' });
+      const recording = new RecordingRepository(db).create({
+        roomId: room.id, roomName: room.displayName, platform: 'bilibili', streamSessionId: null, streamTitle: '',
+      });
+      const repo = new PipelineRepository(db);
+      const run = repo.createRun({ recordingId: recording.id, configSnapshot: {} });
+      db.exec('ALTER TABLE pipeline_runs DROP COLUMN step_progress_pct; DELETE FROM schema_version WHERE version = 58');
+      db.prepare("UPDATE pipeline_runs SET progress_step = 'convert', progress_pct = 28 WHERE id = ?").run(run.id);
+
+      expect(runMigrations(db)).toBe(1);
+      expect(repo.getRun(run.id)).toMatchObject({ progressStep: 'convert', progressPct: 28, stepProgressPct: null });
+    } finally {
+      db.close();
+    }
   });
 
   it('v3 idempotently backfills favorited on a DB that skipped v2 (task #39)', () => {
@@ -48,11 +68,11 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('favorited');
 
     // 跑完整迁移：v2 被跳过（已记录），v3 幂等补列、v4 加 integrity 列、v8 重建 recordings（去外键+room_name），v9-v11 新增 V5 表列，v12 管线表
-    expect(runMigrations(db)).toBe(55);
+    expect(runMigrations(db)).toBe(56);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('favorited');
     expect(colsAfter).toContain('upload_enabled');
-    expect(currentSchemaVersion(db)).toBe(57);
+    expect(currentSchemaVersion(db)).toBe(58);
 
     // 再次运行不再补列也不报错（幂等）
     expect(runMigrations(db)).toBe(0);
@@ -82,7 +102,7 @@ describe('migrations', () => {
     expect(roomsCols).not.toContain('upload_enabled');
 
     // 仅 v16 及之后未应用：补齐缺失列和追加索引并可用 repo 正常读写。
-    expect(runMigrations(db)).toBe(42);
+    expect(runMigrations(db)).toBe(43);
     const after = (db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all() as { name: string }[]).map((c) => c.name);
     expect(after).toContain('title_source');
     expect(after).toContain('title_updated_at');
@@ -96,7 +116,7 @@ describe('migrations', () => {
     repo.setTitleInfo(room.id, { titleSource: 'adapter', titleFallbackUsed: false });
     expect(repo.get(room.id)!.titleSource).toBe('adapter');
 
-    expect(currentSchemaVersion(db)).toBe(57);
+    expect(currentSchemaVersion(db)).toBe(58);
     expect(runMigrations(db)).toBe(0);
   });
 
@@ -118,7 +138,7 @@ describe('migrations', () => {
     expect(colsBefore).not.toContain('expected_quality');
 
     // v19 补列，v20 追加索引，v21 增加直播间顺序，v22 增加上传清理资格列。
-    expect(runMigrations(db)).toBe(39);
+    expect(runMigrations(db)).toBe(40);
     const colsAfter = (db.prepare(`SELECT name FROM pragma_table_info('recordings')`).all() as { name: string }[]).map((c) => c.name);
     expect(colsAfter).toContain('expected_quality');
 
@@ -130,7 +150,7 @@ describe('migrations', () => {
     expect(recs.get(rec.id)!.quality).toBe('720p');
     expect(recs.get(rec.id)!.expectedQuality).toBe('360p');
 
-    expect(currentSchemaVersion(db)).toBe(57);
+    expect(currentSchemaVersion(db)).toBe(58);
     expect(runMigrations(db)).toBe(0);
   });
 
