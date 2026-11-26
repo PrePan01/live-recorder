@@ -1,13 +1,35 @@
 import { Tag } from "antd";
+import youtubeFallbackIcon from "../assets/youtube.svg";
 import type { Platform } from "../types/room";
 
 const PLATFORM_STYLE: Record<
   Platform,
-  { color: string; bg: string; label: string; icon: string }
+  {
+    color: string;
+    bg: string;
+    label: string;
+    icon: string;
+    fallbackIcon?: string;
+  }
 > = {
-  douyu: { color: "#ff5d23", bg: "#fff2e9", label: "斗鱼", icon: "https://www.douyu.com/favicon.ico" },
-  huya: { color: "#b85400", bg: "#fff3d8", label: "虎牙", icon: "https://www.huya.com/favicon.ico" },
-  youtube: { color: "#ff0000", bg: "rgba(255,0,0,0.08)", label: "YouTube", icon: "https://www.youtube.com/favicon.ico" },
+  douyu: {
+    color: "#ff5d23",
+    bg: "#fff2e9",
+    label: "斗鱼",
+    icon: "https://www.douyu.com/favicon.ico",
+  },
+  huya: {
+    color: "#b85400",
+    bg: "#fff3d8",
+    label: "虎牙",
+    icon: "https://www.huya.com/favicon.ico",
+  },
+  youtube: {
+    color: "#ff0000",
+    bg: "rgba(255,0,0,0.08)",
+    label: "YouTube",
+    icon: youtubeFallbackIcon,
+  },
   xiaohongshu: {
     color: "#ff2442",
     bg: "rgba(255,36,66,0.1)",
@@ -43,6 +65,14 @@ export function PlatformIcon({
       alt={`${style.label}图标`}
       width={size}
       height={size}
+      onError={({ currentTarget }) => {
+        if (
+          style.fallbackIcon &&
+          currentTarget.getAttribute("src") === style.icon
+        ) {
+          currentTarget.src = style.fallbackIcon;
+        }
+      }}
     />
   );
 }
